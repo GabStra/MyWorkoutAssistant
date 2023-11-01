@@ -17,6 +17,7 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
@@ -25,6 +26,8 @@ import com.google.android.gms.wearable.Wearable
 
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
+
+    private val db by lazy { AppDatabase.getDatabase(this)}
 
     private val appViewModel: AppViewModel by viewModels()
 
@@ -42,7 +45,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MyWorkoutAssistantNavHost(dataClient,appViewModel,workoutStoreRepository)
+                    MyWorkoutAssistantNavHost(dataClient,appViewModel,workoutStoreRepository,db)
                 }
             }
         }
@@ -56,10 +59,14 @@ class MainActivity : ComponentActivity() {
 fun MyWorkoutAssistantNavHost(
     dataClient: DataClient,
     appViewModel: AppViewModel,
-    workoutStoreRepository : WorkoutStoreRepository
+    workoutStoreRepository : WorkoutStoreRepository,
+    db: AppDatabase
 ){
     val navController = rememberNavController()
     val context = LocalContext.current
+
+    val exerciseHistoryDao= db.exerciseHistoryDao()
+    val workoutHistoryDao= db.workoutHistoryDao()
 
     LaunchedEffect(appViewModel.workouts) {
         workoutStoreRepository.saveWorkoutStore(WorkoutStore(appViewModel.workouts))
@@ -116,7 +123,7 @@ fun MyWorkoutAssistantNavHost(
         composable(Screen.WorkoutDetail.route) { backStackEntry ->
             // Retrieve the argument from the NavBackStackEntry
             val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
-            WorkoutDetailScreen(navController,appViewModel, workoutId.toInt()){
+            WorkoutDetailScreen(navController,appViewModel,workoutHistoryDao, workoutId.toInt()){
                 if(!navController.popBackStack()){
                     navController.navigate(Screen.Workouts.route)
                 }

@@ -29,12 +29,13 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.google.android.gms.wearable.DataClient
 
 import java.time.Duration
 import java.time.LocalDateTime
 
 @Composable
-fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel, state : WorkoutState.Finished){
+fun WorkoutCompleteScreen(dataClient: DataClient, navController: NavController, viewModel: AppViewModel, state : WorkoutState.Finished){
     val workout by viewModel.selectedWorkout
 
     val duration = remember {
@@ -78,7 +79,7 @@ fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel,
                 onClick = {
                     isClickable = false;
                     hideAll=true
-                    viewModel.endWorkout(){
+                    viewModel.endWorkout(dataClient){
                         navController.navigate(Screen.WorkoutSelection.route){
                             popUpTo(Screen.WorkoutSelection.route) {
                                 inclusive = true

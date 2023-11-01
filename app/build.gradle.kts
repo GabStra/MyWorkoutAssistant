@@ -75,6 +75,7 @@ dependencies {
     implementation("androidx.concurrent:concurrent-futures-ktx:1.1.0")
     implementation("com.google.guava:guava:30.0-android")
     implementation("androidx.compose.material:material-icons-extended:+")
+    implementation("com.google.code.gson:gson:2.9.0")
 
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.03.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

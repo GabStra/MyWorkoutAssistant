@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("kotlin-kapt")
 }
 
 android {
@@ -78,6 +79,10 @@ dependencies {
     implementation("com.google.code.gson:gson:2.9.0")
     implementation("androidx.compose.material:material-icons-extended:+")
     implementation("com.google.accompanist:accompanist-permissions:+")
+
+    kapt("androidx.room:room-compiler:+")
+    implementation("androidx.room:room-ktx:+")
+
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

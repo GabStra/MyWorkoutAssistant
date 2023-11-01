@@ -15,5 +15,8 @@ interface ExerciseHistoryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(vararg exerciseHistories: ExerciseHistory)
+
+    @Query("DELETE FROM exercise_history WHERE workoutHistoryId = :workoutHistoryId")
+    suspend fun deleteByWorkoutHistoryId(workoutHistoryId: Int)
 }
 

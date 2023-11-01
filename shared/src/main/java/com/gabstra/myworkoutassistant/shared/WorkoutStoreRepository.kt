@@ -29,7 +29,7 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
         file.writeText(jsonString)  // Write the JSON string to the file
     }
 
-    fun saveWorkoutStoreFromJson(workoutStoreJson: String) {
+    override fun saveWorkoutStoreFromJson(workoutStoreJson: String) {
         val filename = "workout_store.json"  // Assuming a single file for the workout store
         val file = File(filesDir, filename)
         file.writeText(workoutStoreJson)  // Write the JSON string to the file

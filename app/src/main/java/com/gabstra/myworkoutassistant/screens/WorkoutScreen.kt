@@ -25,6 +25,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.presentation.KeepScreenOn
+import com.google.android.gms.wearable.DataClient
 import kotlinx.coroutines.launch
 
 @Composable
@@ -62,7 +63,7 @@ fun LifecycleObserver(
 }
 
 @Composable
-fun WorkoutScreen(navController: NavController, viewModel : AppViewModel, hrViewModel: MeasureDataViewModel){
+fun WorkoutScreen(dataClient: DataClient, navController: NavController, viewModel : AppViewModel, hrViewModel: MeasureDataViewModel){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
@@ -121,7 +122,7 @@ fun WorkoutScreen(navController: NavController, viewModel : AppViewModel, hrView
         }
         is WorkoutState.Finished -> {
             val state = workoutState as WorkoutState.Finished
-            WorkoutCompleteScreen(navController, viewModel,state)
+            WorkoutCompleteScreen(dataClient,navController, viewModel,state)
         }
     }
 }

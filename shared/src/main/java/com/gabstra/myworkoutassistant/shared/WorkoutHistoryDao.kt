@@ -25,6 +25,12 @@ interface WorkoutHistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(vararg workoutHistories: WorkoutHistory)
 
+    @Query("SELECT * FROM workout_history WHERE name = :name")
+    fun getWorkoutsByName(name: String): List<WorkoutHistory>
+
+    @Query("SELECT * FROM workout_history WHERE name = :name ORDER BY date")
+    fun getWorkoutsByNameByDateAsc(name: String): List<WorkoutHistory>
+
     @Query("SELECT * FROM workout_history WHERE name = :name AND date = :date")
     fun getWorkoutsByNameAndDate(name: String, date: LocalDate): List<WorkoutHistory>
 

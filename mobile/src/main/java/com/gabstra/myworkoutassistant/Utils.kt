@@ -16,18 +16,10 @@ fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
             dataMap.putString("timestamp",System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
 
-        dataClient.putDataItem(request).addOnSuccessListener {
-            android.util.Log.d("FIRE_SOME_DATA","Success")
-        }.addOnCanceledListener {
-            android.util.Log.d("FIRE_SOME_DATA","Cancel")
-        }.addOnFailureListener {
-            android.util.Log.d("FIRE_SOME_DATA","Failure")
-        }
+        dataClient.putDataItem(request)
     } catch (cancellationException: CancellationException) {
-        android.util.Log.d("FIRE_SOME_DATA","CANCELED")
         cancellationException.printStackTrace()
     } catch (exception: Exception) {
-        android.util.Log.d("FIRE_SOME_DATA","${exception.message}")
         exception.printStackTrace()
     }
 }

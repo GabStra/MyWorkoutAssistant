@@ -7,9 +7,18 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.content.ContextCompat
+import com.gabstra.myworkoutassistant.shared.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.google.android.gms.wearable.DataClient
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.util.concurrent.CancellationException
 
 fun FormatTime(seconds: Int): String {
     val minutes = seconds / 60
@@ -115,5 +124,25 @@ fun getEnabledItems(workouts: List<Workout>): List<Workout> {
                 )
             }
         )
+    }
+}
+
+fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore) {
+    try {
+        val gson = GsonBuilder()
+            .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+            .create()
+        val jsonString = gson.toJson(workoutHistoryStore)
+
+        val request = PutDataMapRequest.create("/workoutHistoryStore").apply {
+            dataMap.putString("json",jsonString)
+            dataMap.putString("timestamp",System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+
+        dataClient.putDataItem(request)
+    } catch (cancellationException: CancellationException) {
+        cancellationException.printStackTrace()
+    } catch (exception: Exception) {
+        exception.printStackTrace()
     }
 }

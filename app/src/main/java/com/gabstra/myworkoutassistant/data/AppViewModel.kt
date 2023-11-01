@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.data.sendWorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.Exercise
 import com.gabstra.myworkoutassistant.shared.ExerciseGroup
@@ -16,6 +17,8 @@ import com.gabstra.myworkoutassistant.shared.ExerciseHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.google.android.gms.wearable.DataClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -102,14 +105,15 @@ class AppViewModel : ViewModel(){
         }
     }
 
-    fun endWorkout(onEnd: () -> Unit = {}) {
+    fun endWorkout(dataClient: DataClient, onEnd: () -> Unit = {}) {
         viewModelScope.launch {
             withContext(Dispatchers.IO){
-                val existingWorkouts = workoutHistoryDao.getWorkoutsByNameAndDate(selectedWorkout.value.name,LocalDate.now())
+                val existingWorkouts = workoutHistoryDao.getWorkoutsByName(selectedWorkout.value.name)
 
                 if(existingWorkouts.isNotEmpty()){
                     for(workout in existingWorkouts){
                         workoutHistoryDao.deleteById(workout.id)
+                        exerciseHistoryDao.deleteByWorkoutHistoryId(workout.id)
                     }
                 }
 
@@ -123,6 +127,13 @@ class AppViewModel : ViewModel(){
                 exerciseHistoryDao.insertAll(*executedExercisesHistory.toTypedArray())
                 executedExercisesHistory.clear()
             }
+            sendWorkoutHistoryStore(dataClient,WorkoutHistoryStore(
+                WorkoutHistory = WorkoutHistory(
+                    name= selectedWorkout.value.name,
+                    date = LocalDate.now()
+                ),
+                ExerciseHistories =  executedExercisesHistory
+            ))
             onEnd()
         }
     }

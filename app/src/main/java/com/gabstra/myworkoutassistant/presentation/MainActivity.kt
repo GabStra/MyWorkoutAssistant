@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener{
         val workouts= getEnabledItems(workoutStoreRepository.getWorkoutStore().workouts)
         appViewModel.updateWorkouts(workouts)
         setContent {
-            WearApp(appViewModel)
+            WearApp(dataClient,appViewModel)
         }
     }
 }
@@ -98,7 +98,7 @@ fun KeepScreenOn() {
 }
 
 @Composable
-fun WearApp(appViewModel: AppViewModel) {
+fun WearApp(dataClient: DataClient, appViewModel: AppViewModel) {
     MyWorkoutAssistantTheme {
         val navController = rememberNavController()
         val localContext = LocalContext.current
@@ -119,7 +119,7 @@ fun WearApp(appViewModel: AppViewModel) {
                 WorkoutDetailScreen(navController, appViewModel, hrViewModel)
             }
             composable(Screen.Workout.route) {
-                WorkoutScreen(navController,appViewModel,hrViewModel)
+                WorkoutScreen(dataClient,navController,appViewModel,hrViewModel)
             }
         }
     }
