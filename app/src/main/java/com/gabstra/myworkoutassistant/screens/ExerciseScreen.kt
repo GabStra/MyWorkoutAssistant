@@ -44,6 +44,7 @@ import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myhomeworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.ControlButtons
 import com.gabstra.myworkoutassistant.composable.CustomDialog
+import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composable.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composable.LockScreen
 import com.gabstra.myworkoutassistant.composable.TrendIcon
@@ -69,11 +70,16 @@ fun ExerciseScreen(
     var showLockScreen by remember { mutableStateOf(false) }
     var touchJob by remember { mutableStateOf<Job?>(null) }
 
+    var isRepsPickerVisible by remember { mutableStateOf(false) }
+    var isWeightPickerVisible by remember { mutableStateOf(false) }
+
     fun resetTouchTimer() {
         touchJob?.cancel()
         touchJob = scope.launch {
             delay(5000)  // wait for 10 seconds
             showLockScreen=true
+            isRepsPickerVisible = false
+            isWeightPickerVisible = false
             onScreenLocked()
         }
     }
@@ -95,8 +101,7 @@ fun ExerciseScreen(
 
     val bodyWeight = remember { state.weight == null || state.weight == 0.0F }
 
-    var isRepsPickerVisible by remember { mutableStateOf(false) }
-    var isWeightPickerVisible by remember { mutableStateOf(false) }
+
 
     val latestReps = state.reps
     val latestWeights = state.weight
@@ -145,11 +150,18 @@ fun ExerciseScreen(
             hrViewModel
         )
 
+        ExerciseIndicator(
+            modifier = Modifier.fillMaxSize(),
+            viewModel,
+            state
+        )
+
         Column(
-            verticalArrangement = Arrangement.Center,
+            verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
+                .padding(0.dp,45.dp,0.dp,0.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically
@@ -170,7 +182,7 @@ fun ExerciseScreen(
                 }
             }
 
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 40.dp)
@@ -180,7 +192,8 @@ fun ExerciseScreen(
                             enableSkipMode=!enableSkipMode
                         }
                     ),
-                contentAlignment = Alignment.BottomCenter
+                verticalArrangement = Arrangement.Bottom,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     modifier = Modifier.basicMarquee(),

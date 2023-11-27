@@ -73,7 +73,7 @@ fun LockScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(25.dp)
+                .padding(22.dp)
                 .swipeable(
                     state = state,
                     anchors = anchors,

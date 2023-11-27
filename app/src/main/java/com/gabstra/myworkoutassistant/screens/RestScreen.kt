@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,7 +51,7 @@ fun NextExerciseInfo(
     Column(
         modifier = Modifier
             .size(160.dp, 190.dp)
-            .padding(top = 65.dp),
+            .padding(top = 75.dp),
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally,
     ){
@@ -164,16 +165,17 @@ fun RestScreen(
             modifier = Modifier.fillMaxSize(),
             startAngle = 290f,
             endAngle = 250f,
-            strokeWidth = 4.dp
+            strokeWidth = 4.dp,
+            indicatorColor = Color(0xFF02A61D)
         )
 
         Box(
-            modifier = Modifier.size(160.dp,90.dp).padding(0.dp,20.dp),
+            modifier = Modifier.size(160.dp,90.dp).padding(0.dp,30.dp),
             contentAlignment = Alignment.TopCenter
         ){
             Text(
                 text = FormatTime(currentMillis / 1000),
-                style = MaterialTheme.typography.display2,
+                style = MaterialTheme.typography.display3,
             )
         }
 

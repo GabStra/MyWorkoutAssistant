@@ -27,7 +27,7 @@ import com.google.android.horologist.composables.SegmentedProgressIndicator
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
 fun HeartRateCircularChart(
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier.fillMaxSize(),
     hrViewModel: MeasureDataViewModel
 ){
     val uiState by hrViewModel.exerciseServiceState.collectAsState();
@@ -53,7 +53,7 @@ fun HeartRateCircularChart(
     )
 
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier,
         contentAlignment = Alignment.BottomCenter
     ){
         Row(
