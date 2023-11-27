@@ -67,7 +67,7 @@ class HealthServicesRepository(context: Context) {
             isGpsEnabled = false,
         )
 
-        exerciseClient.startExerciseAsync(config).await()
+        exerciseClient.startExercise(config)
     }
 
     /***
@@ -116,7 +116,7 @@ class HealthServicesRepository(context: Context) {
     fun exerciseUpdateFlow() = callbackFlow {
         val callback = object : ExerciseUpdateCallback {
             override fun onExerciseUpdateReceived(update: ExerciseUpdate) {
-                Log.d("DEBUG","DATA RECEIVED: +${update.toString()}")
+                //Log.d("DEBUG","DATA RECEIVED: +${update.toString()}")
                 trySendBlocking(ExerciseMessage.ExerciseUpdateMessage(update))
             }
 
@@ -134,7 +134,7 @@ class HealthServicesRepository(context: Context) {
             override fun onAvailabilityChanged(
                 dataType: DataType<*, *>, availability: Availability
             ) {
-                Log.d("DEBUG","availability RECEIVED: +${availability.toString()}")
+                //Log.d("DEBUG","availability RECEIVED: +${availability.toString()}")
                 if(availability is DataTypeAvailability){
                     trySendBlocking(MeasureMessage.MeasureAvailability(availability))
                 }
@@ -146,10 +146,10 @@ class HealthServicesRepository(context: Context) {
         }
 
         exerciseClient.setUpdateCallback(callback)
-        Log.d("DEBUG","CALLBACK SET")
+        //Log.d("DEBUG","CALLBACK SET")
         awaitClose {
             // Ignore async result
-            Log.d("DEBUG","CALLBACK DISPOSED")
+            //Log.d("DEBUG","CALLBACK DISPOSED")
             exerciseClient.clearUpdateCallbackAsync(callback)
         }
     }

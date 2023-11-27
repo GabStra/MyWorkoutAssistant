@@ -1,6 +1,11 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.material.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -10,7 +15,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -19,6 +27,7 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.Text
 import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myhomeworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.composable.CurrentTime
 import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.Screen
@@ -66,9 +75,11 @@ fun LifecycleObserver(
 fun WorkoutScreen(dataClient: DataClient, navController: NavController, viewModel : AppViewModel, hrViewModel: MeasureDataViewModel){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    var screenLocked by remember { mutableStateOf(false) }
+    val workoutState by viewModel.workoutState
 
     BackHandler(true) {
-        showWorkoutInProgressDialog=true
+        if(!screenLocked) showWorkoutInProgressDialog=true
     }
     val coroutineScope = rememberCoroutineScope()
 
@@ -90,6 +101,10 @@ fun WorkoutScreen(dataClient: DataClient, navController: NavController, viewMode
         handleNoClick = {
             VibrateOnce(context)
             showWorkoutInProgressDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showWorkoutInProgressDialog = false
         }
     )
 
@@ -104,25 +119,39 @@ fun WorkoutScreen(dataClient: DataClient, navController: NavController, viewMode
 
     KeepScreenOn()
 
-    val workoutState by viewModel.workoutState
-    when(workoutState){
-        is WorkoutState.Preparing -> {
-            LoadingScreen()
-        }
-        is WorkoutState.Warmup -> {
-            WarmUpScreen(viewModel,hrViewModel)
-        }
-        is WorkoutState.Exercise -> {
-            val state = workoutState as WorkoutState.Exercise
-            ExerciseScreen(viewModel,hrViewModel, state)
-        }
-        is WorkoutState.Rest -> {
-            val state = workoutState as WorkoutState.Rest
-            RestScreen(viewModel,state)
-        }
-        is WorkoutState.Finished -> {
-            val state = workoutState as WorkoutState.Finished
-            WorkoutCompleteScreen(dataClient,navController, viewModel,state)
+    Box(
+        contentAlignment = Alignment.TopCenter
+    ) {
+        CurrentTime()
+        when(workoutState){
+            is WorkoutState.Preparing -> {
+                LoadingScreen()
+            }
+            is WorkoutState.Warmup -> {
+                WarmUpScreen(viewModel,hrViewModel)
+            }
+            is WorkoutState.Exercise -> {
+                val state = workoutState as WorkoutState.Exercise
+                ExerciseScreen(
+                    viewModel,
+                    hrViewModel,
+                    state,
+                    onScreenLocked = {
+                        screenLocked=true
+                    },
+                    onScreenUnlocked = {
+                        screenLocked=false
+                    })
+            }
+            is WorkoutState.Rest -> {
+                val state = workoutState as WorkoutState.Rest
+                RestScreen(viewModel,state)
+            }
+            is WorkoutState.Finished -> {
+                val state = workoutState as WorkoutState.Finished
+                WorkoutCompleteScreen(dataClient,navController, viewModel,state)
+            }
         }
     }
+
 }

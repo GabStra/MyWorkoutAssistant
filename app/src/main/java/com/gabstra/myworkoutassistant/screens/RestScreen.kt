@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 
 import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun NextExerciseInfo(
     viewModel: AppViewModel,
@@ -83,6 +85,7 @@ fun NextExerciseInfo(
             if(state.exerciseGroup.exercises.count() != 1){
                 Text(
                     text = "${state.exerciseGroup.name}",
+                    modifier = Modifier.basicMarquee(),
                     style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
                     maxLines = 1,
@@ -93,6 +96,7 @@ fun NextExerciseInfo(
 
             Text(
                 text = "${state.exercise.name}",
+                modifier = Modifier.basicMarquee(),
                 style = MaterialTheme.typography.body2,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -162,21 +166,15 @@ fun RestScreen(
             endAngle = 250f,
             strokeWidth = 4.dp
         )
-        Column(
-            verticalArrangement = Arrangement.Top,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            CurrentTime()
-            Spacer(modifier = Modifier.height(5.dp))
-            Box(
-                modifier = Modifier.size(160.dp,90.dp),
-                contentAlignment = Alignment.TopCenter
-            ){
-                Text(
-                    text = FormatTime(currentMillis / 1000),
-                    style = MaterialTheme.typography.display2,
-                )
-            }
+
+        Box(
+            modifier = Modifier.size(160.dp,90.dp).padding(0.dp,20.dp),
+            contentAlignment = Alignment.TopCenter
+        ){
+            Text(
+                text = FormatTime(currentMillis / 1000),
+                style = MaterialTheme.typography.display2,
+            )
         }
 
         val nextWorkoutState by viewModel.nextWorkoutState

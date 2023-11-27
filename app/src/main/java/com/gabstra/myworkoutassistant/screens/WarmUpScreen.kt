@@ -97,14 +97,16 @@ fun WarmUpScreen(viewModel: AppViewModel,hrViewModel: MeasureDataViewModel){
                     style = MaterialTheme.typography.display2,
                 )
                 Spacer(modifier = Modifier.height(5.dp))
+                /*
                 Text(
                     text = "$mhrText",
                     style = MaterialTheme.typography.body2,
                 )
-                Text(
+               Text(
                     text = " (aim for 50% to 70%)",
                     style = MaterialTheme.typography.caption2,
                 )
+                */
                 Spacer(modifier = Modifier.height(10.dp))
                 Button(
                     onClick = {

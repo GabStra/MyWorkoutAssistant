@@ -37,22 +37,24 @@ fun HeartRateCircularChart(
 
     val mhrPercentage =  remember(hr) { GetMHRPercentage(hr.toFloat(),28) }
 
+    val mapPercentage = remember(mhrPercentage){ mapPercentage(mhrPercentage) }
+
     val bpm = remember(hr) {
         hr.toInt()
     }
 
     val segments = listOf(
-        ProgressIndicatorSegment(.5f, Color.hsl(0f,0.02f,0.68f)),
-        ProgressIndicatorSegment(.1f, Color.hsl(208f,0.61f,0.76f)),
-        ProgressIndicatorSegment(.1f, Color.hsl(200f,0.66f,0.49f)),
-        ProgressIndicatorSegment(.1f, Color.hsl(113f,0.79f,0.34f)),
-        ProgressIndicatorSegment(.1f, Color.hsl(27f,0.97f,0.54f)),
-        ProgressIndicatorSegment(.1f, Color.hsl(9f,0.88f,0.45f)),
+        ProgressIndicatorSegment(.166f, Color.hsl(0f,0.02f,0.68f)),
+        ProgressIndicatorSegment(.166f, Color.hsl(208f,0.61f,0.76f)),
+        ProgressIndicatorSegment(.166f, Color.hsl(200f,0.66f,0.49f)),
+        ProgressIndicatorSegment(.166f, Color.hsl(113f,0.79f,0.34f)),
+        ProgressIndicatorSegment(.166f, Color.hsl(27f,0.97f,0.54f)),
+        ProgressIndicatorSegment(.166f, Color.hsl(9f,0.88f,0.45f)),
     )
 
     Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.TopCenter
+        contentAlignment = Alignment.BottomCenter
     ){
         Row(
             horizontalArrangement = Arrangement.Center,
@@ -71,13 +73,21 @@ fun HeartRateCircularChart(
 
         SegmentedProgressIndicator(
             trackSegments = segments,
-            progress = mhrPercentage/100,
+            progress = mapPercentage,
             modifier = Modifier.fillMaxSize(),
             strokeWidth = 4.dp,
             paddingAngle = 2f,
-            startAngle = -70f,
+            startAngle = 110f,
             endAngle = 250f,
             trackColor = Color.DarkGray,
         )
+    }
+}
+
+private fun mapPercentage(percentage: Float): Float {
+    return if (percentage <= 50) {
+        percentage * 0.00332f
+    } else {
+        0.166f + ((percentage - 50) / 10) * 0.166f
     }
 }

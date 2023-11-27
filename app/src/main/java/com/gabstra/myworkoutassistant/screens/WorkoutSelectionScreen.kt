@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -26,6 +28,7 @@ import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.shared.Workout
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
     Chip(
@@ -33,16 +36,17 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
         label = {
             Text(
                 text = workout.name,
+                modifier = Modifier.basicMarquee(),
                 style = MaterialTheme.typography.body2
             )
         },
         secondaryLabel = {
             Text(
                 text = workout.description,
+                modifier = Modifier.basicMarquee(),
                 style = MaterialTheme.typography.caption3,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
-
             )
         },
         onClick = { onItemClick() },

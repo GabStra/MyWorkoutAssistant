@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myhomeworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.Screen
@@ -34,6 +36,7 @@ import com.google.android.gms.wearable.DataClient
 import java.time.Duration
 import java.time.LocalDateTime
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutCompleteScreen(dataClient: DataClient, navController: NavController, viewModel: AppViewModel, state : WorkoutState.Finished){
     val workout by viewModel.selectedWorkout
@@ -65,6 +68,7 @@ fun WorkoutCompleteScreen(dataClient: DataClient, navController: NavController, 
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = "${workout.name}",
+                modifier = Modifier.basicMarquee(),
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.title3
             )

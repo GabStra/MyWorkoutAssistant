@@ -55,30 +55,24 @@ class MeasureDataViewModel(
 
     private fun stopCollection(){
         if (collectionJob?.isActive == true) {
-            Log.d("DEBUG","STOP COLLECTING")
             collectionJob?.cancel()
         }
     }
 
     private fun startCollection(){
         if (collectionJob?.isActive != true) {
-
             collectionJob = viewModelScope.launch {
                 healthServicesRepository.exerciseUpdateFlow().collect { it ->
-                    Log.d("DEBUG",it.toString())
                     when (it) {
                         is ExerciseMessage.ExerciseUpdateMessage ->{
                             processExerciseUpdate(it.exerciseUpdate)
                         }
-
                         is MeasureMessage.MeasureAvailability ->{
-                            //Log.d("EXERCISE DATA","DATA AVAILABILITY ${it.availability}")
                         }
                     }
                 }
             }
 
-            Log.d("DEBUG","START COLLECTING STATUS ACTIVE: ${collectionJob?.isActive}")
         }
     }
 
@@ -90,15 +84,15 @@ class MeasureDataViewModel(
             when (exerciseUpdate.exerciseStateInfo.endReason) {
                 ExerciseEndReason.AUTO_END_SUPERSEDED -> {
                     // TODO Send the user a notification (another app ended their workout)
-                    Log.i("DEBUG","Your exercise was terminated because another app started tracking an exercise")
+                    //Log.i("DEBUG","Your exercise was terminated because another app started tracking an exercise")
                 }
                 ExerciseEndReason.AUTO_END_MISSING_LISTENER -> {
                     // TODO Send the user a notification
-                    Log.i("DEBUG","Your exercise was auto ended because there were no registered listeners")
+                    //Log.i("DEBUG","Your exercise was auto ended because there were no registered listeners")
                 }
                 ExerciseEndReason.AUTO_END_PERMISSION_LOST -> {
                     // TODO Send the user a notification
-                    Log.w("DEBUG","Your exercise was auto ended because it lost the required permissions")
+                    //Log.w("DEBUG","Your exercise was auto ended because it lost the required permissions")
                 }
                 ExerciseEndReason.USER_END -> {
 
@@ -107,7 +101,7 @@ class MeasureDataViewModel(
                 }
             }
         }
-        Log.i("DEBUG","BPM: "+exerciseUpdate.latestMetrics.getData(DataType.HEART_RATE_BPM).lastOrNull()?.value.toString())
+        //Log.i("DEBUG","BPM: "+exerciseUpdate.latestMetrics.getData(DataType.HEART_RATE_BPM).lastOrNull()?.value.toString())
         exerciseServiceState.update { old ->
             old.copy(
                 exerciseState = ExerciseState.ACTIVE,//exerciseUpdate.exerciseStateInfo.state,
@@ -121,6 +115,7 @@ class MeasureDataViewModel(
 
             try{
                 healthServicesRepository.prepareExercise()
+                healthServicesRepository.startExercise()
             }catch (e: Exception) {
                 Log.d("DEBUG","failed - ${e.message}")
             }
@@ -142,7 +137,7 @@ class MeasureDataViewModel(
                 healthServicesRepository.endExercise()
                 stopCollection()
             }catch (e: Exception) {
-                Log.d("EXERCISE DATA","on end failed - ${e.message}")
+                //Log.d("EXERCISE DATA","on end failed - ${e.message}")
             }
         }
     }

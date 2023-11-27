@@ -16,9 +16,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +33,9 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 
 @Composable
@@ -39,13 +44,30 @@ fun CustomDialog(
     title : String = "Confirm Exit",
     message : String = "Do you really want to exit?",
     handleNoClick: () -> Unit,
-    handleYesClick: () -> Unit
+    handleYesClick: () -> Unit,
+    closeTimerInMillis : Long = 0,
+    handleOnAutomaticClose: () -> Unit = {}
 ) {
-    var showDialog by remember(show){ mutableStateOf(show) }
+    var closeDialogJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
-    if (showDialog) {
+    fun startAutomaticCloseTimer(){
+        closeDialogJob?.cancel()
+        closeDialogJob = coroutineScope.launch {
+            delay(closeTimerInMillis)  // wait for 10 seconds
+            handleOnAutomaticClose()
+        }
+    }
+
+    LaunchedEffect(show){
+        if(show && closeTimerInMillis > 0){
+            startAutomaticCloseTimer()
+        }
+    }
+
+    if (show) {
         Dialog(
-            onDismissRequest = { showDialog = false }
+            onDismissRequest = { handleNoClick() }
         ) {
             // Use a Box to add some padding around the content
             Box(modifier = Modifier

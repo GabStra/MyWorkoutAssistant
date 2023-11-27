@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,14 +19,18 @@ import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -38,22 +43,55 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myhomeworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.ControlButtons
+import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.composable.HeartRateCircularChart
+import com.gabstra.myworkoutassistant.composable.LockScreen
 import com.gabstra.myworkoutassistant.composable.TrendIcon
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 
-
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun ExerciseScreen(
     viewModel: AppViewModel,
     hrViewModel: MeasureDataViewModel,
-    state: WorkoutState.Exercise
+    state: WorkoutState.Exercise,
+    onScreenLocked: () -> Unit,
+    onScreenUnlocked: () -> Unit,
 ) {
-
     val context = LocalContext.current
+
+    val scope = rememberCoroutineScope()
+    var showLockScreen by remember { mutableStateOf(false) }
+    var touchJob by remember { mutableStateOf<Job?>(null) }
+
+    fun resetTouchTimer() {
+        touchJob?.cancel()
+        touchJob = scope.launch {
+            delay(5000)  // wait for 10 seconds
+            showLockScreen=true
+            onScreenLocked()
+        }
+    }
+
+
+    LaunchedEffect(Unit) {
+        resetTouchTimer() // start the lock timer immediately
+
+        /*
+        delay(500)
+        showLockScreen=true // Start the lock immediately
+        onScreenLocked()
+        */
+    }
+
+    var showConfirmDialog by remember { mutableStateOf(false) }
+    var enableSkipMode by remember { mutableStateOf(false) }
+
 
     val bodyWeight = remember { state.weight == null || state.weight == 0.0F }
 
@@ -70,8 +108,36 @@ fun ExerciseScreen(
     val selectedExerciseGroup = state.exerciseGroup
     val selectedExercise = state.exercise
 
+    CustomDialog(
+        show = showConfirmDialog,
+        title = "Complete exercise",
+        message = "Do you want to save this data?",
+        handleYesClick = {
+            VibrateOnce(context)
+            viewModel.storeExecutedExerciseHistory(executedReps,usedWeightsInKGs)
+            viewModel.goToNextState()
+            showConfirmDialog=false
+        },
+        handleNoClick = {
+            VibrateOnce(context)
+            showConfirmDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showConfirmDialog = false
+        }
+    )
+
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInteropFilter { event ->
+                if(!showLockScreen){
+                    resetTouchTimer()
+                }
+
+                false
+            },
         contentAlignment = Alignment.Center
     ) {
         HeartRateCircularChart(
@@ -88,6 +154,7 @@ fun ExerciseScreen(
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ){
+
                 Text(
                     text = "Set: $currentSet/${selectedExerciseGroup.sets} ",
                     textAlign= TextAlign.Center,
@@ -106,10 +173,17 @@ fun ExerciseScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 40.dp),
+                    .padding(horizontal = 40.dp)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = {
+                            enableSkipMode=!enableSkipMode
+                        }
+                    ),
                 contentAlignment = Alignment.BottomCenter
             ) {
                 Text(
+                    modifier = Modifier.basicMarquee(),
                     text = selectedExercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
@@ -215,31 +289,41 @@ fun ExerciseScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.End
                 ) {
-                    Button(
-                        onClick = {
-                            VibrateOnce(context)
-                            viewModel.storeExecutedExerciseHistory(executedReps,usedWeightsInKGs)
-                            viewModel.goToNextState()
-
-                        },
-                        modifier = Modifier.size(35.dp),
-                        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-                    ) {
-                        Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Button(
-                        onClick = {
-                            VibrateOnce(context)
-                            executedReps=0
-                        },
-                        modifier = Modifier.size(35.dp),
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
-                    ) {
-                        Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
+                    if(enableSkipMode){
+                        Button(
+                            onClick = {
+                                VibrateOnce(context)
+                                executedReps=0
+                                enableSkipMode=false
+                            },
+                            modifier = Modifier.size(35.dp),
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+                        ) {
+                            Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
+                        }
+                    }else{
+                        Button(
+                            onClick = {
+                                VibrateOnce(context)
+                                showConfirmDialog=true
+                            },
+                            modifier = Modifier.size(35.dp),
+                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                        ) {
+                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                        }
                     }
                 }
             }
         }
     }
+
+    LockScreen(
+        show = showLockScreen,
+        onUnlock = {
+            onScreenUnlocked()
+            resetTouchTimer()
+            showLockScreen = false
+        }
+    )
 }

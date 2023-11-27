@@ -6,12 +6,15 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -41,7 +44,7 @@ val requiredPermissions = listOf(
     Manifest.permission.ACTIVITY_RECOGNITION
 )
 
-@OptIn(ExperimentalPermissionsApi::class)
+@OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel,hrViewModel : MeasureDataViewModel) {
     val workout by viewModel.selectedWorkout
@@ -58,12 +61,13 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel,hr
 
 
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = workout.name,
+            modifier = Modifier.basicMarquee(),
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.title2
         )
