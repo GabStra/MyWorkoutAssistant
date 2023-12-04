@@ -24,11 +24,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
         jsonObject.addProperty("type", workoutComponentType)
         jsonObject.addProperty("name", src.name)
         jsonObject.addProperty("restTimeInSec", src.restTimeInSec)
+        jsonObject.addProperty("enabled", src.enabled)
+        jsonObject.addProperty("skipWorkoutRest", src.skipWorkoutRest)
 
         when (src) {
             is Exercise -> {
                 jsonObject.add("sets", context.serialize(src.sets))
-                jsonObject.addProperty("enabled", src.enabled)
             }
             is ExerciseGroup -> {
                 jsonObject.add("workoutComponents", context.serialize(src.workoutComponents))
@@ -41,19 +42,24 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
         val jsonObject = json.asJsonObject
         val type = jsonObject.get("type").asString
         val name = jsonObject.get("name").asString
+        val enabled = jsonObject.get("enabled").asBoolean
+        val skipWorkoutRest = if (jsonObject.has("skipWorkoutRest")) {
+            jsonObject.get("skipWorkoutRest").asBoolean
+        } else {
+            false
+        }
         val restTimeInSec = jsonObject.get("restTimeInSec").asInt
 
         return when (type) {
             "Exercise" -> {
                 val setsType = object : TypeToken<List<Set>>() {}.type
                 val sets: List<Set> = context.deserialize(jsonObject.get("sets"), setsType)
-                val enabled = jsonObject.get("enabled").asBoolean
-                Exercise(name, restTimeInSec, sets, enabled)
+                Exercise(name, restTimeInSec,enabled,skipWorkoutRest, sets )
             }
             "ExerciseGroup" -> {
                 val workoutComponentsType = object : TypeToken<List<WorkoutComponent>>() {}.type
                 val workoutComponents: List<WorkoutComponent> = context.deserialize(jsonObject.get("workoutComponents"), workoutComponentsType)
-                ExerciseGroup(name, restTimeInSec, workoutComponents)
+                ExerciseGroup(name, restTimeInSec,enabled,skipWorkoutRest , workoutComponents)
             }
             else -> throw RuntimeException("Unsupported workout component type")
         }

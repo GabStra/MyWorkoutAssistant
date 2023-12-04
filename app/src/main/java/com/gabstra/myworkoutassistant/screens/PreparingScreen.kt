@@ -54,7 +54,7 @@ fun PreparingScreen(
     }
 
     LaunchedEffect(uiState.exerciseState, heartRate,state,currentMillis) {
-        val isReady = (uiState.exerciseState == ExerciseState.ACTIVE) && (heartRate > 0) && state.dataLoaded && currentMillis >=3000
+        val isReady = (uiState.exerciseState == ExerciseState.ACTIVE) && (heartRate > 0) && state.dataLoaded && currentMillis >=2000
         if (isReady) {
             viewModel.goToNextState()
         }

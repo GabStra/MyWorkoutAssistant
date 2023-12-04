@@ -148,7 +148,7 @@ fun ExerciseScreen(
                  */
                 Text(
                     modifier = Modifier
-                        .basicMarquee()
+                        .basicMarquee(initialDelayMillis = 3000)
                         .combinedClickable(
                             onClick = {},
                             onLongClick = {

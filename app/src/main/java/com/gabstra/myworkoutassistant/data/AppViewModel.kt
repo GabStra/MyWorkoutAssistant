@@ -177,7 +177,7 @@ class AppViewModel : ViewModel(){
                 is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent,listOf(index),listOf(workoutComponent))
             }
 
-            if (selectedWorkout.value.restTimeInSec >0 && index < selectedWorkout.value.workoutComponents.size - 1) {
+            if (selectedWorkout.value.restTimeInSec >0 && index < selectedWorkout.value.workoutComponents.size - 1 && !workoutComponent.skipWorkoutRest) {
                 workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
             }
         }
