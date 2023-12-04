@@ -10,10 +10,11 @@ import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
-import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
-import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -82,9 +83,27 @@ fun VibrateShortImpulse(context: Context) {
 
 
 
-fun GetMHRPercentage(heartRate: Float, age: Int): Float{
+fun getMaxHearthRatePercentage(heartRate: Float, age: Int): Float{
     val mhr = 208 - (0.7f * age)
     return (heartRate / mhr) * 100
+}
+
+fun mapHeartRateToZonePercentage(hrPercentage: Float): Float {
+    return if (hrPercentage <= 50) {
+        hrPercentage * 0.00332f
+    } else {
+        0.166f + ((hrPercentage - 50) / 10) * 0.166f
+    }
+}
+
+fun mapHearthRatePercentageToZone(percentage: Float): Int {
+    val mappedValue = if (percentage <= 50) {
+        percentage * 0.00332f
+    } else {
+        0.166f + ((percentage - 50) / 10) * 0.166f
+    }
+
+    return (mappedValue / 0.166f).toInt()
 }
 
 fun CoroutineScope.onClickWithDelay(
@@ -118,12 +137,18 @@ fun Context.findActivity(): Activity? {
 fun getEnabledItems(workouts: List<Workout>): List<Workout> {
     return workouts.filter { it.enabled }.map { workout ->
         workout.copy(
-            exerciseGroups = workout.exerciseGroups.filter { it.enabled }.map { exerciseGroup ->
-                exerciseGroup.copy(
-                    exercises = exerciseGroup.exercises.filter { it.enabled }
-                )
-            }
+            workoutComponents = workout.workoutComponents.filter {isWorkoutComponentEnabled(it) }
         )
+    }.filter { workout ->
+        workout.workoutComponents.isNotEmpty()
+    }
+}
+
+fun isWorkoutComponentEnabled(workoutComponent: WorkoutComponent): Boolean{
+    return when (workoutComponent) {
+        is Exercise -> workoutComponent.enabled
+        is ExerciseGroup -> workoutComponent.workoutComponents.any { isWorkoutComponentEnabled(it) }
+        else -> false // or true, depending on whether you want to include other types by default
     }
 }
 

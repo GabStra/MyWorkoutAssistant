@@ -12,9 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -23,7 +20,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -41,10 +37,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import com.gabstra.myworkoutassistant.shared.Exercise
+import com.gabstra.myworkoutassistant.shared.sets.Set
 
 @Composable
-fun ExerciseContent(exercise: Exercise){
+fun ExerciseContent(set: Set){
     Row (
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier
@@ -52,15 +48,15 @@ fun ExerciseContent(exercise: Exercise){
     ){
         Text(
             modifier = Modifier.weight(2f),
-            text = exercise.name
+            text = set.name
         )
         Column( modifier = Modifier.weight(1f)) {
             Text(
-                text = "Reps: ${exercise.reps}"
+                text = "Reps: ${set.reps}"
             )
             Spacer(modifier=Modifier.height(5.dp))
             Text(
-                text = if(exercise.weight != null) "${exercise.weight} kg" else "Body-weight"
+                text = if(set.weight != null) "${set.weight} kg" else "Body-weight"
             )
         }
     }
@@ -81,7 +77,7 @@ fun ExerciseGroupDetailScreen(
 
     val exercises = selectedExerciseGroup.exercises
 
-    var selectedExercises by remember { mutableStateOf(setOf<Exercise>()) }
+    var selectedSets by remember { mutableStateOf(setOf<Set>()) }
     var selectionMode by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -103,16 +99,16 @@ fun ExerciseGroupDetailScreen(
             )
         },
         bottomBar = {
-            if(selectedExercises.isNotEmpty()) BottomAppBar(
+            if(selectedSets.isNotEmpty()) BottomAppBar(
                 actions =  {
                     IconButton(onClick = {
                         val newExercises = exercises.filter { exercise->
-                            exercise !in selectedExercises
+                            exercise !in selectedSets
                         }
 
                         val updatedExerciseGroup  = selectedExerciseGroup.copy(exercises = newExercises)
                         appViewModel.updateExerciseGroup(selectedWorkout,selectedExerciseGroup,updatedExerciseGroup)
-                        selectedExercises = emptySet()
+                        selectedSets = emptySet()
                         selectionMode = false
                     }) {
                         Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
@@ -120,10 +116,10 @@ fun ExerciseGroupDetailScreen(
                     Button(
                         modifier = Modifier.padding(5.dp),
                         onClick = {
-                            for (exercise in selectedExercises) {
+                            for (exercise in selectedSets) {
                                 appViewModel.updateExercise(selectedWorkout,selectedExerciseGroup,exercise,exercise.copy(enabled = true))
                             }
-                            selectedExercises = emptySet()
+                            selectedSets = emptySet()
                             selectionMode = false
                         }) {
                         Text("Enable")
@@ -131,10 +127,10 @@ fun ExerciseGroupDetailScreen(
                     Button(
                         modifier = Modifier.padding(5.dp),
                         onClick = {
-                            for (exercise in selectedExercises) {
+                            for (exercise in selectedSets) {
                                 appViewModel.updateExercise(selectedWorkout,selectedExerciseGroup,exercise,exercise.copy(enabled = false))
                             }
-                            selectedExercises = emptySet()
+                            selectedSets = emptySet()
                             selectionMode = false
                         }) {
                         Text("Disable")
@@ -143,7 +139,7 @@ fun ExerciseGroupDetailScreen(
             )
         },
         floatingActionButton= {
-            if(selectedExercises.isEmpty())
+            if(selectedSets.isEmpty())
                 FloatingActionButton(
                     onClick = {
                         navController.navigate(Screen.getRoute(Screen.NewExercise,workoutId,exerciseGroupId))
@@ -167,12 +163,12 @@ fun ExerciseGroupDetailScreen(
                     .clickable {
                         if (selectionMode) {
                             selectionMode = false
-                            selectedExercises= emptySet()
+                            selectedSets= emptySet()
                         }
                     },
                 items = exercises,
-                selection = selectedExercises,
-                onSelectionChange = { newSelection -> selectedExercises = newSelection} ,
+                selection = selectedSets,
+                onSelectionChange = { newSelection -> selectedSets = newSelection} ,
                 itemContent = { it ->
                     Card(
                         modifier = Modifier
@@ -182,12 +178,12 @@ fun ExerciseGroupDetailScreen(
                                 onClick = {
                                     if (selectionMode) {
                                         val newSelection =
-                                            if (selectedExercises.contains(it)) {
-                                                selectedExercises - it
+                                            if (selectedSets.contains(it)) {
+                                                selectedSets - it
                                             } else {
-                                                selectedExercises + it
+                                                selectedSets + it
                                             }
-                                        selectedExercises = newSelection
+                                        selectedSets = newSelection
                                     } else {
                                         val exerciseId = exercises.indexOf(it)
                                         navController.navigate(Screen.getRoute(Screen.EditExercise,workoutId,exerciseGroupId,exerciseId))

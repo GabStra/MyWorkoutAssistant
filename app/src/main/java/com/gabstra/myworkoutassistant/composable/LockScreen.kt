@@ -2,8 +2,10 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import android.view.MotionEvent
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Box
@@ -55,6 +57,8 @@ fun LockScreen(
     val state = rememberSwipeableState(initialValue = 0)
     val context = LocalContext.current
 
+    var touchCounter by remember { mutableIntStateOf(0) }
+
     LaunchedEffect(state.targetValue) {
         if(state.targetValue == 1){
             VibrateOnce(context)
@@ -74,7 +78,14 @@ fun LockScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(22.dp)
-                .swipeable(
+                .clickable {
+                    if(touchCounter>=5){
+                        Toast.makeText(context, "Unlock by swiping right", Toast.LENGTH_SHORT).show()
+                        touchCounter=0
+                    }else{
+                        touchCounter++
+                    }
+                }.swipeable(
                     state = state,
                     anchors = anchors,
                     thresholds = { _, _ -> FractionalThreshold(0.3f) },
@@ -90,15 +101,4 @@ fun LockScreen(
             )
         }
     }
-}
-
-private fun lerp(start: Offset, end: Offset, fraction: Float): Offset {
-    return Offset(
-        lerp(start.x, end.x, fraction),
-        lerp(start.y, end.y, fraction)
-    )
-}
-
-private fun lerp(start: Float, end: Float, fraction: Float): Float {
-    return start + (end - start) * fraction
 }

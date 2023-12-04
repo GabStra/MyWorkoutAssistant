@@ -4,27 +4,15 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import androidx.room.TypeConverter
 import androidx.room.TypeConverters
-import java.time.LocalDate
+import com.gabstra.myworkoutassistant.shared.typeconverters.DateTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.SetDataTypeConverter
 
-class DateTypeConverter {
+@Database(entities = [SetHistory::class, WorkoutHistory::class], version = 15, exportSchema = false)
+@TypeConverters(DateTypeConverter::class, SetDataTypeConverter::class)
 
-    @TypeConverter
-    fun fromLongToDate(value: Long?): LocalDate? {
-        return value?.let { LocalDate.ofEpochDay(it) }
-    }
-
-    @TypeConverter
-    fun fromDateToLong(date: LocalDate?): Long? {
-        return date?.toEpochDay()
-    }
-}
-
-@Database(entities = [ExerciseHistory::class, WorkoutHistory::class], version = 12, exportSchema = false)
-@TypeConverters(DateTypeConverter::class)
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun exerciseHistoryDao(): ExerciseHistoryDao
+    abstract fun setHistoryDao(): SetHistoryDao
     abstract fun workoutHistoryDao(): WorkoutHistoryDao
 
     companion object {

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -8,18 +9,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.health.services.client.data.ExerciseState
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.data.GetMHRPercentage
+import com.gabstra.myworkoutassistant.data.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -35,7 +39,15 @@ fun HeartRateCircularChart(
         if(uiState.exerciseState == ExerciseState.ACTIVE) uiState.exerciseMetrics.heartRate ?: 0 else 0
     }
 
-    val mhrPercentage =  remember(hr) { GetMHRPercentage(hr.toFloat(),28) }
+    val context = LocalContext.current
+    val mhrPercentage =  remember(hr) { getMaxHearthRatePercentage(hr.toFloat(),28) }
+
+    LaunchedEffect(mhrPercentage){
+        if(mhrPercentage > 100){
+            Toast.makeText(context, "Heart rate over limit", Toast.LENGTH_SHORT).show()
+            VibrateShortImpulse(context);
+        }
+    }
 
     val mapPercentage = remember(mhrPercentage){ mapPercentage(mhrPercentage) }
 
@@ -90,4 +102,14 @@ private fun mapPercentage(percentage: Float): Float {
     } else {
         0.166f + ((percentage - 50) / 10) * 0.166f
     }
+}
+
+fun mapPercentageToZone(percentage: Float): Int {
+    val mappedValue = if (percentage <= 50) {
+        percentage * 0.00332f
+    } else {
+        0.166f + ((percentage - 50) / 10) * 0.166f
+    }
+
+    return (mappedValue / 0.166f).toInt()
 }

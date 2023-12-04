@@ -99,7 +99,10 @@ fun CustomDialog(
                             .padding(8.dp)
                     ) {
                         Button(
-                            onClick = { handleNoClick() },
+                            onClick = {
+                                closeDialogJob?.cancel()
+                                handleNoClick()
+                            },
                             modifier = Modifier.size(35.dp),
                             colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
                         ) {
@@ -108,6 +111,7 @@ fun CustomDialog(
                         Spacer(modifier = Modifier.width(10.dp))
                         Button(
                             onClick = {
+                                closeDialogJob?.cancel()
                                 handleYesClick()
                             },
                             modifier = Modifier.size(35.dp),

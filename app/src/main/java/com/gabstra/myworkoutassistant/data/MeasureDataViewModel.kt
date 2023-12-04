@@ -76,8 +76,6 @@ class MeasureDataViewModel(
         }
     }
 
-    suspend fun isExerciseInProgress() =
-        healthServicesRepository.isExerciseInProgress()
     private fun processExerciseUpdate(exerciseUpdate: ExerciseUpdate) {
         // Dismiss any ongoing activity notification.
         if(exerciseUpdate.exerciseStateInfo.state.isEnded){

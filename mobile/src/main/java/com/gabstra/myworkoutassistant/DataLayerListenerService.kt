@@ -1,15 +1,11 @@
 package com.gabstra.myworkoutassistant
 
-import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.LocalDateAdapter
-import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
-import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
-import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +29,7 @@ class DataLayerListenerService : WearableListenerService() {
                     scope.launch {
                         try{
                             val db = AppDatabase.getDatabase(this@DataLayerListenerService)
-                            val exerciseHistoryDao= db.exerciseHistoryDao()
+                            val exerciseHistoryDao= db.setHistoryDao()
                             val workoutHistoryDao= db.workoutHistoryDao()
 
                             val gson = GsonBuilder()

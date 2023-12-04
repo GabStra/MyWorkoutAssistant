@@ -9,19 +9,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.Exercise
+import com.gabstra.myworkoutassistant.shared.sets.Set
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExerciseForm(
-    onExerciseUpsert: (Exercise) -> Unit,
+    onExerciseUpsert: (Set) -> Unit,
     onCancel: () -> Unit,
-    exercise: Exercise? = null // Add exercise parameter with default value null
+    set: Set? = null // Add exercise parameter with default value null
 ) {
     // Mutable state for form fields
-    val nameState = remember { mutableStateOf(exercise?.name ?: "") }
-    val repsState = remember { mutableStateOf(exercise?.reps?.toString() ?: "") }
-    val weightState = remember { mutableStateOf(exercise?.weight?.toString() ?: "") }
+    val nameState = remember { mutableStateOf(set?.name ?: "") }
+    val repsState = remember { mutableStateOf(set?.reps?.toString() ?: "") }
+    val weightState = remember { mutableStateOf(set?.weight?.toString() ?: "") }
 
     Column(
         modifier = Modifier
@@ -64,14 +64,14 @@ fun ExerciseForm(
         // Submit button
         Button(
             onClick = {
-                val newExercise = Exercise(
+                val newSet = Set(
                     name = nameState.value,
                     reps = repsState.value.toIntOrNull() ?: 0,
                     weight = weightState.value.toFloatOrNull()
                 )
 
                 // Call the callback to insert/update the exercise
-                onExerciseUpsert(newExercise)
+                onExerciseUpsert(newSet)
 
                 // Clear form fields
                 nameState.value = ""
@@ -82,7 +82,7 @@ fun ExerciseForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (exercise == null) Text("Insert Exercise") else Text("Edit Exercise")
+            if (set == null) Text("Insert Exercise") else Text("Edit Exercise")
         }
 
         // Cancel button

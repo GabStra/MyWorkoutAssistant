@@ -10,10 +10,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -65,7 +63,7 @@ fun MyWorkoutAssistantNavHost(
     val navController = rememberNavController()
     val context = LocalContext.current
 
-    val exerciseHistoryDao= db.exerciseHistoryDao()
+    val exerciseHistoryDao= db.setHistoryDao()
     val workoutHistoryDao= db.workoutHistoryDao()
 
     LaunchedEffect(appViewModel.workouts) {
@@ -190,7 +188,7 @@ fun MyWorkoutAssistantNavHost(
                     navController.popBackStack()
                 },
                 onCancel = {  navController.popBackStack() },
-                exercise = originalExercise
+                set = originalExercise
             )
         }
     }

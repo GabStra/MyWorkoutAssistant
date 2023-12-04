@@ -4,8 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
-import com.gabstra.myworkoutassistant.shared.Exercise
-import com.gabstra.myworkoutassistant.shared.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.Workout
 
 enum class Screen(val route: String) {
@@ -66,7 +65,7 @@ class AppViewModel() : ViewModel() {
         }
     }
 
-    fun updateExercise(parentWorkout: Workout, parentExerciseGroup: ExerciseGroup, oldExercise: Exercise, updatedExercise: Exercise) {
+    fun updateExercise(parentWorkout: Workout, parentExerciseGroup: ExerciseGroup, oldSet: Set, updatedSet: Set) {
         workouts = workouts.map { workout ->
             if (workout == parentWorkout) {
                 workout.copy(
@@ -74,7 +73,7 @@ class AppViewModel() : ViewModel() {
                         if (exerciseGroup == parentExerciseGroup) {
                             exerciseGroup.copy(
                                 exercises = exerciseGroup.exercises.map { exercise ->
-                                    if (exercise == oldExercise) updatedExercise else exercise
+                                    if (exercise == oldSet) updatedSet else exercise
                                 }
                             )
                         } else {
@@ -102,13 +101,13 @@ class AppViewModel() : ViewModel() {
         }
     }
 
-    fun addNewExercise(parentWorkout: Workout, exerciseGroup: ExerciseGroup, newExercise: Exercise) {
+    fun addNewExercise(parentWorkout: Workout, exerciseGroup: ExerciseGroup, newSet: Set) {
         workouts = workouts.map { workout ->
             if (workout == parentWorkout) {
                 workout.copy(
                     exerciseGroups = workout.exerciseGroups.map { it ->
                         if (it == exerciseGroup) {
-                            it.copy(exercises = it.exercises + newExercise)
+                            it.copy(exercises = it.exercises + newSet)
                         } else {
                             it
                         }
@@ -136,14 +135,14 @@ class AppViewModel() : ViewModel() {
         }
     }
 
-    fun deleteExercise(parentWorkout: Workout,exerciseGroup: ExerciseGroup, exerciseToDelete: Exercise) {
+    fun deleteExercise(parentWorkout: Workout, exerciseGroup: ExerciseGroup, setToDelete: Set) {
         workouts = workouts.map { workout ->
             if (workout == parentWorkout) {  // Direct object comparison
                 workout.copy(
                     exerciseGroups = workout.exerciseGroups.map { exerciseGroup ->
                         if (exerciseGroup == exerciseGroup) {  // Direct object comparison
                             exerciseGroup.copy(
-                                exercises = exerciseGroup.exercises.filter { it != exerciseToDelete }  // Direct object comparison
+                                exercises = exerciseGroup.exercises.filter { it != setToDelete }  // Direct object comparison
                             )
                         } else {
                             exerciseGroup

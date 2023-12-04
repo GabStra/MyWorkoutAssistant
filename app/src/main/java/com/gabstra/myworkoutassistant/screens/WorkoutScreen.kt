@@ -1,12 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.material.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -16,15 +11,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.navigation.NavController
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.Text
 import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myhomeworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.CurrentTime
@@ -125,13 +116,11 @@ fun WorkoutScreen(dataClient: DataClient, navController: NavController, viewMode
         CurrentTime()
         when(workoutState){
             is WorkoutState.Preparing -> {
-                LoadingScreen()
+                val state = workoutState as WorkoutState.Preparing
+                PreparingScreen( viewModel,hrViewModel,state)
             }
-            is WorkoutState.Warmup -> {
-                WarmUpScreen(viewModel,hrViewModel)
-            }
-            is WorkoutState.Exercise -> {
-                val state = workoutState as WorkoutState.Exercise
+            is WorkoutState.Set -> {
+                val state = workoutState as WorkoutState.Set
                 ExerciseScreen(
                     viewModel,
                     hrViewModel,
@@ -149,7 +138,7 @@ fun WorkoutScreen(dataClient: DataClient, navController: NavController, viewMode
             }
             is WorkoutState.Finished -> {
                 val state = workoutState as WorkoutState.Finished
-                WorkoutCompleteScreen(dataClient,navController, viewModel,state)
+                WorkoutCompleteScreen(navController, viewModel,state)
             }
         }
     }

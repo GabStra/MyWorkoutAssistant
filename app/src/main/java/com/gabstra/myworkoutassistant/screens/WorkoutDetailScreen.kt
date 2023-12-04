@@ -78,6 +78,17 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel,hr
             Button(
                 onClick = {
                     VibrateOnce(context)
+                    //navController.navigate("workoutExercise")
+                },
+                modifier = Modifier.size(35.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.secondary)
+            ) {
+                Icon(imageVector = Icons.Default.Settings, contentDescription = "History")
+            }
+
+            Button(
+                onClick = {
+                    VibrateOnce(context)
                     permissionLauncher.launch(requiredPermissions.toTypedArray())
                 },
                 modifier = Modifier.size(35.dp),
@@ -86,15 +97,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel,hr
                 Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
             }
 
-            Button(
-                onClick = {
-                    VibrateOnce(context)
-                    //navController.navigate("workoutExercise")
-                },
-                modifier = Modifier.size(35.dp)
-            ) {
-                Icon(imageVector = Icons.Default.Settings, contentDescription = "History")
-            }
+
 
             /*Button(onClick = { println("workoutSettings") }) {
                 Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")

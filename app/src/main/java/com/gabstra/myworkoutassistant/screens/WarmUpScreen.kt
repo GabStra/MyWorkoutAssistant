@@ -14,7 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.health.services.client.data.ExerciseState
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
@@ -31,7 +29,6 @@ import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.composable.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.data.FormatTime
-import com.gabstra.myworkoutassistant.data.GetMHRPercentage
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import kotlinx.coroutines.delay
@@ -49,16 +46,6 @@ fun WarmUpScreen(viewModel: AppViewModel,hrViewModel: MeasureDataViewModel){
         }
     }
 
-    val uiState by hrViewModel.exerciseServiceState.collectAsState();
-    val hr = remember(uiState.exerciseState,uiState.exerciseMetrics.heartRate) {
-        if(uiState.exerciseState == ExerciseState.ACTIVE) uiState.exerciseMetrics.heartRate ?: 0 else 0
-    }
-
-    val mhrPercentage =  remember(hr) { GetMHRPercentage(hr.toFloat(),28) }
-    val mhrText= remember(mhrPercentage) {
-        if(mhrPercentage == 0f) "-"
-        else "${mhrPercentage.toInt()}%"
-    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -94,7 +81,7 @@ fun WarmUpScreen(viewModel: AppViewModel,hrViewModel: MeasureDataViewModel){
             }else{
                 Text(
                     text = FormatTime(currentMillis / 1000),
-                    style = MaterialTheme.typography.display2,
+                    style = MaterialTheme.typography.display1,
                 )
                 Spacer(modifier = Modifier.height(5.dp))
                 /*

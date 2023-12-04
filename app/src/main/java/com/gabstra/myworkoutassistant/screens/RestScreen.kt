@@ -32,7 +32,6 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myhomeworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.composable.CurrentTime
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
@@ -43,10 +42,9 @@ import kotlinx.coroutines.delay
 @Composable
 fun NextExerciseInfo(
     viewModel: AppViewModel,
-    state:WorkoutState.Exercise
+    state: WorkoutState.Set
 ){
     val workout by viewModel.selectedWorkout
-    val bodyWeight = remember { state.weight == null || state.weight == 0.0F }
 
     Column(
         modifier = Modifier
@@ -60,6 +58,12 @@ fun NextExerciseInfo(
             horizontalAlignment = Alignment.CenterHorizontally,
         ){
             Text(
+                text = "Coming soon",
+                style = MaterialTheme.typography.body2
+            )
+
+            /*
+            Text(
                 text = "Next:",
                 style = MaterialTheme.typography.body2
             )
@@ -70,12 +74,12 @@ fun NextExerciseInfo(
                     .fillMaxWidth()
             ) {
                 Text(
-                    text = "Exercise: ${workout.exerciseGroups.indexOf(state.exerciseGroup)+1}/${workout.exerciseGroups.count()}",
+                    text = "Exercise: ${workout.workoutComponents.indexOf(state.workoutComponent)+1}/${workout.workoutComponents.count()}",
                     style = MaterialTheme.typography.body2
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
-                    text = "Set: ${state.currentSet}/${state.exerciseGroup.sets}",
+                    text = "Set: ${state.currentSetData}/${state.workoutComponent.sets}",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.body2,
                 )
@@ -83,9 +87,9 @@ fun NextExerciseInfo(
 
 
             Spacer(modifier = Modifier.height(5.dp))
-            if(state.exerciseGroup.exercises.count() != 1){
+            if(state.workoutComponent.exercises.count() != 1){
                 Text(
-                    text = "${state.exerciseGroup.name}",
+                    text = "${state.workoutComponent.name}",
                     modifier = Modifier.basicMarquee(),
                     style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
@@ -96,7 +100,7 @@ fun NextExerciseInfo(
             }
 
             Text(
-                text = "${state.exercise.name}",
+                text = "${state.exerciseName}",
                 modifier = Modifier.basicMarquee(),
                 style = MaterialTheme.typography.body2,
                 textAlign = TextAlign.Center,
@@ -121,6 +125,7 @@ fun NextExerciseInfo(
                     )
                 }
             }
+            */
         }
     }
 }
@@ -166,7 +171,7 @@ fun RestScreen(
             startAngle = 290f,
             endAngle = 250f,
             strokeWidth = 4.dp,
-            indicatorColor = Color(0xFF02A61D)
+            indicatorColor = MaterialTheme.colors.primary
         )
 
         Box(
@@ -181,8 +186,8 @@ fun RestScreen(
 
         val nextWorkoutState by viewModel.nextWorkoutState
         when(nextWorkoutState){
-            is WorkoutState.Exercise -> {
-                val state = nextWorkoutState as WorkoutState.Exercise
+            is WorkoutState.Set -> {
+                val state = nextWorkoutState as WorkoutState.Set
                 NextExerciseInfo(viewModel,state)
             }
             else -> {}

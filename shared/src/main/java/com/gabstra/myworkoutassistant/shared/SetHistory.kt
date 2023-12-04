@@ -2,12 +2,13 @@ package com.gabstra.myworkoutassistant.shared
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import java.time.LocalDate
 
 import androidx.room.ForeignKey
+import androidx.room.Index
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
 
 @Entity(
-    tableName = "exercise_history",
+    tableName = "set_history",
     foreignKeys = [
         ForeignKey(
             entity = WorkoutHistory::class,
@@ -15,16 +16,15 @@ import androidx.room.ForeignKey
             childColumns = ["workoutHistoryId"],
             onDelete = ForeignKey.CASCADE
         )
-    ]
+    ],
+    indices = [Index("workoutHistoryId")]
 )
 
-data class ExerciseHistory(
+data class SetHistory(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,
     var workoutHistoryId: Int? = null,
-    val name: String,
-    val set: Int,
-    val reps: Int,
-    val weight: Float?,
+    val setHistoryId: String,
+    val setData: SetData,
     val skipped: Boolean
 )

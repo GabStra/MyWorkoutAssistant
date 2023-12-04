@@ -7,21 +7,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,14 +36,20 @@ import androidx.wear.compose.material.Text
 
 import com.gabstra.myhomeworkoutassistant.data.AppViewModel
 import com.gabstra.myhomeworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.composable.ControlButtons
+import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.CustomDialog
+import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composable.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composable.LockScreen
-import com.gabstra.myworkoutassistant.composable.TrendIcon
+import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
+import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -60,85 +60,43 @@ import kotlinx.coroutines.launch
 fun ExerciseScreen(
     viewModel: AppViewModel,
     hrViewModel: MeasureDataViewModel,
-    state: WorkoutState.Exercise,
+    state: WorkoutState.Set,
     onScreenLocked: () -> Unit,
     onScreenUnlocked: () -> Unit,
 ) {
     val context = LocalContext.current
 
     val scope = rememberCoroutineScope()
-    var showLockScreen by remember { mutableStateOf(false) }
+
     var touchJob by remember { mutableStateOf<Job?>(null) }
+    var showLockScreen by remember { mutableStateOf(false) }
 
-    var isRepsPickerVisible by remember { mutableStateOf(false) }
-    var isWeightPickerVisible by remember { mutableStateOf(false) }
-
-    fun resetTouchTimer() {
+    fun startTouchTimer() {
         touchJob?.cancel()
         touchJob = scope.launch {
             delay(5000)  // wait for 10 seconds
             showLockScreen=true
-            isRepsPickerVisible = false
-            isWeightPickerVisible = false
             onScreenLocked()
         }
     }
 
+    var showMainButtons by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        resetTouchTimer() // start the lock timer immediately
-
-        /*
-        delay(500)
-        showLockScreen=true // Start the lock immediately
-        onScreenLocked()
-        */
+        delay(10000)
+        startTouchTimer() // start the lock timer immediately
     }
 
     var showConfirmDialog by remember { mutableStateOf(false) }
+    var showSkipDialog by remember { mutableStateOf(false) }
     var enableSkipMode by remember { mutableStateOf(false) }
-
-
-    val bodyWeight = remember { state.weight == null || state.weight == 0.0F }
-
-
-
-    val latestReps = state.reps
-    val latestWeights = state.weight
-
-    var executedReps by remember(latestReps) { mutableIntStateOf(latestReps) }
-    var usedWeightsInKGs by remember(latestWeights) { mutableStateOf(latestWeights) }
-
-    val currentSet = state.currentSet
-    val selectedExerciseGroup = state.exerciseGroup
-    val selectedExercise = state.exercise
-
-    CustomDialog(
-        show = showConfirmDialog,
-        title = "Complete exercise",
-        message = "Do you want to save this data?",
-        handleYesClick = {
-            VibrateOnce(context)
-            viewModel.storeExecutedExerciseHistory(executedReps,usedWeightsInKGs)
-            viewModel.goToNextState()
-            showConfirmDialog=false
-        },
-        handleNoClick = {
-            VibrateOnce(context)
-            showConfirmDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showConfirmDialog = false
-        }
-    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInteropFilter { event ->
-                if(!showLockScreen){
-                    resetTouchTimer()
+            .pointerInteropFilter {
+                if (!showLockScreen) {
+                    startTouchTimer()
                 }
 
                 false
@@ -161,143 +119,100 @@ fun ExerciseScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(0.dp,45.dp,0.dp,0.dp)
+                .padding(0.dp, 40.dp,0.dp,20.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ){
-
-                Text(
-                    text = "Set: $currentSet/${selectedExerciseGroup.sets} ",
-                    textAlign= TextAlign.Center,
-                    style = MaterialTheme.typography.caption3,
-                )
-                if(selectedExerciseGroup.exercises.count()!=1) {
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = "Part: ${selectedExerciseGroup.exercises.indexOf(selectedExercise) + 1}/${selectedExerciseGroup.exercises.count()}",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.caption3,
-                    )
-                }
-            }
-
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 40.dp)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            enableSkipMode=!enableSkipMode
-                        }
-                    ),
+                modifier = Modifier.padding(40.dp,0.dp),
                 verticalArrangement = Arrangement.Bottom,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                /*
+                Row(){
+                    Text(
+                        text = "Set: $currentSet/${selectedExerciseGroup.sets} ",
+                        textAlign= TextAlign.Center,
+                        style = MaterialTheme.typography.caption3,
+                    )
+                    if(selectedExerciseGroup.exercises.count()!=1) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Part: ${selectedExerciseGroup.exercises.indexOf(selectedExercise) + 1}/${selectedExerciseGroup.exercises.count()}",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.caption3,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                 */
                 Text(
-                    modifier = Modifier.basicMarquee(),
-                    text = selectedExercise.name,
+                    modifier = Modifier
+                        .basicMarquee()
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                enableSkipMode = !enableSkipMode
+                            }
+                        ),
+                    text = state.exerciseName,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.combinedClickable(
-                    onClick = {
-                        if (!isWeightPickerVisible) isRepsPickerVisible = !isRepsPickerVisible
-                    },
-                    onLongClick = {
-                        if (isRepsPickerVisible) {
-                            executedReps = latestReps
-                            VibrateOnce(context)
-                        }
-                    }
-                ),
-                verticalAlignment = Alignment.CenterVertically
-
-            ) {
-                if(!isWeightPickerVisible){
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Start
-                    ) {
-                        if (isRepsPickerVisible) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowRight,
-                                contentDescription = "Same",
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                        }
-                        Text(
-                            text = if(executedReps == 0) "Skipped" else "$executedReps reps",
-                            style = MaterialTheme.typography.body2
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        if(executedReps != 0) TrendIcon(executedReps, latestReps)
-                    }
-                }
-            }
-
-            if (!bodyWeight && !isRepsPickerVisible) {
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    modifier = Modifier.combinedClickable(
-                        onClick = {
-                            if (!isRepsPickerVisible) isWeightPickerVisible = !isWeightPickerVisible
-                        },
-                        onLongClick = {
-                            if (isWeightPickerVisible) {
-                                usedWeightsInKGs = latestWeights
-                                VibrateOnce(context)
-                            }
-
-                        }
-                    ),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        if (isWeightPickerVisible) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowRight,
-                                contentDescription = "Pick",
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                        }
-                        Text(
-                            text = "$usedWeightsInKGs kg",
-                            style = MaterialTheme.typography.body2
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        TrendIcon(usedWeightsInKGs!!, latestWeights!!)
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(20.dp))
-
-            if (isRepsPickerVisible || isWeightPickerVisible) {
-                ControlButtons(
-                    onMinusClick = {
-                        if (isRepsPickerVisible && executedReps>1) executedReps--
-                        if (isWeightPickerVisible && (usedWeightsInKGs!! > 0.5)) usedWeightsInKGs = usedWeightsInKGs?.minus(
-                            0.5F
-                        )
-                    },
-                    onPlusClick = {
-                        if (isRepsPickerVisible) executedReps++
-                        if (isWeightPickerVisible) usedWeightsInKGs = usedWeightsInKGs?.plus(0.5F)
+            when(state.set){
+                is WeightSet -> WeightSetScreen(
+                    modifier = Modifier.weight(1f),
+                    state = state,
+                    forceStopEditMode = showLockScreen,
+                    isFooterHidden = !showMainButtons,
+                    onEditModeChange = { inEditMode ->
+                        showMainButtons = !inEditMode
                     }
                 )
-            } else {
+                is BodyWeightSet -> BodyWeightSetScreen(
+                    modifier = Modifier.weight(1f),
+                    state = state,
+                    forceStopEditMode = showLockScreen,
+                    isFooterHidden = !showMainButtons,
+                    onEditModeChange = { inEditMode ->
+                        showMainButtons = !inEditMode
+                    }
+                )
+                is TimedDurationSet -> TimedDurationSetScreen(
+                    modifier = Modifier.weight(1f),
+                    state = state,
+                    onTimerStart = {
+                        showMainButtons = false
+                    },
+                    onTimerEnd = {
+                        if(state.set.autoStop){
+                            viewModel.storeExecutedSetHistory(state)
+                            viewModel.goToNextState()
+                        }else{
+                            showMainButtons = true
+                        }
+                    }
+                )
+                is EnduranceSet -> EnduranceSetScreen(
+                    modifier = Modifier.weight(1f),
+                    state = state,
+                    onTimerStart = {
+                        showMainButtons = false
+                    },
+                    onTimerEnd = {
+                        if(state.set.autoStop){
+                            viewModel.storeExecutedSetHistory(state)
+                            viewModel.goToNextState()
+                        }else{
+                            showMainButtons = true
+                        }
+                    }
+                )
+            }
+
+            if (showMainButtons) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.End
@@ -306,8 +221,7 @@ fun ExerciseScreen(
                         Button(
                             onClick = {
                                 VibrateOnce(context)
-                                executedReps=0
-                                enableSkipMode=false
+                                showSkipDialog = true
                             },
                             modifier = Modifier.size(35.dp),
                             colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
@@ -335,8 +249,48 @@ fun ExerciseScreen(
         show = showLockScreen,
         onUnlock = {
             onScreenUnlocked()
-            resetTouchTimer()
+            startTouchTimer()
             showLockScreen = false
+        }
+    )
+
+    CustomDialog(
+        show = showConfirmDialog,
+        title = "Complete exercise",
+        message = "Do you want to save this data?",
+        handleYesClick = {
+            VibrateOnce(context)
+            viewModel.storeExecutedSetHistory(state)
+            viewModel.goToNextState()
+            showConfirmDialog=false
+        },
+        handleNoClick = {
+            VibrateOnce(context)
+            showConfirmDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showConfirmDialog = false
+        }
+    )
+
+    CustomDialog(
+        show = showSkipDialog,
+        title = "Skip exercise",
+        message = "Do you want to skip this exercise?",
+        handleYesClick = {
+            VibrateOnce(context)
+            viewModel.storeExecutedSetHistory(state)
+            viewModel.goToNextState()
+            showSkipDialog = false
+        },
+        handleNoClick = {
+            VibrateOnce(context)
+            showSkipDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showSkipDialog = false
         }
     )
 }
