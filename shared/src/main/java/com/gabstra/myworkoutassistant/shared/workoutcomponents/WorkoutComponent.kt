@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.workoutcomponents
 
-open class WorkoutComponent(
+sealed class WorkoutComponent(
     open val name: String,
     open val restTimeInSec: Int,
     open val enabled: Boolean,

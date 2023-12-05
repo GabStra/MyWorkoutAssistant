@@ -17,20 +17,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExerciseGroupForm(
-    onExerciseGroupUpsert: (ExerciseGroup) -> Unit,
+    onWorkoutComponentUpsert: (WorkoutComponent) -> Unit,
     onCancel: () -> Unit,
-    exerciseGroup: ExerciseGroup? = null
+    workoutComponent: WorkoutComponent? = null
 ) {
     // Mutable state for form fields
-    val groupNameState = remember { mutableStateOf(exerciseGroup?.name ?: "") }
-    val setsState = remember { mutableStateOf(exerciseGroup?.sets?.toString() ?: "") }
-    val restTimeState = remember { mutableStateOf(exerciseGroup?.restTimeInSec?.toString() ?: "") }
+    val groupNameState = remember { mutableStateOf(workoutComponent?.name ?: "") }
+    val setsState = remember { mutableStateOf(workoutComponent?.sets?.toString() ?: "") }
+    val restTimeState = remember { mutableStateOf(workoutComponent?.restTimeInSec?.toString() ?: "") }
     // Assume ExerciseForm is a separate composable to handle exercise details
-    val exercisesState = remember { mutableStateOf(exerciseGroup?.exercises ?: listOf()) }
+    val exercisesState = remember { mutableStateOf(workoutComponent?.exercises ?: listOf()) }
 
     Column(
         modifier = Modifier
@@ -81,7 +82,7 @@ fun ExerciseGroupForm(
                 )
 
                 // Call the callback to insert/update the exercise group
-                onExerciseGroupUpsert(newExerciseGroup)
+                onWorkoutComponentUpsert(newExerciseGroup)
 
                 // Clear form fields
                 groupNameState.value = ""
@@ -93,7 +94,7 @@ fun ExerciseGroupForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (exerciseGroup == null) Text("Insert Exercise Group") else Text("Edit Exercise Group")
+            if (workoutComponent == null) Text("Insert Exercise Group") else Text("Edit Exercise Group")
         }
 
         // Cancel button

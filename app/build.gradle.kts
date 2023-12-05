@@ -67,7 +67,6 @@ dependencies {
     implementation("androidx.health:health-services-client:+")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.1.0")
     implementation("com.google.accompanist:accompanist-permissions:+")
-    implementation("androidx.compose.material:material:+")
     implementation("com.google.android.horologist:horologist-composables:+")
     implementation("androidx.wear:wear-tooling-preview:1.0.0-rc01")
 

@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant
+package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable

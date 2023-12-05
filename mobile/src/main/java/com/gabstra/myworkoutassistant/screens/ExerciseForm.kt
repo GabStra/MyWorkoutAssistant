@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant
+package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions

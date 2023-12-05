@@ -15,6 +15,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.gabstra.myworkoutassistant.screens.ExerciseForm
+import com.gabstra.myworkoutassistant.screens.ExerciseGroupDetailScreen
+import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
+import com.gabstra.myworkoutassistant.screens.WorkoutForm
+import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
@@ -72,8 +77,8 @@ fun MyWorkoutAssistantNavHost(
         Toast.makeText(context, "Automatic update", Toast.LENGTH_SHORT).show()
     }
 
-    NavHost(navController, startDestination = Screen.Workouts.route) {
-        composable(Screen.Workouts.route) {
+    NavHost(navController, startDestination = ScreenData.WORKOUTS_ROUTE) {
+        composable(ScreenData.WORKOUTS_ROUTE) {
             WorkoutsScreen(navController,appViewModel,
                 onSaveClick={
                     workoutStoreRepository.saveWorkoutStore(WorkoutStore(appViewModel.workouts))
@@ -97,72 +102,84 @@ fun MyWorkoutAssistantNavHost(
                 }
             )
         }
-        composable(Screen.NewWorkout.route) {
+        composable(ScreenData.NEW_WORKOUT_ROUTE) {
             WorkoutForm(
                 onWorkoutUpsert = { newWorkout ->
                     appViewModel.addNewWorkout(newWorkout)
-                    navController.popBackStack()
+                    appViewModel.goBack()
+                    navController.navigate(appViewModel.currentScreenData.route)
                 },
                 onCancel = { navController.popBackStack() },
             )
         }
-        composable(Screen.EditWorkout.route) {backStackEntry ->
-            val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
-            val originalWorkout = appViewModel.workouts.getOrNull(workoutId.toInt()) ?: return@composable
+        composable(ScreenData.EDIT_WORKOUT_ROUTE) { backStackEntry ->
+            val screenData = appViewModel.currentScreenData as ScreenData.EditWorkout
             WorkoutForm(
                 onWorkoutUpsert = { updatedWorkout ->
-                    appViewModel.updateWorkout(originalWorkout,updatedWorkout)
-                    navController.popBackStack()
+                    appViewModel.updateWorkout(screenData.selectedWorkout,updatedWorkout)
+                    appViewModel.goBack()
+                    navController.navigate(appViewModel.currentScreenData.route)
                 },
-                onCancel = {  navController.popBackStack() },
-                workout = originalWorkout
+                onCancel = {
+                    appViewModel.goBack()
+                    navController.navigate(appViewModel.currentScreenData.route)
+                },
+                workout = screenData.selectedWorkout
             )
         }
-        composable(Screen.WorkoutDetail.route) { backStackEntry ->
-            // Retrieve the argument from the NavBackStackEntry
-            val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
-            WorkoutDetailScreen(navController,appViewModel,workoutHistoryDao, workoutId.toInt()){
+        composable(ScreenData.WORKOUT_DETAIL_ROUTE) { backStackEntry ->
+            val screenData = appViewModel.currentScreenData as ScreenData.EditWorkout
+            WorkoutDetailScreen(navController,appViewModel,workoutHistoryDao,screenData.selectedWorkout){
                 if(!navController.popBackStack()){
-                    navController.navigate(Screen.Workouts.route)
+                    appViewModel.goBack()
+                    navController.navigate(appViewModel.currentScreenData.route)
                 }
             }
         }
-        composable(Screen.ExerciseGroupDetail.route) { backStackEntry ->
-            // Retrieve the argument from the NavBackStackEntry
-            val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
-            val exerciseGroupId = backStackEntry.arguments?.getString("exerciseGroupId") ?: return@composable
-            ExerciseGroupDetailScreen(navController,appViewModel, workoutId.toInt(),exerciseGroupId.toInt()){
+        composable(ScreenData.EXERCISE_GROUP_DETAIL_ROUTE) { backStackEntry ->
+            val screenData = appViewModel.currentScreenData as ScreenData.ExerciseGroupDetail
+            ExerciseGroupDetailScreen(navController,appViewModel, screenData.selectedWorkout,screenData.selectedExerciseGroup){
                 if(!navController.popBackStack()){
-                    navController.navigate(Screen.getRoute(Screen.WorkoutDetail,workoutId.toInt()))
+                    appViewModel.goBack()
+                    navController.navigate(appViewModel.currentScreenData.route)
                 }
             }
         }
-        composable(Screen.NewExerciseGroup.route) { backStackEntry ->
+        composable(ScreenData.EXERCISE_DETAIL_ROUTE) { backStackEntry ->
+            val screenData = appViewModel.currentScreenData as ScreenData.ExerciseDetail
+            ExerciseGroupDetailScreen(navController,appViewModel, screenData.selectedWorkout,screenData.selectedExerciseGroup){
+                if(!navController.popBackStack()){
+                    appViewModel.goBack()
+                    navController.navigate(appViewModel.currentScreenData.route)
+                }
+            }
+        }
+        composable(ScreenData.NewExerciseGroup.route) { backStackEntry ->
             val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
             val workout = appViewModel.workouts[workoutId.toInt()]
             ExerciseGroupForm(
-                onExerciseGroupUpsert = { newExerciseGroup ->
+                onWorkoutComponentUpsert = { newExerciseGroup ->
                     appViewModel.addNewExerciseGroup(workout,newExerciseGroup)
                     navController.popBackStack()
                 },
                 onCancel = { navController.popBackStack() },
             )
         }
-        composable(Screen.EditExerciseGroup.route) {backStackEntry ->
+        composable(ScreenData.EditExerciseGroup.route) { backStackEntry ->
             val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
             val exerciseGroupId = backStackEntry.arguments?.getString("exerciseGroupId") ?: return@composable
             val workout = appViewModel.workouts[workoutId.toInt()]
             val originalExerciseGroup = workout.exerciseGroups.getOrNull(exerciseGroupId.toInt()) ?: return@composable
             ExerciseGroupForm(
-                onExerciseGroupUpsert = { updatedExerciseGroup ->
-                    appViewModel.updateExerciseGroup(workout,originalExerciseGroup,updatedExerciseGroup)
+                onWorkoutComponentUpsert = { updatedExerciseGroup ->
+                    appViewModel.updateWorkoutComponents(workout,originalExerciseGroup,updatedExerciseGroup)
                     navController.popBackStack()
                 },
                 onCancel = {  navController.popBackStack() },
-                exerciseGroup = originalExerciseGroup
+                workoutComponent = originalExerciseGroup
             )
         }
-        composable(Screen.NewExercise.route) { backStackEntry ->
+        composable(ScreenData.NewExercise.route) { backStackEntry ->
             val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
             val exerciseGroupId = backStackEntry.arguments?.getString("exerciseGroupId") ?: return@composable
             val workout = appViewModel.workouts[workoutId.toInt()]
@@ -175,7 +192,7 @@ fun MyWorkoutAssistantNavHost(
                 onCancel = { navController.popBackStack() },
             )
         }
-        composable(Screen.EditExercise.route) {backStackEntry ->
+        composable(ScreenData.EditExercise.route) { backStackEntry ->
             val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable
             val exerciseGroupId = backStackEntry.arguments?.getString("exerciseGroupId") ?: return@composable
             val exerciseId = backStackEntry.arguments?.getString("exerciseId") ?: return@composable

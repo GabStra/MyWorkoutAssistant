@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant
+package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.shared.Workout
 import androidx.compose.foundation.background
@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -87,6 +86,12 @@ fun WorkoutForm(
                 .padding(16.dp),
             verticalArrangement = Arrangement.Center,
         ) {
+
+            //add a dropdown to choose the type of workout component
+
+
+
+
             // Workout name field
             OutlinedTextField(
                 value = workoutNameState.value,
@@ -129,7 +134,7 @@ fun WorkoutForm(
                         name = workoutNameState.value,
                         description = workoutDescriptionState.value,
                         restTimeInSec = restTimeState.value,
-                        exerciseGroups = workout?.exerciseGroups ?: listOf()
+                        workoutComponents = workout?.workoutComponents ?: listOf()
                     )
 
                     // Call the callback to insert/update the workout

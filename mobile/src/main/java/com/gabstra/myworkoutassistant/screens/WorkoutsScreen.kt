@@ -1,10 +1,6 @@
-package com.gabstra.myworkoutassistant
+package com.gabstra.myworkoutassistant.screens
 
-import android.Manifest.permission.READ_EXTERNAL_STORAGE
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.util.Log
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -12,13 +8,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 
 import androidx.compose.foundation.layout.wrapContentSize
@@ -30,23 +23,17 @@ import androidx.compose.material.icons.filled.MoreVert
 
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 
-import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,18 +41,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
+import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.composables.ExpandableCard
+import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.SelectableList
+import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.PermissionStatus
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
-import com.google.accompanist.permissions.shouldShowRationale
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -131,44 +116,7 @@ fun WorkoutTitle(modifier: Modifier,workout: Workout){
             modifier = Modifier.weight(1f),
             text = workout.name
         )
-        Text(
-            text = "(${workout.exerciseGroups.size.toString()})"
-        )
     }
-}
-
-@Composable
-fun WorkoutContent(workout: Workout){
-    Card(
-        modifier=Modifier.padding(15.dp)
-       ){
-        Spacer(modifier=Modifier.height(15.dp))
-        for(exerciseGroup in workout.exerciseGroups){
-            Row (horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxWidth()
-            ){
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = exerciseGroup.name
-                )
-                Column( horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Sets: ${exerciseGroup.sets}"
-                    )
-                    Spacer(modifier=Modifier.height(5.dp))
-                    Text(
-                        text = "Rest: ${exerciseGroup.restTimeInSec}s"
-                    )
-                }
-            }
-            if(exerciseGroup != workout.exerciseGroups.last()) Divider( modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp),thickness = 1.dp, color = Color.White)
-        }
-        Spacer(modifier=Modifier.height(10.dp))
-    }
-
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -183,6 +131,8 @@ fun WorkoutsScreen(
     val workouts = appViewModel.workouts
     var selectedWorkouts by remember { mutableStateOf(setOf<Workout>()) }
     var selectionMode by remember { mutableStateOf(false) }
+
+    //add a menu in the floating action button
 
     Scaffold(
         topBar = {
@@ -239,7 +189,8 @@ fun WorkoutsScreen(
             if(selectedWorkouts.isEmpty())
                 FloatingActionButton(
                     onClick = {
-                        navController.navigate(Screen.NewWorkout.route)
+                        appViewModel.setScreenData(ScreenData.NewWorkout);
+                        navController.navigate(ScreenData.NEW_WORKOUT_ROUTE)
                     }
                 ) {
                     Icon(
@@ -270,7 +221,7 @@ fun WorkoutsScreen(
                 onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
                 itemContent = { it ->
                     ExpandableCard(
-                        isExpandable = it.exerciseGroups.isNotEmpty(),
+                        isExpandable = it.workoutComponents.isNotEmpty(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .alpha(if (it.enabled) 1f else 0.4f)
@@ -285,19 +236,14 @@ fun WorkoutsScreen(
                                             }
                                         selectedWorkouts = newSelection
                                     } else {
-                                        val workoutId = appViewModel.workouts.indexOf(it)
-                                        navController.navigate(
-                                            Screen.getRoute(
-                                                Screen.WorkoutDetail,
-                                                workoutId
-                                            )
-                                        )
+                                        appViewModel.setScreenData(ScreenData.WorkoutDetail(it));
+                                        navController.navigate(ScreenData.WORKOUT_DETAIL_ROUTE)
                                     }
                                 },
                                 onLongClick = { if (!selectionMode) selectionMode = true }
                             ),
                         title = { modifier ->  WorkoutTitle(modifier,it) },
-                        content = { WorkoutContent(it) }
+                        content = { WorkoutRenderer(it) }
                     )
                 }
             )
