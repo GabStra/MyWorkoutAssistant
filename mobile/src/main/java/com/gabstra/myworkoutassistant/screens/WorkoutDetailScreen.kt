@@ -200,11 +200,11 @@ fun WorkoutDetailScreen(
                 onItemClick = {
                     when(it){
                         is Exercise -> {
-                            appViewModel.setScreenData(ScreenData.ExerciseDetail(workout, it))
+                            appViewModel.setScreenData(ScreenData.ExerciseDetail(workout, it,null))
                             navController.navigate(ScreenData.EXERCISE_DETAIL_ROUTE)
                         }
                         is ExerciseGroup ->{
-                            appViewModel.setScreenData(ScreenData.ExerciseGroupDetail(workout, it))
+                            appViewModel.setScreenData(ScreenData.ExerciseGroupDetail(workout, it,null))
                             navController.navigate(ScreenData.EXERCISE_GROUP_DETAIL_ROUTE)
                         }
                     }

@@ -30,12 +30,15 @@ sealed class ScreenData(val route: String) {
     object NewWorkout : ScreenData(NEW_WORKOUT_ROUTE)
     data class EditWorkout(val selectedWorkout: Workout) : ScreenData(EDIT_WORKOUT_ROUTE)
     data class WorkoutDetail(val selectedWorkout: Workout) : ScreenData(WORKOUT_DETAIL_ROUTE)
-    data class ExerciseGroupDetail(val selectedWorkout: Workout, val selectedExerciseGroup: ExerciseGroup) : ScreenData(EXERCISE_GROUP_DETAIL_ROUTE)
-    data class ExerciseDetail(val selectedWorkout: Workout, val selectedExercise: Exercise) : ScreenData(EXERCISE_DETAIL_ROUTE)
+    data class ExerciseGroupDetail(val selectedWorkout: Workout, val selectedExerciseGroup: ExerciseGroup, val parentExerciseGroup: ExerciseGroup?) : ScreenData(EXERCISE_GROUP_DETAIL_ROUTE)
+    data class ExerciseDetail(val selectedWorkout: Workout, val selectedExercise: Exercise, val parentExerciseGroup: ExerciseGroup?) : ScreenData(EXERCISE_DETAIL_ROUTE)
     data class NewExerciseGroup(val selectedWorkout: Workout, val parentExerciseGroup: ExerciseGroup?) : ScreenData(NEW_EXERCISE_GROUP_ROUTE)
     data class EditExerciseGroup(val selectedWorkout: Workout, val selectedExerciseGroup: ExerciseGroup) : ScreenData(EDIT_EXERCISE_GROUP_ROUTE)
     data class NewExercise(val selectedWorkout: Workout, val parentExerciseGroup: ExerciseGroup?) : ScreenData(NEW_EXERCISE_ROUTE)
-    data class EditExercise(val workoutId: Int, val exerciseGroupId: Int, val exerciseId: Int) : ScreenData(EDIT_EXERCISE_ROUTE)
+    data class EditExercise(val selectedWorkout: Workout, val selectedExercise: Exercise) : ScreenData(EDIT_EXERCISE_ROUTE)
+
+    data class NewSet(val selectedWorkout: Workout, val parentExercise: Exercise) : ScreenData(NEW_SET_ROUTE)
+    data class EditSet(val selectedWorkout: Workout, val selectedSet: Set, val parentExercise: Exercise) : ScreenData(EDIT_SET_ROUTE)
 }
 
 
