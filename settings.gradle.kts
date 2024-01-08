@@ -10,10 +10,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
 rootProject.name = "My Workout Assistant"
-include(":app")
+include(":wearos")
 include(":mobile")
 include(":shared")

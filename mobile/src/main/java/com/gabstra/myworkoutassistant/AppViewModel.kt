@@ -6,66 +6,69 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import java.util.UUID
 
-sealed class ScreenData(val route: String) {
-    companion object {
-        const val WORKOUTS_ROUTE = "Workouts"
-        const val NEW_WORKOUT_ROUTE = "NewWorkout"
-        const val EDIT_WORKOUT_ROUTE = "EditWorkout"
-        const val WORKOUT_DETAIL_ROUTE = "WorkoutDetail"
-        const val EXERCISE_GROUP_DETAIL_ROUTE = "ExerciseGroupDetail"
-        const val EXERCISE_DETAIL_ROUTE = "ExerciseDetail"
-        const val NEW_EXERCISE_GROUP_ROUTE = "NewExerciseGroup"
-        const val EDIT_EXERCISE_GROUP_ROUTE = "EditExerciseGroup"
-        const val NEW_EXERCISE_ROUTE = "NewExercise"
-        const val EDIT_EXERCISE_ROUTE = "EditExercise"
-        const val NEW_SET_ROUTE = "NewExercise"
-        const val EDIT_SET_ROUTE = "EditExercise"
-    }
-
-    object Workouts : ScreenData(WORKOUTS_ROUTE)
-    object NewWorkout : ScreenData(NEW_WORKOUT_ROUTE)
-    data class EditWorkout(val selectedWorkout: Workout) : ScreenData(EDIT_WORKOUT_ROUTE)
-    data class WorkoutDetail(val selectedWorkout: Workout) : ScreenData(WORKOUT_DETAIL_ROUTE)
-    data class ExerciseGroupDetail(val selectedWorkout: Workout, val selectedExerciseGroup: ExerciseGroup, val parentExerciseGroup: ExerciseGroup?) : ScreenData(EXERCISE_GROUP_DETAIL_ROUTE)
-    data class ExerciseDetail(val selectedWorkout: Workout, val selectedExercise: Exercise, val parentExerciseGroup: ExerciseGroup?) : ScreenData(EXERCISE_DETAIL_ROUTE)
-    data class NewExerciseGroup(val selectedWorkout: Workout, val parentExerciseGroup: ExerciseGroup?) : ScreenData(NEW_EXERCISE_GROUP_ROUTE)
-    data class EditExerciseGroup(val selectedWorkout: Workout, val selectedExerciseGroup: ExerciseGroup) : ScreenData(EDIT_EXERCISE_GROUP_ROUTE)
-    data class NewExercise(val selectedWorkout: Workout, val parentExerciseGroup: ExerciseGroup?) : ScreenData(NEW_EXERCISE_ROUTE)
-    data class EditExercise(val selectedWorkout: Workout, val selectedExercise: Exercise) : ScreenData(EDIT_EXERCISE_ROUTE)
-
-    data class NewSet(val selectedWorkout: Workout, val parentExercise: Exercise) : ScreenData(NEW_SET_ROUTE)
-    data class EditSet(val selectedWorkout: Workout, val selectedSet: Set, val parentExercise: Exercise) : ScreenData(EDIT_SET_ROUTE)
+sealed class ScreenData() {
+    class Workouts() : ScreenData()
+    class Settings() : ScreenData()
+    class NewWorkout() : ScreenData()
+    class EditWorkout(val workoutId: UUID) : ScreenData()
+    class WorkoutDetail(val workoutId: UUID) : ScreenData()
+    class ExerciseGroupDetail(val workoutId: UUID, val selectedExerciseGroupId: UUID) : ScreenData()
+    class ExerciseDetail(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
+    class NewExerciseGroup(val workoutId: UUID, val parentExerciseGroupId: UUID?) : ScreenData()
+    class EditExerciseGroup(val workoutId: UUID, val selectedExerciseGroupId: UUID) : ScreenData()
+    class NewExercise(val workoutId: UUID, val parentExerciseGroupId: UUID?) : ScreenData()
+    class EditExercise(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
+    class NewSet(val workoutId: UUID, val parentExerciseId: UUID) : ScreenData()
+    class EditSet(val workoutId: UUID, val selectedSet: Set, val parentExerciseId: UUID) : ScreenData()
 }
 
 
 class AppViewModel() : ViewModel() {
+    private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts())
 
-    private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts)
-
-    // CurrentScreenData as the top of the stack
-    var currentScreenData: ScreenData
-        get() = screenDataStack.lastOrNull() ?: ScreenData.Workouts
-        private set(value) {
-            screenDataStack.add(value)
-        }
+    // Convert currentScreenData to a MutableState
+    var currentScreenData: ScreenData by mutableStateOf(screenDataStack.lastOrNull() ?: ScreenData.Workouts())
+        private set
 
     fun setScreenData(screenData: ScreenData) {
         currentScreenData = screenData
+        screenDataStack.add(screenData)
     }
 
-    // Go back to the previous screen
-    fun goBack() {
+    fun goBack(): Boolean {
         if (screenDataStack.size > 1) {
             screenDataStack.removeAt(screenDataStack.size - 1)
+            currentScreenData = screenDataStack.last()
+            return true
+        } else if (screenDataStack.size == 1) {
+            // Handle the case where stack size is 1
+            // You can perform some action here if needed
+            return false
         }
+        return false
     }
-
-    var workouts by mutableStateOf(emptyList<Workout>())
+    var workoutStore by mutableStateOf(WorkoutStore(
+        workouts = emptyList(),
+        polarDeviceId = null,
+        birthDateYear = 0
+    ))
         private set
+
+    var workouts: List<Workout>
+        get() = workoutStore.workouts
+        private set(value) {
+            workoutStore = workoutStore.copy(workouts = value)
+        }
+
+    fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
+        workoutStore = newWorkoutStore
+    }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {
         workouts = newWorkouts
@@ -77,7 +80,7 @@ class AppViewModel() : ViewModel() {
         }
     }
 
-    fun updateWorkoutComponents(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
+    fun updateWorkoutComponent(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
         workouts = workouts.map { workout ->
             if (workout == parentWorkout) {
                 workout.copy(workoutComponents = updateWorkoutComponentsRecursively(workout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent))
@@ -89,33 +92,13 @@ class AppViewModel() : ViewModel() {
 
     private fun updateWorkoutComponentsRecursively(components: List<WorkoutComponent>, oldComponent: WorkoutComponent, updatedComponent: WorkoutComponent): List<WorkoutComponent> {
         return components.map { component ->
-            when (component) {
-                oldComponent -> updatedComponent
-                is ExerciseGroup -> component.copy(workoutComponents = updateWorkoutComponentsRecursively(component.workoutComponents, oldComponent, updatedComponent))
-                else -> component
-            }
-        }
-    }
-
-
-    fun updateExercise(parentWorkout: Workout, parentExerciseGroup: ExerciseGroup, oldSet: Set, updatedSet: Set) {
-        workouts = workouts.map { workout ->
-            if (workout == parentWorkout) {
-                workout.copy(
-                    exerciseGroups = workout.exerciseGroups.map { exerciseGroup ->
-                        if (exerciseGroup == parentExerciseGroup) {
-                            exerciseGroup.copy(
-                                exercises = exerciseGroup.exercises.map { exercise ->
-                                    if (exercise == oldSet) updatedSet else exercise
-                                }
-                            )
-                        } else {
-                            exerciseGroup
-                        }
-                    }
-                )
-            } else {
-                workout
+            if(component == oldComponent) {
+                updatedComponent
+            } else{
+                when (component) {
+                    is ExerciseGroup -> component.copy(workoutComponents = updateWorkoutComponentsRecursively(component.workoutComponents, oldComponent, updatedComponent))
+                    else -> component
+                }
             }
         }
     }
@@ -147,32 +130,97 @@ class AppViewModel() : ViewModel() {
     private fun addWorkoutComponentsRecursively(components: List<WorkoutComponent>, parentWorkoutComponent: WorkoutComponent, newWorkoutComponent: WorkoutComponent): List<WorkoutComponent> {
         return components.map { component ->
             when (component) {
-                is ExerciseGroup ->
-                {
-                    if(component == parentWorkoutComponent) {
+                is ExerciseGroup -> {
+                    if (component == parentWorkoutComponent) {
                         component.copy(workoutComponents = component.workoutComponents + newWorkoutComponent)
-                    }else{
-                        component.copy(workoutComponents = addWorkoutComponentsRecursively(component.workoutComponents, parentWorkoutComponent, newWorkoutComponent))
+                    } else {
+                        component.copy(
+                            workoutComponents = addWorkoutComponentsRecursively(
+                                component.workoutComponents,
+                                parentWorkoutComponent,
+                                newWorkoutComponent
+                            )
+                        )
                     }
                 }
                 else -> component
+            }
         }
     }
 
-    fun addNewExercise(parentWorkout: Workout, exerciseGroup: ExerciseGroup, newSet: Set) {
-        workouts = workouts.map { workout ->
-            if (workout == parentWorkout) {
-                workout.copy(
-                    exerciseGroups = workout.exerciseGroups.map { it ->
-                        if (it == exerciseGroup) {
-                            it.copy(exercises = it.exercises + newSet)
-                        } else {
-                            it
-                        }
-                    }
-                )
+    fun addSetToExercise(workout: Workout, exercise: Exercise, newSet: Set) {
+        workouts = workouts.map { it ->
+            if (it == workout) {
+                it.copy(workoutComponents = addSetToExerciseRecursively(it.workoutComponents, exercise, newSet))
             } else {
-                workout
+                it
+            }
+        }
+    }
+
+    private fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: Set): List<WorkoutComponent> {
+        return components.map { component ->
+            when (component) {
+                is Exercise ->
+                    if(component == parentExercise) {
+                        component.copy(sets = component.sets + newSet)
+                    }else{
+                        component
+                    }
+                is ExerciseGroup -> {
+                    component.copy(
+                        workoutComponents = addSetToExerciseRecursively(
+                            component.workoutComponents,
+                            parentExercise,
+                            newSet
+                        )
+                    )
+                }
+                else -> component
+            }
+        }
+    }
+
+    fun updateSetInExercise(workout: Workout, exercise: Exercise, oldSet:Set,updatedSet: Set) {
+        workouts = workouts.map { it ->
+            if (it == workout) {
+                it.copy(workoutComponents = updateSetInExerciseRecursively(it.workoutComponents, exercise, oldSet, updatedSet))
+            } else {
+                it
+            }
+        }
+    }
+
+    private fun updateSetInExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, oldSet:Set,updatedSet: Set): List<WorkoutComponent> {
+        return components.map { component ->
+            when (component) {
+                is Exercise ->
+                    if(component == parentExercise) {
+                        component.copy(sets = updateSet(component.sets,oldSet,updatedSet))
+                    }else{
+                        component
+                    }
+                is ExerciseGroup -> {
+                    component.copy(
+                        workoutComponents = updateSetInExerciseRecursively(
+                            component.workoutComponents,
+                            parentExercise,
+                            oldSet,
+                            updatedSet
+                        )
+                    )
+                }
+                else -> component
+            }
+        }
+    }
+
+    private fun updateSet(sets: List<Set>, oldSet: Set, updatedSet: Set): List<Set> {
+        return sets.map { set ->
+            if(set === oldSet) {
+                updatedSet
+            }else{
+                set
             }
         }
     }
@@ -181,11 +229,55 @@ class AppViewModel() : ViewModel() {
         workouts = workouts.filter { it != workoutToDelete }  // Direct object comparison
     }
 
-    fun deleteExerciseGroup(parentWorkout: Workout, exerciseGroupToDelete: ExerciseGroup) {
-        workouts = workouts.map { workout ->
-            if (workout == parentWorkout) {  // Direct object comparison
+    fun deleteWorkoutComponent(workout: Workout, workoutComponentToDelete: WorkoutComponent) {
+        workouts = workouts.map {
+            if (it == workout) {
+                if(workoutComponentToDelete in it.workoutComponents){
+                    it.copy(
+                        workoutComponents = it.workoutComponents.filter { workoutComponent -> workoutComponent != workoutComponentToDelete }  // Direct object comparison
+                    )
+                }else{
+                    it.copy(
+                        workoutComponents = deleteWorkoutComponentsRecursively(it.workoutComponents, workoutComponentToDelete)
+                    )
+                }
+            } else {
+                it
+            }
+        }
+    }
+
+    private fun deleteWorkoutComponentsRecursively(components: List<WorkoutComponent>, workoutComponentToDelete: WorkoutComponent): List<WorkoutComponent> {
+        return components.map { component ->
+            when (component) {
+                is ExerciseGroup -> {
+                    if (workoutComponentToDelete in component.workoutComponents) {
+                        component.copy(
+                            workoutComponents = component.workoutComponents.filter { workoutComponent -> workoutComponent != workoutComponentToDelete }
+                        )
+                    } else {
+                        component.copy(
+                            workoutComponents = deleteWorkoutComponentsRecursively(
+                                component.workoutComponents,
+                                workoutComponentToDelete
+                            )
+                        )
+                    }
+                }
+                else -> component
+            }
+        }
+    }
+
+    fun deleteSet(workout: Workout, exercise: Exercise, setToDelete: Set) {
+        workouts = workouts.map {
+            if (it == workout) {
                 workout.copy(
-                    exerciseGroups = workout.exerciseGroups.filter { it != exerciseGroupToDelete }  // Direct object comparison
+                    workoutComponents  = deleteSetRecursively(
+                        it.workoutComponents,
+                        exercise,
+                        setToDelete
+                    )
                 )
             } else {
                 workout
@@ -193,22 +285,28 @@ class AppViewModel() : ViewModel() {
         }
     }
 
-    fun deleteExercise(parentWorkout: Workout, exerciseGroup: ExerciseGroup, setToDelete: Set) {
-        workouts = workouts.map { workout ->
-            if (workout == parentWorkout) {  // Direct object comparison
-                workout.copy(
-                    exerciseGroups = workout.exerciseGroups.map { exerciseGroup ->
-                        if (exerciseGroup == exerciseGroup) {  // Direct object comparison
-                            exerciseGroup.copy(
-                                exercises = exerciseGroup.exercises.filter { it != setToDelete }  // Direct object comparison
-                            )
-                        } else {
-                            exerciseGroup
-                        }
+    private fun deleteSetRecursively(components: List<WorkoutComponent>, exercise: Exercise, setToDelete: Set): List<WorkoutComponent> {
+        return components.map { component ->
+            when (component) {
+                is Exercise -> {
+                    if (component == exercise) {
+                        component.copy(
+                            sets = component.sets.filter { set -> set != setToDelete }
+                        )
+                    } else {
+                        component
                     }
-                )
-            } else {
-                workout
+                }
+                is ExerciseGroup -> {
+                    component.copy(
+                        workoutComponents = deleteSetRecursively(
+                            component.workoutComponents,
+                            exercise,
+                            setToDelete
+                        )
+                    )
+                }
+                else -> component
             }
         }
     }

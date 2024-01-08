@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -49,7 +50,7 @@ fun <T> DetailScreen(
     bottomBarActions: @Composable() (RowScope.() -> Unit)
 ) {
     var selectionMode by remember { mutableStateOf(false) }
-    var selectedItems by remember { mutableStateOf(setOf<T>()) }
+    var selectedItems by remember { mutableStateOf(listOf<T>()) }
 
     Scaffold(
         topBar = {
@@ -57,7 +58,7 @@ fun <T> DetailScreen(
                 title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
-                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -73,7 +74,7 @@ fun <T> DetailScreen(
                     if(onUpdateItems != null){
                         IconButton(onClick = {
                             onUpdateItems(items.filterNot { it in selectedItems })
-                            selectedItems = emptySet()
+                            selectedItems = emptyList()
                             selectionMode = false
                         }) {
                             Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
@@ -102,7 +103,7 @@ fun <T> DetailScreen(
                     .clickable {
                         if (selectionMode) {
                             selectionMode = false
-                            selectedItems= emptySet()
+                            selectedItems= emptyList()
                         }
                     },
                 items = items,

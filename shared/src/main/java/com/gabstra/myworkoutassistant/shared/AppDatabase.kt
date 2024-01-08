@@ -7,9 +7,10 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.SetDataTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
-@Database(entities = [SetHistory::class, WorkoutHistory::class], version = 15, exportSchema = false)
-@TypeConverters(DateTypeConverter::class, SetDataTypeConverter::class)
+@Database(entities = [SetHistory::class, WorkoutHistory::class], version = 16, exportSchema = false)
+@TypeConverters(DateTypeConverter::class, SetDataTypeConverter::class, UUIDConverter::class)
 
 abstract class AppDatabase : RoomDatabase() {
     abstract fun setHistoryDao(): SetHistoryDao

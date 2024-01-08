@@ -5,12 +5,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -19,9 +23,11 @@ import androidx.compose.runtime.Composable
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,46 +40,8 @@ fun WorkoutForm(
     // Mutable state for form fields
     val workoutNameState = remember { mutableStateOf(workout?.name ?: "") }
     val workoutDescriptionState = remember { mutableStateOf(workout?.description ?: "") }
-    val restTimeState = remember { mutableStateOf(workout?.restTimeInSec ?: 0) }
-
-    /*
-    val showDeleteDialog = remember { mutableStateOf(false) }
-
-    if (showDeleteDialog.value) {
-        AlertDialog(
-            onDismissRequest = {
-                // Dismiss the dialog if the user cancels
-                showDeleteDialog.value = false
-            },
-            title = {
-                Text("Delete Workout")
-            },
-            text = {
-                Text("Are you sure you want to delete this workout?")
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        // Call the callback to delete the workout
-                        onDelete()
-                        showDeleteDialog.value = false
-                    }
-                ) {
-                    Text("Yes")
-                }
-            },
-            dismissButton = {
-                Button(
-                    onClick = {
-                        // Dismiss the dialog if the user cancels
-                        showDeleteDialog.value = false
-                    }
-                ) {
-                    Text("No")
-                }
-            }
-        )
-    }*/
+    val restTimeState = remember { mutableStateOf(workout?.restTimeInSec?.toString() ?: "") }
+    val usePolarDeviceState = remember { mutableStateOf(workout?.usePolarDevice ?: false) }
 
     Box(
         modifier = Modifier
@@ -86,11 +54,6 @@ fun WorkoutForm(
                 .padding(16.dp),
             verticalArrangement = Arrangement.Center,
         ) {
-
-            //add a dropdown to choose the type of workout component
-
-
-
 
             // Workout name field
             OutlinedTextField(
@@ -113,37 +76,59 @@ fun WorkoutForm(
                     .padding(8.dp)
             )
 
-            // Rest time field
-            OutlinedTextField(
-                value = restTimeState.value.toString(),
-                onValueChange = {
-                    // Filter out non-numeric characters and limit the length
-                    restTimeState.value = it.toIntOrNull() ?: 0
-                },
-                label = { Text("Rest Time (in seconds)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+            ) {
+                if(restTimeState.value.isNotEmpty()){
+                    Text(formatSecondsToMinutesSeconds(restTimeState.value.toInt()))
+                    Spacer(modifier = Modifier.height(15.dp))
+                }
+                // Rest time field
+                OutlinedTextField(
+                    value = restTimeState.value,
+                    onValueChange = { input ->
+                        if (input.isEmpty() || input.all { it -> it.isDigit() }) {
+                            // Update the state only if the input is empty or all characters are digits
+                            restTimeState.value = input
+                        }
+                    },
+                    label = { Text("Rest Time (in seconds)") },
+                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
-            )
+            ) {
+                Checkbox(
+                    checked = usePolarDeviceState.value,
+                    onCheckedChange = { usePolarDeviceState.value = it },
+                )
+                Text(text = "Use Polar Device")
+            }
 
             // Submit button
             Button(
                 onClick = {
+                    val restTimeInSec = restTimeState.value.toIntOrNull() ?: 0
                     val newWorkout = Workout(
+                        id  = workout?.id ?: java.util.UUID.randomUUID(),
                         name = workoutNameState.value,
                         description = workoutDescriptionState.value,
-                        restTimeInSec = restTimeState.value,
-                        workoutComponents = workout?.workoutComponents ?: listOf()
+                        restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
+                        workoutComponents = workout?.workoutComponents ?: listOf(),
+                        usePolarDevice = usePolarDeviceState.value,
                     )
 
                     // Call the callback to insert/update the workout
                     onWorkoutUpsert(newWorkout)
-
-                    // Clear form fields
-                    workoutNameState.value = ""
-                    workoutDescriptionState.value = ""
-                    restTimeState.value = 0
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -155,7 +140,6 @@ fun WorkoutForm(
             // Cancel button
             Button(
                 onClick = {
-                    // Call the callback to cancel the insertion/update
                     onCancel()
                 },
                 modifier = Modifier

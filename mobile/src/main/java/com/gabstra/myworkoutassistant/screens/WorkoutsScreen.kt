@@ -47,9 +47,14 @@ import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
+import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
+import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.SelectableList
 import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -57,6 +62,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 fun Menu(
     onSyncClick: () -> Unit,
     onSaveClick: () -> Unit,
+    onOpenSettingsClick: () -> Unit,
     onFileSelected: (Uri) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -64,7 +70,6 @@ fun Menu(
     val launcher = rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let { onFileSelected(it) }
     }
-
 
     Box(
         modifier = Modifier.wrapContentSize(Alignment.TopEnd)
@@ -94,7 +99,13 @@ fun Menu(
                     expanded = false
                 }
             )
-
+            DropdownMenuItem(
+                text = { Text("Settings") },
+                onClick = {
+                    onOpenSettingsClick()
+                    expanded = false
+                }
+            )
             DropdownMenuItem(
                 text = {Text("Load JSON") },
                 onClick = {
@@ -122,18 +133,17 @@ fun WorkoutTitle(modifier: Modifier,workout: Workout){
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutsScreen(
-    navController: NavController,
     appViewModel: AppViewModel,
     onSyncClick: () -> Unit,
     onSaveClick: () -> Unit,
+    onOpenSettingsClick: () -> Unit,
     onFileSelected: (Uri) -> Unit
 ) {
     val workouts = appViewModel.workouts
-    var selectedWorkouts by remember { mutableStateOf(setOf<Workout>()) }
-    var selectionMode by remember { mutableStateOf(false) }
+    var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
+    var isSelectionModeActive by remember { mutableStateOf(false) }
 
     //add a menu in the floating action button
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -142,6 +152,7 @@ fun WorkoutsScreen(
                     Menu(
                         onSaveClick = onSaveClick,
                         onSyncClick = onSyncClick,
+                        onOpenSettingsClick = onOpenSettingsClick,
                         onFileSelected = onFileSelected
                     )
                 }
@@ -155,8 +166,8 @@ fun WorkoutsScreen(
                             workout !in selectedWorkouts
                         }
                         appViewModel.updateWorkouts(newWorkouts)
-                        selectedWorkouts = emptySet()
-                        selectionMode = false
+                        selectedWorkouts = emptyList()
+                        isSelectionModeActive = false
                     }) {
                         Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
                     }
@@ -166,8 +177,8 @@ fun WorkoutsScreen(
                             for (workout in selectedWorkouts) {
                                 appViewModel.updateWorkout(workout,workout.copy(enabled = true))
                             }
-                            selectedWorkouts = emptySet()
-                            selectionMode = false
+                            selectedWorkouts = emptyList()
+                            isSelectionModeActive = false
                         }) {
                         Text("Enable")
                     }
@@ -177,8 +188,8 @@ fun WorkoutsScreen(
                             for (workout in selectedWorkouts) {
                                 appViewModel.updateWorkout(workout,workout.copy(enabled = false))
                             }
-                            selectedWorkouts = emptySet()
-                            selectionMode = false
+                            selectedWorkouts = emptyList()
+                            isSelectionModeActive = false
                         }) {
                         Text("Disable")
                     }
@@ -189,8 +200,7 @@ fun WorkoutsScreen(
             if(selectedWorkouts.isEmpty())
                 FloatingActionButton(
                     onClick = {
-                        appViewModel.setScreenData(ScreenData.NewWorkout);
-                        navController.navigate(ScreenData.NEW_WORKOUT_ROUTE)
+                        appViewModel.setScreenData(ScreenData.NewWorkout());
                     }
                 ) {
                     Icon(
@@ -205,43 +215,23 @@ fun WorkoutsScreen(
                 .padding(it)
                 .fillMaxSize(),text = "Add a new workout", textAlign = TextAlign.Center)
         }else{
-            SelectableList(
-                selectionMode,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(it)
-                    .clickable {
-                        if (selectionMode) {
-                            selectionMode = false
-                            selectedWorkouts = emptySet()
-                        }
-                    },
+            GenericSelectableList(
+                it,
                 items = workouts,
-                selection = selectedWorkouts,
+                selectedItems= selectedWorkouts,
+                isSelectionModeActive,
+                onItemClick = {
+                    appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
+                },
+                onEnableSelection = { isSelectionModeActive = true },
+                onDisableSelection = { isSelectionModeActive = false },
                 onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
                 itemContent = { it ->
                     ExpandableCard(
                         isExpandable = it.workoutComponents.isNotEmpty(),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .alpha(if (it.enabled) 1f else 0.4f)
-                            .combinedClickable(
-                                onClick = {
-                                    if (selectionMode) {
-                                        val newSelection =
-                                            if (selectedWorkouts.contains(it)) {
-                                                selectedWorkouts - it
-                                            } else {
-                                                selectedWorkouts + it
-                                            }
-                                        selectedWorkouts = newSelection
-                                    } else {
-                                        appViewModel.setScreenData(ScreenData.WorkoutDetail(it));
-                                        navController.navigate(ScreenData.WORKOUT_DETAIL_ROUTE)
-                                    }
-                                },
-                                onLongClick = { if (!selectionMode) selectionMode = true }
-                            ),
+                            .alpha(if (it.enabled) 1f else 0.4f),
                         title = { modifier ->  WorkoutTitle(modifier,it) },
                         content = { WorkoutRenderer(it) }
                     )

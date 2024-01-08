@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
@@ -46,7 +48,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ExerciseGroupDetailScreen(
-    navController: NavController,
     appViewModel: AppViewModel,
     workout: Workout,
     exerciseGroup: ExerciseGroup,
@@ -54,7 +55,7 @@ fun ExerciseGroupDetailScreen(
 ){
     val workoutComponents = exerciseGroup.workoutComponents
 
-    var selectedWorkoutComponents by remember { mutableStateOf(setOf<WorkoutComponent>()) }
+    var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -63,18 +64,17 @@ fun ExerciseGroupDetailScreen(
                 title = { Text(exerciseGroup.name) },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
-                        Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
                     IconButton(onClick = {
                         appViewModel.setScreenData(
                             ScreenData.EditExerciseGroup(
-                                workout,
-                                exerciseGroup
+                                workout.id,
+                                exerciseGroup.id
                             )
                         );
-                        navController.navigate(ScreenData.EDIT_EXERCISE_GROUP_ROUTE)
                     }) {
                         Icon(imageVector = Icons.Default.Settings, contentDescription = "Back")
                     }
@@ -85,16 +85,31 @@ fun ExerciseGroupDetailScreen(
             if(selectedWorkoutComponents.isNotEmpty()) BottomAppBar(
                 actions =  {
                     IconButton(onClick = {
-                        val newWorkoutComponents = workoutComponents.filter {
-                            it !in selectedWorkoutComponents
-                        }
+                        val updatedExerciseGroup = exerciseGroup.copy (
+                            workoutComponents = workoutComponents.filter {
+                                it !in selectedWorkoutComponents
+                            }
+                        )
 
-                        val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
-                        appViewModel.updateWorkout(workout,updatedWorkout)
-                        selectedWorkoutComponents = emptySet()
+                        appViewModel.updateWorkoutComponent(workout,exerciseGroup,updatedExerciseGroup)
+                        selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
                     }) {
                         Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+                    }
+                    IconButton(
+                        enabled = selectedWorkoutComponents.size == 1,
+                        onClick = {
+                            val selectedWorkoutComponent = selectedWorkoutComponents.first()
+                            val newWorkoutComponent = when(selectedWorkoutComponent ){
+                                is Exercise -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
+                                is ExerciseGroup -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
+                            }
+                            appViewModel.addWorkoutComponentToExerciseGroup(workout,exerciseGroup,newWorkoutComponent)
+                            selectedWorkoutComponents = emptyList()
+                            isSelectionModeActive = false
+                        }) {
+                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
                     }
                     Button(
                         modifier = Modifier.padding(5.dp),
@@ -105,9 +120,9 @@ fun ExerciseGroupDetailScreen(
                                     is ExerciseGroup -> workoutComponent.copy(enabled = true)
                                 }
 
-                                appViewModel.updateWorkoutComponents(workout,workoutComponent,updatedWorkoutComponent)
+                                appViewModel.updateWorkoutComponent(workout,workoutComponent,updatedWorkoutComponent)
                             }
-                            selectedWorkoutComponents = emptySet()
+                            selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
                         Text("Enable")
@@ -117,12 +132,12 @@ fun ExerciseGroupDetailScreen(
                         onClick = {
                             for (workoutComponent in selectedWorkoutComponents)  {
                                 val updatedWorkoutComponent = when(workoutComponent){
-                                    is Exercise -> workoutComponent.copy(enabled = true)
-                                    is ExerciseGroup -> workoutComponent.copy(enabled = true)
+                                    is Exercise -> workoutComponent.copy(enabled = false)
+                                    is ExerciseGroup -> workoutComponent.copy(enabled = false)
                                 }
-                                appViewModel.updateWorkoutComponents(workout,workoutComponent,updatedWorkoutComponent)
+                                appViewModel.updateWorkoutComponent(workout,workoutComponent,updatedWorkoutComponent)
                             }
-                            selectedWorkoutComponents = emptySet()
+                            selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
                         Text("Disable")
@@ -137,20 +152,18 @@ fun ExerciseGroupDetailScreen(
                         MenuItem("Add Exercise") {
                             appViewModel.setScreenData(
                                 ScreenData.NewExercise(
-                                    workout,
-                                    exerciseGroup
+                                    workout.id,
+                                    exerciseGroup.id
                                 )
-                            );
-                            navController.navigate(ScreenData.NEW_EXERCISE_ROUTE)
+                            )
                         },
                         MenuItem("Add Exercise Group") {
                             appViewModel.setScreenData(
                                 ScreenData.NewExerciseGroup(
-                                    workout,
-                                    exerciseGroup
+                                    workout.id,
+                                    exerciseGroup.id
                                 )
-                            );
-                            navController.navigate(ScreenData.NEW_EXERCISE_GROUP_ROUTE)
+                            )
                         }
 
                     ),
@@ -174,12 +187,10 @@ fun ExerciseGroupDetailScreen(
                 onItemClick = {
                     when(it){
                         is Exercise -> {
-                            appViewModel.setScreenData(ScreenData.ExerciseDetail(workout, it))
-                            navController.navigate(ScreenData.EXERCISE_DETAIL_ROUTE)
+                            appViewModel.setScreenData(ScreenData.ExerciseDetail(workout.id, it.id))
                         }
                         is ExerciseGroup ->{
-                            appViewModel.setScreenData(ScreenData.ExerciseGroupDetail(workout, it))
-                            navController.navigate(ScreenData.EXERCISE_GROUP_DETAIL_ROUTE)
+                            appViewModel.setScreenData(ScreenData.ExerciseGroupDetail(workout.id, it.id))
                         }
                     }
                 },

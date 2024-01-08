@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -18,39 +19,37 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 @Composable
 fun ExerciseRenderer(exercise: Exercise){
-    Row (horizontalArrangement = Arrangement.SpaceBetween,
+    Row (
+        horizontalArrangement = Arrangement.SpaceEvenly,
         modifier = Modifier
             .fillMaxWidth()
+            .padding(8.dp)
     ){
-        Text(
-            modifier = Modifier.weight(1f),
-            text = exercise.name
-        )
         for (set in exercise.sets){
             Column( horizontalAlignment = Alignment.End) {
                 when(set){
                     is WeightSet -> {
                         Text(
-                            text = "Reps: ${set.reps}"
+                            text = "x${set.reps}"
                         )
                         Spacer(modifier= Modifier.height(5.dp))
                         Text(
-                            text = "Weight: ${set.weight}kg"
+                            text = "${set.weight}kg"
                         )
                     }
                     is BodyWeightSet -> {
                         Text(
-                            text = "Reps: ${set.reps}"
+                            text = "x${set.reps}"
                         )
                     }
                     is TimedDurationSet -> {
                         Text(
-                            text = "Duration: ${set.timeInMillis/1000}s"
+                            text = "${set.timeInMillis/1000}s"
                         )
                     }
                     is EnduranceSet -> {
                         Text(
-                            text = "Duration: ${set.timeInMillis/1000}s"
+                            text = "${set.timeInMillis/1000}s"
                         )
                     }
                 }

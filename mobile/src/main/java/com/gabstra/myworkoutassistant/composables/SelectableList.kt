@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,8 +23,8 @@ fun <T> SelectableList(
     selectionMode: Boolean ,
     modifier : Modifier,
     items: List<T>,
-    selection: Set<T>,
-    onSelectionChange: (Set<T>) -> Unit,
+    selection: List<T>,
+    onSelectionChange: (List<T>) -> Unit,
     itemContent: @Composable (T) -> Unit
 ) {
     LazyColumn(
@@ -36,14 +37,15 @@ fun <T> SelectableList(
             ) {
                 if (selectionMode) {
                     Checkbox(
-                        checked = selection.contains(item),
+                        checked = selection.any { it === item },
                         onCheckedChange = { checked ->
                             val newSelection =
                                 if (checked) {
                                     selection + item
                                 } else {
-                                    selection - item
+                                    selection.filter{ it !== item }
                                 }
+                            Log.d("test", selection.any { it === item }.toString()+ " " + checked.toString()+" " + selection.count().toString()+" " + newSelection.count().toString())
                             onSelectionChange(newSelection)
                         }
                     )

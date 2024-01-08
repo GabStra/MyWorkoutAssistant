@@ -10,29 +10,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun <T> GenericSelectableList(
-    it: PaddingValues,
+    it: PaddingValues? = null,
     items: List<T>,
-    selectedItems: Set<T>,
+    selectedItems: List<T>,
     isSelectionModeActive: Boolean,
     onItemClick: (T) -> Unit,
     itemContent: @Composable (T) -> Unit,
     onEnableSelection: () -> Unit,
     onDisableSelection: () -> Unit,
-    onSelectionChange: (Set<T>) -> Unit,
+    onSelectionChange: (List<T>) -> Unit,
 ) {
     SelectableList(
         isSelectionModeActive,
         modifier = Modifier
             .fillMaxSize()
-            .padding(it)
+            .padding(it ?: PaddingValues(0.dp))
             .clickable {
                 if (isSelectionModeActive) {
                     onDisableSelection()
-                    onSelectionChange(emptySet())
+                    onSelectionChange(emptyList())
                 }
             },
         items = items,
@@ -45,8 +46,8 @@ fun <T> GenericSelectableList(
                     .combinedClickable(
                         onClick = {
                             if (isSelectionModeActive) {
-                                val newSelection = if (selectedItems.contains(item)) {
-                                    selectedItems - item
+                                val newSelection = if (selectedItems.any { it === item }) {
+                                    selectedItems.filter{ it !== item }
                                 } else {
                                     selectedItems + item
                                 }

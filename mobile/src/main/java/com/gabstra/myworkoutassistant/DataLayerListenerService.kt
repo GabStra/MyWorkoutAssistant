@@ -1,7 +1,7 @@
 package com.gabstra.myworkoutassistant
 
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.LocalDateAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -38,7 +38,7 @@ class DataLayerListenerService : WearableListenerService() {
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
                             //Log.d("WORKOUT_HISTORY","RECEIVED: ${workoutHistoryStoreJson}")
 
-                            val existingWorkouts = workoutHistoryDao.getWorkoutsByNameAndDate(workoutHistoryStore.WorkoutHistory.name,workoutHistoryStore.WorkoutHistory.date)
+                            val existingWorkouts = workoutHistoryDao.getWorkoutsByWorkoutIdAndDate(workoutHistoryStore.WorkoutHistory.workoutId,workoutHistoryStore.WorkoutHistory.date)
 
                             if(existingWorkouts.isNotEmpty()){
                                 for(workout in existingWorkouts){

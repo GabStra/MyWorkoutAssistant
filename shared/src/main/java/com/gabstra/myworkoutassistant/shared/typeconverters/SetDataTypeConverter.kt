@@ -6,7 +6,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.utils.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 
 import com.google.gson.GsonBuilder
 

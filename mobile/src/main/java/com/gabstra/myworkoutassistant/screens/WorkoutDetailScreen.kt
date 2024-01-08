@@ -3,13 +3,18 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
@@ -69,7 +74,6 @@ fun WorkoutComponentTitle(modifier:Modifier, workoutComponent: WorkoutComponent)
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutDetailScreen(
-    navController: NavController,
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
     workout: Workout,
@@ -77,7 +81,7 @@ fun WorkoutDetailScreen(
 ) {
     val workoutComponents = workout.workoutComponents
 
-    var selectedWorkoutComponents by remember { mutableStateOf(setOf<WorkoutComponent>()) }
+    var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
     val formatter = remember { DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.ENGLISH)}
@@ -85,7 +89,7 @@ fun WorkoutDetailScreen(
 
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
-            val dates = workoutHistoryDao.getWorkoutsByNameByDateAsc(workout.name)
+            val dates = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
                 .map { it -> it.date }
             workoutHistoryDates.value = dates
         }
@@ -97,13 +101,12 @@ fun WorkoutDetailScreen(
                 title = { Text(workout.name) },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
-                        Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
                     IconButton(onClick = {
-                        appViewModel.setScreenData(ScreenData.EditWorkout(workout));
-                        navController.navigate(ScreenData.EDIT_WORKOUT_ROUTE)
+                        appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
                     }) {
                         Icon(imageVector = Icons.Default.Settings, contentDescription = "Back")
                     }
@@ -120,10 +123,24 @@ fun WorkoutDetailScreen(
 
                         val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
                         appViewModel.updateWorkout(workout,updatedWorkout)
-                        selectedWorkoutComponents = emptySet()
+                        selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
                     }) {
                         Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+                    }
+                    IconButton(
+                        enabled = selectedWorkoutComponents.size == 1,
+                        onClick = {
+                            val selectedWorkoutComponent = selectedWorkoutComponents.first()
+                            val newWorkoutComponent = when(selectedWorkoutComponent ){
+                                is Exercise -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
+                                is ExerciseGroup -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
+                            }
+                            appViewModel.addWorkoutComponent(workout,newWorkoutComponent)
+                            selectedWorkoutComponents = emptyList()
+                            isSelectionModeActive = false
+                        }) {
+                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
                     }
                     Button(
                         modifier = Modifier.padding(5.dp),
@@ -134,9 +151,9 @@ fun WorkoutDetailScreen(
                                     is ExerciseGroup -> workoutComponent.copy(enabled = true)
                                 }
 
-                                appViewModel.updateWorkoutComponents(workout,workoutComponent,updatedWorkoutComponent)
+                                appViewModel.updateWorkoutComponent(workout,workoutComponent,updatedWorkoutComponent)
                             }
-                            selectedWorkoutComponents = emptySet()
+                            selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
                         Text("Enable")
@@ -146,12 +163,12 @@ fun WorkoutDetailScreen(
                         onClick = {
                             for (workoutComponent in selectedWorkoutComponents)  {
                                 val updatedWorkoutComponent = when(workoutComponent){
-                                    is Exercise -> workoutComponent.copy(enabled = true)
-                                    is ExerciseGroup -> workoutComponent.copy(enabled = true)
+                                    is Exercise -> workoutComponent.copy(enabled = false)
+                                    is ExerciseGroup -> workoutComponent.copy(enabled = false)
                                 }
-                                appViewModel.updateWorkoutComponents(workout,workoutComponent,updatedWorkoutComponent)
+                                appViewModel.updateWorkoutComponent(workout,workoutComponent,updatedWorkoutComponent)
                             }
-                            selectedWorkoutComponents = emptySet()
+                            selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
                         Text("Disable")
@@ -164,12 +181,10 @@ fun WorkoutDetailScreen(
                 GenericFloatingActionButtonWithMenu(
                     menuItems = listOf(
                         MenuItem("Add Exercise") {
-                            appViewModel.setScreenData(ScreenData.NewExercise(workout, null));
-                            navController.navigate(ScreenData.NEW_EXERCISE_ROUTE)
+                            appViewModel.setScreenData(ScreenData.NewExercise(workout.id, null));
                         },
                         MenuItem("Add Exercise Group") {
-                            appViewModel.setScreenData(ScreenData.NewExerciseGroup(workout, null));
-                            navController.navigate(ScreenData.NEW_EXERCISE_GROUP_ROUTE)
+                            appViewModel.setScreenData(ScreenData.NewExerciseGroup(workout.id, null));
                         }
 
                     ),
@@ -184,52 +199,57 @@ fun WorkoutDetailScreen(
                 .padding(it)
                 .fillMaxSize(),text = "Add a new workout component", textAlign = TextAlign.Center)
         }else{
-            if(workoutHistoryDates.value.isNotEmpty()){
-                Text(modifier = Modifier
-                    .padding(it)
-                    .fillMaxSize(),
-                    text = "Last executed ${workoutHistoryDates.value.last().format(formatter)}",
-                    textAlign = TextAlign.Center
-                )
-            }
-            GenericSelectableList(
-                it,
-                items = workoutComponents,
-                selectedItems= selectedWorkoutComponents,
-                isSelectionModeActive,
-                onItemClick = {
-                    when(it){
-                        is Exercise -> {
-                            appViewModel.setScreenData(ScreenData.ExerciseDetail(workout, it,null))
-                            navController.navigate(ScreenData.EXERCISE_DETAIL_ROUTE)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(it),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                if(workoutHistoryDates.value.isNotEmpty()){
+                    Text(modifier = Modifier
+                        .fillMaxWidth(),
+                        text = "Last executed ${workoutHistoryDates.value.last().format(formatter)}",
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+                GenericSelectableList(
+                    it = null,
+                    items = workoutComponents,
+                    selectedItems= selectedWorkoutComponents,
+                    isSelectionModeActive,
+                    onItemClick = {
+                        when(it){
+                            is Exercise -> {
+                                appViewModel.setScreenData(ScreenData.ExerciseDetail(workout.id, it.id))
+                            }
+                            is ExerciseGroup ->{
+                                appViewModel.setScreenData(ScreenData.ExerciseGroupDetail(workout.id, it.id))
+                            }
                         }
-                        is ExerciseGroup ->{
-                            appViewModel.setScreenData(ScreenData.ExerciseGroupDetail(workout, it,null))
-                            navController.navigate(ScreenData.EXERCISE_GROUP_DETAIL_ROUTE)
-                        }
-                    }
-                },
-                onEnableSelection = { isSelectionModeActive = true },
-                onDisableSelection = { isSelectionModeActive = false },
-                onSelectionChange = { newSelection -> selectedWorkoutComponents = newSelection} ,
-                itemContent = { it ->
-                    ExpandableCard(
-                        isExpandable = when(it) {
+                    },
+                    onEnableSelection = { isSelectionModeActive = true },
+                    onDisableSelection = { isSelectionModeActive = false },
+                    onSelectionChange = { newSelection -> selectedWorkoutComponents = newSelection} ,
+                    itemContent = { it ->
+                        ExpandableCard(
+                            isExpandable = when(it) {
                                 is Exercise -> it.sets.isNotEmpty()
                                 is ExerciseGroup -> it.workoutComponents.isNotEmpty()
                                 else -> false
                             },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .alpha(if (it.enabled) 1f else 0.4f),
-                        title = { modifier -> WorkoutComponentTitle(modifier,it) },
-                        content = { when(it) {
-                            is Exercise -> ExerciseRenderer(it)
-                            is ExerciseGroup -> ExerciseGroupRenderer(it)
-                        } }
-                    )
-                }
-            )
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .alpha(if (it.enabled) 1f else 0.4f),
+                            title = { modifier -> WorkoutComponentTitle(modifier,it) },
+                            content = { when(it) {
+                                is Exercise ->  ExerciseRenderer(it)
+                                is ExerciseGroup -> ExerciseGroupRenderer(it)
+                            } }
+                        )
+                    }
+                )
+            }
         }
     }
 }
