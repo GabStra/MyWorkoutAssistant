@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant
 
+import android.content.Intent
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
@@ -22,7 +23,7 @@ class DataLayerListenerService : WearableListenerService() {
         dataEvents.forEach { dataEvent ->
             val uri = dataEvent.dataItem.uri
             when (uri.path) {
-                "/workoutHistoryStore" -> {
+                WORKOUT_HISTORY_STORE_PATH -> {
                     val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                     val workoutHistoryStoreJson = dataMap.getString("json")
 
@@ -36,7 +37,6 @@ class DataLayerListenerService : WearableListenerService() {
                                 .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
                                 .create()
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
-                            //Log.d("WORKOUT_HISTORY","RECEIVED: ${workoutHistoryStoreJson}")
 
                             val existingWorkouts = workoutHistoryDao.getWorkoutsByWorkoutIdAndDate(workoutHistoryStore.WorkoutHistory.workoutId,workoutHistoryStore.WorkoutHistory.date)
 
@@ -56,6 +56,18 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
                 }
+                OPEN_PAGE_PATH -> {
+                    val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                    val valueToPass = dataMap.getString("page") // Replace "key" with your actual key
+
+                    // Start an activity and pass the extracted value
+                    val intent = Intent(this, MainActivity::class.java).apply {
+                        putExtra("page", valueToPass) // Replace "extra_key" with your actual extra key
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // Required for starting an activity from a service
+                        addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // This flag helps to reuse the existing instance
+                    }
+                    startActivity(intent)
+                }
             }
         }
 
@@ -65,5 +77,10 @@ class DataLayerListenerService : WearableListenerService() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
+    }
+
+    companion object {
+        private const val WORKOUT_HISTORY_STORE_PATH = "/workoutHistoryStore"
+        private const val OPEN_PAGE_PATH = "/openPagePath" // Define your new URI path here
     }
 }

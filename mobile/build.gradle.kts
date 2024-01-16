@@ -79,7 +79,8 @@ dependencies {
     implementation("com.google.code.gson:gson:2.9.0")
     implementation("androidx.compose.material:material-icons-extended:+")
     implementation("com.google.accompanist:accompanist-permissions:+")
-
+    implementation("com.google.android.horologist:horologist-datalayer:+")
+    implementation("com.google.android.horologist:horologist-datalayer-phone:+")
     kapt("androidx.room:room-compiler:+")
     implementation("androidx.room:room-ktx:+")
 

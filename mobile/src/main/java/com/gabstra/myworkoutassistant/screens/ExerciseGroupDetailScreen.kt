@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -53,7 +54,7 @@ fun ExerciseGroupDetailScreen(
     exerciseGroup: ExerciseGroup,
     onGoBack : () -> Unit
 ){
-    val workoutComponents = exerciseGroup.workoutComponents
+    var workoutComponents by remember { mutableStateOf(exerciseGroup.workoutComponents) }
 
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
@@ -61,7 +62,12 @@ fun ExerciseGroupDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(exerciseGroup.name) },
+                title = {
+                    Text(
+                        modifier = Modifier.basicMarquee(),
+                        text=exerciseGroup.name
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -86,11 +92,11 @@ fun ExerciseGroupDetailScreen(
                 actions =  {
                     IconButton(onClick = {
                         val updatedExerciseGroup = exerciseGroup.copy (
-                            workoutComponents = workoutComponents.filter {
-                                it !in selectedWorkoutComponents
+                            workoutComponents = workoutComponents.filter { component ->
+                                selectedWorkoutComponents.none { it === component }
                             }
                         )
-
+                        workoutComponents = updatedExerciseGroup.workoutComponents
                         appViewModel.updateWorkoutComponent(workout,exerciseGroup,updatedExerciseGroup)
                         selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
@@ -106,6 +112,7 @@ fun ExerciseGroupDetailScreen(
                                 is ExerciseGroup -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
                             }
                             appViewModel.addWorkoutComponentToExerciseGroup(workout,exerciseGroup,newWorkoutComponent)
+                            workoutComponents = workoutComponents + newWorkoutComponent
                             selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
@@ -197,6 +204,13 @@ fun ExerciseGroupDetailScreen(
                 onEnableSelection = { isSelectionModeActive = true },
                 onDisableSelection = { isSelectionModeActive = false },
                 onSelectionChange = { newSelection -> selectedWorkoutComponents = newSelection} ,
+                onOrderChange = { newWorkoutComponents ->
+                    val updatedExerciseGroup = exerciseGroup.copy (
+                        workoutComponents = newWorkoutComponents
+                    )
+                    appViewModel.updateWorkoutComponent(workout,exerciseGroup,updatedExerciseGroup)
+                    workoutComponents = newWorkoutComponents
+                },
                 itemContent = { it ->
                     ExpandableCard(
                         isExpandable = when(it) {

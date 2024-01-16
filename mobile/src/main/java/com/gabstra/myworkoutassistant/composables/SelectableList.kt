@@ -45,7 +45,6 @@ fun <T> SelectableList(
                                 } else {
                                     selection.filter{ it !== item }
                                 }
-                            Log.d("test", selection.any { it === item }.toString()+ " " + checked.toString()+" " + selection.count().toString()+" " + newSelection.count().toString())
                             onSelectionChange(newSelection)
                         }
                     )

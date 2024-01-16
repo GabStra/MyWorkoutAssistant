@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -98,14 +99,19 @@ fun ExerciseDetailScreen(
     exercise: Exercise,
     onGoBack: () -> Unit
 ) {
-    val sets = exercise.sets
+    var sets  by remember { mutableStateOf(exercise.sets) }
     var selectedSets by remember { mutableStateOf(listOf<com.gabstra.myworkoutassistant.shared.sets.Set>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(exercise.name) },
+                title = {
+                    Text(
+                        modifier = Modifier.basicMarquee(),
+                        text=exercise.name
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
                         Icon(
@@ -132,10 +138,10 @@ fun ExerciseDetailScreen(
             if (selectedSets.isNotEmpty()) BottomAppBar(
                 actions = {
                     IconButton(onClick = {
-                        val newSets = sets.filter {
-                            it !in selectedSets
+                        val newSets = sets.filter { set ->
+                            selectedSets.none { it === set }
                         }
-
+                        sets = newSets
                         val updatedExercise = exercise.copy(sets = newSets)
 
                         appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
@@ -155,6 +161,8 @@ fun ExerciseDetailScreen(
                                 is TimedDurationSet -> selectedSet.copy()
                             }
                             appViewModel.addSetToExercise(workout, exercise, newSet)
+                            
+                            sets = sets + newSet
                             selectedSets = emptyList()
                             isSelectionModeActive = false
                         }) {
@@ -196,6 +204,11 @@ fun ExerciseDetailScreen(
                 onEnableSelection = { isSelectionModeActive = true },
                 onDisableSelection = { isSelectionModeActive = false },
                 onSelectionChange = { newSelection -> selectedSets = newSelection },
+                onOrderChange = { newSets ->
+                    val updatedExercise = exercise.copy(sets = newSets)
+                    appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
+                    sets = newSets
+                },
                 itemContent = { it ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),

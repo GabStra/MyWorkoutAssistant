@@ -95,7 +95,7 @@ class MeasureDataViewModel(
             try{
                 healthServicesRepository.prepareExercise()
             }catch (e: Exception) {
-                Log.d("MeasureData","failed - ${e.message}")
+                //Log.d("MeasureData","failed - ${e.message}")
             }
 
 

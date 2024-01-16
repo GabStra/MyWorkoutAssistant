@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+mobile/release/mobile-release.apk
+mobile/release/output-metadata.json
+wearos/release/output-metadata.json
+wearos/release/wearos-release.apk

@@ -50,7 +50,7 @@ fun WeightSetForm(
         OutlinedTextField(
             value = weightState.value,
             onValueChange = { input ->
-                if (input.isEmpty() || input.all { it -> it.isDigit() }) {
+                if (input.isEmpty() || (input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
                     // Update the state only if the input is empty or all characters are digits
                     weightState.value = input
                 }

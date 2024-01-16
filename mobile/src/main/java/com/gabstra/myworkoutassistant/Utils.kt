@@ -1,6 +1,15 @@
 package com.gabstra.myworkoutassistant
 
+import android.content.ContentValues
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import androidx.documentfile.provider.DocumentFile
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
@@ -15,7 +24,6 @@ import java.util.concurrent.CancellationException
 fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
     try {
         val jsonString = fromWorkoutStoreToJSON(workoutStore)
-        Log.d("WorkoutStore", jsonString)
         val request = PutDataMapRequest.create("/workoutStore").apply {
             dataMap.putString("json",jsonString)
             dataMap.putString("timestamp",System.currentTimeMillis().toString())
@@ -72,5 +80,24 @@ fun findWorkoutComponentById(exerciseGroup: ExerciseGroup, id: UUID): WorkoutCom
         }
     }
     return null
+}
+
+fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: String) {
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+        put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+        put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+    }
+
+    val resolver = context.contentResolver
+    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+
+    uri?.let {
+        resolver.openOutputStream(it).use { outputStream ->
+            outputStream?.write(fileContent.toByteArray())
+        }
+    } ?: run {
+        Toast.makeText(context, "Failed to write to downloads folder", Toast.LENGTH_SHORT).show()
+    }
 }
 

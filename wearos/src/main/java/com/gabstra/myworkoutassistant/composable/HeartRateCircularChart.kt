@@ -51,9 +51,6 @@ fun HeartRateCircularChart(
 
     val mapPercentage = remember(mhrPercentage){ mapPercentage(mhrPercentage) }
 
-    val bpm = remember(hr) {
-        hr.toInt()
-    }
 
     val segments = listOf(
         ProgressIndicatorSegment(.166f, Color.hsl(0f,0.02f,0.68f)),
@@ -72,16 +69,23 @@ fun HeartRateCircularChart(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ){
-            if(bpm != 0)
-                PulsingHeartWithBpm(bpm)
+            if(hr != 0)
+                PulsingHeartWithBpm(hr)
             else
                 HeartIcon(modifier = Modifier.size(12.dp))
             Spacer(modifier= Modifier.width(8.dp))
             Text(
-                text="${if(bpm==0) "-" else bpm}",
+                text="${if(hr==0) "-" else hr}",
                 style = MaterialTheme.typography.caption2
             )
         }
+
+        RotatedTriangle(
+            baseAngleInDegrees =  110f + mapPercentage * (250f - 110f),
+            triangleSize = 10f,
+            color = Color.Red,
+            margin = 20f
+        )
 
         SegmentedProgressIndicator(
             trackSegments = segments,

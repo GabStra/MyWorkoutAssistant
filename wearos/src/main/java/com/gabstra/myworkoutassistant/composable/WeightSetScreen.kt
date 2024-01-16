@@ -28,14 +28,13 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myhomeworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.VibrateOnce
-import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean,isFooterHidden:Boolean, onEditModeChange: (Boolean) -> Unit) {
+fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, isFooterHidden:Boolean, onEditModeChange: (Boolean) -> Unit) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData

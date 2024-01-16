@@ -20,7 +20,7 @@ fun RotatedCircles(
     Canvas(modifier = Modifier.fillMaxSize()) {
         val centerX = size.width / 2
         val centerY = size.height / 2
-        Log.d("RotatedCircles", "size.width: ${size.width}, size.height: ${size.height}")
+
         // Draw three circles with offsets
         for (i in 0..2) {
             // Calculate angle for each circle

@@ -27,7 +27,7 @@ fun ExerciseForm(
 ) {
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(exercise?.name ?: "") }
-    val restTimeState = remember { mutableStateOf(exercise?.restTimeInSec?.toString() ?: "") }
+    val restTimeState = remember { mutableStateOf(exercise?.restTimeInSec?.toString() ?: "0") }
     val skipWorkoutRest = remember { mutableStateOf(exercise?.skipWorkoutRest ?: false) }
 
     Column(
@@ -64,7 +64,7 @@ fun ExerciseForm(
                         restTimeState.value = input
                     }
                 },
-                label = { Text("Rest Time (in seconds)") },
+                label = { Text("Rest Time Between Sets (in seconds)") },
                 keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                 modifier = Modifier
                     .fillMaxWidth()

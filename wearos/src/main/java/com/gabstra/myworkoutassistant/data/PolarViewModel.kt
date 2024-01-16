@@ -60,7 +60,6 @@ class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel(
             }
 
             override fun deviceConnected(polarDeviceInfo: PolarDeviceInfo) {
-                Log.d("MyApp", "CONNECTED: ${polarDeviceInfo.deviceId}")
                 startHrStreaming(polarDeviceInfo.deviceId)
                 viewModelScope.launch {
                     _deviceConnectionState.value = polarDeviceInfo
@@ -70,7 +69,6 @@ class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel(
             override fun deviceConnecting(polarDeviceInfo: PolarDeviceInfo) {}
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
-                Log.d("MyApp", "DISCONNECTED: ${polarDeviceInfo.deviceId}")
                 viewModelScope.launch {
                     _deviceConnectionState.value = null
                 }
@@ -91,10 +89,9 @@ class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel(
     fun connectToDevice() {
         viewModelScope.launch {
             try {
-                Log.d("MyApp", "Connecting to device: $deviceId")
                 api.connectToDevice(deviceId)
             } catch (e: Exception) {
-                Log.e("MyApp", "Error connecting to device: $e")
+                //Log.e("MyApp", "Error connecting to device: $e")
             }
         }
     }

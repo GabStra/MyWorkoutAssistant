@@ -1,15 +1,12 @@
-package com.gabstra.myhomeworkoutassistant.data
+package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
-import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.gabstra.myworkoutassistant.data.getEnabledItems
-import com.gabstra.myworkoutassistant.data.sendWorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -31,6 +28,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
+import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,6 +77,16 @@ class AppViewModel : ViewModel(){
         get() = workoutStore.polarDeviceId?: ""
 
     private var dataClient: DataClient? = null
+    private var _phoneNode by mutableStateOf<Node?>(null)
+
+    val isPhoneConnectedAndHasApp: Boolean
+        get() = _phoneNode != null
+
+    var phoneNode: Node?
+        get() = _phoneNode
+        set(value) {
+            _phoneNode = value
+        }
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
         workoutStore = newWorkoutStore
@@ -89,6 +97,16 @@ class AppViewModel : ViewModel(){
 
     fun initDataClient(client: DataClient) {
         dataClient = client
+    }
+
+    fun initExerciseHistoryDao(context: Context){
+        val db = AppDatabase.getDatabase(context)
+        setHistoryDao= db.setHistoryDao()
+    }
+
+    fun initWorkoutHistoryDao(context: Context){
+        val db = AppDatabase.getDatabase(context)
+        workoutHistoryDao= db.workoutHistoryDao()
     }
 
     private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0))
@@ -104,7 +122,6 @@ class AppViewModel : ViewModel(){
     private val _nextWorkoutState = mutableStateOf<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val nextWorkoutState: State<WorkoutState> get() = _nextWorkoutState
 
-
     private val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
 
     private val workoutStateQueue: LinkedList<WorkoutState> = LinkedList()
@@ -113,7 +130,7 @@ class AppViewModel : ViewModel(){
 
     private val latestSetHistoryMap: MutableMap<String, SetHistory> = mutableMapOf()
 
-    val groupedSets: Map<WorkoutComponent?, List<WorkoutState.Set>> get () = setStates
+    val groupedSetsByWorkoutComponent: Map<WorkoutComponent?, List<WorkoutState.Set>> get () = setStates
         .groupBy { it.parents.firstOrNull() }
 
     fun setWorkout(workout: Workout){
@@ -252,15 +269,5 @@ class AppViewModel : ViewModel(){
         if (workoutStateQueue.isEmpty()) return
         _workoutState.value = workoutStateQueue.pollFirst()!!
         if (workoutStateQueue.isNotEmpty()) _nextWorkoutState.value = workoutStateQueue.peek()!!
-    }
-
-    fun initExerciseHistoryDao(context: Context){
-        val db = AppDatabase.getDatabase(context)
-        setHistoryDao= db.setHistoryDao()
-    }
-
-    fun initWorkoutHistoryDao(context: Context){
-        val db = AppDatabase.getDatabase(context)
-        workoutHistoryDao= db.workoutHistoryDao()
     }
 }

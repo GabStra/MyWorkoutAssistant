@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -14,7 +15,11 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
+import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.horologist.annotations.ExperimentalHorologistApi
+import com.google.android.horologist.data.AppHelperResultCode
+import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -170,6 +175,29 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(request)
+    } catch (cancellationException: CancellationException) {
+        cancellationException.printStackTrace()
+    } catch (exception: Exception) {
+        exception.printStackTrace()
+    }
+}
+
+@OptIn(ExperimentalHorologistApi::class)
+suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, phoneNode: Node, appHelper: WearDataLayerAppHelper) {
+    try {
+        val result = appHelper.startRemoteOwnApp(phoneNode.id)
+        if(result != AppHelperResultCode.APP_HELPER_RESULT_SUCCESS){
+            Toast.makeText(context, "Failed to open app in phone", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val request = PutDataMapRequest.create("/openPagePath").apply {
+            dataMap.putString("page","settings")
+            dataMap.putString("timestamp",System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+
+        dataClient.putDataItem(request)
+        Toast.makeText(context, "Opened Settings in phone", Toast.LENGTH_SHORT).show()
     } catch (cancellationException: CancellationException) {
         cancellationException.printStackTrace()
     } catch (exception: Exception) {

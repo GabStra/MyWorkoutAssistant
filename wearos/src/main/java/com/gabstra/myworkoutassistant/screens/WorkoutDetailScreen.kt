@@ -33,12 +33,13 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 
-import com.gabstra.myhomeworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.AppViewModel
+
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
-fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel,hrViewModel : MeasureDataViewModel) {
+fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, hrViewModel : MeasureDataViewModel) {
     val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 

@@ -139,7 +139,7 @@ fun WorkoutsScreen(
     onOpenSettingsClick: () -> Unit,
     onFileSelected: (Uri) -> Unit
 ) {
-    val workouts = appViewModel.workouts
+    var workouts by remember { mutableStateOf(appViewModel.workouts) }
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
@@ -165,6 +165,7 @@ fun WorkoutsScreen(
                         val newWorkouts = workouts.filter { workout ->
                             workout !in selectedWorkouts
                         }
+                        workouts = newWorkouts
                         appViewModel.updateWorkouts(newWorkouts)
                         selectedWorkouts = emptyList()
                         isSelectionModeActive = false
@@ -226,6 +227,10 @@ fun WorkoutsScreen(
                 onEnableSelection = { isSelectionModeActive = true },
                 onDisableSelection = { isSelectionModeActive = false },
                 onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
+                onOrderChange = { newWorkouts->
+                    appViewModel.updateWorkouts(newWorkouts)
+                    workouts = newWorkouts
+                },
                 itemContent = { it ->
                     ExpandableCard(
                         isExpandable = it.workoutComponents.isNotEmpty(),

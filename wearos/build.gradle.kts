@@ -69,7 +69,8 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:+")
     implementation("com.google.android.horologist:horologist-composables:+")
     implementation("androidx.wear:wear-tooling-preview:1.0.0-rc01")
-
+    implementation("com.google.android.horologist:horologist-datalayer:+")
+    implementation("com.google.android.horologist:horologist-datalayer-watch:+")
     kapt("androidx.room:room-compiler:+")
     implementation("androidx.room:room-ktx:+")
     implementation("androidx.health:health-services-client:+")

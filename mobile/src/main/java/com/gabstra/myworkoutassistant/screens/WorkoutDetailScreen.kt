@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,7 +81,7 @@ fun WorkoutDetailScreen(
     workout: Workout,
     onGoBack : () -> Unit
 ) {
-    val workoutComponents = workout.workoutComponents
+    var workoutComponents by remember { mutableStateOf(workout.workoutComponents) }
 
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
@@ -98,7 +100,12 @@ fun WorkoutDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(workout.name) },
+                title = {
+                    Text(
+                        modifier = Modifier.basicMarquee(),
+                        text = workout.name
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -117,9 +124,11 @@ fun WorkoutDetailScreen(
             if(selectedWorkoutComponents.isNotEmpty()) BottomAppBar(
                 actions =  {
                     IconButton(onClick = {
-                        val newWorkoutComponents = workoutComponents.filter {
-                            it !in selectedWorkoutComponents
+                        val newWorkoutComponents = workoutComponents.filter { item ->
+                            selectedWorkoutComponents.none { it === item }
                         }
+
+                        workoutComponents = newWorkoutComponents
 
                         val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
                         appViewModel.updateWorkout(workout,updatedWorkout)
@@ -131,11 +140,11 @@ fun WorkoutDetailScreen(
                     IconButton(
                         enabled = selectedWorkoutComponents.size == 1,
                         onClick = {
-                            val selectedWorkoutComponent = selectedWorkoutComponents.first()
-                            val newWorkoutComponent = when(selectedWorkoutComponent ){
+                            val newWorkoutComponent = when(val selectedWorkoutComponent = selectedWorkoutComponents.first()){
                                 is Exercise -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
                                 is ExerciseGroup -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
                             }
+                            workoutComponents = workoutComponents + newWorkoutComponent
                             appViewModel.addWorkoutComponent(workout,newWorkoutComponent)
                             selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
@@ -231,6 +240,11 @@ fun WorkoutDetailScreen(
                     onEnableSelection = { isSelectionModeActive = true },
                     onDisableSelection = { isSelectionModeActive = false },
                     onSelectionChange = { newSelection -> selectedWorkoutComponents = newSelection} ,
+                    onOrderChange = { newWorkoutComponents ->
+                        val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
+                        appViewModel.updateWorkout(workout,updatedWorkout)
+                        workoutComponents = newWorkoutComponents
+                    },
                     itemContent = { it ->
                         ExpandableCard(
                             isExpandable = when(it) {

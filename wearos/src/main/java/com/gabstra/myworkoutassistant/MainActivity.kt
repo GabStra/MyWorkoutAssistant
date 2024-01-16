@@ -4,8 +4,12 @@
  * changes to the libraries and their usages.
  */
 
-package com.gabstra.myworkoutassistant.presentation
+package com.gabstra.myworkoutassistant
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
@@ -15,19 +19,22 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.gabstra.myhomeworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModelFactory
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.findActivity
-import com.gabstra.myworkoutassistant.data.getEnabledItems
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.HealthServicesRepository
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
@@ -35,52 +42,61 @@ import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.google.android.gms.wearable.DataClient
-import com.google.android.gms.wearable.DataEvent
-import com.google.android.gms.wearable.DataEventBuffer
-import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
+import com.google.android.horologist.annotations.ExperimentalHorologistApi
+import com.google.android.horologist.data.WearDataLayerRegistry
+import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 
-class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener{
+class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
 
     private val appViewModel: AppViewModel by viewModels()
 
-    override fun onDataChanged(dataEvents: DataEventBuffer) {
-        for (event in dataEvents) {
-            if (event.type == DataEvent.TYPE_CHANGED) {
-                when(event.dataItem.uri.path){
-                    "/workoutStore" -> {
-                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                        val workoutStoreJson = dataMap.getString("json")
-                        Log.d("MainActivity", "Received workout store: $workoutStoreJson")
-                        workoutStoreRepository.saveWorkoutStoreFromJson(workoutStoreJson!!)
-                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-                        Toast.makeText(this, "Update received", Toast.LENGTH_SHORT).show()
-                    }
+    private lateinit var myReceiver: BroadcastReceiver
+
+    @OptIn(ExperimentalHorologistApi::class)
+    private lateinit var appHelper: WearDataLayerAppHelper
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
+        registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
+        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(myReceiver)
+    }
+
+    @OptIn(ExperimentalHorologistApi::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        appViewModel.initDataClient(dataClient)
+        val wearDataLayerRegistry  = WearDataLayerRegistry.fromContext(this, lifecycleScope)
+        appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
+
+        myReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val workoutStoreJson = intent.getStringExtra("workoutStoreJson")
+                if(workoutStoreJson != null){
+                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                    Toast.makeText(context, "Update received", Toast.LENGTH_SHORT).show()
                 }
             }
         }
-    }
 
-    override fun onResume() {
-        super.onResume()
-        dataClient.addListener(this)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        dataClient.removeListener(this)
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-        appViewModel.initDataClient(dataClient)
         setContent {
-            WearApp(dataClient,appViewModel)
+            WearApp(dataClient,appViewModel,appHelper)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent) // Update the old intent
+
     }
 }
 
@@ -98,8 +114,9 @@ fun KeepScreenOn() {
     }
 }
 
+@OptIn(ExperimentalHorologistApi::class)
 @Composable
-fun WearApp(dataClient: DataClient, appViewModel: AppViewModel) {
+fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearDataLayerAppHelper) {
     MyWorkoutAssistantTheme {
         val navController = rememberNavController()
         val localContext = LocalContext.current
@@ -119,9 +136,15 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel) {
             )
         )
 
+        val nodes by appHelper.connectedAndInstalledNodes.collectAsState(initial = emptyList())
+
+        LaunchedEffect(nodes){
+            appViewModel.phoneNode = nodes.firstOrNull()
+        }
+
         NavHost(navController, startDestination = Screen.WorkoutSelection.route) {
             composable(Screen.WorkoutSelection.route) {
-                WorkoutSelectionScreen(navController, appViewModel)
+                WorkoutSelectionScreen(dataClient,navController, appViewModel, appHelper)
             }
             composable(Screen.WorkoutDetail.route) {
                 WorkoutDetailScreen(navController, appViewModel, hrViewModel)

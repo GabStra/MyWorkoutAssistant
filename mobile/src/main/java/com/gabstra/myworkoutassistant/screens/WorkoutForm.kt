@@ -40,7 +40,7 @@ fun WorkoutForm(
     // Mutable state for form fields
     val workoutNameState = remember { mutableStateOf(workout?.name ?: "") }
     val workoutDescriptionState = remember { mutableStateOf(workout?.description ?: "") }
-    val restTimeState = remember { mutableStateOf(workout?.restTimeInSec?.toString() ?: "") }
+    val restTimeState = remember { mutableStateOf(workout?.restTimeInSec?.toString() ?: "0") }
     val usePolarDeviceState = remember { mutableStateOf(workout?.usePolarDevice ?: false) }
 
     Box(
@@ -94,7 +94,7 @@ fun WorkoutForm(
                             restTimeState.value = input
                         }
                     },
-                    label = { Text("Rest Time (in seconds)") },
+                    label = { Text("Rest Time Between Exercises (in seconds)") },
                     keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                     modifier = Modifier
                         .fillMaxWidth()

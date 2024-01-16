@@ -100,5 +100,19 @@ fun LockScreen(
                     .size(15.dp)
             )
         }
+    }else{
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(22.dp),
+            contentAlignment = Alignment.TopCenter
+        ){
+            Icon(
+                imageVector = Icons.Filled.LockOpen,
+                contentDescription = "Lock Icon Open",
+                modifier = Modifier
+                    .size(15.dp)
+            )
+        }
     }
 }

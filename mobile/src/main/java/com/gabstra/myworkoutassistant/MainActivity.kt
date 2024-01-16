@@ -1,10 +1,14 @@
 package com.gabstra.myworkoutassistant
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +32,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
@@ -46,7 +51,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        appViewModel.updateWorkouts(workoutStoreRepository.getWorkoutStore().workouts)
+        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
 
         setContent {
             MyWorkoutAssistantTheme {
@@ -60,6 +65,23 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent) // Update the old intent
+        val receivedValue = intent.getStringExtra("page")
+        receivedValue?.let { page ->
+            when(page){
+                "workouts" -> {
+                    appViewModel.setScreenData(ScreenData.Workouts())
+                }
+                "settings" -> {
+                    appViewModel.setScreenData(ScreenData.Settings())
+                }
+            }
+        }
+    }
+
 }
 
 @Composable
@@ -71,7 +93,7 @@ fun MyWorkoutAssistantNavHost(
 ){
     val context = LocalContext.current
 
-    //val exerciseHistoryDao= db.setHistoryDao()
+    //val exerciseHistoryDao = db.setHistoryDao()
     val workoutHistoryDao= db.workoutHistoryDao()
 
     LaunchedEffect(appViewModel.workouts) {
@@ -91,8 +113,9 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.Workouts -> {
             WorkoutsScreen(appViewModel,
                 onSaveClick={
-                    workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
-                    Toast.makeText(context, "Workouts saved", Toast.LENGTH_SHORT).show()
+                    val jsonString = fromWorkoutStoreToJSON(appViewModel.workoutStore)
+                    writeJsonToDownloadsFolder(context,"workout_store.json",jsonString)
+                    Toast.makeText(context, "Workout Store saved to downloads folder", Toast.LENGTH_SHORT).show()
                 },
                 onSyncClick = {
                     sendWorkoutStore(dataClient,appViewModel.workoutStore)

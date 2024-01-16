@@ -30,8 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myhomeworkoutassistant.data.AppViewModel
-import com.gabstra.myhomeworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
@@ -70,7 +70,7 @@ fun NextExerciseInfo(
             Text(
                     modifier = Modifier
                         .basicMarquee(),
-                    text = "${state.exerciseName}",
+                    text = state.exerciseName,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                 )

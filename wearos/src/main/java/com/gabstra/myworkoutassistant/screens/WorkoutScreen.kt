@@ -1,12 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,11 +18,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.navigation.NavController
-import com.gabstra.myhomeworkoutassistant.data.AppViewModel
-import com.gabstra.myhomeworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.CurrentTime
 import com.gabstra.myworkoutassistant.composable.CustomDialog
-import com.gabstra.myworkoutassistant.composable.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composable.HeartRatePolar
 import com.gabstra.myworkoutassistant.composable.HeartRateStandard
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
@@ -32,8 +29,7 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
-import com.gabstra.myworkoutassistant.presentation.KeepScreenOn
-import com.google.android.gms.wearable.DataClient
+import com.gabstra.myworkoutassistant.KeepScreenOn
 import kotlinx.coroutines.launch
 
 @Composable
@@ -171,8 +167,6 @@ fun WorkoutScreen(
                             )
                     }
                 )
-
-
             }
             is WorkoutState.Rest -> {
                 val state = workoutState as WorkoutState.Rest

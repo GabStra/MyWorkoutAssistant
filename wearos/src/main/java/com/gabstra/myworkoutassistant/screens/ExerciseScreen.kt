@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,18 +39,16 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 
-import com.gabstra.myhomeworkoutassistant.data.AppViewModel
-import com.gabstra.myhomeworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composable.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composable.LockScreen
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
-import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.getFirstExercise
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -75,6 +74,9 @@ fun ExerciseScreen(
 
     var touchJob by remember { mutableStateOf<Job?>(null) }
     var showLockScreen by remember { mutableStateOf(false) }
+
+    val exerciseIndex = viewModel.groupedSetsByWorkoutComponent.keys.indexOf(state.parents.first())
+    val totalExercises = viewModel.groupedSetsByWorkoutComponent.keys.count()
 
     fun startTouchTimer() {
         touchJob?.cancel()
@@ -124,13 +126,21 @@ fun ExerciseScreen(
             viewModel,
             state
         )
-
+        Box(modifier = Modifier
+            .fillMaxSize()
+            .padding(0.dp, 20.dp, 0.dp, 25.dp), contentAlignment = Alignment.TopCenter){
+            Row(modifier = Modifier.fillMaxWidth(),horizontalArrangement = Arrangement.Center) {
+                Text(text="${exerciseIndex+1}/${totalExercises}",style = MaterialTheme.typography.body1)
+                Spacer(modifier = Modifier.width(30.dp))
+                Text( text="${setIndex+1}/${sets.count()}",style = MaterialTheme.typography.body1)
+            }
+        }
         Column(
             verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(0.dp, 40.dp, 0.dp, 25.dp)
+                .padding(0.dp, 45.dp, 0.dp, 25.dp)
         ) {
             Column(
                 modifier = Modifier.padding(40.dp,0.dp),
@@ -152,10 +162,6 @@ fun ExerciseScreen(
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.title3,
                     )
-                    if(sets.count()!=1){
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text( text="${setIndex+1}/${sets.count()}",style = MaterialTheme.typography.body1)
-                    }
                 }
             }
 
