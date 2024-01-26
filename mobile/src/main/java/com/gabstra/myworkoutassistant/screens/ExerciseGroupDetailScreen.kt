@@ -59,6 +59,10 @@ fun ExerciseGroupDetailScreen(
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
+    var isDragDisabled by remember {
+        mutableStateOf(false)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -225,9 +229,12 @@ fun ExerciseGroupDetailScreen(
                         content = { when(it) {
                             is Exercise -> ExerciseRenderer(it)
                             is ExerciseGroup -> ExerciseGroupRenderer(it)
-                        } }
+                        } },
+                        onOpen = { isDragDisabled = true },
+                        onClose = { isDragDisabled = false }
                     )
-                }
+                },
+                isDragDisabled = isDragDisabled
             )
         }
     }

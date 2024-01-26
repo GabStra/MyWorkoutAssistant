@@ -3,9 +3,6 @@ package com.gabstra.myworkoutassistant.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -34,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,18 +41,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
-import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
-import com.gabstra.myworkoutassistant.composables.SelectableList
 import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
 import com.gabstra.myworkoutassistant.shared.Workout
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -130,7 +122,7 @@ fun WorkoutTitle(modifier: Modifier,workout: Workout){
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkoutsScreen(
     appViewModel: AppViewModel,
@@ -139,9 +131,13 @@ fun WorkoutsScreen(
     onOpenSettingsClick: () -> Unit,
     onFileSelected: (Uri) -> Unit
 ) {
-    var workouts by remember { mutableStateOf(appViewModel.workouts) }
+    val workouts by appViewModel.workoutsFlow.collectAsState()
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
+
+    var isCardExpanded by remember {
+        mutableStateOf(false)
+    }
 
     //add a menu in the floating action button
     Scaffold(
@@ -165,7 +161,7 @@ fun WorkoutsScreen(
                         val newWorkouts = workouts.filter { workout ->
                             workout !in selectedWorkouts
                         }
-                        workouts = newWorkouts
+
                         appViewModel.updateWorkouts(newWorkouts)
                         selectedWorkouts = emptyList()
                         isSelectionModeActive = false
@@ -222,6 +218,7 @@ fun WorkoutsScreen(
                 selectedItems= selectedWorkouts,
                 isSelectionModeActive,
                 onItemClick = {
+                    if(isCardExpanded) return@GenericSelectableList
                     appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
                 },
                 onEnableSelection = { isSelectionModeActive = true },
@@ -229,7 +226,6 @@ fun WorkoutsScreen(
                 onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
                 onOrderChange = { newWorkouts->
                     appViewModel.updateWorkouts(newWorkouts)
-                    workouts = newWorkouts
                 },
                 itemContent = { it ->
                     ExpandableCard(
@@ -238,9 +234,12 @@ fun WorkoutsScreen(
                             .fillMaxWidth()
                             .alpha(if (it.enabled) 1f else 0.4f),
                         title = { modifier ->  WorkoutTitle(modifier,it) },
-                        content = { WorkoutRenderer(it) }
+                        content = { WorkoutRenderer(it) },
+                        onOpen = { isCardExpanded = true },
+                        onClose = { isCardExpanded = false }
                     )
-                }
+                },
+                isDragDisabled = isCardExpanded
             )
         }
     }

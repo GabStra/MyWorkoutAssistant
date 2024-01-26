@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant
 
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -10,6 +11,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 sealed class ScreenData() {
@@ -60,14 +63,20 @@ class AppViewModel() : ViewModel() {
     ))
         private set
 
+    private val _workoutsFlow = MutableStateFlow(workoutStore.workouts)
+    val workoutsFlow = _workoutsFlow.asStateFlow()
+
     var workouts: List<Workout>
         get() = workoutStore.workouts
         private set(value) {
+            _workoutsFlow.value = value
+            Log.d("AppViewModel", "WORKOUTS LOADED ${value.size}")
             workoutStore = workoutStore.copy(workouts = value)
         }
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
         workoutStore = newWorkoutStore
+        _workoutsFlow.value = newWorkoutStore.workouts
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {

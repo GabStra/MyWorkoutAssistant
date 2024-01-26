@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
@@ -43,14 +44,10 @@ fun ExerciseRenderer(exercise: Exercise){
                         )
                     }
                     is TimedDurationSet -> {
-                        Text(
-                            text = "${set.timeInMillis/1000}s"
-                        )
+                        Text(formatSecondsToMinutesSeconds(set.timeInMillis/1000))
                     }
                     is EnduranceSet -> {
-                        Text(
-                            text = "${set.timeInMillis/1000}s"
-                        )
+                        Text(formatSecondsToMinutesSeconds(set.timeInMillis/1000))
                     }
                 }
             }

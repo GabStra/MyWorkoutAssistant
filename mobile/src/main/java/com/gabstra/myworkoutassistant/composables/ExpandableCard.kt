@@ -35,6 +35,8 @@ fun ExpandableCard(
     modifier : Modifier = Modifier,
     title: @Composable (modifier: Modifier) -> Unit,
     content: @Composable () -> Unit,
+    onOpen: () -> Unit,
+    onClose: () -> Unit,
     colors: CardColors = CardDefaults.cardColors()
 ){
     var isOpen by remember {
@@ -56,7 +58,14 @@ fun ExpandableCard(
                 title(Modifier.weight(1f))
                 IconButton(
                     modifier = Modifier.alpha(if(isExpandable) 1f else 0.4f),
-                    onClick = { if(isExpandable) isOpen = !isOpen }) {
+                    onClick = { if(isExpandable){
+                        isOpen = !isOpen
+                        if(isOpen){
+                            onOpen()
+                        }else{
+                            onClose()
+                        }
+                    } }) {
                     Icon(imageVector = if(isOpen) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
                 }
             }

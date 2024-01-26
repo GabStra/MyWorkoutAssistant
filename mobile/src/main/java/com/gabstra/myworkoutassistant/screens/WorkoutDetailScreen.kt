@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
@@ -78,16 +79,19 @@ fun WorkoutComponentTitle(modifier:Modifier, workoutComponent: WorkoutComponent)
 fun WorkoutDetailScreen(
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
-    workout: Workout,
+    workout : Workout,
+    workoutComponents: List<WorkoutComponent>,
     onGoBack : () -> Unit
 ) {
-    var workoutComponents by remember { mutableStateOf(workout.workoutComponents) }
-
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
     val formatter = remember { DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.ENGLISH)}
     val workoutHistoryDates = remember { mutableStateOf(listOf<LocalDate>()) }
+
+    var isDragDisabled by remember {
+        mutableStateOf(false)
+    }
 
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
@@ -128,7 +132,7 @@ fun WorkoutDetailScreen(
                             selectedWorkoutComponents.none { it === item }
                         }
 
-                        workoutComponents = newWorkoutComponents
+
 
                         val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
                         appViewModel.updateWorkout(workout,updatedWorkout)
@@ -144,7 +148,7 @@ fun WorkoutDetailScreen(
                                 is Exercise -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
                                 is ExerciseGroup -> selectedWorkoutComponent.copy(id= java.util.UUID.randomUUID())
                             }
-                            workoutComponents = workoutComponents + newWorkoutComponent
+
                             appViewModel.addWorkoutComponent(workout,newWorkoutComponent)
                             selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
@@ -154,14 +158,23 @@ fun WorkoutDetailScreen(
                     Button(
                         modifier = Modifier.padding(5.dp),
                         onClick = {
-                            for (workoutComponent in selectedWorkoutComponents) {
-                                val updatedWorkoutComponent = when(workoutComponent){
-                                    is Exercise -> workoutComponent.copy(enabled = true)
-                                    is ExerciseGroup -> workoutComponent.copy(enabled = true)
-                                }
+                            Log.d("WorkoutDetailScreen","selectedWorkoutComponents: ${selectedWorkoutComponents.size}")
 
-                                appViewModel.updateWorkoutComponent(workout,workoutComponent,updatedWorkoutComponent)
+                            val updatedWorkoutComponents = workoutComponents.map { workoutComponent ->
+                                if (selectedWorkoutComponents.any { it === workoutComponent }) {
+                                    when (workoutComponent) {
+                                        is Exercise -> workoutComponent.copy(enabled = true)
+                                        is ExerciseGroup -> workoutComponent.copy(enabled = true)
+                                        else -> workoutComponent
+                                    }
+                                } else {
+                                    workoutComponent
+                                }
                             }
+
+                            val updatedWorkout = workout.copy(workoutComponents = updatedWorkoutComponents)
+                            appViewModel.updateWorkout(workout,updatedWorkout)
+
                             selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
@@ -170,13 +183,21 @@ fun WorkoutDetailScreen(
                     Button(
                         modifier = Modifier.padding(5.dp),
                         onClick = {
-                            for (workoutComponent in selectedWorkoutComponents)  {
-                                val updatedWorkoutComponent = when(workoutComponent){
-                                    is Exercise -> workoutComponent.copy(enabled = false)
-                                    is ExerciseGroup -> workoutComponent.copy(enabled = false)
+                            Log.d("WorkoutDetailScreen","selectedWorkoutComponents: ${selectedWorkoutComponents.size}")
+                            val updatedWorkoutComponents = workoutComponents.map { workoutComponent ->
+                                if (selectedWorkoutComponents.any { it === workoutComponent }) {
+                                    when (workoutComponent) {
+                                        is Exercise -> workoutComponent.copy(enabled = false)
+                                        is ExerciseGroup -> workoutComponent.copy(enabled = false)
+                                        else -> workoutComponent
+                                    }
+                                } else {
+                                    workoutComponent
                                 }
-                                appViewModel.updateWorkoutComponent(workout,workoutComponent,updatedWorkoutComponent)
                             }
+
+                            val updatedWorkout = workout.copy(workoutComponents = updatedWorkoutComponents)
+                            appViewModel.updateWorkout(workout,updatedWorkout)
                             selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
@@ -239,11 +260,13 @@ fun WorkoutDetailScreen(
                     },
                     onEnableSelection = { isSelectionModeActive = true },
                     onDisableSelection = { isSelectionModeActive = false },
-                    onSelectionChange = { newSelection -> selectedWorkoutComponents = newSelection} ,
+                    onSelectionChange = { newSelection ->
+                        Log.d("WorkoutDetailScreen",newSelection.toString())
+                        selectedWorkoutComponents = newSelection
+                                        } ,
                     onOrderChange = { newWorkoutComponents ->
                         val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
                         appViewModel.updateWorkout(workout,updatedWorkout)
-                        workoutComponents = newWorkoutComponents
                     },
                     itemContent = { it ->
                         ExpandableCard(
@@ -259,9 +282,12 @@ fun WorkoutDetailScreen(
                             content = { when(it) {
                                 is Exercise ->  ExerciseRenderer(it)
                                 is ExerciseGroup -> ExerciseGroupRenderer(it)
-                            } }
+                            } },
+                            onOpen = { isDragDisabled = true },
+                            onClose = { isDragDisabled = false }
                         )
-                    }
+                    },
+                    isDragDisabled = isDragDisabled
                 )
             }
         }

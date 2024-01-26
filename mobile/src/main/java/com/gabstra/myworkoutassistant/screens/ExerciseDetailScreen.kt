@@ -36,6 +36,7 @@ import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
+import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -76,14 +77,14 @@ fun SetRenderer(set: Set) {
             is EnduranceSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "Time: ${set.timeInMillis / 1000}s"
+                    text = "Time: ${formatSecondsToMinutesSeconds(set.timeInMillis/1000)}"
                 )
             }
 
             is TimedDurationSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "Time: ${set.timeInMillis / 1000}s"
+                    text = "Time: ${formatSecondsToMinutesSeconds(set.timeInMillis/1000)}"
                 )
             }
         }
