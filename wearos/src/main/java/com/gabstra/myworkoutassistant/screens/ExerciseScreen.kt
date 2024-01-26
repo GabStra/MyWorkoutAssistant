@@ -88,7 +88,7 @@ import kotlin.io.path.Path
 fun Modifier.circleMask() = this.drawWithContent {
     // Create a circular path for the mask
     val path = androidx.compose.ui.graphics.Path().apply {
-        val radius = size.minDimension * 0.55f
+        val radius = size.width  * 0.45f
         val center = Offset(size.width / 2, size.height / 2)
         addOval(androidx.compose.ui.geometry.Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius))
     }
@@ -193,6 +193,7 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .circleMask()
             .pointerInteropFilter {
                 if (!showLockScreen) {
                     startTouchTimer()
@@ -219,11 +220,7 @@ fun ExerciseScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(0.dp, 45.dp, 0.dp, 20.dp)
-                .circleMask()
         ) {
-
-
-
             AnimatedContent(
                 targetState = state,
                 transitionSpec = {
@@ -232,7 +229,7 @@ fun ExerciseScreen(
             ) { updatedState ->
 
                 Column(
-                    modifier = Modifier.padding(20.dp,0.dp),
+                    modifier = Modifier.padding(25.dp,0.dp),
                     verticalArrangement = Arrangement.Bottom,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -328,7 +325,13 @@ fun ExerciseScreen(
                 }
             }
         }
+    }
 
+    Box(
+        modifier = Modifier
+            .fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
         ExerciseIndicator(
             modifier = Modifier.fillMaxSize(),
             viewModel,
