@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable;
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -138,7 +139,7 @@ fun RestScreen(
             )
         }
 
-        val nextWorkoutState by viewModel.nextWorkoutState
+        val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
         when(nextWorkoutState){
             is WorkoutState.Set -> {
                 val state = nextWorkoutState as WorkoutState.Set

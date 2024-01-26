@@ -80,12 +80,14 @@ fun HeartRateCircularChart(
             )
         }
 
+        /*
         RotatedTriangle(
             baseAngleInDegrees =  110f + mapPercentage * (250f - 110f),
             triangleSize = 10f,
             color = Color.Red,
             margin = 20f
         )
+        */
 
         SegmentedProgressIndicator(
             trackSegments = segments,

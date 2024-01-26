@@ -1,21 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:tools="http://schemas.android.com/tools"
+    xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Allows Polar SDK to connect to paired bluetooth devices. Legacy Bluetooth permission,
-     which is needed on devices with API 30 (Android Q) or older. -->
-    <uses-permission
-        android:name="android.permission.BLUETOOTH"/>
 
-    <!-- Allows Polar SDK to discover and pair bluetooth devices. Legacy Bluetooth permission,
-     which is needed on devices with API 30 (Android Q) or older. -->
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_ADMIN" />
+    <!-- Request legacy Bluetooth permissions on older devices. -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+
 
     <!-- Polar SDK needs the fine location permission to get results for Bluetooth scan. Request
     fine location permission on devices with API 30 (Android Q). Note, if your application
@@ -43,7 +44,6 @@
         <uses-library
             android:name="com.google.android.wearable"
             android:required="true" />
-
 
         <service
             android:name=".DataLayerListenerService"

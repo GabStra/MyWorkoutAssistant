@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerStart: () -> Unit, onTimerEnd: () -> Unit) {
+fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -55,10 +55,12 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerS
     var currentMillis by remember(state) { mutableIntStateOf(state.set.timeInMillis) }
     var showStopDialog by remember { mutableStateOf(false) }
 
+    var showBottom by remember { mutableStateOf(false) }
+
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-            onTimerStart()
+
             while (currentMillis > 0) {
                 delay(1000) // Update every sec.
                 currentMillis -= 1000
@@ -77,6 +79,9 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerS
 
             VibrateShortImpulse(context);
             onTimerEnd()
+            if(!state.set.autoStop){
+                showBottom = true
+            }
         }
     }
 
@@ -124,6 +129,8 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerS
                 ) {
                     Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
                 }
+            } else if(showBottom){
+                bottom()
             }
         }
     }

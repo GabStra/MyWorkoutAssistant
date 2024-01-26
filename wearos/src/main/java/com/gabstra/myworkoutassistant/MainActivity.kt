@@ -32,7 +32,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
-import com.gabstra.myworkoutassistant.data.PolarViewModelFactory
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
@@ -129,12 +128,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             )
         )
 
-        val polarViewModel: PolarViewModel = viewModel(
-            factory = PolarViewModelFactory(
-                applicationContext = localContext.applicationContext,
-                deviceId = appViewModel.polarDeviceId
-            )
-        )
+        val polarViewModel: PolarViewModel = viewModel()
 
         val nodes by appHelper.connectedAndInstalledNodes.collectAsState(initial = emptyList())
 

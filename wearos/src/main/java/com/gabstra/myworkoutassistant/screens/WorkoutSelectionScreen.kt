@@ -72,41 +72,9 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
         },
         onClick = { onItemClick() },
         modifier = Modifier
-            .size(160.dp, 50.dp)
+            .size(150.dp, 50.dp)
             .padding(2.dp),
     )
-}
-
-@OptIn(ExperimentalHorologistApi::class)
-@Composable
-fun MissingAppMessage(
-    dataClient: DataClient,
-    viewModel: AppViewModel,
-    appHelper: WearDataLayerAppHelper,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = "Please set your age in the app on your phone",
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.caption1,
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        Button(
-            onClick = {
-                scope.launch {
-                    openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
-                }
-            }) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.SendToMobile,
-                contentDescription = "SendToMobile",
-                modifier = Modifier.size(30.dp),
-            )
-        }
-    }
 }
 
 @OptIn(ExperimentalHorologistApi::class)
@@ -145,12 +113,15 @@ fun MissingAgeSettingMessage(
 @Composable
 fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController, viewModel: AppViewModel, appHelper: WearDataLayerAppHelper) {
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
-    val workouts = viewModel.workouts
+    val workouts by viewModel.workouts
 
     val currentYear = remember {  Calendar.getInstance().get(Calendar.YEAR) }
 
     var waitTimeInSec by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
+
+    val userAge by viewModel.userAge
+    val phoneNode = viewModel.phoneNode
 
     LaunchedEffect(Unit){
         scope.launch {
@@ -169,15 +140,17 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
             )
         }
     ){
+        Text(
+            modifier = Modifier.padding(horizontal = 50.dp, vertical = 10.dp),
+            text = "My Workout Assistant",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.caption1,
+        )
+
         ScalingLazyColumn(
-            modifier = Modifier.padding(horizontal = 10.dp),
-            state = scalingLazyListState
+            modifier = Modifier.padding(10.dp, 55.dp,10.dp,0.dp),
+            state = scalingLazyListState,
         ) {
-            item { ListHeader { Text(
-                text = "My Workout Assistant",
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1,
-            ) } }
             if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5){
                 item {
                     Text(
@@ -187,7 +160,7 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                     )
                 }
             }else{
-                if(viewModel.userAge == currentYear && viewModel.phoneNode != null){
+                if(userAge == currentYear && phoneNode != null){
                     item {
                         MissingAgeSettingMessage(dataClient, viewModel, appHelper)
                     }

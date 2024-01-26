@@ -4,8 +4,10 @@ import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +39,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
+@RequiresApi(Build.VERSION_CODES.S)
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, hrViewModel : MeasureDataViewModel) {

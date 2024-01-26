@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.util.Log
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +44,7 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PreparingStandardScreen(
     viewModel: AppViewModel,
@@ -79,13 +82,13 @@ fun PreparingStandardScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(40.dp,50.dp,40.dp,0.dp),
+            .padding(20.dp,50.dp,20.dp,0.dp),
         contentAlignment = Alignment.TopCenter
     ) {
         Column(){
             Text(text = "Preparing Watch Sensor", style = MaterialTheme.typography.body2)
             Spacer(modifier = Modifier.height(10.dp))
-            Row(modifier = Modifier.width(180.dp)){
+            Row(modifier = Modifier.width(180.dp).padding(horizontal = 20.dp)){
                 LoadingText(baseText = "Loading HR")
             }
             if(canSkip){

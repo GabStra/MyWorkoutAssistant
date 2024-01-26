@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -18,22 +19,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel() {
-    private val deviceId = deviceId
+class PolarViewModel : ViewModel() {
+    private lateinit var deviceId: String
 
-    private val api: PolarBleApi = PolarBleApiDefaultImpl.defaultImplementation(applicationContext,
-        setOf(
-            PolarBleApi.PolarBleSdkFeature.FEATURE_HR,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_SDK_MODE,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_BATTERY_INFO,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_H10_EXERCISE_RECORDING,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_OFFLINE_RECORDING,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_ONLINE_STREAMING,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_DEVICE_TIME_SETUP,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_DEVICE_INFO,
-            PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_LED_ANIMATION
-        )
-    )
+    private lateinit var api: PolarBleApi
 
     private val _deviceConnectionState = MutableStateFlow<PolarDeviceInfo?>(null)
     val deviceConnectionState = _deviceConnectionState.asStateFlow()
@@ -46,7 +35,28 @@ class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel(
 
     private val disposables = CompositeDisposable()
 
-    init {
+    private val _hasBeenInitialized = MutableStateFlow<Boolean>(false)
+
+    val hasBeenInitialized = _hasBeenInitialized.asStateFlow()
+
+    fun initialize(applicationContext: Context, deviceId: String){
+        _hasBeenInitialized.value = true
+
+        this.deviceId = deviceId
+        api = PolarBleApiDefaultImpl.defaultImplementation(applicationContext,
+            setOf(
+                PolarBleApi.PolarBleSdkFeature.FEATURE_HR,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_SDK_MODE,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_BATTERY_INFO,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_H10_EXERCISE_RECORDING,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_OFFLINE_RECORDING,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_ONLINE_STREAMING,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_DEVICE_TIME_SETUP,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_DEVICE_INFO,
+                PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_LED_ANIMATION
+            )
+        )
+
         val enableSdkLogs = true
         if(enableSdkLogs) {
             api.setApiLogger { s: String -> Log.d("MyApp", s) }
@@ -66,7 +76,9 @@ class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel(
                 }
             }
 
-            override fun deviceConnecting(polarDeviceInfo: PolarDeviceInfo) {}
+            override fun deviceConnecting(polarDeviceInfo: PolarDeviceInfo) {
+                Toast.makeText(applicationContext, "Connecting to ${polarDeviceInfo.deviceId}", Toast.LENGTH_SHORT).show()
+            }
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
                 viewModelScope.launch {
@@ -91,7 +103,18 @@ class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel(
             try {
                 api.connectToDevice(deviceId)
             } catch (e: Exception) {
-                //Log.e("MyApp", "Error connecting to device: $e")
+                Log.e("MyApp", "Error connecting to device ${deviceId}: $e")
+            }
+        }
+    }
+
+    fun disconnectFromDevice() {
+        viewModelScope.launch {
+            try {
+                disposables.clear()
+                api.disconnectFromDevice(deviceId)
+            } catch (e: Exception) {
+                Log.e("MyApp", "Error disconnecting from device ${deviceId}: $e")
             }
         }
     }
@@ -123,15 +146,5 @@ class PolarViewModel(applicationContext: Context, deviceId: String) : ViewModel(
     override fun onCleared() {
         super.onCleared()
         disposables.dispose()
-    }
-}
-
-class PolarViewModelFactory(private val applicationContext: Context, private val deviceId: String) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(PolarViewModel::class.java)) {
-            @Suppress("UNCHECKED_CAST")
-            return PolarViewModel(applicationContext,deviceId) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
     }
 }

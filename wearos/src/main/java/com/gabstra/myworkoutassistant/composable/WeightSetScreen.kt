@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.runtime.Composable
@@ -23,18 +26,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.google.android.horologist.compose.pager.PagerScreen
+import kotlin.math.absoluteValue
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, isFooterHidden:Boolean, onEditModeChange: (Boolean) -> Unit) {
+fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData
@@ -43,12 +50,12 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
     var isRepsPickerVisible by remember { mutableStateOf(false) }
     var isWeightPickerVisible by remember { mutableStateOf(false) }
 
-    LaunchedEffect(forceStopEditMode) {
-        if(forceStopEditMode) isRepsPickerVisible = false
-    }
 
-    LaunchedEffect(isRepsPickerVisible,isWeightPickerVisible) {
-        onEditModeChange(isRepsPickerVisible || isWeightPickerVisible)
+    LaunchedEffect(forceStopEditMode) {
+        if(forceStopEditMode){
+            isRepsPickerVisible = false
+            isWeightPickerVisible = false
+        }
     }
 
     LaunchedEffect(currentSet) {
@@ -58,26 +65,29 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
+        modifier = Modifier
+            .fillMaxSize()
     ){
-        Column(modifier = Modifier.padding(30.dp,5.dp,30.dp,0.dp), verticalArrangement = Arrangement.Top, horizontalAlignment = Alignment.End) {
+        Column(modifier = Modifier.padding(25.dp,2.dp,30.dp,2.dp), verticalArrangement = Arrangement.Top, horizontalAlignment = Alignment.End) {
             Row(
-                modifier = Modifier.combinedClickable(
-                    onClick = {
-                        if(!forceStopEditMode){
-                            isRepsPickerVisible = !isRepsPickerVisible
-                            isWeightPickerVisible = false
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = {
+                            if (!forceStopEditMode) {
+                                isRepsPickerVisible = !isRepsPickerVisible
+                                isWeightPickerVisible = false
+                            }
+                        },
+                        onLongClick = {
+                            if (isRepsPickerVisible) {
+                                currentSet = currentSet.copy(
+                                    actualReps = previousSet.actualReps
+                                )
+                                VibrateOnce(context)
+                            }
                         }
-                    },
-                    onLongClick = {
-                        if (isRepsPickerVisible) {
-                            currentSet = currentSet.copy(
-                                actualReps = previousSet.actualReps
-                            )
-                            VibrateOnce(context)
-                        }
-                    }
-                ),
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.End
             ) {
@@ -105,27 +115,31 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                     Text(
                         text = "reps",
                         style = MaterialTheme.typography.body1,
-                        modifier = Modifier.width(35.dp).padding(0.dp,0.dp,0.dp,4.dp)
+                        modifier = Modifier
+                            .width(35.dp)
+                            .padding(0.dp, 0.dp, 0.dp, 4.dp)
                     )
                 }
             }
             Row(
-                modifier = Modifier.combinedClickable(
-                    onClick = {
-                        if(!forceStopEditMode){
-                            isWeightPickerVisible = !isWeightPickerVisible
-                            isRepsPickerVisible = false
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = {
+                            if (!forceStopEditMode) {
+                                isWeightPickerVisible = !isWeightPickerVisible
+                                isRepsPickerVisible = false
+                            }
+                        },
+                        onLongClick = {
+                            if (isWeightPickerVisible) {
+                                currentSet = currentSet.copy(
+                                    actualWeight = previousSet.actualWeight
+                                )
+                                VibrateOnce(context)
+                            }
                         }
-                    },
-                    onLongClick = {
-                        if (isWeightPickerVisible) {
-                            currentSet = currentSet.copy(
-                                actualWeight = previousSet.actualWeight
-                            )
-                            VibrateOnce(context)
-                        }
-                    }
-                ),
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.End
             ) {
@@ -152,14 +166,16 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                     Text(
                         text = "kg",
                         style = MaterialTheme.typography.body1,
-                        modifier = Modifier.width(35.dp).padding(0.dp,0.dp,0.dp,4.dp)
+                        modifier = Modifier
+                            .width(35.dp)
+                            .padding(0.dp, 0.dp, 0.dp, 4.dp)
                     )
                 }
             }
         }
 
         Box(contentAlignment = Alignment.BottomCenter) {
-            if (isFooterHidden && (isRepsPickerVisible || isWeightPickerVisible)) {
+            if (isRepsPickerVisible || isWeightPickerVisible) {
                 Spacer(modifier = Modifier.height(10.dp))
                 ControlButtons(
                     onMinusClick = {
@@ -187,6 +203,8 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                         }
                     }
                 )
+            }else{
+                bottom()
             }
         }
     }

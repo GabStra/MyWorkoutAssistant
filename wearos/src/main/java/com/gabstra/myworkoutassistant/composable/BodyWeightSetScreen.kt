@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,7 +33,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, isFooterHidden:Boolean, onEditModeChange: (Boolean) -> Unit) {
+fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as BodyWeightSetData
@@ -44,9 +45,6 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
         if(forceStopEditMode) isRepsPickerVisible = false
     }
 
-    LaunchedEffect(isRepsPickerVisible) {
-        onEditModeChange(isRepsPickerVisible)
-    }
 
     LaunchedEffect(currentSet) {
         // Update the WorkoutState.Set whenever currentSet changes
@@ -59,7 +57,7 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
     ){
         Column(modifier = Modifier.weight(1f).padding(40.dp,20.dp,40.dp,0.dp), verticalArrangement = Arrangement.Top, horizontalAlignment = Alignment.End) {
             Row(
-                modifier = Modifier.combinedClickable(
+                modifier = Modifier.fillMaxWidth().combinedClickable(
                     onClick = {
                         if(!forceStopEditMode) isRepsPickerVisible = !isRepsPickerVisible
                     },
@@ -102,7 +100,7 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
             }
         }
         Box(contentAlignment = Alignment.BottomCenter) {
-            if (isFooterHidden && isRepsPickerVisible) {
+            if (isRepsPickerVisible) {
                 ControlButtons(
                     onMinusClick = {
                         if (currentSet.actualReps > 1) currentSet = currentSet.copy(actualReps = currentSet.actualReps - 1)
@@ -111,6 +109,8 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
                         currentSet = currentSet.copy(actualReps = currentSet.actualReps + 1)
                     }
                 )
+            }else{
+                bottom()
             }
         }
     }

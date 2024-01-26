@@ -23,7 +23,6 @@ fun ExerciseIndicator(
     viewModel: AppViewModel,
     state: WorkoutState.Set,
 ){
-    val workout by viewModel.selectedWorkout
     val parentIndex = viewModel.groupedSetsByWorkoutComponent.keys.indexOf(state.parents.first())
 
     val maxCount = 5
@@ -32,7 +31,7 @@ fun ExerciseIndicator(
     var areMoreElementsAvailable = false
     var elementsToSkip = 0
 
-    var maxElementToSkip = viewModel.groupedSetsByWorkoutComponent.keys.count() - maxCount
+    val maxElementToSkip = viewModel.groupedSetsByWorkoutComponent.keys.count() - maxCount
     if(maxElementToSkip > 0){
         elementsToSkip = min(parentIndex-2, maxElementToSkip)
         if(elementsToSkip <0){
@@ -104,6 +103,10 @@ fun ExerciseIndicator(
             val currentSetIndex = setIds.indexOf(state.setHistoryId)
             val exerciseSegments = listOf(ProgressIndicatorSegment(1f / setIds.count(),if(isParent) Color.White else MaterialTheme.colors.primary))
 
+            if(totalGroups == 1 && setIds.isNotEmpty() && currentSetIndex == 0){
+                endAngleForGroup-=13
+            }
+
             if(isParent && currentSetIndex >0){
                 RotatedCircles(
                     baseAngleInDegrees = 2f + startAngleForGroup,
@@ -131,6 +134,8 @@ fun ExerciseIndicator(
                 trackColor = Color.DarkGray,
             )
             if(isParent && currentSetIndex < setIds.count()-1) {
+
+
                 RotatedCircles(
                     baseAngleInDegrees = 4f + endAngleForGroup,
                     circleRadius = 3f, // Size of each circle

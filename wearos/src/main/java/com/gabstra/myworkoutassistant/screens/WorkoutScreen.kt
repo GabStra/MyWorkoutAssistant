@@ -1,11 +1,18 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -30,6 +37,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.KeepScreenOn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -76,8 +84,10 @@ fun WorkoutScreen(
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var screenLocked by remember { mutableStateOf(false) }
-    val workoutState by viewModel.workoutState
+    val workoutState by viewModel.workoutState.collectAsState()
     val selectedWorkout by viewModel.selectedWorkout
+    val userAge by viewModel.userAge
+    val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
 
     BackHandler(true) {
         if(!screenLocked) showWorkoutInProgressDialog=true
@@ -92,6 +102,8 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog=false
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.endExercise()
+            }else{
+                polarViewModel.disconnectFromDevice()
             }
             coroutineScope.launch {
                 navController.navigate(Screen.WorkoutSelection.route){
@@ -122,7 +134,9 @@ fun WorkoutScreen(
                 hrViewModel.startExercise()
             }
             else{
-                polarViewModel.connectToDevice()
+                if(hasPolarApiBeenInitialized){
+                    polarViewModel.connectToDevice()
+                }
             }
         }
     )
@@ -157,13 +171,13 @@ fun WorkoutScreen(
                             HeartRateStandard(
                                 modifier = Modifier.fillMaxSize(),
                                 hrViewModel,
-                                viewModel.userAge
+                                userAge
                             )
                         else
                             HeartRatePolar(
                                 modifier = Modifier.fillMaxSize(),
                                 polarViewModel,
-                                viewModel.userAge
+                                userAge
                             )
                     }
                 )

@@ -39,7 +39,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerStart: () -> Unit, onTimerEnd: () -> Unit) {
+fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -54,10 +54,11 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerStar
     var currentMillis by remember(set) { mutableIntStateOf(0) }
     var showStopDialog by remember { mutableStateOf(false) }
 
+    var showBottom by remember { mutableStateOf(false) }
+
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-            onTimerStart()
             while (currentMillis < set.timeInMillis) {
                 delay(1000) // Update every sec.
                 currentMillis += 1000
@@ -77,6 +78,10 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerStar
             VibrateShortImpulse(context);
 
             onTimerEnd()
+
+            if(!state.set.autoStop){
+                showBottom = true
+            }
         }
     }
 
@@ -112,7 +117,7 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerStar
                 }
             }
 
-            if (timerJob != null) {
+            if (timerJob?.isActive == true) {
                 Button(
                     onClick = {
                         VibrateOnce(context)
@@ -124,6 +129,8 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerStar
                 ) {
                     Icon(imageVector = Icons.Default.Stop, contentDescription = "Start")
                 }
+            }else if(showBottom){
+                bottom()
             }
         }
     }

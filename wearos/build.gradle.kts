@@ -10,8 +10,8 @@ android {
 
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
-        minSdk = 30
-        targetSdk = 33
+        minSdk = 31
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
         vectorDrawables {
@@ -27,11 +27,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+
+        isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
         jvmTarget = "17"
@@ -55,36 +58,37 @@ dependencies {
     implementation("com.google.android.gms:play-services-wearable:18.1.0")
     implementation("androidx.percentlayout:percentlayout:1.0.0")
     implementation("androidx.legacy:legacy-support-v4:1.0.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.1")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation(platform("androidx.compose:compose-bom:2023.03.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.wear.compose:compose-material:1.2.0")
-    implementation("androidx.wear.compose:compose-foundation:1.2.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
-    implementation("androidx.activity:activity-compose:1.7.2")
-    implementation("androidx.navigation:navigation-compose:+")
-    implementation("androidx.health:health-services-client:+")
+    implementation("androidx.wear.compose:compose-material:1.3.0")
+    implementation("androidx.wear.compose:compose-foundation:1.3.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.navigation:navigation-compose:2.7.6")
+    implementation("androidx.health:health-services-client:1.1.0-alpha02")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.1.0")
-    implementation("com.google.accompanist:accompanist-permissions:+")
-    implementation("com.google.android.horologist:horologist-composables:+")
-    implementation("androidx.wear:wear-tooling-preview:1.0.0-rc01")
-    implementation("com.google.android.horologist:horologist-datalayer:+")
-    implementation("com.google.android.horologist:horologist-datalayer-watch:+")
+    implementation("com.google.accompanist:accompanist-permissions:0.33.2-alpha")
+    implementation("com.google.android.horologist:horologist-composables:0.5.19")
+    implementation("androidx.wear:wear-tooling-preview:1.0.0")
+    implementation("com.google.android.horologist:horologist-datalayer:0.5.19")
+    implementation("com.google.android.horologist:horologist-datalayer-watch:0.5.19")
     kapt("androidx.room:room-compiler:+")
     implementation("androidx.room:room-ktx:+")
-    implementation("androidx.health:health-services-client:+")
+    implementation("androidx.health:health-services-client:1.1.0-alpha02")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.1.0")
     implementation("com.google.guava:guava:30.0-android")
-    implementation("androidx.compose.material:material-icons-extended:+")
-    implementation("com.google.code.gson:gson:2.9.0")
-
+    implementation("androidx.compose.material:material-icons-extended:1.6.0")
+    implementation("com.google.code.gson:gson:2.10")
+    implementation("com.google.android.horologist:horologist-compose-layout:0.5.19")
     implementation("com.github.polarofficial:polar-ble-sdk:5.5.0")
     implementation("io.reactivex.rxjava3:rxjava:3.1.6")
     implementation("io.reactivex.rxjava3:rxandroid:3.0.2")
-
+    implementation("androidx.compose.foundation:foundation:1.6.0")
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.03.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }

@@ -2,14 +2,9 @@ package com.gabstra.myworkoutassistant
 
 import android.content.ContentValues
 import android.content.Context
-import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.util.Log
 import android.widget.Toast
-import androidx.compose.ui.platform.LocalContext
-import androidx.documentfile.provider.DocumentFile
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON

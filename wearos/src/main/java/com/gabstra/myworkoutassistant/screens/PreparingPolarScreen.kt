@@ -60,12 +60,15 @@ fun PreparingPolarScreen(
     var canSkip by remember { mutableStateOf(false) }
     val context = LocalContext.current
     LaunchedEffect(Unit){
+
         if(viewModel.polarDeviceId.isEmpty()){
             Toast.makeText(context, "No polar device id set", Toast.LENGTH_SHORT).show()
             navController.popBackStack()
             VibrateShortImpulse(context);
             return@LaunchedEffect
         }
+
+        polarViewModel.initialize(context,viewModel.polarDeviceId)
 
         polarViewModel.connectToDevice()
 
@@ -81,6 +84,7 @@ fun PreparingPolarScreen(
     }
 
     LaunchedEffect(deviceConnectionInfo, heartRate,state,currentMillis) {
+        Log.d("PreparingPolarScreen", "deviceConnectionInfo: $deviceConnectionInfo, heartRate: $heartRate, state: $state, currentMillis: $currentMillis")
         val isReady = (deviceConnectionInfo != null) && (heartRate > 0) && state.dataLoaded && currentMillis >=2000
         if (isReady) {
             viewModel.goToNextState()
@@ -90,16 +94,16 @@ fun PreparingPolarScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(40.dp,50.dp,40.dp,0.dp),
+            .padding(20.dp,50.dp,20.dp,0.dp),
         contentAlignment = Alignment.TopCenter
     ) {
         Column(){
             Text(text = "Preparing Polar", style = MaterialTheme.typography.body2)
             Spacer(modifier = Modifier.height(10.dp))
-            Row(modifier = Modifier.width(180.dp)){
+            Row(modifier = Modifier.width(180.dp).padding(horizontal = 20.dp)){
                 LoadingText(baseText =  if(deviceConnectionInfo == null) "Connecting" else "Loading HR")
             }
-            if(canSkip){
+            if(canSkip && deviceConnectionInfo == null){
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
                     Button(
