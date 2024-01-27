@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 fun SetRenderer(set: Set) {
     Row(
         modifier = Modifier.padding(15.dp),
+        horizontalArrangement = Arrangement.Center
     ) {
         when (set) {
             is WeightSet -> {
@@ -70,21 +71,23 @@ fun SetRenderer(set: Set) {
 
             is BodyWeightSet -> {
                 Text(
-                    text = "Reps: ${set.reps}"
+                    text = "Reps: ${set.reps}",
                 )
             }
 
             is EnduranceSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "Time: ${formatSecondsToMinutesSeconds(set.timeInMillis/1000)}"
+                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis/1000)} (mm:ss)",
+                    textAlign = TextAlign.Center,
                 )
             }
 
             is TimedDurationSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "Time: ${formatSecondsToMinutesSeconds(set.timeInMillis/1000)}"
+                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis/1000)} (mm:ss)",
+                    textAlign = TextAlign.Center,
                 )
             }
         }

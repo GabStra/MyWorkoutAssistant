@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -34,8 +36,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -279,10 +284,20 @@ fun WorkoutDetailScreen(
                                 .fillMaxWidth()
                                 .alpha(if (it.enabled) 1f else 0.4f),
                             title = { modifier -> WorkoutComponentTitle(modifier,it) },
-                            content = { when(it) {
-                                is Exercise ->  ExerciseRenderer(it)
-                                is ExerciseGroup -> ExerciseGroupRenderer(it)
-                            } },
+                            content = {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal=10.dp, vertical = 5.dp)
+                                        .clip(RoundedCornerShape(5.dp)).background(Color.Black),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ){
+                                    when(it) {
+                                        is Exercise ->  ExerciseRenderer(it)
+                                        is ExerciseGroup -> ExerciseGroupRenderer(it)
+                                    }
+                                }
+                                 },
                             onOpen = { isDragDisabled = true },
                             onClose = { isDragDisabled = false }
                         )

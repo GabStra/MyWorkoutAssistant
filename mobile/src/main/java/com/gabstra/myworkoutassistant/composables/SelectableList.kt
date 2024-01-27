@@ -32,7 +32,7 @@ fun <T> SelectableList(
     ) {
         items(items) { item ->
             Row(
-                modifier = Modifier.padding(10.dp),
+                modifier = Modifier,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (selectionMode) {

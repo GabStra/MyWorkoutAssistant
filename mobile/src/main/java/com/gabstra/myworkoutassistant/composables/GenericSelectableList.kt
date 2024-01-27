@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,7 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 
 fun findNewIndex(newCenterY: Float, currentIndex: Int, centerPointByIndex: MutableMap<Int, Pair<Float, Float>>): Int {
-    val minDiff = 100f // Adjust this threshold as needed
+    val minDiff = 60f // Adjust this threshold as needed
     val upperBound = newCenterY + minDiff
     val lowerBound = newCenterY - minDiff
 
@@ -105,6 +106,7 @@ fun <T> GenericSelectableList(
                                         Card(
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .padding(5.dp)
                                         ){
                                             itemContent(itemToDisplay)
                                         }
@@ -143,13 +145,16 @@ fun <T> GenericSelectableList(
             }
         }
 
-
+    val interactionSource = remember { MutableInteractionSource() }
     SelectableList(
         isSelectionModeActive,
         modifier = Modifier
             .fillMaxSize()
             .padding(it ?: PaddingValues(0.dp))
-            .clickable {
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null
+            ) {
                 if (isSelectionModeActive) {
                     onDisableSelection()
                     onSelectionChange(emptyList())
@@ -187,6 +192,7 @@ fun <T> GenericSelectableList(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(5.dp)
                             .combinedClickable(
                                 onClick = {
                                     if (isSelectionModeActive) {
