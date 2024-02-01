@@ -7,16 +7,22 @@ import androidx.room.Query
 
 @Dao
 interface SetHistoryDao {
+    @Query("SELECT * FROM set_history")
+    suspend fun getAllSetHistories(): List<SetHistory>
+
     @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId")
-    suspend fun getExerciseHistoriesByWorkoutHistoryId(workoutHistoryId: Int): List<SetHistory>
+    suspend fun getSetHistoriesByWorkoutHistoryId(workoutHistoryId: Int): List<SetHistory>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(setHistory: SetHistory)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(vararg exerciseHistories: SetHistory)
+    suspend fun insertAll(vararg setHistories: SetHistory)
 
     @Query("DELETE FROM set_history WHERE workoutHistoryId = :workoutHistoryId")
     suspend fun deleteByWorkoutHistoryId(workoutHistoryId: Int)
+
+    @Query("DELETE FROM set_history")
+    suspend fun deleteAll()
 }
 

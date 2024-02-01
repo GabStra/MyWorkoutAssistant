@@ -17,7 +17,7 @@ interface WorkoutHistoryDao {
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId ORDER BY date DESC LIMIT 1")
     suspend fun getLatestWorkoutHistoryByWorkoutId(workoutId: UUID): WorkoutHistory?
 
-    @Query("SELECT * FROM workout_history ORDER BY date DESC")
+    @Query("SELECT * FROM workout_history")
     suspend fun getAllWorkoutHistories(): List<WorkoutHistory>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -35,7 +35,9 @@ interface WorkoutHistoryDao {
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId AND date = :date")
     fun getWorkoutsByWorkoutIdAndDate(workoutId: UUID, date: LocalDate): List<WorkoutHistory>
 
-
     @Query("DELETE FROM workout_history WHERE id = :id")
     suspend fun deleteById(id: Int)
+
+    @Query("DELETE FROM workout_history")
+    suspend fun deleteAll()
 }

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -18,11 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
 import com.gabstra.myworkoutassistant.screens.ExerciseGroupDetailScreen
@@ -32,20 +31,37 @@ import com.gabstra.myworkoutassistant.screens.SettingsScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
+import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
+import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
+import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
+import com.google.gson.GsonBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
-    private val db by lazy { AppDatabase.getDatabase(this)}
+    private val db by lazy { AppDatabase.getDatabase(this) }
 
     private val appViewModel: AppViewModel by viewModels()
 
@@ -63,7 +79,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MyWorkoutAssistantNavHost(dataClient,appViewModel,workoutStoreRepository,db)
+                    MyWorkoutAssistantNavHost(dataClient, appViewModel, workoutStoreRepository, db)
                 }
             }
         }
@@ -74,10 +90,11 @@ class MainActivity : ComponentActivity() {
         setIntent(intent) // Update the old intent
         val receivedValue = intent.getStringExtra("page")
         receivedValue?.let { page ->
-            when(page){
+            when (page) {
                 "workouts" -> {
                     appViewModel.setScreenData(ScreenData.Workouts())
                 }
+
                 "settings" -> {
                     appViewModel.setScreenData(ScreenData.Settings())
                 }
@@ -91,17 +108,17 @@ class MainActivity : ComponentActivity() {
 fun MyWorkoutAssistantNavHost(
     dataClient: DataClient,
     appViewModel: AppViewModel,
-    workoutStoreRepository : WorkoutStoreRepository,
+    workoutStoreRepository: WorkoutStoreRepository,
     db: AppDatabase
-){
+) {
     val context = LocalContext.current
 
-    //val exerciseHistoryDao = db.setHistoryDao()
-    val workoutHistoryDao= db.workoutHistoryDao()
+    val setHistoryDao = db.setHistoryDao()
+    val workoutHistoryDao = db.workoutHistoryDao()
 
     LaunchedEffect(appViewModel.workouts) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
-        sendWorkoutStore(dataClient,appViewModel.workoutStore)
+        sendWorkoutStore(dataClient, appViewModel.workoutStore)
         Toast.makeText(context, "Automatic update", Toast.LENGTH_SHORT).show()
     }
 
@@ -112,41 +129,84 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    when(appViewModel.currentScreenData){
+    val scope = rememberCoroutineScope()
+
+    val jsonPickerLauncher =
+        rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            uri?.let {
+                try {
+                    context.contentResolver.openInputStream(it)?.use { inputStream ->
+                        val reader = inputStream.bufferedReader()
+                        val content = reader.readText()
+                        val appBackup = fromJSONtoAppBackup(content)
+                        workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
+                        scope.launch {
+                            workoutHistoryDao.deleteAll()
+                            setHistoryDao.deleteAll()
+                            workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
+                            setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
+                        }
+                        Toast.makeText(
+                            context,
+                            "Data restored from backup",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Failed to import data from backup", Toast.LENGTH_SHORT)
+                        .show()
+                }
+            }
+        }
+
+    when (appViewModel.currentScreenData) {
         is ScreenData.Workouts -> {
             WorkoutsScreen(appViewModel,
-                onSaveClick={
-                    val jsonString = fromWorkoutStoreToJSON(appViewModel.workoutStore)
-                    writeJsonToDownloadsFolder(context,"workout_store.json",jsonString)
-                    Toast.makeText(context, "Workout Store saved to downloads folder", Toast.LENGTH_SHORT).show()
-                },
                 onSyncClick = {
-                    sendWorkoutStore(dataClient,appViewModel.workoutStore)
+                    scope.launch {
+                        withContext(Dispatchers.IO){
+                            val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+                            val setHistories = setHistoryDao.getAllSetHistories()
+                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories)
+                            sendAppBackup(dataClient, appBackup)
+                        }
+                        Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onOpenSettingsClick = {
                     appViewModel.setScreenData(ScreenData.Settings())
                 },
-                onFileSelected = {
-                    try {
-                        context.contentResolver.openInputStream(it)?.use { inputStream ->
-                            val reader = inputStream.bufferedReader()
-                            val content = reader.readText()
-                            workoutStoreRepository.saveWorkoutStoreFromJson(content)
-                            appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-                            Toast.makeText(context, "Workout Store loaded from json", Toast.LENGTH_SHORT).show()
-                        }
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "Import failed", Toast.LENGTH_SHORT).show()
+                onBackupClick = {
+                    scope.launch {
+                        val sdf = SimpleDateFormat("dd_MM_yyyy", Locale.getDefault())
+                        val currentDate = sdf.format(Date())
+                        val filename = "my_workout_history_$currentDate.json"
+
+                        val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+                        val setHistories = setHistoryDao.getAllSetHistories()
+                        val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories)
+                        val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
+                        writeJsonToDownloadsFolder(context, filename, jsonString)
+                        Toast.makeText(
+                            context,
+                            "Backup of workout history saved to downloads folder",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
+
+                },
+                onRestoreClick = {
+                    jsonPickerLauncher.launch(arrayOf("application/json"))
                 }
             )
         }
-        is ScreenData.Settings ->{
+
+        is ScreenData.Settings -> {
             SettingsScreen(
                 onSave = { newWorkoutStore ->
                     appViewModel.updateWorkoutStore(newWorkoutStore)
                     workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
-                    sendWorkoutStore(dataClient,appViewModel.workoutStore)
+                    sendWorkoutStore(dataClient, appViewModel.workoutStore)
                     Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
                     appViewModel.goBack()
                 },
@@ -156,6 +216,7 @@ fun MyWorkoutAssistantNavHost(
                 workoutStore = appViewModel.workoutStore
             )
         }
+
         is ScreenData.NewWorkout -> {
             WorkoutForm(
                 onWorkoutUpsert = { newWorkout ->
@@ -165,13 +226,14 @@ fun MyWorkoutAssistantNavHost(
                 onCancel = { appViewModel.goBack() },
             )
         }
+
         is ScreenData.EditWorkout -> {
             val screenData = appViewModel.currentScreenData as ScreenData.EditWorkout
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
             WorkoutForm(
                 onWorkoutUpsert = { updatedWorkout ->
-                    appViewModel.updateWorkout(selectedWorkout,updatedWorkout)
+                    appViewModel.updateWorkout(selectedWorkout, updatedWorkout)
                     appViewModel.goBack()
                 },
                 onCancel = {
@@ -180,36 +242,55 @@ fun MyWorkoutAssistantNavHost(
                 workout = selectedWorkout
             )
         }
+
         is ScreenData.WorkoutDetail -> {
             val screenData = appViewModel.currentScreenData as ScreenData.WorkoutDetail
             val workouts by appViewModel.workoutsFlow.collectAsState()
 
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            Log.d("WorkoutDetailScreen","selectedWorkout: ${selectedWorkout.workoutComponents[0].enabled}")
-            WorkoutDetailScreen(appViewModel,workoutHistoryDao,selectedWorkout,selectedWorkout.workoutComponents){
+
+            WorkoutDetailScreen(
+                appViewModel,
+                workoutHistoryDao,
+                selectedWorkout,
+                selectedWorkout.workoutComponents
+            ) {
                 appViewModel.goBack()
             }
         }
+
         is ScreenData.ExerciseGroupDetail -> {
             val screenData = appViewModel.currentScreenData as ScreenData.ExerciseGroupDetail
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val selectedExerciseGroup = findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.selectedExerciseGroupId) as ExerciseGroup
-            ExerciseGroupDetailScreen(appViewModel, selectedWorkout,selectedExerciseGroup){
+            val selectedExerciseGroup = findWorkoutComponentByIdInWorkout(
+                selectedWorkout,
+                screenData.selectedExerciseGroupId
+            ) as ExerciseGroup
+            ExerciseGroupDetailScreen(appViewModel, selectedWorkout, selectedExerciseGroup) {
                 appViewModel.goBack()
             }
         }
+
         is ScreenData.NewExerciseGroup -> {
             val screenData = appViewModel.currentScreenData as ScreenData.NewExerciseGroup
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val parentExerciseGroup = if(screenData.parentExerciseGroupId != null) findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.parentExerciseGroupId) as ExerciseGroup else null
+            val parentExerciseGroup =
+                if (screenData.parentExerciseGroupId != null) findWorkoutComponentByIdInWorkout(
+                    selectedWorkout,
+                    screenData.parentExerciseGroupId
+                ) as ExerciseGroup else null
             ExerciseGroupForm(
                 onWorkoutComponentUpsert = { newExerciseGroup ->
-                    if(parentExerciseGroup != null){
-                        appViewModel.addWorkoutComponentToExerciseGroup(selectedWorkout,parentExerciseGroup,newExerciseGroup)
-                    }else{
-                        appViewModel.addWorkoutComponent(selectedWorkout,newExerciseGroup)
+                    if (parentExerciseGroup != null) {
+                        appViewModel.addWorkoutComponentToExerciseGroup(
+                            selectedWorkout,
+                            parentExerciseGroup,
+                            newExerciseGroup
+                        )
+                    } else {
+                        appViewModel.addWorkoutComponent(selectedWorkout, newExerciseGroup)
                     }
                     appViewModel.goBack()
                 },
@@ -218,14 +299,22 @@ fun MyWorkoutAssistantNavHost(
                 },
             )
         }
+
         is ScreenData.EditExerciseGroup -> {
             val screenData = appViewModel.currentScreenData as ScreenData.EditExerciseGroup
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val selectedExerciseGroup = findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.selectedExerciseGroupId) as ExerciseGroup
+            val selectedExerciseGroup = findWorkoutComponentByIdInWorkout(
+                selectedWorkout,
+                screenData.selectedExerciseGroupId
+            ) as ExerciseGroup
             ExerciseGroupForm(
                 onWorkoutComponentUpsert = { updatedExerciseGroup ->
-                    appViewModel.updateWorkoutComponent(selectedWorkout,selectedExerciseGroup,updatedExerciseGroup)
+                    appViewModel.updateWorkoutComponent(
+                        selectedWorkout,
+                        selectedExerciseGroup,
+                        updatedExerciseGroup
+                    )
                     appViewModel.goBack()
                 },
                 onCancel = {
@@ -234,40 +323,61 @@ fun MyWorkoutAssistantNavHost(
                 exerciseGroup = selectedExerciseGroup
             )
         }
+
         is ScreenData.ExerciseDetail -> {
             val screenData = appViewModel.currentScreenData as ScreenData.ExerciseDetail
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val selectedExercise = findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.selectedExerciseId) as Exercise
-            ExerciseDetailScreen(appViewModel, selectedWorkout,selectedExercise){
+            val selectedExercise = findWorkoutComponentByIdInWorkout(
+                selectedWorkout,
+                screenData.selectedExerciseId
+            ) as Exercise
+            ExerciseDetailScreen(appViewModel, selectedWorkout, selectedExercise) {
                 appViewModel.goBack()
             }
         }
+
         is ScreenData.NewExercise -> {
             val screenData = appViewModel.currentScreenData as ScreenData.NewExercise
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val parentExerciseGroup = if(screenData.parentExerciseGroupId != null) findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.parentExerciseGroupId) as ExerciseGroup else null
+            val parentExerciseGroup =
+                if (screenData.parentExerciseGroupId != null) findWorkoutComponentByIdInWorkout(
+                    selectedWorkout,
+                    screenData.parentExerciseGroupId
+                ) as ExerciseGroup else null
             ExerciseForm(
                 onExerciseUpsert = { newExercise ->
-                    if(parentExerciseGroup != null){
-                        appViewModel.addWorkoutComponentToExerciseGroup(selectedWorkout,parentExerciseGroup,newExercise)
-                    }else{
-                        appViewModel.addWorkoutComponent(selectedWorkout,newExercise)
+                    if (parentExerciseGroup != null) {
+                        appViewModel.addWorkoutComponentToExerciseGroup(
+                            selectedWorkout,
+                            parentExerciseGroup,
+                            newExercise
+                        )
+                    } else {
+                        appViewModel.addWorkoutComponent(selectedWorkout, newExercise)
                     }
                     appViewModel.goBack()
                 },
                 onCancel = { appViewModel.goBack() },
             )
         }
+
         is ScreenData.EditExercise -> {
             val screenData = appViewModel.currentScreenData as ScreenData.EditExercise
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val selectedExercise = findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.selectedExerciseId) as Exercise
+            val selectedExercise = findWorkoutComponentByIdInWorkout(
+                selectedWorkout,
+                screenData.selectedExerciseId
+            ) as Exercise
             ExerciseForm(
                 onExerciseUpsert = { updatedExercise ->
-                    appViewModel.updateWorkoutComponent(selectedWorkout,selectedExercise,updatedExercise)
+                    appViewModel.updateWorkoutComponent(
+                        selectedWorkout,
+                        selectedExercise,
+                        updatedExercise
+                    )
                     appViewModel.goBack()
                 },
                 onCancel = {
@@ -281,10 +391,13 @@ fun MyWorkoutAssistantNavHost(
             val screenData = appViewModel.currentScreenData as ScreenData.NewSet
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val parentExercise = findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.parentExerciseId) as Exercise
+            val parentExercise = findWorkoutComponentByIdInWorkout(
+                selectedWorkout,
+                screenData.parentExerciseId
+            ) as Exercise
             SetForm(
                 onSetUpsert = { updatedSet ->
-                    appViewModel.addSetToExercise(selectedWorkout,parentExercise,updatedSet)
+                    appViewModel.addSetToExercise(selectedWorkout, parentExercise, updatedSet)
                     appViewModel.goBack()
                 },
                 onCancel = {
@@ -292,14 +405,23 @@ fun MyWorkoutAssistantNavHost(
                 },
             )
         }
+
         is ScreenData.EditSet -> {
             val screenData = appViewModel.currentScreenData as ScreenData.EditSet
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-            val parentExercise = findWorkoutComponentByIdInWorkout(selectedWorkout,screenData.parentExerciseId) as Exercise
+            val parentExercise = findWorkoutComponentByIdInWorkout(
+                selectedWorkout,
+                screenData.parentExerciseId
+            ) as Exercise
             SetForm(
                 onSetUpsert = { updatedSet ->
-                    appViewModel.updateSetInExercise(selectedWorkout,parentExercise,screenData.selectedSet,updatedSet)
+                    appViewModel.updateSetInExercise(
+                        selectedWorkout,
+                        parentExercise,
+                        screenData.selectedSet,
+                        updatedSet
+                    )
                     appViewModel.goBack()
                 },
                 onCancel = {

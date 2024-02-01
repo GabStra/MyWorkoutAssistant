@@ -31,13 +31,27 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
+import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
+import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.LoadingText
+import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
+import com.gabstra.myworkoutassistant.composable.WeightSetDataViewer
+import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.getFirstExercise
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 
 import kotlinx.coroutines.delay
 
@@ -78,6 +92,22 @@ fun NextExerciseInfo(
             if(sets.count()!=1){
                 Text( text="${setIndex+1}/${sets.count()}",style = MaterialTheme.typography.body1)
             }
+            Spacer(modifier = Modifier.height(5.dp))
+            when(state.set){
+                is WeightSet -> WeightSetDataViewerMinimal(
+                    state.currentSetData as WeightSetData
+                )
+                is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                    state.currentSetData as BodyWeightSetData
+                )
+                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                    state.currentSetData as TimedDurationSetData
+                )
+                is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                    state.currentSetData as EnduranceSetData
+                )
+            }
+
            //TODO Show info based on set type
         }
     }

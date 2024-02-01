@@ -4,6 +4,8 @@ import android.content.Intent
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
@@ -30,11 +32,12 @@ class DataLayerListenerService : WearableListenerService() {
                     scope.launch {
                         try{
                             val db = AppDatabase.getDatabase(this@DataLayerListenerService)
-                            val exerciseHistoryDao= db.setHistoryDao()
+                            val setHistoryDao = db.setHistoryDao()
                             val workoutHistoryDao= db.workoutHistoryDao()
 
                             val gson = GsonBuilder()
                                 .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+                                .registerTypeAdapter(SetData::class.java, SetDataAdapter())
                                 .create()
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
 
@@ -46,11 +49,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
                             }
 
-                            val workoutHistoryId = workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory ).toInt()
-                            val executedExercisesHistory = workoutHistoryStore.ExerciseHistories.map {
-                                it.copy(workoutHistoryId = workoutHistoryId)
-                            }
-                            exerciseHistoryDao.insertAll(*executedExercisesHistory.toTypedArray())
+                            workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
+                            setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
                         }catch (exception: Exception) {
                             exception.printStackTrace()
                         }

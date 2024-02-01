@@ -53,15 +53,11 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 @Composable
 fun Menu(
     onSyncClick: () -> Unit,
-    onSaveClick: () -> Unit,
+    onBackupClick: () -> Unit,
+    onRestoreClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
-    onFileSelected: (Uri) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
-
-    val launcher = rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let { onFileSelected(it) }
-    }
 
     Box(
         modifier = Modifier.wrapContentSize(Alignment.TopEnd)
@@ -85,9 +81,16 @@ fun Menu(
                 }
             )
             DropdownMenuItem(
-                text = { Text("Save") },
+                text = { Text("Save Backup") },
                 onClick = {
-                    onSaveClick()
+                    onBackupClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Restore Backup") },
+                onClick = {
+                    onRestoreClick()
                     expanded = false
                 }
             )
@@ -95,13 +98,6 @@ fun Menu(
                 text = { Text("Settings") },
                 onClick = {
                     onOpenSettingsClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = {Text("Load JSON") },
-                onClick = {
-                    launcher.launch(arrayOf("application/json"))
                     expanded = false
                 }
             )
@@ -127,9 +123,9 @@ fun WorkoutTitle(modifier: Modifier,workout: Workout){
 fun WorkoutsScreen(
     appViewModel: AppViewModel,
     onSyncClick: () -> Unit,
-    onSaveClick: () -> Unit,
-    onOpenSettingsClick: () -> Unit,
-    onFileSelected: (Uri) -> Unit
+    onBackupClick: () -> Unit,
+    onRestoreClick: () -> Unit,
+    onOpenSettingsClick: () -> Unit
 ) {
     val workouts by appViewModel.workoutsFlow.collectAsState()
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
@@ -146,10 +142,10 @@ fun WorkoutsScreen(
                 title = { Text("My Workout Assistant") },
                 actions = {
                     Menu(
-                        onSaveClick = onSaveClick,
                         onSyncClick = onSyncClick,
                         onOpenSettingsClick = onOpenSettingsClick,
-                        onFileSelected = onFileSelected
+                        onBackupClick = onBackupClick,
+                        onRestoreClick = onRestoreClick
                     )
                 }
             )
@@ -159,7 +155,7 @@ fun WorkoutsScreen(
                 actions =  {
                     IconButton(onClick = {
                         val newWorkouts = workouts.filter { workout ->
-                            workout !in selectedWorkouts
+                            selectedWorkouts.none { it === workout }
                         }
 
                         appViewModel.updateWorkouts(newWorkouts)

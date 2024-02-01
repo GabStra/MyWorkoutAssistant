@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
-import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -9,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -150,13 +150,30 @@ class AppViewModel : ViewModel(){
         }
     }
 
+    fun sendWorkoutHistoryToPhone(){
+        viewModelScope.launch {
+            val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
+            if(workoutHistory !=null){
+                val exerciseHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+
+                dataClient?.let {
+                    sendWorkoutHistoryStore(
+                        it,WorkoutHistoryStore(
+                            WorkoutHistory =workoutHistory,
+                            ExerciseHistories =  exerciseHistories
+                        ))
+                }
+            }
+        }
+    }
+
     private suspend fun loadWorkoutHistory(){
         val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
         latestSetHistoryMap.clear()
         if(workoutHistory !=null){
-            val exerciseHistories = setHistoryDao.getExerciseHistoriesByWorkoutHistoryId(workoutHistory.id)
-            for(exerciseHistory in exerciseHistories){
-                latestSetHistoryMap[exerciseHistory.setHistoryId] = exerciseHistory
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+            for(setHistory in setHistories){
+                latestSetHistoryMap[setHistory.setHistoryId] = setHistory
             }
         }
     }

@@ -83,7 +83,8 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         ) {
             Button(
                 onClick = {
-                    //VibrateOnce(context)
+                    VibrateOnce(context)
+                    viewModel.sendWorkoutHistoryToPhone()
                 },
                 modifier = Modifier.size(35.dp),
                 colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.secondary)

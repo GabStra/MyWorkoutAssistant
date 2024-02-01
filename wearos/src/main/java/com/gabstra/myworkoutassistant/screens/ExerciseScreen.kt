@@ -275,10 +275,8 @@ fun ExerciseScreen(
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
                                     onTimerEnd = {
-                                        if(updatedState.set.autoStop){
-                                            viewModel.storeExecutedSetHistory(updatedState)
-                                            viewModel.goToNextState()
-                                        }
+                                        viewModel.storeExecutedSetHistory(updatedState)
+                                        viewModel.goToNextState()
                                     },
                                     bottom = completeOrSkipExerciseComposable
                                 )
@@ -286,10 +284,8 @@ fun ExerciseScreen(
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
                                     onTimerEnd = {
-                                        if(updatedState.set.autoStop){
-                                            viewModel.storeExecutedSetHistory(updatedState)
-                                            viewModel.goToNextState()
-                                        }
+                                        viewModel.storeExecutedSetHistory(updatedState)
+                                        viewModel.goToNextState()
                                     },
                                     bottom = completeOrSkipExerciseComposable
                                 )

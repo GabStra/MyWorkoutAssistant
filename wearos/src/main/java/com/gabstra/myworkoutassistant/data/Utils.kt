@@ -6,11 +6,18 @@ import android.content.ContextWrapper
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.logLargeString
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -166,8 +173,14 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
     try {
         val gson = GsonBuilder()
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+            .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
+            .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
+            .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
+            .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
             .create()
         val jsonString = gson.toJson(workoutHistoryStore)
+
+        logLargeString("WORKOUT_HISTORY_JSON", jsonString)
 
         val request = PutDataMapRequest.create("/workoutHistoryStore").apply {
             dataMap.putString("json",jsonString)

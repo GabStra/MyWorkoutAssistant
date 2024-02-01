@@ -40,6 +40,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -79,16 +80,30 @@ class MainActivity : ComponentActivity() {
 
         myReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                val workoutStoreJson = intent.getStringExtra("workoutStoreJson")
-                if(workoutStoreJson != null){
-                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-                    Toast.makeText(context, "Update received", Toast.LENGTH_SHORT).show()
+                try{
+                    val workoutStoreJson = intent.getStringExtra("workoutStoreJson")
+                    val appBackupJson = intent.getStringExtra("appBackupJson")
+
+                    if(workoutStoreJson != null || appBackupJson != null){
+                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                    }
+
+                    if(workoutStoreJson != null){
+                        Toast.makeText(context, "Workouts updated", Toast.LENGTH_SHORT).show()
+                    }
+
+                    if(appBackupJson != null){
+                        Toast.makeText(context, "Data received", Toast.LENGTH_SHORT).show()
+                    }
+                }catch (exception: Exception) {
+                    Log.d("MainActivity", "Exception: $exception")
                 }
+
             }
         }
 
         setContent {
-            WearApp(dataClient,appViewModel,appHelper)
+            WearApp(dataClient, appViewModel, appHelper)
         }
     }
 
