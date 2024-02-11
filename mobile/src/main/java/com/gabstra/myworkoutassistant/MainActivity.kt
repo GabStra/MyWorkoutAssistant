@@ -1,7 +1,10 @@
 package com.gabstra.myworkoutassistant
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -30,6 +33,7 @@ import com.gabstra.myworkoutassistant.screens.SetForm
 import com.gabstra.myworkoutassistant.screens.SettingsScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
+import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
@@ -67,10 +71,33 @@ class MainActivity : ComponentActivity() {
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
 
+    private lateinit var myReceiver: BroadcastReceiver
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
+        registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
+        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(myReceiver)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+        myReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                try{
+                    if( intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
+                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                    }
+                }catch (_: Exception) {
+                }
+            }
+        }
 
         setContent {
             MyWorkoutAssistantTheme {
@@ -88,7 +115,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update the old intent
-        val receivedValue = intent.getStringExtra("page")
+        val receivedValue = intent.getStringExtra(DataLayerListenerService.PAGE)
         receivedValue?.let { page ->
             when (page) {
                 "workouts" -> {
@@ -153,6 +180,7 @@ fun MyWorkoutAssistantNavHost(
                         ).show()
                     }
                 } catch (e: Exception) {
+                    Log.e("MainActivity", "Failed to import data from backup", e)
                     Toast.makeText(context, "Failed to import data from backup", Toast.LENGTH_SHORT)
                         .show()
                 }
@@ -161,7 +189,9 @@ fun MyWorkoutAssistantNavHost(
 
     when (appViewModel.currentScreenData) {
         is ScreenData.Workouts -> {
-            WorkoutsScreen(appViewModel,
+            WorkoutsScreen(
+                appViewModel,
+                workoutHistoryDao,
                 onSyncClick = {
                     scope.launch {
                         withContext(Dispatchers.IO){
@@ -189,7 +219,7 @@ fun MyWorkoutAssistantNavHost(
                         writeJsonToDownloadsFolder(context, filename, jsonString)
                         Toast.makeText(
                             context,
-                            "Backup of workout history saved to downloads folder",
+                            "Backup saved to downloads folder",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -197,6 +227,13 @@ fun MyWorkoutAssistantNavHost(
                 },
                 onRestoreClick = {
                     jsonPickerLauncher.launch(arrayOf("application/json"))
+                },
+                onClearAllHistories = {
+                    scope.launch {
+                        workoutHistoryDao.deleteAll()
+                        setHistoryDao.deleteAll()
+                        Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
         }
@@ -253,7 +290,20 @@ fun MyWorkoutAssistantNavHost(
                 appViewModel,
                 workoutHistoryDao,
                 selectedWorkout,
-                selectedWorkout.workoutComponents
+            ) {
+                appViewModel.goBack()
+            }
+        }
+
+        is ScreenData.WorkoutHistory -> {
+            val screenData = appViewModel.currentScreenData as ScreenData.WorkoutHistory
+            val workouts by appViewModel.workoutsFlow.collectAsState()
+            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            WorkoutHistoryScreen(
+                workoutHistoryDao,
+                setHistoryDao,
+                selectedWorkout,
             ) {
                 appViewModel.goBack()
             }
@@ -332,7 +382,13 @@ fun MyWorkoutAssistantNavHost(
                 selectedWorkout,
                 screenData.selectedExerciseId
             ) as Exercise
-            ExerciseDetailScreen(appViewModel, selectedWorkout, selectedExercise) {
+
+            ExerciseDetailScreen(
+                appViewModel,
+                selectedWorkout,
+                setHistoryDao,
+                selectedExercise
+            ) {
                 appViewModel.goBack()
             }
         }

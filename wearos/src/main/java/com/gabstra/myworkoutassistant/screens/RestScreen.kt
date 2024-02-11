@@ -6,14 +6,11 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable;
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -23,27 +20,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
-import com.gabstra.myworkoutassistant.composable.WeightSetDataViewer
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
-import com.gabstra.myworkoutassistant.data.getFirstExercise
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -61,12 +52,10 @@ fun NextExerciseInfo(
     viewModel: AppViewModel,
     state: WorkoutState.Set
 ){
-    val workout by viewModel.selectedWorkout
-    val sets = remember(state){
-        getFirstExercise(state.parents).sets
-    }
-    val setIndex = remember(state) {
-        sets.indexOfFirst { it === state.set }
+    val exerciseSets = state.parentExercise.sets
+
+    val setIndex = remember(state,exerciseSets) {
+        exerciseSets.indexOfFirst { it === state.set }
     }
 
     Column(
@@ -85,12 +74,12 @@ fun NextExerciseInfo(
             Text(
                     modifier = Modifier
                         .basicMarquee(),
-                    text = state.exerciseName,
+                    text = state.parentExercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                 )
-            if(sets.count()!=1){
-                Text( text="${setIndex+1}/${sets.count()}",style = MaterialTheme.typography.body1)
+            if(exerciseSets.count()!=1){
+                Text( text="${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
             }
             Spacer(modifier = Modifier.height(5.dp))
             when(state.set){
@@ -107,8 +96,6 @@ fun NextExerciseInfo(
                     state.currentSetData as EnduranceSetData
                 )
             }
-
-           //TODO Show info based on set type
         }
     }
 }
@@ -172,8 +159,7 @@ fun RestScreen(
         val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
         when(nextWorkoutState){
             is WorkoutState.Set -> {
-                val state = nextWorkoutState as WorkoutState.Set
-                NextExerciseInfo(viewModel,state)
+                NextExerciseInfo(viewModel,nextWorkoutState as WorkoutState.Set)
             }
             else -> {}
         }

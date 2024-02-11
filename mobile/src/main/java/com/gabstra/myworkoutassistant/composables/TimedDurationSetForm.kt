@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +95,7 @@ fun TimedDurationSetForm(
             onClick = {
                 val timeInSeconds = timeInSecondsState.value.toIntOrNull() ?: 0
                 val newTimedDurationSet = TimedDurationSet(
+                    id = UUID.randomUUID(),
                     timeInMillis = if (timeInSeconds >= 0) timeInSeconds * 1000 else 0,
                     autoStart = autoStartState.value,
                     autoStop = autoStopState.value,
@@ -106,7 +108,7 @@ fun TimedDurationSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (timedDurationSet == null) Text("Insert CountDown Set") else Text("Edit CountDown Set")
+            if (timedDurationSet == null) Text("Insert Count-Down Set") else Text("Edit Count-Down Set")
         }
     }
 }

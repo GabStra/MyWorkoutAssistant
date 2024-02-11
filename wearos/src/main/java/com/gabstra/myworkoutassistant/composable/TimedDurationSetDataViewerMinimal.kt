@@ -23,7 +23,7 @@ fun TimedDurationSetDataViewerMinimal(timedDurationSetData: TimedDurationSetData
         horizontalArrangement = Arrangement.Center
     ) {
         Text(
-            text =  FormatTime(timedDurationSetData.actualTimeInMillis / 1000),
+            text =  FormatTime(timedDurationSetData.startTimer / 1000),
             style = MaterialTheme.typography.body1
         )
     }

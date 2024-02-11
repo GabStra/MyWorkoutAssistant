@@ -13,7 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,11 +29,14 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
+import com.gabstra.myworkoutassistant.data.UiState
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
-
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 
 @OptIn(ExperimentalHorologistApi::class)
@@ -51,6 +58,27 @@ fun HeartRateCircularChart(
 
     val mapPercentage = remember(mhrPercentage){ mapPercentage(mhrPercentage) }
 
+
+    val scope = rememberCoroutineScope()
+
+    var dataStaleJob by remember { mutableStateOf<Job?>(null) }
+
+    var isDataStale by remember { mutableStateOf(false) }
+
+    fun startDataStaleCounter() {
+        isDataStale = false
+        dataStaleJob?.cancel()
+        dataStaleJob = scope.launch {
+            delay(5000)  // wait for 5 seconds
+            isDataStale=true
+        }
+    }
+
+    LaunchedEffect(hr){
+        if(hr > 0){
+            startDataStaleCounter()
+        }
+    }
 
     val segments = listOf(
         ProgressIndicatorSegment(.166f, Color.hsl(0f,0.02f,0.68f)),
@@ -76,7 +104,8 @@ fun HeartRateCircularChart(
             Spacer(modifier= Modifier.width(8.dp))
             Text(
                 text="${if(hr==0) "-" else hr}",
-                style = MaterialTheme.typography.caption2
+                style = MaterialTheme.typography.caption2,
+                color = if(isDataStale) Color.Gray else Color.White
             )
         }
 
@@ -102,24 +131,33 @@ fun HeartRateCircularChart(
     }
 }
 
+
 @Composable
 fun HeartRateStandard(
     modifier: Modifier = Modifier.fillMaxSize(),
     hrViewModel: MeasureDataViewModel,
     userAge : Int
 ) {
-    val uiState by hrViewModel.exerciseServiceState.collectAsState()
+    val uiState by hrViewModel.uiState.collectAsState()
 
-    val hr = remember(uiState.exerciseState,uiState.exerciseMetrics.heartRate) {
-        if(uiState.exerciseState == ExerciseState.ACTIVE) uiState.exerciseMetrics.heartRate ?: 0 else 0
+    val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
+
+    var lastNonZeroHeartRate by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(currentHeartRate){
+        if(currentHeartRate > 0){
+            lastNonZeroHeartRate = currentHeartRate.toInt()
+        }
     }
+
+    val hr = if (uiState is UiState.HeartRateAvailable) lastNonZeroHeartRate else 0
 
     HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge)
 }
 
 @Composable
 fun HeartRatePolar(
-    modifier: Modifier = Modifier.fillMaxSize(),
+    modifier: Modifier = Modifier,
     polarViewModel: PolarViewModel,
     userAge : Int
 ) {

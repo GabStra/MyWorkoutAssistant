@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -37,6 +38,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.KeepScreenOn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -57,6 +59,7 @@ fun LifecycleObserver(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            Log.d("LifecycleObserver", "Event: $event")
             when (event) {
                 Lifecycle.Event.ON_START -> onStartedState.value()
                 Lifecycle.Event.ON_PAUSE -> onPausedState.value()
@@ -74,6 +77,7 @@ fun LifecycleObserver(
     }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @Composable
 fun WorkoutScreen(
     navController: NavController,
@@ -101,7 +105,7 @@ fun WorkoutScreen(
             VibrateOnce(context)
             showWorkoutInProgressDialog=false
             if(!selectedWorkout.usePolarDevice){
-                hrViewModel.endExercise()
+                hrViewModel.stopMeasuringHeartRate()
             }else{
                 polarViewModel.disconnectFromDevice()
             }
@@ -126,17 +130,16 @@ fun WorkoutScreen(
     LifecycleObserver(
         onPaused = {
             if(!selectedWorkout.usePolarDevice){
-                hrViewModel.endExercise()
+                hrViewModel.stopMeasuringHeartRate()
             }
         },
         onResumed = {
             if(!selectedWorkout.usePolarDevice){
-                hrViewModel.startExercise()
+                Log.d("WorkoutScreen","HR STARTED")
+                hrViewModel.startMeasuringHeartRate()
             }
-            else{
-                if(hasPolarApiBeenInitialized){
+            else if(hasPolarApiBeenInitialized){
                     polarViewModel.connectToDevice()
-                }
             }
         }
     )

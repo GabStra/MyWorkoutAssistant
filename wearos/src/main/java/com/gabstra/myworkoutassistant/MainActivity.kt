@@ -35,12 +35,11 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
-import com.gabstra.myworkoutassistant.repository.HealthServicesRepository
+import com.gabstra.myworkoutassistant.repository.MeasureDataRepository
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -81,8 +80,8 @@ class MainActivity : ComponentActivity() {
         myReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 try{
-                    val workoutStoreJson = intent.getStringExtra("workoutStoreJson")
-                    val appBackupJson = intent.getStringExtra("appBackupJson")
+                    val workoutStoreJson = intent.getStringExtra(DataLayerListenerService.WORKOUT_STORE_JSON)
+                    val appBackupJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_JSON)
 
                     if(workoutStoreJson != null || appBackupJson != null){
                         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
@@ -139,7 +138,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
 
         val hrViewModel: MeasureDataViewModel =  viewModel(
             factory = MeasureDataViewModelFactory(
-                healthServicesRepository = HealthServicesRepository(localContext)
+                measureDataRepository = MeasureDataRepository(localContext)
             )
         )
 

@@ -96,3 +96,65 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .create()
     return gson.fromJson(json, AppBackup::class.java)
 }
+
+fun initializeSetData(set: Set): SetData = when (set) {
+    is WeightSet -> WeightSetData(set.reps, set.weight)
+    is BodyWeightSet -> BodyWeightSetData(set.reps)
+    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis)
+    is EnduranceSet -> EnduranceSetData(set.timeInMillis,0)
+}
+
+fun copySetData(setData: SetData): SetData = when (setData) {
+    is WeightSetData -> setData.copy()
+    is BodyWeightSetData -> setData.copy()
+    is TimedDurationSetData -> setData.copy()
+    is EnduranceSetData -> setData.copy()
+}
+
+fun isSetDataValid(set: Set, setData: SetData): Boolean {
+    return when (set) {
+        is WeightSet -> setData is WeightSetData
+        is BodyWeightSet -> setData is BodyWeightSetData
+        is TimedDurationSet -> setData is TimedDurationSetData
+        is EnduranceSet -> setData is EnduranceSetData
+    }
+}
+
+fun getNewSetFromSetData(set: Set, setData: SetData): Set? {
+    when (set) {
+        is WeightSet -> {
+            if (setData is WeightSetData) {
+                return set.copy(
+                    reps = setData.actualReps,
+                    weight = setData.actualWeight
+                )
+            }
+        }
+
+        is BodyWeightSet -> {
+            if (setData is BodyWeightSetData) {
+                return set.copy(
+                    reps = setData.actualReps
+                )
+            }
+        }
+
+        is TimedDurationSet -> {
+            if (setData is TimedDurationSetData) {
+                return set.copy(
+                    timeInMillis = setData.startTimer
+                )
+            }
+        }
+
+        is EnduranceSet -> {
+            if (setData is EnduranceSetData) {
+                return set.copy(
+                    timeInMillis = setData.startTimer
+                )
+            }
+        }
+    }
+
+    return null
+}

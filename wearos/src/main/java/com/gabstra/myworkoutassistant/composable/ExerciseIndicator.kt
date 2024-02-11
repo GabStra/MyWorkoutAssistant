@@ -1,10 +1,8 @@
 package com.gabstra.myworkoutassistant.composable
 
-import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -21,9 +19,9 @@ import kotlin.math.min
 fun ExerciseIndicator(
     modifier: Modifier = Modifier.fillMaxSize(),
     viewModel: AppViewModel,
-    state: WorkoutState.Set,
+    set: WorkoutState.Set,
 ){
-    val parentIndex = viewModel.groupedSetsByWorkoutComponent.keys.indexOf(state.parents.first())
+    val parentIndex = viewModel.groupedSetsByWorkoutComponent.keys.indexOf(set.parentExercise)
 
     val maxCount = 5
 
@@ -97,13 +95,13 @@ fun ExerciseIndicator(
 
             var endAngleForGroup = startAngleForGroup + anglePerGroup
 
-            val setIds = viewModel.groupedSetsByWorkoutComponent[workoutComponent]?.map{ state -> state.setHistoryId} ?: listOf()
+            val sets = viewModel.groupedSetsByWorkoutComponent[workoutComponent] ?: listOf()
 
             // Find the index of the current setHistoryId
-            val currentSetIndex = setIds.indexOf(state.setHistoryId)
-            val exerciseSegments = listOf(ProgressIndicatorSegment(1f / setIds.count(),if(isParent) Color.White else MaterialTheme.colors.primary))
+            val currentSetIndex = sets.indexOfFirst { it === set }
+            val exerciseSegments = listOf(ProgressIndicatorSegment(1f / sets.count(),if(isParent) Color.White else MaterialTheme.colors.primary))
 
-            if(totalGroups == 1 && setIds.isNotEmpty() && currentSetIndex == 0){
+            if(totalGroups == 1 && sets.isNotEmpty() && currentSetIndex == 0){
                 endAngleForGroup-=13
             }
 
@@ -119,7 +117,7 @@ fun ExerciseIndicator(
                 endAngleForGroup = startAngleForGroup + (anglePerGroup-13f)
             }
 
-            if(isParent && currentSetIndex < setIds.count()-1 && currentSetIndex>0){
+            if(isParent && currentSetIndex < sets.count()-1 && currentSetIndex>0){
                 endAngleForGroup-=13f
             }
 
@@ -133,7 +131,7 @@ fun ExerciseIndicator(
                 endAngle = endAngleForGroup,
                 trackColor = Color.DarkGray,
             )
-            if(isParent && currentSetIndex < setIds.count()-1) {
+            if(isParent && currentSetIndex < sets.count()-1) {
 
 
                 RotatedCircles(

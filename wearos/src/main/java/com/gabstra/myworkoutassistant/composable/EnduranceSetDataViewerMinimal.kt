@@ -20,7 +20,7 @@ fun EnduranceSetDataViewerMinimal(enduranceSetData: EnduranceSetData){
         horizontalArrangement = Arrangement.Center
     ) {
         Text(
-            text =  FormatTime(enduranceSetData.actualTimeInMillis / 1000),
+            text =  FormatTime(enduranceSetData.startTimer / 1000),
             style = MaterialTheme.typography.body1
         )
     }

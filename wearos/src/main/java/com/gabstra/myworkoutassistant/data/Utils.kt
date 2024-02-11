@@ -34,11 +34,15 @@ import java.time.LocalDate
 import java.util.concurrent.CancellationException
 
 fun FormatTime(seconds: Int): String {
-    val minutes = seconds / 60
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
-    return String.format("%02d:%02d", minutes, remainingSeconds)
+    return if (hours > 0) {
+        String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
+    } else {
+        String.format("%02d:%02d", minutes, remainingSeconds)
+    }
 }
-
 fun VibrateOnce(context: Context,durationInMillis:Long=30) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
@@ -93,29 +97,9 @@ fun VibrateShortImpulse(context: Context) {
     }
 }
 
-
-
 fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
     val mhr = 208 - (0.7f * age)
     return (heartRate / mhr) * 100
-}
-
-fun mapHeartRateToZonePercentage(hrPercentage: Float): Float {
-    return if (hrPercentage <= 50) {
-        hrPercentage * 0.00332f
-    } else {
-        0.166f + ((hrPercentage - 50) / 10) * 0.166f
-    }
-}
-
-fun mapHearthRatePercentageToZone(percentage: Float): Int {
-    val mappedValue = if (percentage <= 50) {
-        percentage * 0.00332f
-    } else {
-        0.166f + ((percentage - 50) / 10) * 0.166f
-    }
-
-    return (mappedValue / 0.166f).toInt()
 }
 
 fun CoroutineScope.onClickWithDelay(
@@ -145,29 +129,6 @@ fun Context.findActivity(): Activity? {
     }
     return null
 }
-
-fun getEnabledItems(workouts: List<Workout>): List<Workout> {
-    return workouts.filter { it.enabled }.map { workout ->
-        workout.copy(
-            workoutComponents = workout.workoutComponents.filter {isWorkoutComponentEnabled(it) }
-        )
-    }.filter { workout ->
-        workout.workoutComponents.isNotEmpty()
-    }
-}
-
-fun isWorkoutComponentEnabled(workoutComponent: WorkoutComponent): Boolean{
-    return when (workoutComponent) {
-        is Exercise -> workoutComponent.enabled
-        is ExerciseGroup -> workoutComponent.workoutComponents.any { isWorkoutComponentEnabled(it) }
-        else -> false // or true, depending on whether you want to include other types by default
-    }
-}
-
-fun getFirstExercise(workoutComponents: List<WorkoutComponent>): Exercise {
-    return workoutComponents.asReversed().firstOrNull { it is Exercise } as Exercise
-}
-
 
 fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore) {
     try {

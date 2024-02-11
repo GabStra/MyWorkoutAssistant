@@ -1,16 +1,12 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.ExperimentalAnimationApi
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.with
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,15 +21,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -41,17 +38,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow.Companion.Clip
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
+import androidx.wear.compose.foundation.HierarchicalFocusCoordinator
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
@@ -60,6 +56,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
+import com.gabstra.myworkoutassistant.composable.ClippedBox
 import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
@@ -71,18 +68,15 @@ import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.data.getFirstExercise
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.google.android.horologist.compose.pager.PagerScreen
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.io.path.Path
 
 
 fun Modifier.circleMask() = this.drawWithContent {
@@ -100,7 +94,7 @@ fun Modifier.circleMask() = this.drawWithContent {
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class,
-    ExperimentalAnimationApi::class
+    ExperimentalAnimationApi::class, ExperimentalWearFoundationApi::class
 )
 @Composable
 fun ExerciseScreen(
@@ -117,7 +111,7 @@ fun ExerciseScreen(
     var touchJob by remember { mutableStateOf<Job?>(null) }
     var showLockScreen by remember { mutableStateOf(false) }
 
-    val exerciseIndex = viewModel.groupedSetsByWorkoutComponent.keys.indexOf(state.parents.first())
+    val exerciseIndex = viewModel.groupedSetsByWorkoutComponent.keys.indexOfFirst { it === state.parentExercise }
     val totalExercises = viewModel.groupedSetsByWorkoutComponent.keys.count()
 
     fun startTouchTimer() {
@@ -136,26 +130,26 @@ fun ExerciseScreen(
 
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
-    var enableSkipMode by remember { mutableStateOf(false) }
+    var showAddSetDialog by remember { mutableStateOf(false) }
 
-    val sets = remember(state){
-        getFirstExercise(state.parents).sets
-    }
+    val exerciseSets = state.parentExercise.sets
 
-    val setIndex = remember(state) {
-        sets.indexOfFirst { it === state.set }
+    val setIndex = remember(state,exerciseSets) {
+        exerciseSets.indexOfFirst { it === state.set }
     }
 
     val pagerState = rememberPagerState(pageCount = {
         2
     })
 
+    var enableSettingsMode by remember { mutableStateOf(false) }
+
     val completeOrSkipExerciseComposable = @Composable {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.Center
         ) {
-            if(enableSkipMode){
+            if (enableSettingsMode) {
                 Button(
                     onClick = {
                         VibrateOnce(context)
@@ -166,11 +160,11 @@ fun ExerciseScreen(
                 ) {
                     Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
                 }
-            }else{
+            } else {
                 Button(
                     onClick = {
                         VibrateOnce(context)
-                        showConfirmDialog=true
+                        showConfirmDialog = true
                     },
                     modifier = Modifier.size(35.dp),
                     colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
@@ -210,7 +204,7 @@ fun ExerciseScreen(
             Row(modifier = Modifier.fillMaxWidth(),horizontalArrangement = Arrangement.Center) {
                 Text(text="${exerciseIndex+1}/${totalExercises}",style = MaterialTheme.typography.body1)
                 Spacer(modifier = Modifier.width(30.dp))
-                Text( text="${setIndex+1}/${sets.count()}",style = MaterialTheme.typography.body1)
+                Text( text="${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
             }
         }
 
@@ -227,7 +221,6 @@ fun ExerciseScreen(
                     fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
                 }, label = ""
             ) { updatedState ->
-
                 Column(
                     modifier = Modifier.padding(25.dp,0.dp),
                     verticalArrangement = Arrangement.Bottom,
@@ -241,11 +234,11 @@ fun ExerciseScreen(
                                 .combinedClickable(
                                     onClick = {},
                                     onLongClick = {
-                                        enableSkipMode = !enableSkipMode
+                                        enableSettingsMode = !enableSettingsMode
                                         VibrateOnce(context)
                                     }
                                 ),
-                            text = updatedState.exerciseName,
+                            text = updatedState.parentExercise.name,
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.title3,
                         )
@@ -369,6 +362,26 @@ fun ExerciseScreen(
     CustomDialog(
         show = showSkipDialog,
         title = "Skip exercise",
+        message = "Do you want to skip this exercise?",
+        handleYesClick = {
+            VibrateOnce(context)
+            viewModel.storeExecutedSetHistory(state)
+            viewModel.goToNextState()
+            showSkipDialog = false
+        },
+        handleNoClick = {
+            VibrateOnce(context)
+            showSkipDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showSkipDialog = false
+        }
+    )
+
+    CustomDialog(
+        show = showAddSetDialog,
+        title = "Add a new set",
         message = "Do you want to skip this exercise?",
         handleYesClick = {
             VibrateOnce(context)

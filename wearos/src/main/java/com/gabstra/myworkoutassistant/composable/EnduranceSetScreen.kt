@@ -64,7 +64,7 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd:
                 currentMillis += 1000
 
                 state.currentSetData = currentSet.copy(
-                    actualTimeInMillis = currentMillis
+                    endTimer = currentMillis
                 )
 
                 if (currentMillis >= (set.timeInMillis-3000))
@@ -72,7 +72,7 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd:
             }
 
             state.currentSetData = currentSet.copy(
-                actualTimeInMillis = set.timeInMillis
+                endTimer = set.timeInMillis
             )
 
             VibrateShortImpulse(context);
@@ -100,7 +100,6 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd:
             Text(
                 text = FormatTime(currentMillis / 1000),
                 style = MaterialTheme.typography.display1,
-                color = if(currentMillis > previousSet.actualTimeInMillis) MaterialTheme.colors.secondary else Color.Unspecified
             )
         }
         Box(contentAlignment = Alignment.BottomCenter) {
@@ -142,7 +141,7 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd:
         handleYesClick = {
             VibrateOnce(context)
             state.currentSetData = currentSet.copy(
-                actualTimeInMillis = currentMillis
+                endTimer = currentMillis
             )
             onTimerEnd()
             showStopDialog = false

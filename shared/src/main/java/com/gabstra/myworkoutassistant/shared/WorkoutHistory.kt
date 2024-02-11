@@ -11,4 +11,5 @@ data class WorkoutHistory(
     val id: Int = 0,
     val workoutId: UUID,
     val date: LocalDate,
+    val duration: Int,
 )

@@ -44,7 +44,7 @@ class DataLayerListenerService : WearableListenerService() {
                         if(workoutStoreJson != null){
                             workoutStoreRepository.saveWorkoutStoreFromJson(workoutStoreJson)
                             val intent = Intent(INTENT_ID).apply {
-                                putExtra("workoutStoreJson", workoutStoreJson)
+                                putExtra(WORKOUT_STORE_JSON, workoutStoreJson)
                             }
                             sendBroadcast(intent)
                         }
@@ -79,7 +79,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 val intent = Intent(INTENT_ID).apply {
-                                    putExtra("appBackupJson", backupJson)
+                                    putExtra(APP_BACKUP_JSON, backupJson)
                                 }
                                 sendBroadcast(intent)
 
@@ -105,5 +105,7 @@ class DataLayerListenerService : WearableListenerService() {
         private const val WORKOUT_STORE_PATH = "/workoutStore"
         private const val BACKUP_CHUNK_PATH = "/backupChunkPath"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"
+        const val WORKOUT_STORE_JSON = "workoutStoreJson"
+        const val APP_BACKUP_JSON = "appBackupJson"
     }
 }

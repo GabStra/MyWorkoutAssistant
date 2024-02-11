@@ -1,3 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.sets
 
-data class WeightSet(val reps: Int, val weight: Float) : Set()
+import java.util.UUID
+
+data class WeightSet(override val id: UUID, val reps: Int, val weight: Float) : Set(id)

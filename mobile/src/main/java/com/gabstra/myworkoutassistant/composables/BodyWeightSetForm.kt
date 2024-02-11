@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +51,7 @@ fun BodyWeightSetForm(
             onClick = {
                 val reps = repsState.value.toIntOrNull() ?: 0
                 val newBodyWeightSet = BodyWeightSet(
+                    id = UUID.randomUUID(),
                     reps = if (reps >= 0) reps else 0,
                 )
 

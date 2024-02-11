@@ -39,8 +39,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
-@RequiresApi(Build.VERSION_CODES.S)
-@OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, hrViewModel : MeasureDataViewModel) {
     val workout by viewModel.selectedWorkout
@@ -48,7 +46,6 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
 
     val basePermissions = listOf(
         Manifest.permission.BODY_SENSORS,
-        Manifest.permission.ACTIVITY_RECOGNITION,
         Manifest.permission.BLUETOOTH_SCAN,
         Manifest.permission.BLUETOOTH_CONNECT,
         Manifest.permission.ACCESS_FINE_LOCATION,
@@ -78,6 +75,20 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
             style = MaterialTheme.typography.title2
         )
         Spacer(modifier = Modifier.height(30.dp))
+
+        Button(
+            onClick = {
+                VibrateOnce(context)
+                permissionLauncher.launch(basePermissions.toTypedArray())
+            },
+            modifier = Modifier.size(35.dp),
+            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+        ) {
+            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+        }
+
+        /*
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(15.dp)
         ) {
@@ -109,5 +120,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                 Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
             }*/
         }
+
+         */
     }
 }

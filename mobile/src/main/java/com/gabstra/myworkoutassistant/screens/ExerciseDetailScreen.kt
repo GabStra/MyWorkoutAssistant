@@ -37,6 +37,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -100,6 +101,7 @@ fun SetRenderer(set: Set) {
 fun ExerciseDetailScreen(
     appViewModel: AppViewModel,
     workout: Workout,
+    setHistoryDao: SetHistoryDao,
     exercise: Exercise,
     onGoBack: () -> Unit
 ) {

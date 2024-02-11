@@ -35,6 +35,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +48,9 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -56,6 +59,7 @@ fun Menu(
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
+    onClearAllHistories: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -101,6 +105,13 @@ fun Menu(
                     expanded = false
                 }
             )
+            DropdownMenuItem(
+                text = { Text("Clear all histories") },
+                onClick = {
+                    onClearAllHistories()
+                    expanded = false
+                }
+            )
         }
     }
 }
@@ -122,10 +133,12 @@ fun WorkoutTitle(modifier: Modifier,workout: Workout){
 @Composable
 fun WorkoutsScreen(
     appViewModel: AppViewModel,
+    workoutHistoryDao: WorkoutHistoryDao,
     onSyncClick: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
-    onOpenSettingsClick: () -> Unit
+    onOpenSettingsClick: () -> Unit,
+    onClearAllHistories: () -> Unit,
 ) {
     val workouts by appViewModel.workoutsFlow.collectAsState()
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
@@ -134,6 +147,8 @@ fun WorkoutsScreen(
     var isCardExpanded by remember {
         mutableStateOf(false)
     }
+
+    val scope = rememberCoroutineScope()
 
     //add a menu in the floating action button
     Scaffold(
@@ -145,7 +160,8 @@ fun WorkoutsScreen(
                         onSyncClick = onSyncClick,
                         onOpenSettingsClick = onOpenSettingsClick,
                         onBackupClick = onBackupClick,
-                        onRestoreClick = onRestoreClick
+                        onRestoreClick = onRestoreClick,
+                        onClearAllHistories = onClearAllHistories
                     )
                 }
             )
@@ -159,6 +175,11 @@ fun WorkoutsScreen(
                         }
 
                         appViewModel.updateWorkouts(newWorkouts)
+                        scope.launch {
+                            for (workout in selectedWorkouts) {
+                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                            }
+                        }
                         selectedWorkouts = emptyList()
                         isSelectionModeActive = false
                     }) {

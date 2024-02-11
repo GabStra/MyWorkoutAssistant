@@ -1,3 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.sets
 
-sealed class Set()
+import java.util.UUID
+
+sealed class Set(open val id: UUID)

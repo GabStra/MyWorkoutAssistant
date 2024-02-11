@@ -13,6 +13,9 @@ interface SetHistoryDao {
     @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId")
     suspend fun getSetHistoriesByWorkoutHistoryId(workoutHistoryId: Int): List<SetHistory>
 
+    @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId AND setId = :setId")
+    suspend fun getSetHistoryByWorkoutHistoryIdAndSetId(workoutHistoryId: Int, setId: Int): SetHistory?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(setHistory: SetHistory)
 

@@ -17,6 +17,9 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.copySetData
+import com.gabstra.myworkoutassistant.shared.initializeSetData
+import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -36,20 +39,22 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.Calendar
 import java.util.LinkedList
+import java.util.UUID
+
 
 sealed class WorkoutState {
     data class Preparing (
         val dataLoaded :Boolean
     ): WorkoutState()
     data class Set(
-        val parents: List<WorkoutComponent>,
-        val exerciseName: String,
+        val parentExercise: Exercise,
         val set: com.gabstra.myworkoutassistant.shared.sets.Set,
-        val setHistoryId : String,
+        val order: Int,
         val previousSetData: SetData?,
         var currentSetData:  SetData,
         val hasNoHistory: Boolean,
@@ -126,10 +131,10 @@ class AppViewModel : ViewModel(){
 
     private val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
-    private val latestSetHistoryMap: MutableMap<String, SetHistory> = mutableMapOf()
+    private val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
 
     val groupedSetsByWorkoutComponent: Map<WorkoutComponent?, List<WorkoutState.Set>> get () = setStates
-        .groupBy { it.parents.firstOrNull() }
+        .groupBy { it.parentExercise }
 
     fun setWorkout(workout: Workout){
         _selectedWorkout.value = workout;
@@ -173,51 +178,43 @@ class AppViewModel : ViewModel(){
         if(workoutHistory !=null){
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
             for(setHistory in setHistories){
-                latestSetHistoryMap[setHistory.setHistoryId] = setHistory
+                latestSetHistoryMap[setHistory.setId] = setHistory
             }
         }
     }
 
-    fun endWorkout(onEnd: () -> Unit = {}) {
+    fun endWorkout(duration: Duration, onEnd: () -> Unit = {}) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO){
-                val existingWorkouts = workoutHistoryDao.getWorkoutsByWorkoutId(selectedWorkout.value.id)
-                /*
-                if(existingWorkouts.isNotEmpty()){
-                    for(workout in existingWorkouts){
-                        workoutHistoryDao.deleteById(workout.id)
-                        setHistoryDao.deleteByWorkoutHistoryId(workout.id)
-                    }
-                }
-                */
-                val workoutHistoryId = workoutHistoryDao.insert(
-                    WorkoutHistory(
-                        workoutId= selectedWorkout.value.id,
-                        date = LocalDate.now()
-                    )
-                ).toInt()
-                executedSetsHistory.forEach { it.workoutHistoryId = workoutHistoryId }
-                setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
-                executedSetsHistory.clear()
-            }
+            val newWorkoutHistory =  WorkoutHistory(
+                workoutId= selectedWorkout.value.id,
+                date = LocalDate.now(),
+                duration = duration.seconds.toInt()
+            )
+
+            val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()
+            executedSetsHistory.forEach { it.workoutHistoryId = workoutHistoryId }
+            setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
+
             dataClient?.let {
                 sendWorkoutHistoryStore(
                     it,WorkoutHistoryStore(
-                        WorkoutHistory = WorkoutHistory(
-                            workoutId= selectedWorkout.value.id,
-                            date = LocalDate.now()
-                        ),
+                        WorkoutHistory = newWorkoutHistory,
                         ExerciseHistories =  executedSetsHistory
                     ))
             }
+
+            executedSetsHistory.clear()
+
             onEnd()
         }
     }
 
     fun storeExecutedSetHistory(state: WorkoutState.Set){
         val newSetHistory = SetHistory(
-            setHistoryId = state.setHistoryId,
+            setId = state.set.id,
             setData = state.currentSetData,
+            order = state.order,
+            exerciseId = state.parentExercise.id,
             skipped = state.skipped
         )
 
@@ -225,13 +222,12 @@ class AppViewModel : ViewModel(){
     }
 
     private fun generateWorkoutStates() {
-
         for ((index, workoutComponent) in selectedWorkout.value.workoutComponents.withIndex()) {
             if(!workoutComponent.enabled) continue
 
             when(workoutComponent){
-                is Exercise -> addStatesFromExercise(workoutComponent, listOf(index),listOf())
-                is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent,listOf(index),listOf())
+                is Exercise -> addStatesFromExercise(workoutComponent)
+                is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent)
             }
 
             if (selectedWorkout.value.restTimeInSec >0 && index < selectedWorkout.value.workoutComponents.size - 1 && !workoutComponent.skipWorkoutRest) {
@@ -241,58 +237,38 @@ class AppViewModel : ViewModel(){
         workoutStateQueue.addLast(WorkoutState.Finished(LocalDateTime.now()))
     }
 
-    private fun addStatesFromExercise(exercise: Exercise, idList: List<Int>, parentsList:List<WorkoutComponent>){
+    private fun addStatesFromExercise(exercise: Exercise){
         for ((index, set) in exercise.sets.withIndex()) {
+            val historySet = latestSetHistoryMap[set.id];
 
-            val setHistoryId = (idList+index).joinToString(separator = "-")
-            val historySet = latestSetHistoryMap[setHistoryId];
-            var currentSet = historySet?.setData
-                ?: when(set){
-                    is WeightSet -> WeightSetData(set.reps,set.weight)
-                    is BodyWeightSet -> BodyWeightSetData(set.reps)
-                    is TimedDurationSet -> TimedDurationSetData(0)
-                    is EnduranceSet -> EnduranceSetData(0)
-                }
+            var currentSet = initializeSetData(set)
 
-            try {
-                when (set) {
-                    is WeightSet -> require(currentSet is WeightSetData) { "Expected WeightSetData, got ${currentSet::class.simpleName}" }
-                    is BodyWeightSet -> require(currentSet is BodyWeightSetData) { "Expected BodyWeightSetData, got ${currentSet::class.simpleName}" }
-                    is TimedDurationSet -> require(currentSet is TimedDurationSetData) { "Expected TimedDurationSetData, got ${currentSet::class.simpleName}" }
-                    is EnduranceSet -> require(currentSet is EnduranceSetData) { "Expected EnduranceSetData, got ${currentSet::class.simpleName}" }
-                }
-            }catch(e:Exception){
-                currentSet = when(set){
-                    is WeightSet -> WeightSetData(set.reps,set.weight)
-                    is BodyWeightSet -> BodyWeightSetData(set.reps)
-                    is TimedDurationSet -> TimedDurationSetData(0)
-                    is EnduranceSet -> EnduranceSetData(0)
+            if(historySet != null){
+                val historySetData = historySet.setData
+                if(isSetDataValid(set,historySetData)){
+                    currentSet = historySet.setData
                 }
             }
 
-            val previousSet = when(currentSet){
-                is WeightSetData -> currentSet.copy()
-                is BodyWeightSetData -> currentSet.copy()
-                is TimedDurationSetData -> currentSet.copy()
-                is EnduranceSetData -> currentSet.copy()
-            }
+            val previousSet = copySetData(currentSet)
 
-            val setState: WorkoutState.Set = WorkoutState.Set(parentsList + exercise,exercise.name,set,setHistoryId,previousSet, currentSet,historySet == null,false)
+            val setState: WorkoutState.Set = WorkoutState.Set(exercise,set,index,previousSet, currentSet,historySet == null,false)
             workoutStateQueue.addLast(setState)
             setStates.addLast(setState)
+
             if (exercise.restTimeInSec >0 && index < exercise.sets.size - 1) {
                 workoutStateQueue.addLast(WorkoutState.Rest(exercise.restTimeInSec))
             }
         }
     }
 
-    private fun addStatesFromExerciseGroup(exerciseGroup: ExerciseGroup, idList: List<Int>, parentsList:List<WorkoutComponent>){
+    private fun addStatesFromExerciseGroup(exerciseGroup: ExerciseGroup){
         for ((index, workoutComponent) in exerciseGroup.workoutComponents.withIndex()) {
             if(!workoutComponent.enabled) continue
 
             when(workoutComponent){
-                is Exercise -> addStatesFromExercise(workoutComponent, idList+ index,parentsList + exerciseGroup)
-                is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent,idList + index,parentsList + exerciseGroup)
+                is Exercise -> addStatesFromExercise(workoutComponent)
+                is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent)
             }
 
             if (exerciseGroup.restTimeInSec >0 && index < exerciseGroup.workoutComponents.size - 1) {

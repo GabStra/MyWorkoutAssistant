@@ -1,3 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.sets
 
-data class EnduranceSet(val timeInMillis: Int, val autoStart:Boolean,val autoStop:Boolean) : Set()
+import java.util.UUID
+
+data class EnduranceSet(override val id: UUID,  val timeInMillis: Int, val autoStart:Boolean, val autoStop:Boolean) : Set(id)

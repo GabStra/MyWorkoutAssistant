@@ -40,6 +40,7 @@ import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.UiState
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -51,11 +52,10 @@ fun PreparingStandardScreen(
     hrViewModel: MeasureDataViewModel,
     state: WorkoutState.Preparing,
 ){
-    val uiState by hrViewModel.exerciseServiceState.collectAsState()
+    val uiState by hrViewModel.uiState.collectAsState()
 
-    val heartRate = remember(uiState) {
-        uiState.exerciseMetrics.heartRate ?: 0
-    }
+    val heartRate by hrViewModel.heartRateBpm.collectAsState()
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var currentMillis by remember { mutableIntStateOf(0) }
@@ -73,7 +73,7 @@ fun PreparingStandardScreen(
     }
 
     LaunchedEffect(uiState,state,heartRate,currentMillis) {
-        val isReady = (uiState.exerciseState == ExerciseState.ACTIVE) && (heartRate > 0) && state.dataLoaded && currentMillis >=2000
+        val isReady = (uiState is UiState.HeartRateAvailable) && (heartRate > 0) && state.dataLoaded && currentMillis >=2000
         if (isReady) {
             viewModel.goToNextState()
         }

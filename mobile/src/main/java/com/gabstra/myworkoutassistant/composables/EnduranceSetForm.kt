@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatMillisecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +95,7 @@ fun EnduranceSetForm(
             onClick = {
                 val timeInSeconds = timeInSecondsState.value.toIntOrNull() ?: 0
                 val newEnduranceSet = EnduranceSet(
+                    id = UUID.randomUUID(),
                     timeInMillis = if (timeInSeconds >= 0) timeInSeconds * 1000 else 0,
                     autoStart = autoStartState.value,
                     autoStop = autoStopState.value,
@@ -106,7 +108,7 @@ fun EnduranceSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (enduranceSet == null) Text("Insert CountUp Set") else Text("Edit CountUp Set")
+            if (enduranceSet == null) Text("Insert Count-Up Set") else Text("Edit Count-Up Set")
         }
     }
 }

@@ -1,5 +1,110 @@
 package com.gabstra.myworkoutassistant.data
 
+import androidx.health.services.client.data.DataTypeAvailability
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.repository.MeasureDataRepository
+import com.gabstra.myworkoutassistant.repository.MeasureMessage
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+
+class MeasureDataViewModel(
+    private val measureDataRepository: MeasureDataRepository
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow<UiState>(UiState.Startup)
+    val uiState: StateFlow<UiState> = _uiState
+
+    private val _heartRateAvailable = MutableStateFlow(DataTypeAvailability.UNKNOWN)
+    val heartRateAvailable: StateFlow<DataTypeAvailability> = _heartRateAvailable
+
+    private val _heartRateBpm = MutableStateFlow(0.0)
+    val heartRateBpm: StateFlow<Double> = _heartRateBpm
+
+    private var heartRateCollectJob: Job? = null
+
+    @ExperimentalCoroutinesApi
+    fun startMeasuringHeartRate() {
+        // Cancel any existing collection job to ensure we don't have multiple collectors
+        stopMeasuringHeartRate()
+
+        viewModelScope.launch {
+            _uiState.value = if (measureDataRepository.hasHeartRateCapability()) {
+                UiState.HeartRateAvailable
+            } else {
+                UiState.HeartRateNotAvailable
+            }
+        }
+
+        heartRateCollectJob = viewModelScope.launch {
+            measureDataRepository.heartRateMeasureFlow()
+                .collect {
+                    when (it) {
+                        is MeasureMessage.MeasureAvailability -> {
+                            _heartRateAvailable.value = it.availability
+                        }
+                        is MeasureMessage.MeasureData -> {
+                            val bpm = it.data.last().value
+                            _heartRateBpm.value = bpm
+                        }
+                    }
+                }
+        }
+    }
+
+    fun stopMeasuringHeartRate() {
+        heartRateCollectJob?.cancel()
+        heartRateCollectJob = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Ensure all children coroutines are cancelled when the ViewModel is cleared
+        stopMeasuringHeartRate()
+    }
+
+    @ExperimentalCoroutinesApi
+    suspend fun measureHeartRate() {
+        measureDataRepository.heartRateMeasureFlow().collect {
+            when (it) {
+                is MeasureMessage.MeasureAvailability -> {
+                    _heartRateAvailable.value = it.availability
+                }
+                is MeasureMessage.MeasureData -> {
+                    val bpm = it.data.last().value
+                    _heartRateBpm.value = bpm
+                }
+            }
+        }
+    }
+}
+
+class MeasureDataViewModelFactory(
+    private val measureDataRepository: MeasureDataRepository
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(MeasureDataViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return MeasureDataViewModel(
+                measureDataRepository = measureDataRepository
+            ) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+
+sealed class UiState {
+    object Startup : UiState()
+    object HeartRateAvailable : UiState()
+    object HeartRateNotAvailable : UiState()
+}
+
+/*
 import android.util.Log
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
@@ -160,3 +265,4 @@ data class ExerciseServiceState(
     val exerciseState: ExerciseState? = null,
     val exerciseMetrics: ExerciseMetrics = ExerciseMetrics(),
 )
+*/

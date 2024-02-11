@@ -34,10 +34,12 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 jsonObject.addProperty("actualReps", src.actualReps)
             }
             is TimedDurationSetData ->{
-                jsonObject.addProperty("actualTimeInMillis", src.actualTimeInMillis)
+                jsonObject.addProperty("startTimer", src.startTimer)
+                jsonObject.addProperty("endTimer", src.endTimer)
             }
             is EnduranceSetData ->{
-                jsonObject.addProperty("actualTimeInMillis", src.actualTimeInMillis)
+                jsonObject.addProperty("startTimer", src.startTimer)
+                jsonObject.addProperty("endTimer", src.endTimer)
             }
         }
         return jsonObject
@@ -58,12 +60,14 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 BodyWeightSetData(actualReps)
             }
             "TimedDurationSetData" -> {
-                val actualTimeInMillis = jsonObject.get("actualTimeInMillis").asInt
-                TimedDurationSetData(actualTimeInMillis)
+                val startTimer = jsonObject.get("startTimer").asInt
+                val endTimer = jsonObject.get("endTimer").asInt
+                TimedDurationSetData(startTimer,endTimer)
             }
             "EnduranceSetData" -> {
-                val actualTimeInMillis = jsonObject.get("actualTimeInMillis").asInt
-                EnduranceSetData(actualTimeInMillis)
+                val startTimer = jsonObject.get("startTimer").asInt
+                val endTimer = jsonObject.get("endTimer").asInt
+                EnduranceSetData(startTimer,endTimer)
             }
             else -> throw RuntimeException("Unsupported set type")
         }

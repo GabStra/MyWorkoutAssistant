@@ -97,16 +97,18 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
 }
 
 fun formatSecondsToMinutesSeconds(seconds: Int): String {
-    val minutes = seconds / 60
+    val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
     return String.format("%02d:%02d", minutes, remainingSeconds)
 }
 
 fun formatMillisecondsToMinutesSeconds(milliseconds: Int): String {
-    val minutes = milliseconds / 60000
-    val seconds = (milliseconds / 1000) % 60
+    val seconds = milliseconds / 1000
+
+    val minutes = (seconds % 3600) / 60
+    val remainingSeconds = seconds % 60
     val remainingMilliseconds = milliseconds % 1000
-    return String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds)
+    return String.format("%02d:%02d:%03d", minutes, remainingSeconds, remainingMilliseconds)
 }
 
 fun findWorkoutComponentByIdInWorkout(workout: Workout, id: UUID): WorkoutComponent? {

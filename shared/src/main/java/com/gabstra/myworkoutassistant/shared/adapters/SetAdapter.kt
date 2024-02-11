@@ -12,6 +12,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer
 import java.lang.reflect.Type
+import java.util.UUID
 
 class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
     override fun serialize(src: Set, typeOfSrc: Type, context: JsonSerializationContext): JsonElement {
@@ -22,6 +23,8 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is TimedDurationSet -> "TimedDurationSet"
             is EnduranceSet -> "EnduranceSet"
         }
+
+        jsonObject.addProperty("id", src.id.toString())
         jsonObject.addProperty("type", exerciseType)
 
         when (src) {
@@ -48,29 +51,36 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
 
     override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): Set {
         val jsonObject = json.asJsonObject
+
+        val id = if (jsonObject.has("id")) {
+            jsonObject.get("id").asString
+        } else {
+            UUID.randomUUID().toString()
+        }
+
         val type = jsonObject.get("type").asString
 
         return when (type) {
             "WeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
                 val weight = jsonObject.get("weight").asFloat
-                WeightSet(reps, weight)
+                WeightSet(UUID.fromString(id),reps, weight)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
-                BodyWeightSet(reps)
+                BodyWeightSet(UUID.fromString(id),reps)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
                 val autoStart = jsonObject.get("autoStart").asBoolean
                 val autoStop = jsonObject.get("autoStop").asBoolean
-                TimedDurationSet(timeInMillis,autoStart,autoStop)
+                TimedDurationSet(UUID.fromString(id),timeInMillis,autoStart,autoStop)
             }
             "EnduranceSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
                 val autoStart = jsonObject.get("autoStart").asBoolean
                 val autoStop = jsonObject.get("autoStop").asBoolean
-                EnduranceSet(timeInMillis,autoStart,autoStop)
+                EnduranceSet(UUID.fromString(id),timeInMillis,autoStart,autoStop)
             }
             else -> throw RuntimeException("Unsupported set type")
         }

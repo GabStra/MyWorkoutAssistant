@@ -1,5 +1,5 @@
 package com.gabstra.myworkoutassistant.repository
-
+/*
 import android.content.Context
 import android.util.Log
 import androidx.concurrent.futures.await
@@ -162,3 +162,4 @@ sealed class MeasureMessage {
     class MeasureAvailability(val availability: DataTypeAvailability) : MeasureMessage()
     class MeasureData(val data: List<SampleDataPoint<Double>>) : MeasureMessage()
 }
+*/

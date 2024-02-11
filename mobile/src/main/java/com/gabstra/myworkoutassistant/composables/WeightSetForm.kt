@@ -16,6 +16,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +68,7 @@ fun WeightSetForm(
                 val reps = repsState.value.toIntOrNull() ?: 0
                 val weight = weightState.value.toFloatOrNull() ?: 0f
                 val newWeightSet = WeightSet(
+                    id = UUID.randomUUID(),
                     reps = if (reps >= 0) reps else 0,
                     weight = if (weight >= 0f) weight else 0f,
                 )

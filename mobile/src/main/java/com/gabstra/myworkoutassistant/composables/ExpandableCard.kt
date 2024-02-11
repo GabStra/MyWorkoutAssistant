@@ -31,16 +31,17 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun ExpandableCard(
-    isExpandable:Boolean = true,
     modifier : Modifier = Modifier,
+    isExpandable:Boolean = true,
+    isOpen: Boolean = false,
     title: @Composable (modifier: Modifier) -> Unit,
     content: @Composable () -> Unit,
     onOpen: () -> Unit,
     onClose: () -> Unit,
     colors: CardColors = CardDefaults.cardColors()
 ){
-    var isOpen by remember {
-        mutableStateOf(false)
+    var openStatus by remember {
+        mutableStateOf(isOpen)
     }
 
     Card(
@@ -59,17 +60,17 @@ fun ExpandableCard(
                 IconButton(
                     modifier = Modifier.alpha(if(isExpandable) 1f else 0.4f),
                     onClick = { if(isExpandable){
-                        isOpen = !isOpen
-                        if(isOpen){
+                        openStatus = !openStatus
+                        if(openStatus){
                             onOpen()
                         }else{
                             onClose()
                         }
                     } }) {
-                    Icon(imageVector = if(isOpen) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
+                    Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
                 }
             }
-            if(isOpen){
+            if(openStatus){
                 content()
             }
         }

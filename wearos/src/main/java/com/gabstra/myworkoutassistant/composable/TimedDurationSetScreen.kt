@@ -66,7 +66,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
                 currentMillis -= 1000
 
                 state.currentSetData = currentSet.copy(
-                    actualTimeInMillis = currentMillis
+                    endTimer = currentMillis
                 )
 
                 if (currentMillis <= 3000)
@@ -74,7 +74,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
             }
 
             state.currentSetData = currentSet.copy(
-                actualTimeInMillis = 0
+                endTimer = 0
             )
 
             VibrateShortImpulse(context);
@@ -142,7 +142,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
         handleYesClick = {
             VibrateOnce(context)
             state.currentSetData = currentSet.copy(
-                actualTimeInMillis = currentMillis
+                endTimer =  currentMillis
             )
             onTimerEnd()
             showStopDialog = false

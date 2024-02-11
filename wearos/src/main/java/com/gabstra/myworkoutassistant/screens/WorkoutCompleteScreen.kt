@@ -72,7 +72,7 @@ fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel,
 
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "${workout.name}",
+                text = workout.name,
                 modifier = Modifier.basicMarquee(),
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.title3
@@ -88,7 +88,7 @@ fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel,
                 onClick = {
                     isClickable = false;
                     hideAll=true
-                    viewModel.endWorkout(){
+                    viewModel.endWorkout(duration){
                         navController.navigate(Screen.WorkoutSelection.route){
                             popUpTo(Screen.WorkoutSelection.route) {
                                 inclusive = true
