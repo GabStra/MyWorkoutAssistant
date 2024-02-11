@@ -36,6 +36,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -124,12 +125,16 @@ fun WorkoutHistoryScreen(
                         val setData = setHistory.setData as WeightSetData
                         volume += setData.actualReps * setData.actualWeight
                     }
+
+                    if(setHistory.setData is BodyWeightSetData){
+                        val setData = setHistory.setData as BodyWeightSetData
+                        volume += setData.actualReps
+                    }
                 }
                 volumes.add(Pair(workoutHistories.indexOf(workoutHistory),volume))
                 durations.add(Pair(workoutHistories.indexOf(workoutHistory),workoutHistory.duration.toFloat()))
             }
 
-            Log.d("WorkoutHistoryScreen", "volumes: $volumes")
             volumeEntryModel = entryModelOf(*volumes.toTypedArray())
             durationEntryModel = entryModelOf(*durations.toTypedArray())
             selectedWorkoutHistory = workoutHistories.lastOrNull()
@@ -145,7 +150,7 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    var selectedTabIndex by remember { mutableStateOf(0) }
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
     val tabTitles = listOf("Sets","Graphs")
 
     val graphsTabContent = @Composable {
