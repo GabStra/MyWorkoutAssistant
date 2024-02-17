@@ -1,25 +1,39 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Star
 
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -28,29 +42,73 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.kizitonwose.calendar.compose.CalendarLayoutInfo
+import com.kizitonwose.calendar.compose.CalendarState
+import com.kizitonwose.calendar.compose.HorizontalCalendar
+import com.kizitonwose.calendar.compose.rememberCalendarState
+import com.kizitonwose.calendar.core.CalendarDay
+import com.kizitonwose.calendar.core.CalendarMonth
+import com.kizitonwose.calendar.core.DayPosition
+import com.kizitonwose.calendar.core.OutDateStyle
+import com.kizitonwose.calendar.core.daysOfWeek
+import com.kizitonwose.calendar.core.nextMonth
+import com.kizitonwose.calendar.core.previousMonth
+
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.Month
+import java.time.YearMonth
+import java.time.format.TextStyle
+import java.util.Locale
+
+
+fun YearMonth.displayText(short: Boolean = false): String {
+    return "${this.month.displayText(short = short)} ${this.year}"
+}
+
+fun Month.displayText(short: Boolean = true): String {
+    val style = if (short) TextStyle.SHORT else TextStyle.FULL
+    return getDisplayName(style, Locale.getDefault())
+}
+
+fun DayOfWeek.displayText(uppercase: Boolean = false): String {
+    return getDisplayName(TextStyle.SHORT, Locale.getDefault()).let { value ->
+        if (uppercase) value.uppercase(Locale.getDefault()) else value
+    }
+}
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -129,6 +187,141 @@ fun WorkoutTitle(modifier: Modifier,workout: Workout){
     }
 }
 
+@Composable
+fun MonthHeader(
+    modifier: Modifier = Modifier,
+    daysOfWeek: List<DayOfWeek> = emptyList(),
+) {
+    Row(modifier.fillMaxWidth()) {
+        for (dayOfWeek in daysOfWeek) {
+            Text(
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Center,
+                fontSize = 12.sp,
+                color = Color.White,
+                text = dayOfWeek.displayText(),
+                fontWeight = FontWeight.Light,
+            )
+        }
+    }
+}
+
+@Composable
+private fun Day(
+    day: CalendarDay,
+    isToday: Boolean = false,
+    isSelected: Boolean = false,
+    showStar: Boolean = false,
+    onClick: (CalendarDay) -> Unit = {},
+) {
+    Box(
+        modifier = Modifier
+            .aspectRatio(1f) // This is important for square-sizing!
+            .border(
+                width = if (isSelected) 1.dp else 0.dp,
+                color = if (isSelected) Color.White else if(isToday) Color.Green else Color.Transparent,
+            )
+            .padding(1.dp)
+            // Disable clicks on inDates/outDates
+            .clickable(
+                enabled = day.position == DayPosition.MonthDate,
+                onClick = { onClick(day) },
+            ),
+    ) {
+        val textColor = when (day.position) {
+            DayPosition.MonthDate -> Color.Unspecified
+            DayPosition.InDate, DayPosition.OutDate -> Color.Gray
+        }
+        Text(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 3.dp, end = 4.dp),
+            text = day.date.dayOfMonth.toString(),
+            color = textColor,
+            fontSize = 12.sp,
+        )
+
+        //set the star yellow
+        Icon(
+            imageVector = Icons.Default.Star,
+            contentDescription = "Star",
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(0.dp,5.dp)
+                .alpha(if (showStar) 1f else 0f)
+                .size(15.dp),
+            tint = Color.Yellow
+
+        )
+    }
+}
+
+private val CalendarLayoutInfo.completelyVisibleMonths: List<CalendarMonth>
+    get() {
+        val visibleItemsInfo = this.visibleMonthsInfo.toMutableList()
+        return if (visibleItemsInfo.isEmpty()) {
+            emptyList()
+        } else {
+            val lastItem = visibleItemsInfo.last()
+            val viewportSize = this.viewportEndOffset + this.viewportStartOffset
+            if (lastItem.offset + lastItem.size > viewportSize) {
+                visibleItemsInfo.removeLast()
+            }
+            val firstItem = visibleItemsInfo.firstOrNull()
+            if (firstItem != null && firstItem.offset < this.viewportStartOffset) {
+                visibleItemsInfo.removeFirst()
+            }
+            visibleItemsInfo.map { it.month }
+        }
+    }
+
+@Composable
+fun rememberFirstCompletelyVisibleMonth(state: CalendarState): CalendarMonth {
+    val visibleMonth = remember(state) { mutableStateOf(state.firstVisibleMonth) }
+    // Only take non-null values as null will be produced when the
+    // list is mid-scroll as no index will be completely visible.
+    LaunchedEffect(state) {
+        snapshotFlow { state.layoutInfo.completelyVisibleMonths.firstOrNull() }
+            .filterNotNull()
+            .collect { month -> visibleMonth.value = month }
+    }
+    return visibleMonth.value
+}
+
+@Composable
+fun SimpleCalendarTitle(
+    modifier: Modifier,
+    currentMonth: YearMonth,
+    goToPrevious: () -> Unit,
+    goToNext: () -> Unit,
+) {
+    Row(
+        modifier = modifier.height(40.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = goToPrevious,
+        ) {
+            Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back")
+        }
+
+        Text(
+            modifier = Modifier
+                .weight(1f),
+            text = currentMonth.displayText(),
+            fontSize = 22.sp,
+            textAlign = TextAlign.Center,
+            fontWeight = FontWeight.Medium,
+        )
+
+        IconButton(
+            onClick = goToNext,
+        ) {
+            Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Back")
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkoutsScreen(
@@ -144,12 +337,38 @@ fun WorkoutsScreen(
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
+    var groupedWorkouts by remember { mutableStateOf<Map<LocalDate, List<WorkoutHistory>>?>(null) }
+
+    var selectedCalendarWorkouts by remember { mutableStateOf<List<Pair<WorkoutHistory,Workout>>?>(null) }
+
+    LaunchedEffect(workouts){
+        groupedWorkouts = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
+    }
+
     var isCardExpanded by remember {
         mutableStateOf(false)
     }
 
     val scope = rememberCoroutineScope()
 
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    val tabTitles = listOf("Status","Workouts")
+
+    val currentDay = remember { LocalDate.now() }
+    val currentMonth = remember { YearMonth.now() }
+    val startMonth = remember { currentMonth.minusMonths(500) }
+    val endMonth = remember { currentMonth.plusMonths(500) }
+    var selection by remember { mutableStateOf<CalendarDay?>(null) }
+    val daysOfWeek = remember { daysOfWeek() }
+
+    val calendarState = rememberCalendarState(
+        startMonth = startMonth,
+        endMonth = endMonth,
+        firstVisibleMonth = currentMonth,
+        firstDayOfWeek = daysOfWeek.first(),
+        outDateStyle = OutDateStyle.EndOfGrid,
+    )
+    val visibleMonth = rememberFirstCompletelyVisibleMonth(calendarState)
     //add a menu in the floating action button
     Scaffold(
         topBar = {
@@ -229,35 +448,120 @@ fun WorkoutsScreen(
                 .padding(it)
                 .fillMaxSize(),text = "Add a new workout", textAlign = TextAlign.Center)
         }else{
-            GenericSelectableList(
-                it,
-                items = workouts,
-                selectedItems= selectedWorkouts,
-                isSelectionModeActive,
-                onItemClick = {
-                    if(isCardExpanded) return@GenericSelectableList
-                    appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
-                },
-                onEnableSelection = { isSelectionModeActive = true },
-                onDisableSelection = { isSelectionModeActive = false },
-                onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
-                onOrderChange = { newWorkouts->
-                    appViewModel.updateWorkouts(newWorkouts)
-                },
-                itemContent = { it ->
-                    ExpandableCard(
-                        isExpandable = it.workoutComponents.isNotEmpty(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .alpha(if (it.enabled) 1f else 0.4f),
-                        title = { modifier ->  WorkoutTitle(modifier,it) },
-                        content = { WorkoutRenderer(it) },
-                        onOpen = { isCardExpanded = true },
-                        onClose = { isCardExpanded = false }
-                    )
-                },
-                isDragDisabled = isCardExpanded
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(it),
+                verticalArrangement = Arrangement.Top,
+            ){
+                TabRow(selectedTabIndex = selectedTabIndex) {
+                    tabTitles.forEachIndexed { index, title ->
+                        Tab(
+                            selected = index == selectedTabIndex,
+                            onClick = { selectedTabIndex = index },
+                            text = { Text(title) }
+                        )
+                    }
+                }
+
+                when (selectedTabIndex) {
+                    0 -> {
+                        SimpleCalendarTitle(
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                            currentMonth = visibleMonth.yearMonth,
+                            goToPrevious = {
+                                scope.launch {
+                                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
+                                }
+                            },
+                            goToNext = {
+                                scope.launch {
+                                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
+                                }
+                            },
+                        )
+                        HorizontalCalendar(
+                            modifier = Modifier.wrapContentWidth(),
+                            state = calendarState,
+                            calendarScrollPaged= false,
+                            userScrollEnabled = false,
+                            dayContent = { day ->
+                                val workoutHistories = groupedWorkouts?.get(day.date)
+
+                                val hasWorkouts = workoutHistories.let { histories ->
+                                    !histories.isNullOrEmpty()
+                                }
+
+                                Day(
+                                    isToday = day.date == currentDay,
+                                    day = day,
+                                    isSelected = selection == day,
+                                    showStar = hasWorkouts,
+
+                                ) { clicked ->
+                                    selection = clicked
+                                    if (workoutHistories != null) {
+                                        selectedCalendarWorkouts = workoutHistories.map { workoutHistory ->
+                                            Pair(workoutHistory,workouts.first { workout -> workout.id == workoutHistory.workoutId })
+                                        }
+                                    }
+                                }
+                            },
+                            monthHeader = {
+                                MonthHeader(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    daysOfWeek = daysOfWeek,
+                                )
+                            },
+                        )
+                        if(selectedCalendarWorkouts != null){
+                            LazyColumn(modifier = Modifier.padding(horizontal = 8.dp)){
+                                items(selectedCalendarWorkouts!!){ (workoutHistory,workout) ->
+                                    Card(
+                                        onClick = {
+                                            appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id,workoutHistory.id))
+                                        }
+                                    ){
+                                        WorkoutTitle(Modifier,workout)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    1 -> {
+                        GenericSelectableList(
+                            PaddingValues(0.dp,5.dp),
+                            items = workouts,
+                            selectedItems= selectedWorkouts,
+                            isSelectionModeActive,
+                            onItemClick = {
+                                if(isCardExpanded) return@GenericSelectableList
+                                appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
+                            },
+                            onEnableSelection = { isSelectionModeActive = true },
+                            onDisableSelection = { isSelectionModeActive = false },
+                            onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
+                            onOrderChange = { newWorkouts->
+                                appViewModel.updateWorkouts(newWorkouts)
+                            },
+                            itemContent = { it ->
+                                ExpandableCard(
+                                    isExpandable = it.workoutComponents.isNotEmpty(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .alpha(if (it.enabled) 1f else 0.4f),
+                                    title = { modifier ->  WorkoutTitle(modifier,it) },
+                                    content = { WorkoutRenderer(it) },
+                                    onOpen = { isCardExpanded = true },
+                                    onClose = { isCardExpanded = false }
+                                )
+                            },
+                            isDragDisabled = isCardExpanded
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,6 +30,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -173,18 +176,6 @@ fun WorkoutDetailScreen(
         )
     }
 
-    val standardBottomBar = @Composable {
-        BottomAppBar(
-            actions =  {
-                IconButton(onClick = {
-                    appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id))
-                }) {
-                    Icon(imageVector = Icons.Default.History, contentDescription = "History")
-                }
-            }
-        )
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -210,7 +201,6 @@ fun WorkoutDetailScreen(
         },
         bottomBar = {
             if(selectedWorkoutComponents.isNotEmpty()) editModeBottomBar()
-            else standardBottomBar()
         },
         floatingActionButton= {
             if(selectedWorkoutComponents.isEmpty())
@@ -228,8 +218,6 @@ fun WorkoutDetailScreen(
                 )
         },
     ) { it ->
-
-
         if(workout.workoutComponents.isEmpty()){
             Text(
                 modifier = Modifier
@@ -245,8 +233,21 @@ fun WorkoutDetailScreen(
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
+                TabRow(selectedTabIndex = 0) {
+                    Tab(
+                        selected = true,
+                        onClick = { },
+                        text = { Text("Overview") }
+                    )
+                    Tab(
+                        selected = false,
+                        onClick = { appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id),true) },
+                        text = { Text("History")  }
+                    )
+                }
+
                 GenericSelectableList(
-                    it = null,
+                    it = PaddingValues(0.dp,5.dp),
                     items = workout.workoutComponents,
                     selectedItems= selectedWorkoutComponents,
                     isSelectionModeActive,

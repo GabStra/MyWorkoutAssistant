@@ -21,7 +21,7 @@ sealed class ScreenData() {
     class NewWorkout() : ScreenData()
     class EditWorkout(val workoutId: UUID) : ScreenData()
     class WorkoutDetail(val workoutId: UUID) : ScreenData()
-    class WorkoutHistory(val workoutId: UUID) : ScreenData()
+    class WorkoutHistory(val workoutId: UUID,val workoutHistoryId: Int? = null) : ScreenData()
     class ExerciseGroupDetail(val workoutId: UUID, val selectedExerciseGroupId: UUID) : ScreenData()
     class ExerciseDetail(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
     class NewExerciseGroup(val workoutId: UUID, val parentExerciseGroupId: UUID?) : ScreenData()
@@ -40,9 +40,11 @@ class AppViewModel() : ViewModel() {
     var currentScreenData: ScreenData by mutableStateOf(screenDataStack.lastOrNull() ?: ScreenData.Workouts())
         private set
 
-    fun setScreenData(screenData: ScreenData) {
+    fun setScreenData(screenData: ScreenData,skipStack: Boolean = false) {
         currentScreenData = screenData
-        screenDataStack.add(screenData)
+        if(!skipStack){
+            screenDataStack.add(screenData)
+        }
     }
 
     fun goBack(): Boolean {

@@ -301,7 +301,9 @@ fun MyWorkoutAssistantNavHost(
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
 
             WorkoutHistoryScreen(
+                appViewModel,
                 workoutHistoryDao,
+                screenData.workoutHistoryId,
                 setHistoryDao,
                 selectedWorkout,
             ) {

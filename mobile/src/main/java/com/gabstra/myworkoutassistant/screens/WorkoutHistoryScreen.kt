@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,7 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -46,6 +49,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
@@ -77,7 +82,9 @@ import java.util.UUID
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutHistoryScreen(
+    appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
+    workoutHistoryId: Int? = null,
     setHistoryDao: SetHistoryDao,
     workout : Workout,
     onGoBack : () -> Unit
@@ -110,6 +117,8 @@ fun WorkoutHistoryScreen(
         formatSecondsToMinutesSeconds(value.toInt())
     }
 
+    var isLoading by remember { mutableStateOf(true) }
+
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
             workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
@@ -135,9 +144,14 @@ fun WorkoutHistoryScreen(
                 durations.add(Pair(workoutHistories.indexOf(workoutHistory),workoutHistory.duration.toFloat()))
             }
 
-            volumeEntryModel = entryModelOf(*volumes.toTypedArray())
+            //check if volumes are not all 0
+            if(volumes.any { it.second != 0f }) {
+                volumeEntryModel = entryModelOf(*volumes.toTypedArray())
+            }
+
             durationEntryModel = entryModelOf(*durations.toTypedArray())
-            selectedWorkoutHistory = workoutHistories.lastOrNull()
+            selectedWorkoutHistory = if(workoutHistoryId!=null) workoutHistories.find { it.id == workoutHistoryId} else workoutHistories.lastOrNull()
+            isLoading = false
         }
     }
 
@@ -150,49 +164,42 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabTitles = listOf("Sets","Graphs")
-
     val graphsTabContent = @Composable {
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(10.dp),
         ){
-            item {
-                if(volumeEntryModel != null){
-                    Column(Modifier.padding(10.dp)){
-                        Text(modifier = Modifier
-                            .fillMaxWidth(),
-                            text = "Volume over time",
-                            textAlign = TextAlign.Center
-                        )
-                        Chart(
-                            modifier = Modifier.padding(10.dp),
-                            chart = columnChart(),
-                            model = volumeEntryModel!!,
-                            startAxis = rememberStartAxis(),
-                            bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
-                        )
-                    }
+            if(volumeEntryModel != null){
+                Column(Modifier.padding(10.dp)){
+                    Text(modifier = Modifier
+                        .fillMaxWidth(),
+                        text = "Volume over time",
+                        textAlign = TextAlign.Center
+                    )
+                    Chart(
+                        modifier = Modifier.padding(10.dp),
+                        chart = columnChart(),
+                        model = volumeEntryModel!!,
+                        startAxis = rememberStartAxis(),
+                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
+                    )
                 }
             }
-            item {
-                if(durationEntryModel != null){
-                    Column(Modifier.padding(10.dp)){
-                        Text(modifier = Modifier
-                            .fillMaxWidth(),
-                            text = "Workout duration over time",
-                            textAlign = TextAlign.Center
-                        )
-                        Chart(
-                            modifier = Modifier.padding(10.dp),
-                            chart = lineChart(),
-                            model = durationEntryModel!!,
-                            startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter),
-                            bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
-                        )
-                    }
+            if(durationEntryModel != null){
+                Column(Modifier.padding(10.dp)){
+                    Text(modifier = Modifier
+                        .fillMaxWidth(),
+                        text = "Workout duration over time",
+                        textAlign = TextAlign.Center
+                    )
+                    Chart(
+                        modifier = Modifier.padding(10.dp),
+                        chart = lineChart(),
+                        model = durationEntryModel!!,
+                        startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter),
+                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
+                    )
                 }
             }
         }
@@ -202,49 +209,55 @@ fun WorkoutHistoryScreen(
 
     }
 
-    val setsTabContent = @Composable {
-        Row(modifier = Modifier.padding(15.dp)) {
-            if(selectedWorkoutHistory != workoutHistories.first()){
-                IconButton(
-                    onClick = {
-                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                        selectedWorkoutHistory = workoutHistories[index-1]
+    val workoutSelector = @Composable {
+        Row(modifier = Modifier.padding(15.dp,0.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = {
+                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                    if (index > 0) { // Check to avoid IndexOutOfBoundsException
+                        selectedWorkoutHistory = workoutHistories[index - 1]
                     }
-                ) {
-                    Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back")
-                }
-                Spacer(modifier = Modifier.width(10.dp))
+                },
+                enabled = selectedWorkoutHistory != workoutHistories.first()
+            ) {
+                Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous")
             }
+            Spacer(modifier = Modifier.width(10.dp))
             Text(modifier = Modifier
-                .fillMaxWidth(),
+                .weight(1f),
                 text = selectedWorkoutHistory!!.date.format(formatter),
                 textAlign = TextAlign.Center
             )
-            if(selectedWorkoutHistory != workoutHistories.last()){
-                Spacer(modifier = Modifier.width(10.dp))
-                IconButton(
-                    onClick = {
-                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                        selectedWorkoutHistory = workoutHistories[index+1]
+            Spacer(modifier = Modifier.width(10.dp))
+            IconButton(
+                onClick = {
+                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                    if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                        selectedWorkoutHistory = workoutHistories[index + 1]
                     }
-                ) {
-                    Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Forward")
-                }
+                },
+                enabled = selectedWorkoutHistory != workoutHistories.last()
+            ) {
+                Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next")
             }
         }
+    }
 
+    val setsTabContent = @Composable {
         Text(modifier = Modifier
             .fillMaxWidth(),
             text = "Duration: ${formatSecondsToMinutesSeconds(selectedWorkoutHistory!!.duration)} (mm:ss)",
             textAlign = TextAlign.Center
         )
 
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(10.dp),
+                .padding(10.dp)
         ) {
-            items(setHistoriesByExerciseId.keys.toList()) { key ->
+            setHistoriesByExerciseId.keys.toList().forEach(){ key ->
                 ExpandableCard(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -276,7 +289,7 @@ fun WorkoutHistoryScreen(
                 title = {
                     Text(
                         modifier = Modifier.basicMarquee(),
-                        text = "History: ${workout.name}"
+                        text = workout.name
                     )
                 },
                 navigationIcon = {
@@ -293,29 +306,36 @@ fun WorkoutHistoryScreen(
                 .padding(it),
             verticalArrangement = Arrangement.Top,
         ){
+            TabRow(selectedTabIndex = 1) {
+                Tab(
+                    selected = false,
+                    onClick = { appViewModel.setScreenData(ScreenData.WorkoutDetail(workout.id),true) },
+
+                    text = { Text("Overview") }
+                )
+                Tab(
+                    selected = true,
+                    onClick = { },
+                    text = { Text("History")  }
+                )
+            }
+
             if(workoutHistories.isEmpty() || selectedWorkoutHistory == null){
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(10.dp),
-                    text = "No workout history found",
+                    text = if(isLoading) "Loading..." else "No workout history found",
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }else{
-                TabRow(selectedTabIndex = selectedTabIndex) {
-                    tabTitles.forEachIndexed { index, title ->
-                        Tab(
-                            selected = index == selectedTabIndex,
-                            onClick = { selectedTabIndex = index },
-                            text = { Text(title) }
-                        )
+                LazyColumn(){
+                    item {
+                        workoutSelector()
                     }
-                }
-
-                when (selectedTabIndex) {
-                    0 -> setsTabContent()
-                    1 -> graphsTabContent()
+                    item{graphsTabContent()}
+                    item{setsTabContent()}
                 }
             }
         }
