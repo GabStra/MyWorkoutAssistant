@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.composable
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -24,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -38,6 +42,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CustomDialog(
     show : Boolean = false,
@@ -45,6 +50,7 @@ fun CustomDialog(
     message : String = "Do you really want to exit?",
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
+    handleYesClickLongPress: () -> Unit = {},
     closeTimerInMillis : Long = 0,
     handleOnAutomaticClose: () -> Unit = {}
 ) {
@@ -109,16 +115,38 @@ fun CustomDialog(
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
                         Spacer(modifier = Modifier.width(10.dp))
-                        Button(
-                            onClick = {
-                                closeDialogJob?.cancel()
-                                handleYesClick()
-                            },
-                            modifier = Modifier.size(35.dp),
-                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-                        ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                        if (handleYesClickLongPress == {}) {
+                            Button(
+                                onClick = {
+                                    closeDialogJob?.cancel()
+                                    handleYesClick()
+                                },
+                                modifier = Modifier.size(35.dp),
+                                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                            ) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(35.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colors.primary)
+                                    .combinedClickable(
+                                        onClick = {
+
+                                        },
+                                        onLongClick = {
+                                            closeDialogJob?.cancel()
+                                            handleYesClickLongPress()
+                                        }
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                            }
                         }
+
                     }
                 }
             }

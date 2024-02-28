@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
+import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
@@ -47,15 +49,38 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
 
     val set = state.set as TimedDurationSet
 
-    var showStartButton by remember(state) { mutableStateOf(!state.set.autoStart) }
+    var showStartButton by remember(state) { mutableStateOf(!set.autoStart) }
 
     val previousSet = state.previousSetData as TimedDurationSetData
-    val currentSet = state.currentSetData as TimedDurationSetData
+    var currentSet = state.currentSetData as TimedDurationSetData
 
-    var currentMillis by remember(state) { mutableIntStateOf(state.set.timeInMillis) }
+    var isTimerInEditMode by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentSet) {
+        // Update the WorkoutState.Set whenever currentSet changes
+        state.currentSetData = currentSet
+    }
+
+    var currentMillis by remember(currentSet) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
 
     var showBottom by remember { mutableStateOf(false) }
+
+    fun onMinusClick(){
+        if (currentSet.startTimer > 5000){
+            val newTimerValue = currentSet.startTimer - 5000
+            currentSet = currentSet.copy(startTimer = newTimerValue)
+            currentMillis = newTimerValue
+            VibrateOnce(context)
+        }
+    }
+
+    fun onPlusClick(){
+        val newTimerValue = currentSet.startTimer + 5000
+        currentSet = currentSet.copy(startTimer = newTimerValue)
+        currentMillis = newTimerValue
+        VibrateOnce(context)
+    }
 
     fun startTimerJob() {
         timerJob?.cancel()
@@ -65,7 +90,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
                 delay(1000) // Update every sec.
                 currentMillis -= 1000
 
-                state.currentSetData = currentSet.copy(
+                currentSet = currentSet.copy(
                     endTimer = currentMillis
                 )
 
@@ -73,7 +98,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
                     VibrateOnce(context);
             }
 
-            state.currentSetData = currentSet.copy(
+            currentSet = currentSet.copy(
                 endTimer = 0
             )
 
@@ -92,45 +117,81 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
         }
     }
 
+    var textComposable = @Composable {
+        Text(
+            modifier = Modifier.combinedClickable(
+                onClick = {
+                },
+                onLongClick = {
+                    if (showStartButton) {
+                        isTimerInEditMode = !isTimerInEditMode
+
+                        VibrateOnce(context)
+                    }
+                },
+                onDoubleClick = {
+                    if (isTimerInEditMode) {
+                        val newTimerValue = previousSet.startTimer
+                        currentSet = currentSet.copy(startTimer = newTimerValue)
+                        currentMillis = newTimerValue
+                        VibrateTwice(context)
+                    }
+                }
+            ),
+            text = FormatTime(currentMillis / 1000),
+            style = if(isTimerInEditMode)  MaterialTheme.typography.display2 else MaterialTheme.typography.display1,
+        )
+    }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
     ) {
-        Column(modifier = Modifier.padding(0.dp,5.dp,0.dp,5.dp), verticalArrangement = Arrangement.Top) {
-            Text(
-                text = FormatTime(currentMillis / 1000),
-                style = MaterialTheme.typography.display1,
+        if (isTimerInEditMode) {
+            ControlButtonsVertical(
+                modifier = Modifier.fillMaxSize(),
+                onMinusClick = { onMinusClick() },
+                onMinusLongPress = { onMinusClick() },
+                onPlusClick = { onPlusClick() },
+                onPlusLongPress = { onPlusClick() },
+                content = {
+                    textComposable()
+                }
             )
-        }
-        Box(contentAlignment = Alignment.BottomCenter) {
-            if (showStartButton) {
-                Button(
-                    onClick = {
-                        VibrateOnce(context)
-                        startTimerJob()
-                        showStartButton=false
-                    },
-                    modifier = Modifier.size(35.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-                ) {
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
-                }
+        }else{
+            Column(modifier = Modifier.padding(0.dp,5.dp,0.dp,5.dp).weight(1f), verticalArrangement = Arrangement.Top) {
+                textComposable()
             }
-
-            if (timerJob?.isActive == true) {
-                Button(
-                    onClick = {
-                        VibrateOnce(context)
-                        timerJob?.cancel()
-                        showStopDialog = true
-                    },
-                    modifier = Modifier.size(35.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
-                ) {
-                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+            Box(contentAlignment = Alignment.BottomCenter) {
+                if (showStartButton) {
+                    Button(
+                        onClick = {
+                            VibrateOnce(context)
+                            startTimerJob()
+                            showStartButton=false
+                        },
+                        modifier = Modifier.size(35.dp),
+                        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                    ) {
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                    }
                 }
-            } else if(showBottom){
-                bottom()
+
+                if (timerJob?.isActive == true) {
+                    Button(
+                        onClick = {
+                            VibrateOnce(context)
+                            timerJob?.cancel()
+                            showStopDialog = true
+                        },
+                        modifier = Modifier.size(35.dp),
+                        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
+                    ) {
+                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+                    }
+                } else if(showBottom){
+                    bottom()
+                }
             }
         }
     }
@@ -139,9 +200,10 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
         show = showStopDialog,
         title = "Stop exercise",
         message = "Do you want to stop this exercise?",
-        handleYesClick = {
+        handleYesClick = {},
+        handleYesClickLongPress = {
             VibrateOnce(context)
-            state.currentSetData = currentSet.copy(
+            currentSet = currentSet.copy(
                 endTimer =  currentMillis
             )
             onTimerEnd()
@@ -152,9 +214,6 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
             showStopDialog = false
             startTimerJob()
         },
-        handleOnAutomaticClose = {
-            showStopDialog = false
-            startTimerJob()
-        }
+        handleOnAutomaticClose = {}
     )
 }

@@ -3,9 +3,11 @@ package com.gabstra.myworkoutassistant.composable
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingFlat
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
@@ -32,12 +34,12 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
             )
         }
 
-        /* else -> {
+         else -> {
              Icon(
                  imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
                  contentDescription = "Same",
-                 modifier = Modifier.size(24.dp)
+                 modifier = Modifier.size(30.dp).alpha(0f)
              )
-         }*/
+         }
     }
 }

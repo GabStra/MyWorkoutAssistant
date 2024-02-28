@@ -1,13 +1,21 @@
 package com.gabstra.myworkoutassistant.data
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -43,7 +51,7 @@ fun FormatTime(seconds: Int): String {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
 }
-fun VibrateOnce(context: Context,durationInMillis:Long=30) {
+fun VibrateOnce(context: Context,durationInMillis:Long=20) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
     vibrator?.let {
@@ -60,9 +68,9 @@ fun VibrateTwice(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val timings = longArrayOf(
         0,
-        30,
-        50,
-        30,
+        75,
+        20,
+        75,
     ) // Start immediately, vibrate 100ms, pause 100ms, vibrate 100ms.
 
     vibrator?.let {
@@ -178,3 +186,5 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
         exception.printStackTrace()
     }
 }
+
+

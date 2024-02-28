@@ -6,6 +6,10 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.State
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -162,3 +166,10 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
     }
 }
 
+fun Modifier.optionalClip(shape:RoundedCornerShape?): Modifier {
+    return if (shape != null) {
+        clip(shape)
+    } else {
+        this
+    }
+}

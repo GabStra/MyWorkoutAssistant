@@ -38,6 +38,9 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.KeepScreenOn
+import com.gabstra.myworkoutassistant.data.VibrateTwice
+import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -94,14 +97,15 @@ fun WorkoutScreen(
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
 
     BackHandler(true) {
-        if(!screenLocked) showWorkoutInProgressDialog=true
+        if(!screenLocked) showWorkoutInProgressDialog = true
     }
     val coroutineScope = rememberCoroutineScope()
 
     CustomDialog(
         show = showWorkoutInProgressDialog,
         title = "Workout in progress",
-        handleYesClick = {
+        handleYesClick = {},
+        handleYesClickLongPress = {
             VibrateOnce(context)
             showWorkoutInProgressDialog=false
             if(!selectedWorkout.usePolarDevice){
@@ -109,6 +113,7 @@ fun WorkoutScreen(
             }else{
                 polarViewModel.disconnectFromDevice()
             }
+            cancelWorkoutInProgressNotification(context)
             coroutineScope.launch {
                 navController.navigate(Screen.WorkoutSelection.route){
                     popUpTo(Screen.WorkoutSelection.route) {
@@ -124,10 +129,14 @@ fun WorkoutScreen(
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showWorkoutInProgressDialog = false
+            VibrateTwice(context)
         }
     )
 
     LifecycleObserver(
+        onStarted = {
+            showWorkoutInProgressNotification(context)
+        },
         onPaused = {
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()
@@ -135,11 +144,10 @@ fun WorkoutScreen(
         },
         onResumed = {
             if(!selectedWorkout.usePolarDevice){
-                Log.d("WorkoutScreen","HR STARTED")
                 hrViewModel.startMeasuringHeartRate()
             }
             else if(hasPolarApiBeenInitialized){
-                    polarViewModel.connectToDevice()
+                polarViewModel.connectToDevice()
             }
         }
     )

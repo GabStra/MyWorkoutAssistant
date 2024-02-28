@@ -33,6 +33,7 @@ import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.MeasureDataRepository
@@ -68,6 +69,11 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         unregisterReceiver(myReceiver)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cancelWorkoutInProgressNotification(this)
     }
 
     @OptIn(ExperimentalHorologistApi::class)

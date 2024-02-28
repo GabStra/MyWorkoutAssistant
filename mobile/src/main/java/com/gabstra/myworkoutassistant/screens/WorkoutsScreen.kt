@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,12 +21,12 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -41,6 +42,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -69,6 +71,7 @@ import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
+import com.gabstra.myworkoutassistant.optionalClip
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -91,6 +94,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.Month
 import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
@@ -219,27 +223,39 @@ private fun Day(
             .aspectRatio(1f) // This is important for square-sizing!
             .border(
                 width = if (isSelected) 1.dp else 0.dp,
-                color = if (isSelected) Color.White else if(isToday) Color.Green else Color.Transparent,
+                color = if (isSelected) Color.White else Color.Transparent,
             )
-            .padding(1.dp)
+            .padding(3.dp)
             // Disable clicks on inDates/outDates
             .clickable(
                 enabled = day.position == DayPosition.MonthDate,
                 onClick = { onClick(day) },
             ),
     ) {
-        val textColor = when (day.position) {
+        val textColor = if (isToday) Color.Black else when (day.position) {
             DayPosition.MonthDate -> Color.Unspecified
             DayPosition.InDate, DayPosition.OutDate -> Color.Gray
         }
-        Text(
+
+        val shape = if(isToday) RoundedCornerShape(3.dp) else null
+
+        Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 3.dp, end = 4.dp),
-            text = day.date.dayOfMonth.toString(),
-            color = textColor,
-            fontSize = 12.sp,
-        )
+                .optionalClip(shape)
+                .size(20.dp)
+                .background(if (isToday) Color.White else Color.Transparent),
+            contentAlignment = Alignment.Center
+        ){
+            Text(
+                modifier = Modifier
+                    .background(if (isToday) Color.White else Color.Transparent),
+                text = day.date.dayOfMonth.toString(),
+                color = textColor,
+                fontSize = 12.sp,
+            )
+        }
+
 
         //set the star yellow
         Icon(
@@ -247,7 +263,7 @@ private fun Day(
             contentDescription = "Star",
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(0.dp,5.dp)
+                .padding(0.dp, 5.dp)
                 .alpha(if (showStar) 1f else 0f)
                 .size(15.dp),
             tint = Color.Yellow
@@ -349,6 +365,12 @@ fun WorkoutsScreen(
         mutableStateOf(false)
     }
 
+    val currentLocale = Locale.getDefault()
+
+    val formatter = remember(currentLocale) {
+        DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
+    }
+
     val scope = rememberCoroutineScope()
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
@@ -358,7 +380,7 @@ fun WorkoutsScreen(
     val currentMonth = remember { YearMonth.now() }
     val startMonth = remember { currentMonth.minusMonths(500) }
     val endMonth = remember { currentMonth.plusMonths(500) }
-    var selection by remember { mutableStateOf<CalendarDay?>(null) }
+    var selectedDate by remember { mutableStateOf<CalendarDay?>(null) }
     val daysOfWeek = remember { daysOfWeek() }
 
     val calendarState = rememberCalendarState(
@@ -496,16 +518,30 @@ fun WorkoutsScreen(
                                 Day(
                                     isToday = day.date == currentDay,
                                     day = day,
-                                    isSelected = selection == day,
+                                    isSelected = selectedDate == day,
                                     showStar = hasWorkouts,
 
                                 ) { clicked ->
-                                    selection = clicked
+                                    Log.d("WorkoutsScreen", "Selected date: ${clicked.date.format(formatter)}")
+                                    Log.d("WorkoutsScreen","hasWorkouts: $hasWorkouts")
+                                    Log.d("WorkoutsScreen","workoutHistories: $workoutHistories")
+
+
                                     if (workoutHistories != null) {
-                                        selectedCalendarWorkouts = workoutHistories.map { workoutHistory ->
-                                            Pair(workoutHistory,workouts.first { workout -> workout.id == workoutHistory.workoutId })
+                                        try {
+                                            selectedCalendarWorkouts = workoutHistories.map { workoutHistory ->
+                                                Pair(workoutHistory,workouts.first { workout -> workout.id == workoutHistory.workoutId })
+                                            }
+                                        }catch (e:Exception){
+                                            selectedCalendarWorkouts = null
+                                            Log.e("WorkoutsScreen",e.message.toString())
                                         }
+
+                                    }else{
+                                        selectedCalendarWorkouts =  emptyList()
                                     }
+                                    Log.d("WorkoutsScreen","selectedCalendarWorkouts: $selectedCalendarWorkouts")
+                                    selectedDate = clicked
                                 }
                             },
                             monthHeader = {
@@ -515,19 +551,38 @@ fun WorkoutsScreen(
                                 )
                             },
                         )
-                        if(selectedCalendarWorkouts != null){
-                            LazyColumn(modifier = Modifier.padding(horizontal = 8.dp)){
-                                items(selectedCalendarWorkouts!!){ (workoutHistory,workout) ->
-                                    Card(
-                                        onClick = {
-                                            appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id,workoutHistory.id))
+                        if(selectedDate != null){
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text(
+                                    text = selectedDate!!.date.format(formatter),
+                                    modifier = Modifier.padding(8.dp),
+                                    color = Color.Gray
+                                )
+                                if(selectedCalendarWorkouts.isNullOrEmpty()){
+                                    Text(
+                                        text = "No workouts for this day",
+                                        modifier = Modifier.padding(8.dp),
+                                        textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        color = Color.Gray
+                                    )
+                                }else{
+                                    LazyColumn(modifier = Modifier.padding(horizontal = 8.dp)){
+                                        items(selectedCalendarWorkouts!!){ (workoutHistory,workout) ->
+                                            Card(
+                                                modifier = Modifier.padding(5.dp),
+                                                onClick = {
+                                                    appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id,workoutHistory.id))
+                                                }
+                                            ){
+                                                WorkoutTitle(Modifier,workout)
+                                            }
                                         }
-                                    ){
-                                        WorkoutTitle(Modifier,workout)
                                     }
                                 }
                             }
                         }
+
                     }
                     1 -> {
                         GenericSelectableList(

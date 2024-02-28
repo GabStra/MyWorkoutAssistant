@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.material.Button
@@ -91,31 +92,24 @@ fun PreparingPolarScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp,50.dp,20.dp,0.dp),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        Column(){
-            Text(text = "Preparing Polar", style = MaterialTheme.typography.body2)
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(modifier = Modifier.width(180.dp).padding(horizontal = 20.dp)){
-                LoadingText(baseText =  if(deviceConnectionInfo == null) "Connecting" else "Loading HR")
-            }
-            if(canSkip && deviceConnectionInfo == null){
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
-                    Button(
-                        onClick = {
-                            VibrateOnce(context)
-                            viewModel.goToNextState()
-                        },
-                        modifier = Modifier.size(35.dp),
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
-                    ) {
-                        Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
-                    }
+    Column(modifier = Modifier .fillMaxSize().padding(20.dp,60.dp,20.dp,0.dp)){
+        Text(modifier = Modifier.fillMaxWidth(),text = "Preparing Polar", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
+        Spacer(modifier = Modifier.height(15.dp))
+        Row(modifier = Modifier.width(180.dp).padding(horizontal = 20.dp)){
+            LoadingText(baseText =  if(deviceConnectionInfo == null) "Connecting" else "Loading HR")
+        }
+        if(canSkip && deviceConnectionInfo == null){
+            Spacer(modifier = Modifier.height(25.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
+                Button(
+                    onClick = {
+                        VibrateOnce(context)
+                        viewModel.goToNextState()
+                    },
+                    modifier = Modifier.size(35.dp),
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+                ) {
+                    Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
                 }
             }
         }

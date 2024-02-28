@@ -140,17 +140,20 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
             )
         }
     ){
-        Text(
-            modifier = Modifier.padding(horizontal = 50.dp, vertical = 10.dp),
-            text = "My Workout Assistant",
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.caption1,
-        )
 
         ScalingLazyColumn(
-            modifier = Modifier.padding(10.dp, 55.dp,10.dp,0.dp),
+            modifier = Modifier.padding(10.dp, vertical = 0.dp),
             state = scalingLazyListState,
         ) {
+            item{
+                Text(
+                    modifier = Modifier.padding(0.dp, 0.dp,0.dp, 10.dp),
+                    text = "My Workout Assistant",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1,
+                )
+            }
+
             if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5){
                 item {
                     Text(
@@ -167,8 +170,8 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                 }else{
                     items(workouts) { workout ->
                         WorkoutListItem(workout) {
-                            viewModel.setWorkout(workout)
                             navController.navigate(Screen.WorkoutDetail.route)
+                            viewModel.setWorkout(workout)
                         }
                     }
                 }

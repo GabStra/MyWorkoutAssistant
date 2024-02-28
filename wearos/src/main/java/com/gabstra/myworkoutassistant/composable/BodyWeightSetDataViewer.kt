@@ -35,13 +35,13 @@ fun BodyWeightSetDataViewer(bodyWeightSetData: BodyWeightSetData){
 
             Text(
                 text = "${bodyWeightSetData.actualReps}",
-                style = MaterialTheme.typography.display3
+                style = MaterialTheme.typography.title1
             )
             Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = "reps",
                 style = MaterialTheme.typography.body1,
-                modifier = Modifier.width(35.dp).padding(0.dp,0.dp,0.dp,4.dp)
+                modifier = Modifier.width(35.dp).padding(0.dp,0.dp,0.dp,1.dp)
             )
         }
     }

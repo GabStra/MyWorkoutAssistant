@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoubleArrow
@@ -38,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -123,10 +126,12 @@ fun ExerciseScreen(
         }
     }
 
+    /*
     LaunchedEffect(Unit) {
         delay(10000)
         startTouchTimer()
     }
+    */
 
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
@@ -150,24 +155,40 @@ fun ExerciseScreen(
             horizontalArrangement = Arrangement.Center
         ) {
             if (enableSettingsMode) {
-                Button(
-                    onClick = {
-                        VibrateOnce(context)
-                        showSkipDialog = true
-                    },
-                    modifier = Modifier.size(35.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+                Box(
+                    modifier = Modifier
+                        .size(35.dp)
+                        .clip(CircleShape)
+                        .background(Color.Gray)
+                        .combinedClickable(
+                            onClick = {
+                                // Handle your regular click action here
+                            },
+                            onLongClick = {
+                                VibrateOnce(context)
+                                showSkipDialog = true
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
+                    Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "Skip")
                 }
             } else {
-                Button(
-                    onClick = {
-                        VibrateOnce(context)
-                        showConfirmDialog = true
-                    },
-                    modifier = Modifier.size(35.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                Box(
+                    modifier = Modifier
+                        .size(35.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colors.primary)
+                        .combinedClickable(
+                            onClick = {
+                                // Handle your regular click action here
+                            },
+                            onLongClick = {
+                                VibrateOnce(context) // Make sure this is a correctly implemented function to vibrate once.
+                                showConfirmDialog = true // Ensure you have state management to handle showing a dialog.
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
                 }
@@ -189,9 +210,9 @@ fun ExerciseScreen(
             .fillMaxSize()
             .circleMask()
             .pointerInteropFilter {
-                if (!showLockScreen) {
+                /*if (!showLockScreen) {
                     startTouchTimer()
-                }
+                }*/
 
                 false
             },
@@ -285,7 +306,7 @@ fun ExerciseScreen(
                             }
                         }
                         1 -> {
-                            Box(modifier = Modifier.fillMaxSize().padding(0.dp,5.dp,0.dp,0.dp)){
+                            Box(modifier = Modifier.fillMaxSize().padding(0.dp,10.dp,0.dp,0.dp)){
                                 Text(
                                     modifier = Modifier.fillMaxSize(),
                                     text = "Previous Set",
@@ -330,6 +351,7 @@ fun ExerciseScreen(
         hearthRateChart()
     }
 
+    /*
     LockScreen(
         show = showLockScreen,
         onUnlock = {
@@ -338,6 +360,7 @@ fun ExerciseScreen(
             showLockScreen = false
         }
     )
+    */
 
     CustomDialog(
         show = showConfirmDialog,

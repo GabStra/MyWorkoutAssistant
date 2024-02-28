@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
@@ -36,6 +37,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composable.LoadingText
+import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.google.android.gms.wearable.DataClient
 
 import java.time.Duration
@@ -45,6 +47,8 @@ import java.time.LocalDateTime
 @Composable
 fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel, state : WorkoutState.Finished){
     val workout by viewModel.selectedWorkout
+
+    val context = LocalContext.current
 
     val duration = remember {
         Duration.between(state.startWorkoutTime, LocalDateTime.now())
@@ -89,6 +93,7 @@ fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel,
                     isClickable = false;
                     hideAll=true
                     viewModel.endWorkout(duration){
+                        cancelWorkoutInProgressNotification(context)
                         navController.navigate(Screen.WorkoutSelection.route){
                             popUpTo(Screen.WorkoutSelection.route) {
                                 inclusive = true

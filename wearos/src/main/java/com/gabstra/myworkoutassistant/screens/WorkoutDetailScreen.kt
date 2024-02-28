@@ -36,9 +36,11 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @Composable
 fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, hrViewModel : MeasureDataViewModel) {
     val workout by viewModel.selectedWorkout
@@ -49,7 +51,8 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         Manifest.permission.BLUETOOTH_SCAN,
         Manifest.permission.BLUETOOTH_CONNECT,
         Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.POST_NOTIFICATIONS
     )
 
 

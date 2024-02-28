@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +29,7 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 
@@ -39,12 +41,80 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
     val previousSet = state.previousSetData as BodyWeightSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
-    var isRepsPickerVisible by remember { mutableStateOf(false) }
+    var isRepsInEditMode by remember { mutableStateOf(false) }
 
     LaunchedEffect(forceStopEditMode) {
-        if(forceStopEditMode) isRepsPickerVisible = false
+        if(forceStopEditMode) isRepsInEditMode = false
     }
 
+    fun onMinusClick(){
+        if (isRepsInEditMode && currentSet.actualReps>1){
+            currentSet = currentSet.copy(
+                actualReps = currentSet.actualReps-1
+            )
+            VibrateOnce(context)
+        }
+    }
+
+    fun onPlusClick(){
+        if (isRepsInEditMode){
+            currentSet = currentSet.copy(
+                actualReps = currentSet.actualReps+1
+            )
+            VibrateOnce(context)
+        }
+    }
+
+    val repsRow = @Composable {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {
+                    },
+                    onLongClick = {
+                        if (!forceStopEditMode) {
+                            isRepsInEditMode = !isRepsInEditMode
+                        }
+
+                        VibrateOnce(context)
+                    },
+                    onDoubleClick = {
+                        if (isRepsInEditMode) {
+                            currentSet = currentSet.copy(
+                                actualReps = previousSet.actualReps
+                            )
+
+                            VibrateTwice(context)
+                        }
+                    }
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End
+        ) {
+            TrendIcon(currentSet.actualReps, previousSet.actualReps)
+            Spacer(modifier = Modifier.width(5.dp))
+
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.End
+            ) {
+
+                Text(
+                    text = "${currentSet.actualReps}",
+                    style = MaterialTheme.typography.title1
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = "reps",
+                    style = MaterialTheme.typography.body1,
+                    modifier = Modifier
+                        .width(35.dp)
+                        .padding(0.dp, 0.dp, 0.dp, 1.dp)
+                )
+            }
+        }
+    }
 
     LaunchedEffect(currentSet) {
         // Update the WorkoutState.Set whenever currentSet changes
@@ -53,63 +123,29 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = modifier
     ){
-        Column(modifier = Modifier.weight(1f).padding(40.dp,20.dp,40.dp,0.dp), verticalArrangement = Arrangement.Top, horizontalAlignment = Alignment.End) {
-            Row(
-                modifier = Modifier.fillMaxWidth().combinedClickable(
-                    onClick = {
-                        if(!forceStopEditMode) isRepsPickerVisible = !isRepsPickerVisible
-                    },
-                    onLongClick = {
-                        if (isRepsPickerVisible) {
-                            currentSet= previousSet.copy()
-                            VibrateOnce(context)
-                        }
+        if (isRepsInEditMode) {
+            ControlButtonsVertical(
+                modifier = Modifier.fillMaxSize(),
+                onMinusClick = { onMinusClick() },
+                onMinusLongPress = { onMinusClick() },
+                onPlusClick = { onPlusClick() },
+                onPlusLongPress = { onPlusClick() },
+                content = {
+                    Column(modifier = Modifier.padding(0.dp,0.dp,50.dp,0.dp)) {
+                        repsRow()
                     }
-                ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End
-            ) {
-                if (isRepsPickerVisible) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowRight,
-                        contentDescription = "Same",
-                        modifier = Modifier.size(35.dp)
-                    )
-                }else{
-                    if(currentSet.actualReps != 0 && !isRepsPickerVisible) TrendIcon(currentSet.actualReps, previousSet.actualReps)
-                    Spacer(modifier = Modifier.width(5.dp))
                 }
-                Row(
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.End
-                ) {
+            )
 
-                    Text(
-                        text = "${currentSet.actualReps}",
-                        style = MaterialTheme.typography.display3
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = "reps",
-                        style = MaterialTheme.typography.body1,
-                        modifier = Modifier.width(35.dp).padding(0.dp,0.dp,0.dp,4.dp)
-                    )
-                }
+        }else{
+            Column(modifier = Modifier.padding(0.dp,5.dp,50.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
+                repsRow()
             }
-        }
-        Box(contentAlignment = Alignment.BottomCenter) {
-            if (isRepsPickerVisible) {
-                ControlButtons(
-                    onMinusClick = {
-                        if (currentSet.actualReps > 1) currentSet = currentSet.copy(actualReps = currentSet.actualReps - 1)
-                    },
-                    onPlusClick = {
-                        currentSet = currentSet.copy(actualReps = currentSet.actualReps + 1)
-                    }
-                )
-            }else{
+
+            Box(contentAlignment = Alignment.BottomCenter) {
                 bottom()
             }
         }

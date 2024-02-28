@@ -35,7 +35,7 @@ fun WeightSetDataViewer(weightSetData: WeightSetData){
 
             Text(
                 text = "${weightSetData.actualReps}",
-                style = MaterialTheme.typography.display3
+                style = MaterialTheme.typography.title1
             )
             Spacer(modifier = Modifier.width(5.dp))
             Text(
@@ -43,7 +43,7 @@ fun WeightSetDataViewer(weightSetData: WeightSetData){
                 style = MaterialTheme.typography.body1,
                 modifier = Modifier
                     .width(35.dp)
-                    .padding(0.dp, 0.dp, 0.dp, 4.dp)
+                    .padding(0.dp, 0.dp, 0.dp, 1.dp)
             )
         }
     }
@@ -58,7 +58,7 @@ fun WeightSetDataViewer(weightSetData: WeightSetData){
         ) {
             Text(
                 text = "${weightSetData.actualWeight}",
-                style = MaterialTheme.typography.display3
+                style = MaterialTheme.typography.title1
             )
             Spacer(modifier = Modifier.width(5.dp))
             Text(
@@ -66,7 +66,7 @@ fun WeightSetDataViewer(weightSetData: WeightSetData){
                 style = MaterialTheme.typography.body1,
                 modifier = Modifier
                     .width(35.dp)
-                    .padding(0.dp, 0.dp, 0.dp, 4.dp)
+                    .padding(0.dp, 0.dp, 0.dp, 1.dp)
             )
         }
     }
