@@ -101,7 +101,7 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                         VibrateOnce(context)
                     },
                     onDoubleClick = {
-                        if (isRepsInEditMode) {
+                        if (!isRepsInEditMode) {
                             currentSet = currentSet.copy(
                                 actualReps = previousSet.actualReps
                             )
@@ -152,7 +152,7 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                         VibrateOnce(context)
                     },
                     onDoubleClick = {
-                        if (isWeightInEditMode) {
+                        if (!isWeightInEditMode) {
                             currentSet = currentSet.copy(
                                 actualWeight = previousSet.actualWeight
                             )
@@ -200,7 +200,7 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                 onPlusClick = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
-                    Column(modifier = Modifier.padding(0.dp,0.dp,50.dp,0.dp)) {
+                    Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,0.dp)) {
                         if (isRepsInEditMode) repsRow()
                         if (isWeightInEditMode) weightRow()
                     }
@@ -208,7 +208,7 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
             )
 
         }else{
-            Column(modifier = Modifier.padding(0.dp,5.dp,50.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
+            Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
                 repsRow()
                 Spacer(modifier = Modifier.height(5.dp))
                 weightRow()

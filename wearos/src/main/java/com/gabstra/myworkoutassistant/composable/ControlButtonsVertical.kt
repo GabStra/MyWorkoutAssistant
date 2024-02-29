@@ -1,14 +1,17 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.view.MotionEvent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Alignment
 
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -20,6 +23,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
@@ -27,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 
@@ -36,45 +41,30 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.performActionOnLongPress(
     coroutineScope: CoroutineScope,
-    thresholdMillis: Long = 5000L, // Default threshold for long press
-    intervalMillis: Long = 1000L, // Interval for repeated action post-long press
-    onAction: () -> Unit, // Action to perform on long press and repeat
-    onClick: () -> Unit // Action to perform on click
-): Modifier {
-    var job: Job? = null
-    var touchDownTimestamp: Long = 0L
-
-    return this.then(
-        pointerInteropFilter { motionEvent ->
-            when (motionEvent.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    touchDownTimestamp = System.currentTimeMillis()
-                    job = coroutineScope.launch {
-                        delay(thresholdMillis)
-                        while (true) {
-                            onAction()
-                            delay(intervalMillis)
-                        }
-                    }
-                    true // Allow further event processing, e.g., onClick
+    thresholdMillis: Long = 5000L,
+    intervalMillis: Long = 1000L,
+    onAction: () -> Unit,
+    onClick: () -> Unit
+): Modifier = this.then(
+    pointerInput(Unit) {
+        detectTapGestures(
+            onPress = { _ ->
+                var actionHasBeenPerfomed= false
+                val job = coroutineScope.launch {
+                    delay(thresholdMillis)
+                    do {
+                        actionHasBeenPerfomed = true
+                        onAction()
+                        delay(intervalMillis)
+                    } while (true)
                 }
-                MotionEvent.ACTION_UP -> {
-                    job?.cancel()
-                    if (System.currentTimeMillis() - touchDownTimestamp < thresholdMillis) {
-                        // Touch was released before the threshold, indicating a click
-                        onClick()
-                    }
-                    true // Allow further event processing, e.g., onClick
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    job?.cancel()
-                    true // Allow further event processing if needed
-                }
-                else -> false // Other events are not handled, allow them to propagate
+                tryAwaitRelease()
+                job.cancel()
+                if(!actionHasBeenPerfomed) onClick()
             }
-        }
-    )
-}
+        )
+    }
+)
 
 @Composable
 fun ControlButtonsVertical(
@@ -88,22 +78,26 @@ fun ControlButtonsVertical(
     val coroutineScope = rememberCoroutineScope()
     
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally,verticalArrangement = Arrangement.Center) {
-        Button(
-            onClick = {
-            },
-            modifier = Modifier.size(30.dp).performActionOnLongPress(coroutineScope,thresholdMillis= 1500,intervalMillis = 200, onAction = onPlusLongPress, onClick = onPlusClick),
-            colors = ButtonDefaults.buttonColors(backgroundColor = Color.hsl(124f,0.27f,0.42f))
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(Color.Green)
+                .performActionOnLongPress(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onPlusLongPress, onClick = onPlusClick),
+            contentAlignment = Alignment.Center
         ) {
             Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
         }
         Spacer(modifier = Modifier.height(5.dp))
         content()
         Spacer(modifier = Modifier.height(5.dp))
-        Button(
-            onClick = {
-            },
-            modifier = Modifier.size(30.dp).performActionOnLongPress(coroutineScope,thresholdMillis= 1500,intervalMillis = 200, onAction = onMinusLongPress, onClick = onMinusClick),
-            colors = ButtonDefaults.buttonColors(backgroundColor = Color.hsl(0f,0.44f,0.49f))
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(Color.Red)
+                .performActionOnLongPress(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onMinusLongPress, onClick = onMinusClick),
+            contentAlignment = Alignment.Center
         ) {
             Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
         }

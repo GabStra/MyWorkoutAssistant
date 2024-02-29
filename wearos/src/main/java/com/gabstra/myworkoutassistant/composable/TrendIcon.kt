@@ -11,6 +11,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 
 @Composable
@@ -21,7 +22,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 imageVector = Icons.AutoMirrored.Filled.TrendingUp,
                 contentDescription = "Up",
                 modifier = Modifier.size(30.dp),
-                tint = Color.Green
+                tint = MyColors.Green
             )
         }
 
@@ -30,7 +31,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 imageVector = Icons.AutoMirrored.Filled.TrendingDown,
                 contentDescription = "Down",
                 modifier = Modifier.size(30.dp),
-                tint = Color.Red
+                tint = MyColors.ComplementaryGreen
             )
         }
 

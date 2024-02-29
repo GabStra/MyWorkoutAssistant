@@ -80,7 +80,7 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
                         VibrateOnce(context)
                     },
                     onDoubleClick = {
-                        if (isRepsInEditMode) {
+                        if (!isRepsInEditMode) {
                             currentSet = currentSet.copy(
                                 actualReps = previousSet.actualReps
                             )
@@ -134,14 +134,14 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
                 onPlusClick = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
-                    Column(modifier = Modifier.padding(0.dp,0.dp,50.dp,0.dp)) {
+                    Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,0.dp)) {
                         repsRow()
                     }
                 }
             )
 
         }else{
-            Column(modifier = Modifier.padding(0.dp,5.dp,50.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
+            Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
                 repsRow()
             }
 

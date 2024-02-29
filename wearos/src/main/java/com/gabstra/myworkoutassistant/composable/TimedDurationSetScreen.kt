@@ -159,7 +159,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
                 }
             )
         }else{
-            Column(modifier = Modifier.padding(0.dp,5.dp,0.dp,5.dp).weight(1f), verticalArrangement = Arrangement.Top) {
+            Column(modifier = Modifier.padding(0.dp,5.dp,0.dp,5.dp).weight(1f), verticalArrangement = Arrangement.Center) {
                 textComposable()
             }
             Box(contentAlignment = Alignment.BottomCenter) {
@@ -200,8 +200,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
         show = showStopDialog,
         title = "Stop exercise",
         message = "Do you want to stop this exercise?",
-        handleYesClick = {},
-        handleYesClickLongPress = {
+        handleYesClick = {
             VibrateOnce(context)
             currentSet = currentSet.copy(
                 endTimer =  currentMillis

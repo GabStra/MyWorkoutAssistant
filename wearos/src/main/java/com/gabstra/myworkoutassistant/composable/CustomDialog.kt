@@ -50,7 +50,6 @@ fun CustomDialog(
     message : String = "Do you really want to exit?",
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
-    handleYesClickLongPress: () -> Unit = {},
     closeTimerInMillis : Long = 0,
     handleOnAutomaticClose: () -> Unit = {}
 ) {
@@ -114,39 +113,17 @@ fun CustomDialog(
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        if (handleYesClickLongPress == {}) {
-                            Button(
-                                onClick = {
-                                    closeDialogJob?.cancel()
-                                    handleYesClick()
-                                },
-                                modifier = Modifier.size(35.dp),
-                                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-                            ) {
-                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(35.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colors.primary)
-                                    .combinedClickable(
-                                        onClick = {
-
-                                        },
-                                        onLongClick = {
-                                            closeDialogJob?.cancel()
-                                            handleYesClickLongPress()
-                                        }
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
-                            }
+                        Spacer(modifier = Modifier.width(20.dp))
+                        Button(
+                            onClick = {
+                                closeDialogJob?.cancel()
+                                handleYesClick()
+                            },
+                            modifier = Modifier.size(35.dp),
+                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                        ) {
+                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
                         }
-
                     }
                 }
             }

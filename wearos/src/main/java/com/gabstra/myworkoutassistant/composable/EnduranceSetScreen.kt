@@ -200,8 +200,7 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd:
         show = showStopDialog,
         title = "Stop exercise",
         message = "Do you want to stop this exercise?",
-        handleYesClick = {},
-        handleYesClickLongPress = {
+        handleYesClick = {
             VibrateOnce(context)
             currentSet = currentSet.copy(
                 endTimer = currentMillis
