@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,7 @@ import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.CustomDialog
+import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
@@ -92,46 +94,23 @@ fun Modifier.circleMask() = this.drawWithContent {
 fun ExerciseScreen(
     viewModel: AppViewModel,
     state: WorkoutState.Set,
-    onScreenLocked: () -> Unit,
-    onScreenUnlocked: () -> Unit,
     hearthRateChart: @Composable () -> Unit
 ) {
     val context = LocalContext.current
 
-    val scope = rememberCoroutineScope()
-
-    var touchJob by remember { mutableStateOf<Job?>(null) }
-    var showLockScreen by remember { mutableStateOf(false) }
-
-    val exerciseIndex = viewModel.setsByExercise.keys.indexOfFirst { it === state.parentExercise }
-    val totalExercises = viewModel.setsByExercise.keys.count()
-
-    fun startTouchTimer() {
-        touchJob?.cancel()
-        touchJob = scope.launch {
-            delay(5000)  // wait for 10 seconds
-            showLockScreen=true
-            onScreenLocked()
-        }
-    }
-
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
-    var showAddSetDialog by remember { mutableStateOf(false) }
 
     val exerciseSets = state.parentExercise.sets
 
-    val setIndex = remember(state,exerciseSets) {
-        exerciseSets.indexOfFirst { it === state.set }
-    }
+    val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
 
     val pagerState = rememberPagerState(
         initialPage = 1,
         pageCount = {
         3
     })
-
 
     LaunchedEffect(state) {
         pagerState.animateScrollToPage(1)
@@ -150,9 +129,9 @@ fun ExerciseScreen(
                     VibrateOnce(context)
                     showGoBackDialog = true
                 },
-                enabled = !viewModel.isHistoryEmpty
+                enabled = !isHistoryEmpty
             ) {
-                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "B")
+                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
             }
             Spacer(modifier = Modifier.width(20.dp))
             Button(
@@ -186,19 +165,6 @@ fun ExerciseScreen(
             .circleMask(),
         contentAlignment = Alignment.Center
     ) {
-
-        /*
-        Box(modifier = Modifier
-            .fillMaxSize()
-            .padding(0.dp, 20.dp, 0.dp, 25.dp), contentAlignment = Alignment.TopCenter){
-            Row(modifier = Modifier.fillMaxWidth(),horizontalArrangement = Arrangement.Center) {
-                Text(text="${exerciseIndex+1}/${totalExercises}",style = MaterialTheme.typography.body1)
-                Spacer(modifier = Modifier.width(30.dp))
-                Text( text="${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
-            }
-        }
-        */
-
         Column(
             verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -244,23 +210,25 @@ fun ExerciseScreen(
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center){
                                 completeOrSkipExerciseComposable()
                             }
-
                         }
                         1 -> {
                             when(updatedState.set){
                                 is WeightSet -> WeightSetScreen(
+                                    viewModel = viewModel,
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
-                                    forceStopEditMode = showLockScreen,
+                                    forceStopEditMode = false,
                                     bottom = {  }
                                 )
                                 is BodyWeightSet -> BodyWeightSetScreen(
+                                    viewModel = viewModel,
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
-                                    forceStopEditMode = showLockScreen,
+                                    forceStopEditMode = false,
                                     bottom = {  }
                                 )
                                 is TimedDurationSet -> TimedDurationSetScreen(
+                                    viewModel = viewModel,
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
                                     onTimerEnd = {
@@ -270,6 +238,7 @@ fun ExerciseScreen(
                                     bottom = {  }
                                 )
                                 is EnduranceSet -> EnduranceSetScreen(
+                                    viewModel = viewModel,
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
                                     onTimerEnd = {
@@ -328,18 +297,7 @@ fun ExerciseScreen(
         hearthRateChart()
     }
 
-    /*
-    LockScreen(
-        show = showLockScreen,
-        onUnlock = {
-            onScreenUnlocked()
-            startTouchTimer()
-            showLockScreen = false
-        }
-    )
-    */
-
-    CustomDialog(
+    CustomDialogYesOnLongPress(
         show = showConfirmDialog,
         title = "Complete exercise",
         message = "Do you want to save this data?",
@@ -356,10 +314,11 @@ fun ExerciseScreen(
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showConfirmDialog = false
-        }
+        },
+        holdTimeInMillis = 2000
     )
 
-    CustomDialog(
+    CustomDialogYesOnLongPress(
         show = showSkipDialog,
         title = "Skip exercise",
         message = "Do you want to skip this exercise?",
@@ -376,10 +335,11 @@ fun ExerciseScreen(
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showSkipDialog = false
-        }
+        },
+        holdTimeInMillis = 2000
     )
 
-    CustomDialog(
+    CustomDialogYesOnLongPress(
         show = showGoBackDialog,
         title = "Go to previous set",
         message = "Do you want to go back?",
@@ -395,6 +355,7 @@ fun ExerciseScreen(
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showGoBackDialog = false
-        }
+        },
+        holdTimeInMillis = 2000
     )
 }

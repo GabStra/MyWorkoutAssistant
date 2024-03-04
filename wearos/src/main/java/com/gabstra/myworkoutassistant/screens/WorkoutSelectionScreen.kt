@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.SendToMobile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -113,7 +114,7 @@ fun MissingAgeSettingMessage(
 @Composable
 fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController, viewModel: AppViewModel, appHelper: WearDataLayerAppHelper) {
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
-    val workouts by viewModel.workouts
+    val workouts by viewModel.workouts.collectAsState()
 
     val currentYear = remember {  Calendar.getInstance().get(Calendar.YEAR) }
 
@@ -154,7 +155,7 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                 )
             }
 
-            if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5){
+            if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5 && workouts.isEmpty()){
                 item {
                     Text(
                         text = "Please install the app on your phone",

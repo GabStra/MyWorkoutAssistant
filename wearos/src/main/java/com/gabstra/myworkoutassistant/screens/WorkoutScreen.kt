@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.KeepScreenOn
+import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
@@ -94,18 +95,18 @@ fun WorkoutScreen(
 ){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    var screenLocked by remember { mutableStateOf(false) }
     val workoutState by viewModel.workoutState.collectAsState()
     val selectedWorkout by viewModel.selectedWorkout
     val userAge by viewModel.userAge
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
 
     BackHandler(true) {
-        if(!screenLocked) showWorkoutInProgressDialog = true
+        showWorkoutInProgressDialog = true
+        viewModel.pauseWorkout()
     }
     val coroutineScope = rememberCoroutineScope()
 
-    CustomDialog(
+    CustomDialogYesOnLongPress(
         show = showWorkoutInProgressDialog,
         title = "Workout in progress",
         handleYesClick = {
@@ -128,12 +129,14 @@ fun WorkoutScreen(
         handleNoClick = {
             VibrateOnce(context)
             showWorkoutInProgressDialog = false
+            viewModel.resumeWorkout()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showWorkoutInProgressDialog = false
-            VibrateTwice(context)
-        }
+            viewModel.resumeWorkout()
+        },
+        holdTimeInMillis = 2000
     )
 
     LifecycleObserver(
@@ -177,22 +180,18 @@ fun WorkoutScreen(
                 ExerciseScreen(
                     viewModel,
                     state,
-                    onScreenLocked = {
-                        screenLocked=true
-                    },
-                    onScreenUnlocked = {
-                        screenLocked=false
-                    },
                     hearthRateChart = {
                         if(!selectedWorkout.usePolarDevice)
                             HeartRateStandard(
                                 modifier = Modifier.fillMaxSize(),
+                                viewModel,
                                 hrViewModel,
                                 userAge
                             )
                         else
                             HeartRatePolar(
                                 modifier = Modifier.fillMaxSize(),
+                                viewModel,
                                 polarViewModel,
                                 userAge
                             )

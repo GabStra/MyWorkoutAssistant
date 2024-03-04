@@ -12,4 +12,5 @@ data class WorkoutHistory(
     val workoutId: UUID,
     val date: LocalDate,
     val duration: Int,
+    val heartBeatRecords: List<Int>
 )

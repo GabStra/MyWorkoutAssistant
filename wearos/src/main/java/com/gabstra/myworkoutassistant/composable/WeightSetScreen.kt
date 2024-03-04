@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
@@ -32,7 +33,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
+fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData
@@ -101,7 +102,7 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                         VibrateOnce(context)
                     },
                     onDoubleClick = {
-                        if (!isRepsInEditMode) {
+                        if (isRepsInEditMode) {
                             currentSet = currentSet.copy(
                                 actualReps = previousSet.actualReps
                             )
@@ -152,7 +153,7 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
                         VibrateOnce(context)
                     },
                     onDoubleClick = {
-                        if (!isWeightInEditMode) {
+                        if (isWeightInEditMode) {
                             currentSet = currentSet.copy(
                                 actualWeight = previousSet.actualWeight
                             )
@@ -195,9 +196,9 @@ fun WeightSetScreen (modifier: Modifier, state: WorkoutState.Set, forceStopEditM
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier.fillMaxSize(),
-                onMinusClick = { onMinusClick() },
+                onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
-                onPlusClick = { onPlusClick() },
+                onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,0.dp)) {

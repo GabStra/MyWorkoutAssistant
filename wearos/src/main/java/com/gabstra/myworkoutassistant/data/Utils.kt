@@ -13,8 +13,11 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -37,6 +40,7 @@ import com.google.android.horologist.data.AppHelperResultCode
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.util.concurrent.CancellationException
@@ -187,4 +191,73 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
+fun Modifier.repeatActionOnLongPressOrTap(
+    coroutineScope: CoroutineScope,
+    thresholdMillis: Long = 5000L,
+    intervalMillis: Long = 1000L,
+    onAction: () -> Unit,
+    onTap: () -> Unit
+): Modifier = this.then(
+    pointerInput(Unit) {
+        var repeatedActionHappening = false
+        detectTapGestures(
+            onPress = { _ ->
+                val job = coroutineScope.launch {
+                    delay(thresholdMillis)
+                    do {
+                        repeatedActionHappening = true
+                        onAction()
+                        delay(intervalMillis)
+                    } while (true)
+                }
+                tryAwaitRelease()
+                job.cancel()
+                repeatedActionHappening = false
+            },
+            onTap = {
+                if(!repeatedActionHappening) onTap()
+            }
+        )
+    }
+)
 
+@OptIn(ExperimentalComposeUiApi::class)
+fun Modifier.repeatActionOnLongPress(
+    coroutineScope: CoroutineScope,
+    thresholdMillis: Long = 5000L,
+    intervalMillis: Long = 1000L,
+    onPressStart: () -> Unit,
+    onBeforeLongPressRepeat: () -> Unit,
+    onLongPressRepeat: () -> Unit,
+    onRelease: () -> Unit
+): Modifier = this.then(
+    pointerInput(Unit) {
+        detectTapGestures(
+            onPress = { _ ->
+                onPressStart()
+                val job = coroutineScope.launch {
+                    delay(thresholdMillis)
+                    onBeforeLongPressRepeat()
+                    do {
+                        delay(intervalMillis)
+                        onLongPressRepeat()
+                    } while (true)
+                }
+                tryAwaitRelease()
+                job.cancel()
+                onRelease()
+            }
+        )
+    }
+)
+
+fun extractValuesAfterFirstZeroFollowedByNonZero(heartBeatHistory: List<Int>): List<Int> {
+    // Find the index of the first zero followed by a non-zero value
+    val index = heartBeatHistory.indexOfFirst { it == 0 }
+        .takeIf { it != -1 && it < heartBeatHistory.size - 1 } // Ensure the zero is not the last element
+        ?.let { if (heartBeatHistory[it + 1] != 0) it else null } // Check if the next element is non-zero
+
+    // If such a pattern exists, return all values after it; otherwise, return an empty list
+    return if (index != null) heartBeatHistory.drop(index + 2) else emptyList()
+}

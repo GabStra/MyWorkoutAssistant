@@ -119,7 +119,7 @@ class PolarViewModel : ViewModel() {
         }
     }
 
-    private val _hrDataState = MutableStateFlow<List<Int>?>(null)
+    private val _hrDataState = MutableStateFlow<Int?>(null)
     val hrDataState = _hrDataState.asStateFlow()
 
     private fun startHrStreaming(deviceId: String) {
@@ -129,7 +129,7 @@ class PolarViewModel : ViewModel() {
                     .observeOn(AndroidSchedulers.mainThread())
                     .subscribe(
                         { hrData: PolarHrData ->
-                            _hrDataState.value = hrData.samples.map { it.hr }
+                            _hrDataState.value = hrData.samples.map { it.hr }.average().toInt()
                         },
                         { error: Throwable ->
                             Log.e("MyApp", "HR stream failed. Reason $error")

@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.health.services.client.data.ExerciseState
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -35,7 +36,11 @@ import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.ticker
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 
@@ -43,11 +48,30 @@ import kotlinx.coroutines.launch
 @Composable
 fun HeartRateCircularChart(
     modifier: Modifier = Modifier.fillMaxSize(),
+    appViewModel: AppViewModel,
     hr: Int,
     age: Int = 28
 ){
     val context = LocalContext.current
     val mhrPercentage =  remember(hr) { getMaxHearthRatePercentage(hr,age) }
+
+    val heartRateFlow = remember { MutableStateFlow(hr) }
+
+    // Update the StateFlow with the latest hr value
+    LaunchedEffect(hr) {
+        heartRateFlow.value = hr
+    }
+
+    // Collect the heart rate value from the StateFlow and call registerHeartBeat at 500 ms intervals
+    LaunchedEffect(heartRateFlow) {
+        // Create a ticker channel that emits every 500ms
+        val tickerChannel = ticker(delayMillis = 500, initialDelayMillis = 0)
+        coroutineScope {
+            tickerChannel.receiveAsFlow().collect {
+                appViewModel.registerHeartBeat(heartRateFlow.value)
+            }
+        }
+    }
 
     LaunchedEffect(mhrPercentage){
         if(mhrPercentage > 100){
@@ -135,6 +159,7 @@ fun HeartRateCircularChart(
 @Composable
 fun HeartRateStandard(
     modifier: Modifier = Modifier.fillMaxSize(),
+    appViewModel: AppViewModel,
     hrViewModel: MeasureDataViewModel,
     userAge : Int
 ) {
@@ -152,22 +177,23 @@ fun HeartRateStandard(
 
     val hr = if (uiState is UiState.HeartRateAvailable) lastNonZeroHeartRate else 0
 
-    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge)
+    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge)
 }
 
 @Composable
 fun HeartRatePolar(
     modifier: Modifier = Modifier,
+    appViewModel: AppViewModel,
     polarViewModel: PolarViewModel,
     userAge : Int
 ) {
     val hrData by polarViewModel.hrDataState.collectAsState()
 
     val hr = remember(hrData) {
-        hrData?.get(0) ?: 0
+        hrData ?: 0
     }
 
-    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge)
+    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge)
 }
 
 private fun mapPercentage(percentage: Float): Float {

@@ -32,6 +32,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -233,16 +235,30 @@ fun WorkoutDetailScreen(
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
-                TabRow(selectedTabIndex = 0) {
+                TabRow(
+                    selectedTabIndex = 0,
+                    indicator = {
+                            tabPositions ->
+                            TabRowDefaults.Indicator(
+                                Modifier.tabIndicatorOffset(tabPositions[0]),
+                                color = Color.White, // Set the indicator color
+                                height = 2.dp // Set the indicator thickness
+                        )
+                    }
+                ) {
                     Tab(
                         selected = true,
                         onClick = { },
-                        text = { Text("Overview") }
+                        text = { Text("Overview") },
+                        selectedContentColor = Color.White, // Color when tab is selected
+                        unselectedContentColor = Color.LightGray // Color when tab is not selected
                     )
                     Tab(
                         selected = false,
                         onClick = { appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id),true) },
-                        text = { Text("History")  }
+                        text = { Text("History")  },
+                        selectedContentColor = Color.White, // Color when tab is selected
+                        unselectedContentColor = Color.LightGray // Color when tab is not selected
                     )
                 }
 

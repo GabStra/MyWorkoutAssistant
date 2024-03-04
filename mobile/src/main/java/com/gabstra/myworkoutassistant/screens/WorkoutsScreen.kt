@@ -46,6 +46,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -476,12 +478,25 @@ fun WorkoutsScreen(
                     .padding(it),
                 verticalArrangement = Arrangement.Top,
             ){
-                TabRow(selectedTabIndex = selectedTabIndex) {
+                TabRow(
+                    selectedTabIndex = selectedTabIndex,
+                    indicator = {
+                            tabPositions ->
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                            color = Color.White, // Set the indicator color
+                            height = 2.dp // Set the indicator thickness
+                        )
+                    }
+
+                ) {
                     tabTitles.forEachIndexed { index, title ->
                         Tab(
                             selected = index == selectedTabIndex,
                             onClick = { selectedTabIndex = index },
-                            text = { Text(title) }
+                            text = { Text(title) },
+                            selectedContentColor = Color.White, // Color when tab is selected
+                            unselectedContentColor = Color.LightGray // Color when tab is not selected
                         )
                     }
                 }

@@ -54,7 +54,7 @@ fun PreparingPolarScreen(
     val deviceConnectionInfo by polarViewModel.deviceConnectionState.collectAsState()
     val hrData by polarViewModel.hrDataState.collectAsState()
 
-    val heartRate =  hrData?.get(0) ?: 0
+    val heartRate =  hrData ?: 0
 
     val scope = rememberCoroutineScope()
     var currentMillis by remember { mutableIntStateOf(0) }

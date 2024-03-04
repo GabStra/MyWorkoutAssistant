@@ -21,7 +21,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
@@ -29,6 +28,7 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
@@ -42,17 +42,17 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit) {
+fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
-    val set = state.set as TimedDurationSet
+    val set = remember(state){ state.set as TimedDurationSet}
 
-    var showStartButton by remember(state) { mutableStateOf(!set.autoStart) }
+    var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
-    val previousSet = state.previousSetData as TimedDurationSetData
-    var currentSet = state.currentSetData as TimedDurationSetData
+    val previousSet = remember(state){ state.previousSetData as TimedDurationSetData }
+    var currentSet = remember(state){ state.currentSetData as TimedDurationSetData}
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
@@ -104,7 +104,7 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
 
             VibrateShortImpulse(context);
             onTimerEnd()
-            if(!state.set.autoStop){
+            if(!set.autoStop){
                 showBottom = true
             }
         }
@@ -114,6 +114,28 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
         if (set.autoStart) {
             delay(500)
             startTimerJob()
+        }
+    }
+
+    // State to track if this is the first time the composable is being run
+    val initialRun = remember { mutableStateOf(true) }
+
+    // Observe isPaused from your viewModel
+    val isPaused by viewModel.isPaused
+
+    LaunchedEffect(isPaused) {
+        if (initialRun.value) {
+            // If it's the first run, just set initialRun to false and do nothing else
+            initialRun.value = false
+        } else {
+            // For subsequent runs (when isPaused changes), check your condition and act accordingly
+            if (timerJob != null) {
+                if (timerJob!!.isActive && isPaused) {
+                    timerJob?.cancel()
+                } else {
+                    startTimerJob()
+                }
+            }
         }
     }
 
@@ -150,9 +172,9 @@ fun TimedDurationSetScreen(modifier: Modifier, state: WorkoutState.Set, onTimerE
         if (isTimerInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier.fillMaxSize(),
-                onMinusClick = { onMinusClick() },
+                onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
-                onPlusClick = { onPlusClick() },
+                onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     textComposable()

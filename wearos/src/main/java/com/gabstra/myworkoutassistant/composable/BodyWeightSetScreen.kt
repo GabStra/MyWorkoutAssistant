@@ -9,12 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,9 +21,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
@@ -35,7 +31,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
+fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as BodyWeightSetData
@@ -80,7 +76,7 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
                         VibrateOnce(context)
                     },
                     onDoubleClick = {
-                        if (!isRepsInEditMode) {
+                        if (isRepsInEditMode) {
                             currentSet = currentSet.copy(
                                 actualReps = previousSet.actualReps
                             )
@@ -102,7 +98,7 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
 
                 Text(
                     text = "${currentSet.actualReps}",
-                    style = MaterialTheme.typography.title1
+                    style = MaterialTheme.typography.display3
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
@@ -110,7 +106,7 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
                     style = MaterialTheme.typography.body1,
                     modifier = Modifier
                         .width(35.dp)
-                        .padding(0.dp, 0.dp, 0.dp, 1.dp)
+                        .padding(0.dp, 0.dp, 0.dp, 3.dp)
                 )
             }
         }
@@ -129,9 +125,9 @@ fun BodyWeightSetScreen(modifier: Modifier, state: WorkoutState.Set, forceStopEd
         if (isRepsInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier.fillMaxSize(),
-                onMinusClick = { onMinusClick() },
+                onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
-                onPlusClick = { onPlusClick() },
+                onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,0.dp)) {

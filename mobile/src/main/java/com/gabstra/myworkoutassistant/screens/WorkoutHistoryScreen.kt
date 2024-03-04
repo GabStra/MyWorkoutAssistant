@@ -1,14 +1,13 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,23 +16,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -54,6 +53,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -63,13 +63,21 @@ import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.column.columnChart
+import com.patrykandpatrick.vico.compose.chart.edges.rememberFadingEdges
+import com.patrykandpatrick.vico.compose.chart.layout.fullWidth
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.compose.chart.scroll.ChartScrollSpec
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
+import com.patrykandpatrick.vico.core.chart.edges.FadingEdges
+import com.patrykandpatrick.vico.core.chart.layout.HorizontalLayout
+import com.patrykandpatrick.vico.core.chart.scale.AutoScaleUp
+import com.patrykandpatrick.vico.core.component.text.TextComponent
 import com.patrykandpatrick.vico.core.entry.ChartEntryModel
 import com.patrykandpatrick.vico.core.entry.entryModelOf
 import kotlinx.coroutines.Dispatchers
@@ -106,18 +114,25 @@ fun WorkoutHistoryScreen(
     var setHistoriesByExerciseId by remember { mutableStateOf<Map<UUID, List<SetHistory>>>(emptyMap()) }
 
     var volumeEntryModel by remember { mutableStateOf<ChartEntryModel?>(null) }
-
     var durationEntryModel by remember { mutableStateOf<ChartEntryModel?>(null) }
+    var heartRateEntryModel by remember { mutableStateOf<ChartEntryModel?>(null) }
+
 
     val horizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
         workoutHistories[value.toInt()].date.format(formatter)
     }
 
+    val secondsHorizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
+        formatTime(value.toInt())
+    }
+
     val durationAxisValueFormatter = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
-        formatSecondsToMinutesSeconds(value.toInt())
+        formatTime(value.toInt())
     }
 
     var isLoading by remember { mutableStateOf(true) }
+
+    var selectedMode by remember { mutableIntStateOf(0) } // 0 for Graphs, 1 for Sets
 
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
@@ -151,12 +166,25 @@ fun WorkoutHistoryScreen(
 
             durationEntryModel = entryModelOf(*durations.toTypedArray())
             selectedWorkoutHistory = if(workoutHistoryId!=null) workoutHistories.find { it.id == workoutHistoryId} else workoutHistories.lastOrNull()
+
+            if(workoutHistoryId !=null && selectedWorkoutHistory != null){
+                selectedMode = 1
+            }
+
             isLoading = false
         }
     }
 
     LaunchedEffect(selectedWorkoutHistory) {
         if(selectedWorkoutHistory == null) return@LaunchedEffect
+
+        heartRateEntryModel = null
+        if(selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }){
+            val indexedHeartBeatRecords = selectedWorkoutHistory!!.heartBeatRecords.mapIndexed { index, value ->
+                (index+1)/2 to value
+            }
+            heartRateEntryModel = entryModelOf(*indexedHeartBeatRecords.toTypedArray())
+        }
 
         withContext(Dispatchers.IO) {
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
@@ -182,7 +210,7 @@ fun WorkoutHistoryScreen(
                         chart = columnChart(),
                         model = volumeEntryModel!!,
                         startAxis = rememberStartAxis(),
-                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
+                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter, labelRotationDegrees = -45f),
                     )
                 }
             }
@@ -198,15 +226,11 @@ fun WorkoutHistoryScreen(
                         chart = lineChart(),
                         model = durationEntryModel!!,
                         startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter),
-                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
+                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter, labelRotationDegrees = -45f),
                     )
                 }
             }
         }
-
-
-
-
     }
 
     val workoutSelector = @Composable {
@@ -246,9 +270,30 @@ fun WorkoutHistoryScreen(
     }
 
     val setsTabContent = @Composable {
+
+
+        if(heartRateEntryModel != null){
+            Column(Modifier.padding(10.dp)){
+                Text(modifier = Modifier
+                    .fillMaxWidth(),
+                    text = "HR over workout duration (1/2 sec intervals)",
+                    textAlign = TextAlign.Center
+                )
+                Chart(
+                    modifier = Modifier.padding(10.dp),
+                    chart = lineChart(),
+                    model = heartRateEntryModel!!,
+                    startAxis = rememberStartAxis(),
+                    bottomAxis = rememberBottomAxis(valueFormatter= secondsHorizontalAxisValueFormatter),
+                    isZoomEnabled = false,
+                    getXStep = { heartRateEntryModel!!.entries[0].size.toFloat()/2 },
+                )
+            }
+        }
+
         Text(modifier = Modifier
             .fillMaxWidth(),
-            text = "Duration: ${formatSecondsToMinutesSeconds(selectedWorkoutHistory!!.duration)} (mm:ss)",
+            text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
             textAlign = TextAlign.Center
         )
 
@@ -283,6 +328,50 @@ fun WorkoutHistoryScreen(
         }
     }
 
+    val customBottomBar = @Composable {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp), // Fill the width of the container
+            horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
+            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .then(
+                        if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                    ) // Apply background color only if enabled
+                    .clickable { selectedMode = 0 }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.ShowChart, contentDescription = "Graphs", tint = if (selectedMode != 0) Color.White else Color.Black)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("Graphs", color = if (selectedMode != 0) Color.White else Color.Black)
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .then(
+                        if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                    ) // Apply background color only if enabled
+                    .clickable { selectedMode = 1 }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Sets", tint = if (selectedMode != 1) Color.White else Color.Black)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("Sets", color = if (selectedMode != 1) Color.White else Color.Black)
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -298,6 +387,11 @@ fun WorkoutHistoryScreen(
                     }
                 }
             )
+        },
+        bottomBar = {
+            if(!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)){
+                customBottomBar()
+            }
         }
     ) {
         Column(
@@ -306,17 +400,30 @@ fun WorkoutHistoryScreen(
                 .padding(it),
             verticalArrangement = Arrangement.Top,
         ){
-            TabRow(selectedTabIndex = 1) {
+            TabRow(
+                selectedTabIndex = 1,
+                indicator = {
+                    tabPositions ->
+                    TabRowDefaults.Indicator(
+                        Modifier.tabIndicatorOffset(tabPositions[1]),
+                        color = Color.White, // Set the indicator color
+                        height = 5.dp // Set the indicator thickness
+                    )
+                }
+            ) {
                 Tab(
                     selected = false,
                     onClick = { appViewModel.setScreenData(ScreenData.WorkoutDetail(workout.id),true) },
-
-                    text = { Text("Overview") }
+                    text = { Text("Overview") },
+                    selectedContentColor = Color.White, // Color when tab is selected
+                    unselectedContentColor = Color.LightGray // Color when tab is not selected
                 )
                 Tab(
                     selected = true,
                     onClick = { },
-                    text = { Text("History")  }
+                    text = { Text("History")  },
+                    selectedContentColor = Color.White, // Color when tab is selected
+                    unselectedContentColor = Color.LightGray // Color when tab is not selected
                 )
             }
 
@@ -324,18 +431,20 @@ fun WorkoutHistoryScreen(
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(10.dp),
+                        .padding(20.dp),
                     text = if(isLoading) "Loading..." else "No workout history found",
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }else{
                 LazyColumn(){
-                    item {
-                        workoutSelector()
+                    when(selectedMode){
+                        0 -> item{graphsTabContent()}
+                        1 -> {
+                            item {workoutSelector()}
+                            item{setsTabContent()}
+                        }
                     }
-                    item{graphsTabContent()}
-                    item{setsTabContent()}
                 }
             }
         }

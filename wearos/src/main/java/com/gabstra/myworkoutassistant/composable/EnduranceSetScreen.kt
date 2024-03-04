@@ -21,7 +21,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
@@ -29,6 +28,7 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.data.AppViewModel
 
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -43,7 +44,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit) {
+fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -52,8 +53,8 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd:
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
-    val previousSet = state.previousSetData as EnduranceSetData
-    var currentSet = state.currentSetData as EnduranceSetData
+    val previousSet = remember(state){ state.previousSetData as EnduranceSetData }
+    var currentSet = remember(state){ state.currentSetData as EnduranceSetData }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
@@ -148,9 +149,9 @@ fun EnduranceSetScreen (modifier: Modifier, state: WorkoutState.Set, onTimerEnd:
         if (isTimerInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier.fillMaxSize(),
-                onMinusClick = { onMinusClick() },
+                onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
-                onPlusClick = { onPlusClick() },
+                onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     Column(modifier = Modifier.padding(0.dp,5.dp,0.dp,5.dp)) {

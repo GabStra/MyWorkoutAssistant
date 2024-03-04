@@ -65,8 +65,20 @@ class AppViewModel : ViewModel(){
         )
     )
 
-    private var _workouts = mutableStateOf<List<Workout>>(emptyList())
-    val workouts: State<List<Workout>> = _workouts
+    private val _isPaused = mutableStateOf(false) // Private mutable state
+    val isPaused: State<Boolean> = _isPaused // Public read-only State access
+
+    fun pauseWorkout() {
+        _isPaused.value = true
+    }
+
+    fun resumeWorkout() {
+        _isPaused.value = false
+    }
+
+
+    private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
+    val workouts = _workouts.asStateFlow()
 
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
@@ -117,12 +129,14 @@ class AppViewModel : ViewModel(){
 
     private val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
 
+    private val heartBeatHistory: MutableList<Int> = mutableListOf()
+
     private val workoutStateQueue: LinkedList<WorkoutState> = LinkedList()
 
     private val workoutStateHistory: MutableList<WorkoutState> = mutableListOf()
 
-    var isHistoryEmpty by mutableStateOf(true)
-        private set
+    private val _isHistoryEmpty = MutableStateFlow<Boolean>(true)
+    val isHistoryEmpty = _isHistoryEmpty.asStateFlow()
 
     private val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
@@ -133,23 +147,22 @@ class AppViewModel : ViewModel(){
 
     fun setWorkout(workout: Workout){
         _selectedWorkout.value = workout;
-        executedSetsHistory.clear()
     }
 
 
     fun startWorkout(){
         viewModelScope.launch {
             withContext(Dispatchers.IO){
-                //_workoutState.value = WorkoutState.Preparing(dataLoaded = false)
+                _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
                 workoutStateQueue.clear()
                 workoutStateHistory.clear()
-                isHistoryEmpty = workoutStateHistory.isEmpty()
+                _isHistoryEmpty.value = workoutStateHistory.isEmpty()
                 setStates.clear()
+                executedSetsHistory.clear()
+                heartBeatHistory.clear()
                 loadWorkoutHistory()
                 generateWorkoutStates()
-                //_workoutState.value = WorkoutState.Preparing(dataLoaded = true)
-                goToNextState()
-                goToNextState()
+                _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
             }
         }
     }
@@ -182,12 +195,17 @@ class AppViewModel : ViewModel(){
         }
     }
 
+    fun registerHeartBeat(heartBeat: Int){
+        heartBeatHistory.add(heartBeat)
+    }
+
     fun endWorkout(duration: Duration, onEnd: () -> Unit = {}) {
         viewModelScope.launch {
             val newWorkoutHistory =  WorkoutHistory(
                 workoutId= selectedWorkout.value.id,
                 date = LocalDate.now(),
-                duration = duration.seconds.toInt()
+                duration = duration.seconds.toInt(),
+                heartBeatRecords = extractValuesAfterFirstZeroFollowedByNonZero(heartBeatHistory)
             )
 
             val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()
@@ -288,17 +306,17 @@ class AppViewModel : ViewModel(){
     fun goToNextState(){
         if (workoutStateQueue.isEmpty()) return
 
-
-        workoutStateHistory.add(_workoutState.value)
-        isHistoryEmpty = workoutStateHistory.isEmpty()
-
+        if(_workoutState.value !is WorkoutState.Preparing){
+            workoutStateHistory.add(_workoutState.value)
+            _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+        }
 
         _workoutState.value = workoutStateQueue.pollFirst()!!
         if (workoutStateQueue.isNotEmpty()) _nextWorkoutState.value = workoutStateQueue.peek()!!
     }
 
     fun goToPreviousSet() {
-        if (workoutStateHistory.isEmpty()) return
+        if (workoutStateHistory.isEmpty() || (workoutStateHistory.size ==1 && workoutStateHistory[0] ===_workoutState.value)) return
 
         // Remove the current state from the queue and re-add it at the beginning to revisit later
         val currentState = _workoutState.value
@@ -320,7 +338,7 @@ class AppViewModel : ViewModel(){
         }
 
         // Update the next workout state based on the new queue
-        _nextWorkoutState.value = workoutStateQueue.peek()
-        isHistoryEmpty = workoutStateHistory.isEmpty()
+        _nextWorkoutState.value = workoutStateQueue.peek()!!
+        _isHistoryEmpty.value = workoutStateHistory.isEmpty()
     }
 }
