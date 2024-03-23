@@ -57,7 +57,7 @@ class PolarViewModel : ViewModel() {
             )
         )
 
-        val enableSdkLogs = true
+        val enableSdkLogs = false
         if(enableSdkLogs) {
             api.setApiLogger { s: String -> Log.d("MyApp", s) }
         }

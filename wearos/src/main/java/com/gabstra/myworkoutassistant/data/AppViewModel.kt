@@ -261,10 +261,6 @@ class AppViewModel : ViewModel(){
                 workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
             }
         }
-
-        for(states in workoutStateQueue){
-            Log.d("WorkoutState", states.toString())
-        }
     }
 
     private fun addStatesFromExercise(exercise: Exercise){

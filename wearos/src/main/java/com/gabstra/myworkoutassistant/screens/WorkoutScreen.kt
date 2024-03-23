@@ -67,7 +67,6 @@ fun LifecycleObserver(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            Log.d("LifecycleObserver", "Event: $event")
             when (event) {
                 Lifecycle.Event.ON_START -> onStartedState.value()
                 Lifecycle.Event.ON_PAUSE -> onPausedState.value()

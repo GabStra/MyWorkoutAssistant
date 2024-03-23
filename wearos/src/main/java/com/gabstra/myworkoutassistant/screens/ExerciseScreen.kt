@@ -103,8 +103,6 @@ fun ExerciseScreen(
 ) {
     val context = LocalContext.current
 
-    Log.d("ExerciseScreen", state.toString())
-
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
@@ -316,7 +314,6 @@ fun ExerciseScreen(
         title = "Complete exercise",
         message = "Do you want to save this data?",
         handleYesClick = {
-            Log.d("ExerciseScreen", "handleYesClick called")
             showConfirmDialog=false
             VibrateOnce(context)
             viewModel.storeExecutedSetHistory(state)

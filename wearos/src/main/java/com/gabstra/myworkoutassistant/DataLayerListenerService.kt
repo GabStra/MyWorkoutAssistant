@@ -54,8 +54,6 @@ class DataLayerListenerService : WearableListenerService() {
                         val backupChunk = dataMap.getString("chunk")
 
                         if (backupChunk != null) {
-                            Log.d("CHUNK", backupChunk)
-
                             if(backupChunk == "START"){
                                 backupChunks.clear()
                             }else{
