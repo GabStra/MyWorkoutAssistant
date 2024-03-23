@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -205,7 +206,7 @@ class AppViewModel : ViewModel(){
                 workoutId= selectedWorkout.value.id,
                 date = LocalDate.now(),
                 duration = duration.seconds.toInt(),
-                heartBeatRecords = extractValuesAfterFirstZeroFollowedByNonZero(heartBeatHistory)
+                heartBeatRecords = heartBeatHistory
             )
 
             val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()
@@ -260,7 +261,10 @@ class AppViewModel : ViewModel(){
                 workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
             }
         }
-        workoutStateQueue.addLast(WorkoutState.Finished(LocalDateTime.now()))
+
+        for(states in workoutStateQueue){
+            Log.d("WorkoutState", states.toString())
+        }
     }
 
     private fun addStatesFromExercise(exercise: Exercise){
@@ -301,6 +305,10 @@ class AppViewModel : ViewModel(){
                 workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
             }
         }
+    }
+
+    fun setWorkoutStart(){
+        workoutStateQueue.addLast(WorkoutState.Finished(LocalDateTime.now()))
     }
 
     fun goToNextState(){

@@ -73,7 +73,10 @@ import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
+import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
+import com.gabstra.myworkoutassistant.composables.rememberFirstCompletelyVisibleMonth
 import com.gabstra.myworkoutassistant.optionalClip
+import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -99,22 +102,7 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
-
-
-fun YearMonth.displayText(short: Boolean = false): String {
-    return "${this.month.displayText(short = short)} ${this.year}"
-}
-
-fun Month.displayText(short: Boolean = true): String {
-    val style = if (short) TextStyle.SHORT else TextStyle.FULL
-    return getDisplayName(style, Locale.getDefault())
-}
-
-fun DayOfWeek.displayText(uppercase: Boolean = false): String {
-    return getDisplayName(TextStyle.SHORT, Locale.getDefault()).let { value ->
-        if (uppercase) value.uppercase(Locale.getDefault()) else value
-    }
-}
+import java.util.UUID
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -193,174 +181,39 @@ fun WorkoutTitle(modifier: Modifier,workout: Workout){
     }
 }
 
-@Composable
-fun MonthHeader(
-    modifier: Modifier = Modifier,
-    daysOfWeek: List<DayOfWeek> = emptyList(),
-) {
-    Row(modifier.fillMaxWidth()) {
-        for (dayOfWeek in daysOfWeek) {
-            Text(
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center,
-                fontSize = 12.sp,
-                color = Color.White,
-                text = dayOfWeek.displayText(),
-                fontWeight = FontWeight.Light,
-            )
-        }
-    }
-}
-
-@Composable
-private fun Day(
-    day: CalendarDay,
-    isToday: Boolean = false,
-    isSelected: Boolean = false,
-    showStar: Boolean = false,
-    onClick: (CalendarDay) -> Unit = {},
-) {
-    Box(
-        modifier = Modifier
-            .aspectRatio(1f) // This is important for square-sizing!
-            .border(
-                width = if (isSelected) 1.dp else 0.dp,
-                color = if (isSelected) Color.White else Color.Transparent,
-            )
-            .padding(3.dp)
-            // Disable clicks on inDates/outDates
-            .clickable(
-                enabled = day.position == DayPosition.MonthDate,
-                onClick = { onClick(day) },
-            ),
-    ) {
-        val textColor = if (isToday) Color.Black else when (day.position) {
-            DayPosition.MonthDate -> Color.Unspecified
-            DayPosition.InDate, DayPosition.OutDate -> Color.Gray
-        }
-
-        val shape = if(isToday) RoundedCornerShape(3.dp) else null
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .optionalClip(shape)
-                .size(20.dp)
-                .background(if (isToday) Color.White else Color.Transparent),
-            contentAlignment = Alignment.Center
-        ){
-            Text(
-                modifier = Modifier
-                    .background(if (isToday) Color.White else Color.Transparent),
-                text = day.date.dayOfMonth.toString(),
-                color = textColor,
-                fontSize = 12.sp,
-            )
-        }
 
 
-        //set the star yellow
-        Icon(
-            imageVector = Icons.Default.Star,
-            contentDescription = "Star",
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(0.dp, 5.dp)
-                .alpha(if (showStar) 1f else 0f)
-                .size(15.dp),
-            tint = Color.Yellow
 
-        )
-    }
-}
 
-private val CalendarLayoutInfo.completelyVisibleMonths: List<CalendarMonth>
-    get() {
-        val visibleItemsInfo = this.visibleMonthsInfo.toMutableList()
-        return if (visibleItemsInfo.isEmpty()) {
-            emptyList()
-        } else {
-            val lastItem = visibleItemsInfo.last()
-            val viewportSize = this.viewportEndOffset + this.viewportStartOffset
-            if (lastItem.offset + lastItem.size > viewportSize) {
-                visibleItemsInfo.removeLast()
-            }
-            val firstItem = visibleItemsInfo.firstOrNull()
-            if (firstItem != null && firstItem.offset < this.viewportStartOffset) {
-                visibleItemsInfo.removeFirst()
-            }
-            visibleItemsInfo.map { it.month }
-        }
-    }
 
-@Composable
-fun rememberFirstCompletelyVisibleMonth(state: CalendarState): CalendarMonth {
-    val visibleMonth = remember(state) { mutableStateOf(state.firstVisibleMonth) }
-    // Only take non-null values as null will be produced when the
-    // list is mid-scroll as no index will be completely visible.
-    LaunchedEffect(state) {
-        snapshotFlow { state.layoutInfo.completelyVisibleMonths.firstOrNull() }
-            .filterNotNull()
-            .collect { month -> visibleMonth.value = month }
-    }
-    return visibleMonth.value
-}
 
-@Composable
-fun SimpleCalendarTitle(
-    modifier: Modifier,
-    currentMonth: YearMonth,
-    goToPrevious: () -> Unit,
-    goToNext: () -> Unit,
-) {
-    Row(
-        modifier = modifier.height(40.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(
-            onClick = goToPrevious,
-        ) {
-            Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back")
-        }
 
-        Text(
-            modifier = Modifier
-                .weight(1f),
-            text = currentMonth.displayText(),
-            fontSize = 22.sp,
-            textAlign = TextAlign.Center,
-            fontWeight = FontWeight.Medium,
-        )
-
-        IconButton(
-            onClick = goToNext,
-        ) {
-            Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Back")
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkoutsScreen(
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
+    setHistoryDao: SetHistoryDao,
     onSyncClick: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
     onClearAllHistories: () -> Unit,
+    selectedTabIndex : Int
 ) {
     val workouts by appViewModel.workoutsFlow.collectAsState()
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
     var groupedWorkouts by remember { mutableStateOf<Map<LocalDate, List<WorkoutHistory>>?>(null) }
+    var workoutById by remember { mutableStateOf<Map<UUID, Workout>?>(null) }
 
     var selectedCalendarWorkouts by remember { mutableStateOf<List<Pair<WorkoutHistory,Workout>>?>(null) }
 
     LaunchedEffect(workouts){
         groupedWorkouts = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
+        workoutById = workouts.associateBy { it.id }
     }
 
     var isCardExpanded by remember {
@@ -375,24 +228,44 @@ fun WorkoutsScreen(
 
     val scope = rememberCoroutineScope()
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
     val tabTitles = listOf("Status","Workouts")
 
-    val currentDay = remember { LocalDate.now() }
-    val currentMonth = remember { YearMonth.now() }
-    val startMonth = remember { currentMonth.minusMonths(500) }
-    val endMonth = remember { currentMonth.plusMonths(500) }
     var selectedDate by remember { mutableStateOf<CalendarDay?>(null) }
-    val daysOfWeek = remember { daysOfWeek() }
 
-    val calendarState = rememberCalendarState(
-        startMonth = startMonth,
-        endMonth = endMonth,
-        firstVisibleMonth = currentMonth,
-        firstDayOfWeek = daysOfWeek.first(),
-        outDateStyle = OutDateStyle.EndOfGrid,
-    )
-    val visibleMonth = rememberFirstCompletelyVisibleMonth(calendarState)
+    fun onDayClicked(calendarState: CalendarState, day: CalendarDay){
+        val workoutHistories = groupedWorkouts?.get(day.date)
+
+        selectedCalendarWorkouts = try {
+            workoutHistories?.map { workoutHistory ->
+                Pair(workoutHistory,workoutById?.get(workoutHistory.workoutId)!!)
+            } ?: emptyList()
+        }catch (e:Exception){
+            emptyList()
+        }
+
+        if(day.position == DayPosition.InDate){
+            scope.launch {
+                calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
+                selectedDate = day
+            }
+            return
+        }
+
+        if(day.position == DayPosition.OutDate){
+            scope.launch {
+                calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
+                selectedDate = day
+            }
+            return
+        }
+
+        selectedDate = day
+    }
+
+    fun showStar(day: CalendarDay): Boolean {
+        return groupedWorkouts?.get(day.date)?.isNotEmpty() ?: false
+    }
+
     //add a menu in the floating action button
     Scaffold(
         topBar = {
@@ -416,12 +289,16 @@ fun WorkoutsScreen(
                         val newWorkouts = workouts.filter { workout ->
                             selectedWorkouts.none { it === workout }
                         }
-
                         appViewModel.updateWorkouts(newWorkouts)
                         scope.launch {
                             for (workout in selectedWorkouts) {
+                                val workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
+                                for(workoutHistory in workoutHistories) {
+                                    setHistoryDao.deleteByWorkoutHistoryId(workoutHistory.id)
+                                }
                                 workoutHistoryDao.deleteAllByWorkoutId(workout.id)
                             }
+                            groupedWorkouts = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
                         }
                         selectedWorkouts = emptyList()
                         isSelectionModeActive = false
@@ -467,17 +344,17 @@ fun WorkoutsScreen(
                 }
         }
     ) {
-        if(workouts.isEmpty()){
-            Text(modifier = Modifier
-                .padding(it)
-                .fillMaxSize(),text = "Add a new workout", textAlign = TextAlign.Center)
-        }else{
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(it),
-                verticalArrangement = Arrangement.Top,
-            ){
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(it),
+            verticalArrangement = Arrangement.Top,
+        ){
+            if(workouts.isEmpty()){
+                Text(modifier = Modifier
+                    .padding(10.dp)
+                    .fillMaxSize(),text = "Add a new workout", textAlign = TextAlign.Center)
+            }else{
                 TabRow(
                     selectedTabIndex = selectedTabIndex,
                     indicator = {
@@ -493,7 +370,7 @@ fun WorkoutsScreen(
                     tabTitles.forEachIndexed { index, title ->
                         Tab(
                             selected = index == selectedTabIndex,
-                            onClick = { selectedTabIndex = index },
+                            onClick = { appViewModel.updateScreenData(ScreenData.Workouts(index)) },
                             text = { Text(title) },
                             selectedContentColor = Color.White, // Color when tab is selected
                             unselectedContentColor = Color.LightGray // Color when tab is not selected
@@ -503,86 +380,31 @@ fun WorkoutsScreen(
 
                 when (selectedTabIndex) {
                     0 -> {
-                        SimpleCalendarTitle(
-                            modifier = Modifier
-                                .padding(horizontal = 8.dp, vertical = 12.dp),
-                            currentMonth = visibleMonth.yearMonth,
-                            goToPrevious = {
-                                scope.launch {
-                                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
-                                }
+                        WorkoutsCalendar(
+                            selectedDate = selectedDate,
+                            onDayClicked = { calendarState, day ->
+                                onDayClicked(calendarState,day)
                             },
-                            goToNext = {
-                                scope.launch {
-                                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
-                                }
-                            },
-                        )
-                        HorizontalCalendar(
-                            modifier = Modifier.wrapContentWidth(),
-                            state = calendarState,
-                            calendarScrollPaged= false,
-                            userScrollEnabled = false,
-                            dayContent = { day ->
-                                val workoutHistories = groupedWorkouts?.get(day.date)
-
-                                val hasWorkouts = workoutHistories.let { histories ->
-                                    !histories.isNullOrEmpty()
-                                }
-
-                                Day(
-                                    isToday = day.date == currentDay,
-                                    day = day,
-                                    isSelected = selectedDate == day,
-                                    showStar = hasWorkouts,
-
-                                ) { clicked ->
-                                    Log.d("WorkoutsScreen", "Selected date: ${clicked.date.format(formatter)}")
-                                    Log.d("WorkoutsScreen","hasWorkouts: $hasWorkouts")
-                                    Log.d("WorkoutsScreen","workoutHistories: $workoutHistories")
-
-
-                                    if (workoutHistories != null) {
-                                        try {
-                                            selectedCalendarWorkouts = workoutHistories.map { workoutHistory ->
-                                                Pair(workoutHistory,workouts.first { workout -> workout.id == workoutHistory.workoutId })
-                                            }
-                                        }catch (e:Exception){
-                                            selectedCalendarWorkouts = null
-                                            Log.e("WorkoutsScreen",e.message.toString())
-                                        }
-
-                                    }else{
-                                        selectedCalendarWorkouts =  emptyList()
-                                    }
-                                    Log.d("WorkoutsScreen","selectedCalendarWorkouts: $selectedCalendarWorkouts")
-                                    selectedDate = clicked
-                                }
-                            },
-                            monthHeader = {
-                                MonthHeader(
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    daysOfWeek = daysOfWeek,
-                                )
-                            },
+                            showStar = { day -> showStar(day) }
                         )
                         if(selectedDate != null){
                             Column(modifier = Modifier.padding(8.dp)) {
                                 Text(
                                     text = selectedDate!!.date.format(formatter),
-                                    modifier = Modifier.padding(8.dp),
-                                    color = Color.Gray
+                                    modifier = Modifier.fillMaxWidth().padding(vertical=10.dp),
+                                    color = Color.Gray,
+                                    textAlign = TextAlign.Center
                                 )
                                 if(selectedCalendarWorkouts.isNullOrEmpty()){
                                     Text(
-                                        text = "No workouts for this day",
-                                        modifier = Modifier.padding(8.dp),
+                                        text = "No workouts on this day",
+                                        modifier = Modifier.fillMaxWidth().padding(vertical=10.dp),
                                         textAlign = TextAlign.Center,
-                                        style = MaterialTheme.typography.headlineSmall,
+                                        style = MaterialTheme.typography.titleLarge,
                                         color = Color.Gray
                                     )
                                 }else{
-                                    LazyColumn(modifier = Modifier.padding(horizontal = 8.dp)){
+                                    LazyColumn{
                                         items(selectedCalendarWorkouts!!){ (workoutHistory,workout) ->
                                             Card(
                                                 modifier = Modifier.padding(5.dp),

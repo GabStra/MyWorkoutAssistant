@@ -92,6 +92,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
-    implementation("com.patrykandpatrick.vico:compose:1.13.1")
+    implementation("com.patrykandpatrick.vico:compose:2.0.0-alpha.10")
     implementation("com.kizitonwose.calendar:compose:2.5.0")
 }

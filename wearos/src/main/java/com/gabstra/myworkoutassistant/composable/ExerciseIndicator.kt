@@ -81,7 +81,9 @@ fun ExerciseIndicator(
                 trackColor = Color.White,
             )
 
-            CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 15f, circleColor =  Color.DarkGray, number = numberOfElementsLeft, margin = -10f, transparency = 1f)
+            if(numberOfElementsLeft > 1){
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 15f, circleColor = Color.DarkGray, number = numberOfElementsLeft, margin = -10f, transparency = 1f)
+            }
         }
     }
 }

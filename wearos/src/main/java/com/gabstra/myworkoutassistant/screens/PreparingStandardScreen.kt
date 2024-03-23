@@ -52,6 +52,7 @@ fun PreparingStandardScreen(
     viewModel: AppViewModel,
     hrViewModel: MeasureDataViewModel,
     state: WorkoutState.Preparing,
+    onReady: () -> Unit
 ){
     val uiState by hrViewModel.uiState.collectAsState()
 
@@ -77,6 +78,8 @@ fun PreparingStandardScreen(
         val isReady = (uiState is UiState.HeartRateAvailable) && (heartRate > 0) && state.dataLoaded && currentMillis >=2000
         if (isReady) {
             viewModel.goToNextState()
+            viewModel.setWorkoutStart()
+            onReady()
         }
     }
 
@@ -93,6 +96,8 @@ fun PreparingStandardScreen(
                     onClick = {
                         VibrateOnce(context)
                         viewModel.goToNextState()
+                        viewModel.setWorkoutStart()
+                        onReady()
                     },
                     modifier = Modifier.size(35.dp),
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)

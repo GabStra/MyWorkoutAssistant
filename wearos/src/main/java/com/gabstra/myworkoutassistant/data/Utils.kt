@@ -40,7 +40,9 @@ import com.google.android.horologist.data.AppHelperResultCode
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.util.concurrent.CancellationException
@@ -107,11 +109,6 @@ fun VibrateShortImpulse(context: Context) {
             it.vibrate(timings, -1)
         }
     }
-}
-
-fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
-    val mhr = 208 - (0.7f * age)
-    return (heartRate / mhr) * 100
 }
 
 fun CoroutineScope.onClickWithDelay(
@@ -242,8 +239,9 @@ fun Modifier.repeatActionOnLongPress(
                     do {
                         delay(intervalMillis)
                         onLongPressRepeat()
-                    } while (true)
+                    } while (isActive)
                 }
+
                 tryAwaitRelease()
                 job.cancel()
                 onRelease()
@@ -251,13 +249,3 @@ fun Modifier.repeatActionOnLongPress(
         )
     }
 )
-
-fun extractValuesAfterFirstZeroFollowedByNonZero(heartBeatHistory: List<Int>): List<Int> {
-    // Find the index of the first zero followed by a non-zero value
-    val index = heartBeatHistory.indexOfFirst { it == 0 }
-        .takeIf { it != -1 && it < heartBeatHistory.size - 1 } // Ensure the zero is not the last element
-        ?.let { if (heartBeatHistory[it + 1] != 0) it else null } // Check if the next element is non-zero
-
-    // If such a pattern exists, return all values after it; otherwise, return an empty list
-    return if (index != null) heartBeatHistory.drop(index + 2) else emptyList()
-}

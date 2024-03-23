@@ -161,10 +161,10 @@ fun ExerciseDetailScreen(
                         onClick = {
                             val selectedSet = selectedSets.first()
                             val newSet = when (selectedSet) {
-                                is WeightSet -> selectedSet.copy()
-                                is BodyWeightSet -> selectedSet.copy()
-                                is EnduranceSet -> selectedSet.copy()
-                                is TimedDurationSet -> selectedSet.copy()
+                                is WeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                is BodyWeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                is EnduranceSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                is TimedDurationSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
                             }
                             appViewModel.addSetToExercise(workout, exercise, newSet)
                             

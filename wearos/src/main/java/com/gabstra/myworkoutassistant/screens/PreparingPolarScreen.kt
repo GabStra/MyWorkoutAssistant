@@ -50,6 +50,7 @@ fun PreparingPolarScreen(
     navController: NavController,
     polarViewModel: PolarViewModel,
     state: WorkoutState.Preparing,
+    onReady: () -> Unit
 ){
     val deviceConnectionInfo by polarViewModel.deviceConnectionState.collectAsState()
     val hrData by polarViewModel.hrDataState.collectAsState()
@@ -60,8 +61,8 @@ fun PreparingPolarScreen(
     var currentMillis by remember { mutableIntStateOf(0) }
     var canSkip by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    LaunchedEffect(Unit){
 
+    LaunchedEffect(Unit){
         if(viewModel.polarDeviceId.isEmpty()){
             Toast.makeText(context, "No polar device id set", Toast.LENGTH_SHORT).show()
             navController.popBackStack()
@@ -70,7 +71,6 @@ fun PreparingPolarScreen(
         }
 
         polarViewModel.initialize(context,viewModel.polarDeviceId)
-
         polarViewModel.connectToDevice()
 
         scope.launch {
@@ -85,10 +85,11 @@ fun PreparingPolarScreen(
     }
 
     LaunchedEffect(deviceConnectionInfo, heartRate,state,currentMillis) {
-        Log.d("PreparingPolarScreen", "deviceConnectionInfo: $deviceConnectionInfo, heartRate: $heartRate, state: $state, currentMillis: $currentMillis")
         val isReady = (deviceConnectionInfo != null) && (heartRate > 0) && state.dataLoaded && currentMillis >=2000
         if (isReady) {
             viewModel.goToNextState()
+            viewModel.setWorkoutStart()
+            onReady()
         }
     }
 
@@ -105,6 +106,8 @@ fun PreparingPolarScreen(
                     onClick = {
                         VibrateOnce(context)
                         viewModel.goToNextState()
+                        viewModel.setWorkoutStart()
+                        onReady()
                     },
                     modifier = Modifier.size(35.dp),
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)

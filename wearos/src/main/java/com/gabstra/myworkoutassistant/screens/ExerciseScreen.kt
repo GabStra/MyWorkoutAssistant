@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.tween
@@ -54,8 +55,10 @@ import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
+import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewer
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
@@ -63,6 +66,8 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -98,6 +103,8 @@ fun ExerciseScreen(
 ) {
     val context = LocalContext.current
 
+    Log.d("ExerciseScreen", state.toString())
+
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
@@ -114,6 +121,9 @@ fun ExerciseScreen(
 
     LaunchedEffect(state) {
         pagerState.animateScrollToPage(1)
+        showConfirmDialog = false
+        showGoBackDialog = false
+        showSkipDialog = false
     }
 
     val completeOrSkipExerciseComposable = @Composable {
@@ -270,8 +280,12 @@ fun ExerciseScreen(
                                             is BodyWeightSet -> BodyWeightSetDataViewer(
                                                 updatedState.previousSetData as BodyWeightSetData
                                             )
-                                            is TimedDurationSet -> notAvailableTextComposable()
-                                            is EnduranceSet -> notAvailableTextComposable()
+                                            is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                                                updatedState.previousSetData as TimedDurationSetData
+                                            )
+                                            is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                                                updatedState.previousSetData as EnduranceSetData
+                                            )
                                         }
                                     }
                                 }
@@ -302,14 +316,15 @@ fun ExerciseScreen(
         title = "Complete exercise",
         message = "Do you want to save this data?",
         handleYesClick = {
+            Log.d("ExerciseScreen", "handleYesClick called")
+            showConfirmDialog=false
             VibrateOnce(context)
             viewModel.storeExecutedSetHistory(state)
             viewModel.goToNextState()
-            showConfirmDialog=false
         },
         handleNoClick = {
-            VibrateOnce(context)
             showConfirmDialog = false
+            VibrateOnce(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
@@ -323,14 +338,14 @@ fun ExerciseScreen(
         title = "Skip exercise",
         message = "Do you want to skip this exercise?",
         handleYesClick = {
+            showSkipDialog = false
             VibrateOnce(context)
             viewModel.storeExecutedSetHistory(state)
             viewModel.goToNextState()
-            showSkipDialog = false
         },
         handleNoClick = {
-            VibrateOnce(context)
             showSkipDialog = false
+            VibrateOnce(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
@@ -344,13 +359,13 @@ fun ExerciseScreen(
         title = "Go to previous set",
         message = "Do you want to go back?",
         handleYesClick = {
+            showGoBackDialog = false
             VibrateOnce(context)
             viewModel.goToPreviousSet()
-            showGoBackDialog = false
         },
         handleNoClick = {
-            VibrateOnce(context)
             showGoBackDialog = false
+            VibrateOnce(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {

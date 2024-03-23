@@ -37,6 +37,8 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composable.LoadingText
+import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.google.android.gms.wearable.DataClient
 
@@ -45,7 +47,13 @@ import java.time.LocalDateTime
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel, state : WorkoutState.Finished){
+fun WorkoutCompleteScreen(
+    navController: NavController,
+    viewModel: AppViewModel,
+    state : WorkoutState.Finished,
+    hrViewModel: MeasureDataViewModel,
+    polarViewModel: PolarViewModel
+){
     val workout by viewModel.selectedWorkout
 
     val context = LocalContext.current
@@ -94,6 +102,11 @@ fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel,
                     hideAll=true
                     viewModel.endWorkout(duration){
                         cancelWorkoutInProgressNotification(context)
+                        if(!workout.usePolarDevice){
+                            hrViewModel.stopMeasuringHeartRate()
+                        }else{
+                            polarViewModel.disconnectFromDevice()
+                        }
                         navController.navigate(Screen.WorkoutSelection.route){
                             popUpTo(Screen.WorkoutSelection.route) {
                                 inclusive = true
@@ -118,14 +131,4 @@ fun WorkoutCompleteScreen(navController: NavController, viewModel: AppViewModel,
             }
         }
     }
-}
-
-@Preview(device = WearDevices.LARGE_ROUND)
-@Composable
-fun WorkoutCompleteScreenPreview() {
-    val mockNavController = rememberNavController()
-    val mockViewModel = AppViewModel() // Assuming you have a default constructor, otherwise create a mock
-    val mockState = WorkoutState.Finished(LocalDateTime.now().minusHours(1)) // Example start time
-
-    WorkoutCompleteScreen(mockNavController, mockViewModel, mockState)
 }

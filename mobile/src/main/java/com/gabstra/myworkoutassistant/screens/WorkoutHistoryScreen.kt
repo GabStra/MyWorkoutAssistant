@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
@@ -60,31 +61,46 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
+import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
+import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
-import com.patrykandpatrick.vico.compose.chart.Chart
-import com.patrykandpatrick.vico.compose.chart.column.columnChart
-import com.patrykandpatrick.vico.compose.chart.edges.rememberFadingEdges
+import com.patrykandpatrick.vico.compose.chart.CartesianChartHost
+
+import com.patrykandpatrick.vico.compose.chart.layer.rememberLineCartesianLayer
+import com.patrykandpatrick.vico.compose.chart.layer.rememberLineSpec
 import com.patrykandpatrick.vico.compose.chart.layout.fullWidth
-import com.patrykandpatrick.vico.compose.chart.line.lineChart
-import com.patrykandpatrick.vico.compose.chart.scroll.ChartScrollSpec
+
+import com.patrykandpatrick.vico.compose.chart.rememberCartesianChart
+import com.patrykandpatrick.vico.compose.chart.scroll.rememberVicoScrollState
+
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
-import com.patrykandpatrick.vico.core.chart.edges.FadingEdges
-import com.patrykandpatrick.vico.core.chart.layout.HorizontalLayout
-import com.patrykandpatrick.vico.core.chart.scale.AutoScaleUp
-import com.patrykandpatrick.vico.core.component.text.TextComponent
-import com.patrykandpatrick.vico.core.entry.ChartEntryModel
-import com.patrykandpatrick.vico.core.entry.entryModelOf
+import com.patrykandpatrick.vico.core.model.CartesianChartModel
+import com.patrykandpatrick.vico.core.model.ColumnCartesianLayerModel
+import com.patrykandpatrick.vico.core.model.LineCartesianLayerModel
+import com.patrykandpatrick.vico.compose.chart.zoom.rememberVicoZoomState
+import com.patrykandpatrick.vico.compose.component.rememberShapeComponent
+import com.patrykandpatrick.vico.compose.component.rememberTextComponent
+import com.patrykandpatrick.vico.compose.dimensions.dimensionsOf
+import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
+import com.patrykandpatrick.vico.core.chart.decoration.ThresholdLine
+import com.patrykandpatrick.vico.core.chart.values.AxisValueOverrider
+import com.patrykandpatrick.vico.core.model.CartesianChartModelProducer
+import com.patrykandpatrick.vico.core.model.lineSeries
+import com.patrykandpatrick.vico.core.zoom.Zoom
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
+import com.patrykandpatrick.vico.core.component.shape.shader.DynamicShaders
+import com.patrykandpatrick.vico.compose.component.shape.shader.color
+import com.patrykandpatrick.vico.compose.component.shape.shader.verticalGradient
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -98,6 +114,8 @@ fun WorkoutHistoryScreen(
     onGoBack : () -> Unit
 ){
     val currentLocale = Locale.getDefault()
+
+    val userAge by appViewModel.userAge
 
     val exerciseById =  remember(workout) {
         WorkoutManager.getAllExercisesFromWorkout(workout).associateBy { it.id }
@@ -113,20 +131,20 @@ fun WorkoutHistoryScreen(
 
     var setHistoriesByExerciseId by remember { mutableStateOf<Map<UUID, List<SetHistory>>>(emptyMap()) }
 
-    var volumeEntryModel by remember { mutableStateOf<ChartEntryModel?>(null) }
-    var durationEntryModel by remember { mutableStateOf<ChartEntryModel?>(null) }
-    var heartRateEntryModel by remember { mutableStateOf<ChartEntryModel?>(null) }
+    var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
+    var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
+    var heartRateEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
 
 
-    val horizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
+    val horizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, chartValues, _->
         workoutHistories[value.toInt()].date.format(formatter)
     }
 
-    val secondsHorizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
+    val secondsHorizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, chartValues, _->
         formatTime(value.toInt())
     }
 
-    val durationAxisValueFormatter = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
+    val durationAxisValueFormatter = AxisValueFormatter<AxisPosition.Vertical.Start> { value, chartValues, _->
         formatTime(value.toInt())
     }
 
@@ -161,10 +179,10 @@ fun WorkoutHistoryScreen(
 
             //check if volumes are not all 0
             if(volumes.any { it.second != 0f }) {
-                volumeEntryModel = entryModelOf(*volumes.toTypedArray())
+                volumeEntryModel = CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map{ it.second }).toTypedArray()) })
             }
 
-            durationEntryModel = entryModelOf(*durations.toTypedArray())
+            durationEntryModel = CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map{ it.second }).toTypedArray()) })
             selectedWorkoutHistory = if(workoutHistoryId!=null) workoutHistories.find { it.id == workoutHistoryId} else workoutHistories.lastOrNull()
 
             if(workoutHistoryId !=null && selectedWorkoutHistory != null){
@@ -180,10 +198,7 @@ fun WorkoutHistoryScreen(
 
         heartRateEntryModel = null
         if(selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }){
-            val indexedHeartBeatRecords = selectedWorkoutHistory!!.heartBeatRecords.mapIndexed { index, value ->
-                (index+1)/2 to value
-            }
-            heartRateEntryModel = entryModelOf(*indexedHeartBeatRecords.toTypedArray())
+            heartRateEntryModel = CartesianChartModel(LineCartesianLayerModel.build { series(selectedWorkoutHistory!!.heartBeatRecords) })
         }
 
         withContext(Dispatchers.IO) {
@@ -205,12 +220,13 @@ fun WorkoutHistoryScreen(
                         text = "Volume over time",
                         textAlign = TextAlign.Center
                     )
-                    Chart(
-                        modifier = Modifier.padding(10.dp),
-                        chart = columnChart(),
+                    CartesianChartHost(
+                        zoomState = rememberVicoZoomState(initialZoom = Zoom.x(3f)),
+                        chart = rememberCartesianChart(
+                            rememberLineCartesianLayer(axisValueOverrider = AxisValueOverrider.auto()),
+                            startAxis = rememberStartAxis(itemPlacer = AxisItemPlacer.Vertical.step({1f})),
+                            bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter)),
                         model = volumeEntryModel!!,
-                        startAxis = rememberStartAxis(),
-                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter, labelRotationDegrees = -45f),
                     )
                 }
             }
@@ -221,12 +237,14 @@ fun WorkoutHistoryScreen(
                         text = "Workout duration over time",
                         textAlign = TextAlign.Center
                     )
-                    Chart(
-                        modifier = Modifier.padding(10.dp),
-                        chart = lineChart(),
-                        model = durationEntryModel!!,
-                        startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter),
-                        bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter, labelRotationDegrees = -45f),
+                    CartesianChartHost(
+                        zoomState = rememberVicoZoomState(initialZoom = Zoom.x(3f)),
+                        chart = rememberCartesianChart(
+                            rememberLineCartesianLayer(axisValueOverrider = AxisValueOverrider.auto()),
+                            startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter, itemPlacer = AxisItemPlacer.Vertical.step({1f})),
+                            bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
+                        ),
+                        model=durationEntryModel!!,
                     )
                 }
             }
@@ -270,8 +288,6 @@ fun WorkoutHistoryScreen(
     }
 
     val setsTabContent = @Composable {
-
-
         if(heartRateEntryModel != null){
             Column(Modifier.padding(10.dp)){
                 Text(modifier = Modifier
@@ -279,14 +295,75 @@ fun WorkoutHistoryScreen(
                     text = "HR over workout duration (1/2 sec intervals)",
                     textAlign = TextAlign.Center
                 )
-                Chart(
+                CartesianChartHost(
                     modifier = Modifier.padding(10.dp),
-                    chart = lineChart(),
+                    zoomState = rememberVicoZoomState(initialZoom = Zoom.Content),
+                    chart = rememberCartesianChart(
+                        rememberLineCartesianLayer(
+                            axisValueOverrider = AxisValueOverrider.fixed(null,null,50f,getMaxHeartRate(userAge).toFloat())),
+                        startAxis =rememberStartAxis(itemPlacer = AxisItemPlacer.Vertical.step({ null },true),guideline = null,),
+                        decorations =
+                        listOf(
+                            ThresholdLine(
+                                thresholdValue = getHeartRateFromPercentage(0.5f,userAge).toFloat(),
+                                lineComponent = rememberShapeComponent(color = Color.hsl(208f, 0.61f, 0.76f,.5f)),
+                                labelComponent = rememberTextComponent(
+                                    textSize = 0.sp,
+                                    color = Color.White,
+                                    lineCount = 1,
+                                    padding = dimensionsOf(4.dp),
+                                ),
+                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            ),
+                            ThresholdLine(
+                                thresholdValue = getHeartRateFromPercentage(0.6f,userAge).toFloat(),
+                                lineComponent = rememberShapeComponent(color = Color.hsl(200f, 0.66f, 0.49f,.5f)),
+                                labelComponent = rememberTextComponent(
+                                    textSize = 0.sp,
+                                    color = Color.White,
+                                    lineCount = 1,
+                                    padding = dimensionsOf(4.dp),
+                                ),
+                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            ),
+                            ThresholdLine(
+                                thresholdValue = getHeartRateFromPercentage(0.7f,userAge).toFloat(),
+                                lineComponent = rememberShapeComponent(
+                                    color = Color.hsl(113f, 0.79f, 0.34f,.5f)),
+                                labelComponent = rememberTextComponent(
+                                    textSize = 0.sp,
+                                    color = Color.White,
+                                    lineCount = 1,
+                                    padding = dimensionsOf(4.dp),
+                                ),
+                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            ),
+                            ThresholdLine(
+                                thresholdValue = getHeartRateFromPercentage(0.8f,userAge).toFloat(),
+                                lineComponent = rememberShapeComponent(color = Color.hsl(27f, 0.97f, 0.54f,.5f)),
+                                labelComponent = rememberTextComponent(
+                                    textSize = 0.sp,
+                                    color = Color.White,
+                                    lineCount = 1,
+                                    padding = dimensionsOf(4.dp),
+                                ),
+                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            ),
+                            ThresholdLine(
+                                thresholdValue = getHeartRateFromPercentage(0.9f,userAge).toFloat(),
+                                lineComponent = rememberShapeComponent(color = Color.hsl(9f, 0.88f, 0.45f,.5f)),
+                                labelComponent = rememberTextComponent(
+                                    textSize = 0.sp,
+                                    color = Color.White,
+                                    lineCount = 1,
+                                    padding = dimensionsOf(4.dp),
+                                ),
+                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            ),
+                        ),
+                    ),
                     model = heartRateEntryModel!!,
-                    startAxis = rememberStartAxis(),
-                    bottomAxis = rememberBottomAxis(valueFormatter= secondsHorizontalAxisValueFormatter),
-                    isZoomEnabled = false,
-                    getXStep = { heartRateEntryModel!!.entries[0].size.toFloat()/2 },
+                    scrollState = rememberVicoScrollState(scrollEnabled = false),
                 )
             }
         }
@@ -340,7 +417,7 @@ fun WorkoutHistoryScreen(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
                     .then(
-                        if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                        if (selectedMode == 0) Modifier.background(Color.White) else Modifier
                     ) // Apply background color only if enabled
                     .clickable { selectedMode = 0 }
                     .padding(8.dp),
@@ -357,7 +434,7 @@ fun WorkoutHistoryScreen(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
                     .then(
-                        if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                        if (selectedMode == 1) Modifier.background(Color.White) else Modifier
                     ) // Apply background color only if enabled
                     .clickable { selectedMode = 1 }
                     .padding(8.dp),

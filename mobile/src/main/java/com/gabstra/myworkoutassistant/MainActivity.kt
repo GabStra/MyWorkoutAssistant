@@ -119,7 +119,7 @@ class MainActivity : ComponentActivity() {
         receivedValue?.let { page ->
             when (page) {
                 "workouts" -> {
-                    appViewModel.setScreenData(ScreenData.Workouts())
+                    appViewModel.setScreenData(ScreenData.Workouts(1))
                 }
 
                 "settings" -> {
@@ -178,6 +178,7 @@ fun MyWorkoutAssistantNavHost(
                             "Data restored from backup",
                             Toast.LENGTH_SHORT
                         ).show()
+                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
                     }
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Failed to import data from backup", e)
@@ -189,9 +190,11 @@ fun MyWorkoutAssistantNavHost(
 
     when (appViewModel.currentScreenData) {
         is ScreenData.Workouts -> {
+            val screenData = appViewModel.currentScreenData as ScreenData.Workouts
             WorkoutsScreen(
                 appViewModel,
                 workoutHistoryDao,
+                setHistoryDao,
                 onSyncClick = {
                     scope.launch {
                         withContext(Dispatchers.IO){
@@ -234,7 +237,8 @@ fun MyWorkoutAssistantNavHost(
                         setHistoryDao.deleteAll()
                         Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
                     }
-                }
+                },
+                selectedTabIndex = screenData.selectedTabIndex
             )
         }
 

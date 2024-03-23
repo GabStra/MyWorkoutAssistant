@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant
 
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
@@ -13,10 +15,11 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.Calendar
 import java.util.UUID
 
 sealed class ScreenData() {
-    class Workouts() : ScreenData()
+    class Workouts(val selectedTabIndex : Int) : ScreenData()
     class Settings() : ScreenData()
     class NewWorkout() : ScreenData()
     class EditWorkout(val workoutId: UUID) : ScreenData()
@@ -34,17 +37,26 @@ sealed class ScreenData() {
 
 
 class AppViewModel() : ViewModel() {
-    private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts())
+    private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts(0))
 
     // Convert currentScreenData to a MutableState
-    var currentScreenData: ScreenData by mutableStateOf(screenDataStack.lastOrNull() ?: ScreenData.Workouts())
+    var currentScreenData: ScreenData by mutableStateOf(screenDataStack.lastOrNull() ?: ScreenData.Workouts(0))
         private set
+
+    private var _userAge = mutableIntStateOf(0)
+    val userAge: State<Int> = _userAge
 
     fun setScreenData(screenData: ScreenData,skipStack: Boolean = false) {
         currentScreenData = screenData
         if(!skipStack){
             screenDataStack.add(screenData)
         }
+    }
+
+    //function to update current screen data
+    fun updateScreenData(screenData: ScreenData) {
+        currentScreenData = screenData
+        screenDataStack[screenDataStack.size - 1] = screenData
     }
 
     fun goBack(): Boolean {
@@ -78,6 +90,8 @@ class AppViewModel() : ViewModel() {
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
         workoutStore = newWorkoutStore
+        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+        _userAge.intValue =  currentYear - workoutStore.birthDateYear
         _workoutsFlow.value = newWorkoutStore.workouts
     }
 

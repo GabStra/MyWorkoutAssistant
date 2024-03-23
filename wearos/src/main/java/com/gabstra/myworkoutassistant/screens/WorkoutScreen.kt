@@ -141,7 +141,7 @@ fun WorkoutScreen(
 
     LifecycleObserver(
         onStarted = {
-            showWorkoutInProgressNotification(context)
+
         },
         onPaused = {
             if(!selectedWorkout.usePolarDevice){
@@ -171,9 +171,13 @@ fun WorkoutScreen(
             is WorkoutState.Preparing -> {
                 val state = workoutState as WorkoutState.Preparing
                 if(!selectedWorkout.usePolarDevice)
-                    PreparingStandardScreen(viewModel,hrViewModel,state)
+                    PreparingStandardScreen(viewModel,hrViewModel,state,onReady = {
+                        showWorkoutInProgressNotification(context)
+                    })
                 else
-                    PreparingPolarScreen(viewModel,navController,polarViewModel,state)
+                    PreparingPolarScreen(viewModel,navController,polarViewModel,state,onReady = {
+                        showWorkoutInProgressNotification(context)
+                    })
             }
             is WorkoutState.Set -> {
                 val state = workoutState as WorkoutState.Set
@@ -181,20 +185,21 @@ fun WorkoutScreen(
                     viewModel,
                     state,
                     hearthRateChart = {
-                        if(!selectedWorkout.usePolarDevice)
-                            HeartRateStandard(
-                                modifier = Modifier.fillMaxSize(),
-                                viewModel,
-                                hrViewModel,
-                                userAge
-                            )
-                        else
+                        if(selectedWorkout.usePolarDevice){
                             HeartRatePolar(
                                 modifier = Modifier.fillMaxSize(),
                                 viewModel,
                                 polarViewModel,
                                 userAge
                             )
+                        }else{
+                            HeartRateStandard(
+                                modifier = Modifier.fillMaxSize(),
+                                viewModel,
+                                hrViewModel,
+                                userAge
+                            )
+                        }
                     }
                 )
             }
@@ -204,7 +209,13 @@ fun WorkoutScreen(
             }
             is WorkoutState.Finished -> {
                 val state = workoutState as WorkoutState.Finished
-                WorkoutCompleteScreen(navController, viewModel,state)
+                WorkoutCompleteScreen(
+                    navController,
+                    viewModel,
+                    state,
+                    hrViewModel,
+                    polarViewModel
+                )
             }
         }
     }

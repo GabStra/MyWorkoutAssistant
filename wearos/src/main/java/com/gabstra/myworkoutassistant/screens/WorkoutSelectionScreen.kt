@@ -90,6 +90,7 @@ fun MissingAgeSettingMessage(
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         Text(
+            modifier = Modifier.padding(vertical = 10.dp),
             text = "Please set your age in the app on your phone",
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.caption1,
@@ -102,7 +103,7 @@ fun MissingAgeSettingMessage(
                 }
             }) {
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.SendToMobile,
+                imageVector = Icons.AutoMirrored.Default.SendToMobile,
                 contentDescription = "SendToMobile",
                 modifier = Modifier.size(30.dp),
             )
@@ -158,6 +159,7 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
             if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5 && workouts.isEmpty()){
                 item {
                     Text(
+                        modifier = Modifier.padding(vertical = 10.dp),
                         text = "Please install the app on your phone",
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.caption1,

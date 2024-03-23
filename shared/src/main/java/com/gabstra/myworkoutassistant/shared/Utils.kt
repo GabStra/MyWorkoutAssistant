@@ -158,3 +158,36 @@ fun getNewSetFromSetData(set: Set, setData: SetData): Set? {
 
     return null
 }
+
+fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
+    val mhr = 208 - (0.7f * age)
+    return (heartRate / mhr) * 100
+}
+
+fun getMaxHeartRate(age: Int): Int {
+    return 208 - (0.7f * age).toInt()
+}
+
+fun getHeartRateFromPercentage(percentage: Float, age: Int): Int {
+    val mhr = getMaxHeartRate(age)
+    val heartRate = percentage * mhr
+    return heartRate.toInt()
+}
+
+fun mapPercentage(percentage: Float): Float {
+    return if (percentage <= 50) {
+        percentage * 0.00332f
+    } else {
+        0.166f + ((percentage - 50) / 10) * 0.166f
+    }
+}
+
+fun mapPercentageToZone(percentage: Float): Int {
+    val mappedValue = if (percentage <= 50) {
+        percentage * 0.00332f
+    } else {
+        0.166f + ((percentage - 50) / 10) * 0.166f
+    }
+
+    return (mappedValue / 0.166f).toInt()
+}

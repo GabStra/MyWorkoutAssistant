@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -44,6 +45,8 @@ import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.CircularProgressIndicator
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -62,6 +65,7 @@ fun CustomDialogYesOnLongPress(
 ) {
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
+    val longPressCoroutineScope = rememberCoroutineScope()
 
     var currentMillis by remember { mutableLongStateOf(0) }
 
@@ -91,8 +95,11 @@ fun CustomDialogYesOnLongPress(
     }
 
     LaunchedEffect(currentMillis){
+
         if (currentMillis >= holdTimeInMillis && !hasBeenPressedLongEnough) {
+            Log.d("CustomDialogYesOnLongPress", "currentMillis: $currentMillis hasBeenPressedLongEnough: $hasBeenPressedLongEnough")
             hasBeenPressedLongEnough = true
+            longPressCoroutineScope.coroutineContext.cancelChildren()
             coroutineScope.launch {
                 delay(100)
                 handleYesClick()
@@ -177,13 +184,14 @@ fun CustomDialogYesOnLongPress(
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colors.primary)
                                 .repeatActionOnLongPress(
-                                    coroutineScope,
+                                    longPressCoroutineScope,
                                     thresholdMillis = 200,
                                     intervalMillis = 100,
                                     onPressStart = { },
                                     onBeforeLongPressRepeat = { onBeforeLongPressRepeat() },
                                     onLongPressRepeat = { onLongPressRepeat() },
-                                    onRelease = { onRelease() }),
+                                    onRelease = { onRelease() }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(imageVector = Icons.Default.Check, contentDescription = "Done")

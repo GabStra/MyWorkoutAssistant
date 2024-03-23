@@ -160,7 +160,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                 }
             )
         }else{
-            Column(modifier = Modifier.padding(0.dp,5.dp,0.dp,5.dp).weight(1f), verticalArrangement = Arrangement.Top) {
+            Column(modifier = Modifier.padding(vertical= 15.dp), verticalArrangement = Arrangement.Top) {
                 textComposable()
             }
             Box(contentAlignment = Alignment.BottomCenter) {
