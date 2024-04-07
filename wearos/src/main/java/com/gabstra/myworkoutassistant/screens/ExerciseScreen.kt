@@ -107,6 +107,8 @@ fun ExerciseScreen(
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
 
+    var enableHorizontalPager by remember { mutableStateOf(true) }
+
     val exerciseSets = state.parentExercise.sets
 
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
@@ -212,6 +214,7 @@ fun ExerciseScreen(
                         .weight(1f)
                         .padding(0.dp, 20.dp, 0.dp, 0.dp),
                     pagerState = pagerState,
+                    userScrollEnabled = enableHorizontalPager
                 ) { page ->
                     when(page){
                         0 -> {
@@ -226,14 +229,26 @@ fun ExerciseScreen(
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
                                     forceStopEditMode = false,
-                                    bottom = {  }
+                                    bottom = {  },
+                                    onEditModeDisabled = {
+                                        enableHorizontalPager = true
+                                    },
+                                    onEditModeEnabled = {
+                                        enableHorizontalPager = false
+                                    }
                                 )
                                 is BodyWeightSet -> BodyWeightSetScreen(
                                     viewModel = viewModel,
                                     modifier = Modifier.fillMaxSize(),
                                     state = updatedState,
                                     forceStopEditMode = false,
-                                    bottom = {  }
+                                    bottom = {  },
+                                    onEditModeDisabled = {
+                                        enableHorizontalPager = true
+                                    },
+                                    onEditModeEnabled = {
+                                        enableHorizontalPager = false
+                                    }
                                 )
                                 is TimedDurationSet -> TimedDurationSetScreen(
                                     viewModel = viewModel,
@@ -243,7 +258,13 @@ fun ExerciseScreen(
                                         viewModel.storeExecutedSetHistory(updatedState)
                                         viewModel.goToNextState()
                                     },
-                                    bottom = {  }
+                                    bottom = {  },
+                                    onTimerDisabled = {
+                                        enableHorizontalPager = true
+                                    },
+                                    onTimerEnabled = {
+                                        enableHorizontalPager = false
+                                    }
                                 )
                                 is EnduranceSet -> EnduranceSetScreen(
                                     viewModel = viewModel,
@@ -253,7 +274,13 @@ fun ExerciseScreen(
                                         viewModel.storeExecutedSetHistory(updatedState)
                                         viewModel.goToNextState()
                                     },
-                                    bottom = {  }
+                                    bottom = {  },
+                                    onTimerDisabled = {
+                                        enableHorizontalPager = true
+                                    },
+                                    onTimerEnabled = {
+                                        enableHorizontalPager = false
+                                    }
                                 )
                             }
                         }

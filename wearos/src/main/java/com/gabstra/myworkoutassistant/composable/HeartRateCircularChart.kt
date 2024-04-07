@@ -142,20 +142,8 @@ fun HeartRateStandard(
     hrViewModel: MeasureDataViewModel,
     userAge : Int
 ) {
-    val uiState by hrViewModel.uiState.collectAsState()
-
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
-
-    var lastNonZeroHeartRate by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(currentHeartRate){
-        if(currentHeartRate > 0){
-            lastNonZeroHeartRate = currentHeartRate.toInt()
-        }
-    }
-
-    val hr = if (uiState is UiState.HeartRateAvailable) lastNonZeroHeartRate else 0
-
+    val hr = currentHeartRate ?: 0
     HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge)
 }
 

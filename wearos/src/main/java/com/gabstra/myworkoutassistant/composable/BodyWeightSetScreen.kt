@@ -31,7 +31,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
+fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit, onEditModeEnabled : () -> Unit, onEditModeDisabled: () -> Unit) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as BodyWeightSetData
@@ -41,6 +41,14 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
 
     LaunchedEffect(forceStopEditMode) {
         if(forceStopEditMode) isRepsInEditMode = false
+    }
+
+    LaunchedEffect(isRepsInEditMode) {
+        if (isRepsInEditMode) {
+            onEditModeEnabled()
+        } else {
+            onEditModeDisabled()
+        }
     }
 
     fun onMinusClick(){

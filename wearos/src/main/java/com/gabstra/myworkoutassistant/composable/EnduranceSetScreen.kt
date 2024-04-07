@@ -44,7 +44,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit) {
+fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit, onTimerEnabled : () -> Unit, onTimerDisabled: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -57,6 +57,16 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     var currentSet = remember(state){ state.currentSetData as EnduranceSetData }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
+
+    val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
+
+    LaunchedEffect(stopScrolling) {
+        if (stopScrolling) {
+            onTimerEnabled()
+        } else {
+            onTimerDisabled()
+        }
+    }
 
     LaunchedEffect(currentSet) {
         // Update the WorkoutState.Set whenever currentSet changes
@@ -129,7 +139,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
 
             onTimerEnd()
 
-            if(!state.set.autoStop){
+            if(!set.autoStop){
                 showBottom = true
             }
         }
@@ -197,7 +207,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
         }
     }
 
-    CustomDialog(
+    CustomDialogYesOnLongPress(
         show = showStopDialog,
         title = "Stop exercise",
         message = "Do you want to stop this exercise?",
@@ -214,6 +224,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             showStopDialog = false
             startTimerJob()
         },
-        handleOnAutomaticClose = {}
+        handleOnAutomaticClose = {},
+        holdTimeInMillis = 2000
     )
 }

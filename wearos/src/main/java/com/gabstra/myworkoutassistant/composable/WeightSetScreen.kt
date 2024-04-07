@@ -33,7 +33,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit) {
+fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit, onEditModeEnabled : () -> Unit, onEditModeDisabled: () -> Unit){
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData
@@ -42,6 +42,15 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
 
+    val isInEditMode = isRepsInEditMode || isWeightInEditMode
+
+    LaunchedEffect(isInEditMode) {
+        if (isInEditMode) {
+            onEditModeEnabled()
+        } else {
+            onEditModeDisabled()
+        }
+    }
 
     LaunchedEffect(forceStopEditMode) {
         if(forceStopEditMode){
@@ -209,7 +218,9 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
             )
 
         }else{
-            Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
+            Column(modifier = Modifier
+                .padding(0.dp, 0.dp, 30.dp, 2.dp)
+                .weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
                 repsRow()
                 Spacer(modifier = Modifier.height(5.dp))
                 weightRow()

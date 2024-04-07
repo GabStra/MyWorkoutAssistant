@@ -54,8 +54,6 @@ fun PreparingStandardScreen(
     state: WorkoutState.Preparing,
     onReady: () -> Unit
 ){
-    val uiState by hrViewModel.uiState.collectAsState()
-
     val heartRate by hrViewModel.heartRateBpm.collectAsState()
 
     val context = LocalContext.current
@@ -74,8 +72,8 @@ fun PreparingStandardScreen(
         }
     }
 
-    LaunchedEffect(uiState,state,heartRate,currentMillis) {
-        val isReady = (uiState is UiState.HeartRateAvailable) && (heartRate > 0) && state.dataLoaded && currentMillis >=2000
+    LaunchedEffect(state,heartRate,currentMillis) {
+        val isReady = heartRate != null && heartRate!! > 0 && state.dataLoaded && currentMillis >=2000
         if (isReady) {
             viewModel.goToNextState()
             viewModel.setWorkoutStart()

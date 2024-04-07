@@ -44,7 +44,7 @@ sealed class WorkoutState {
     ): WorkoutState()
     data class Set(
         val parentExercise: Exercise,
-        val set: com.gabstra.myworkoutassistant.shared.sets.Set,
+        var set: com.gabstra.myworkoutassistant.shared.sets.Set,
         val order: Int,
         val previousSetData: SetData?,
         var currentSetData:  SetData,

@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared
 
+import android.content.Context
+import android.content.pm.PackageManager
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
@@ -190,4 +192,18 @@ fun mapPercentageToZone(percentage: Float): Int {
     }
 
     return (mappedValue / 0.166f).toInt()
+}
+
+fun getVersionName(context: Context): String {
+    return try {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }
+    } catch (e: PackageManager.NameNotFoundException) {
+        e.printStackTrace()
+        ""
+    }
 }

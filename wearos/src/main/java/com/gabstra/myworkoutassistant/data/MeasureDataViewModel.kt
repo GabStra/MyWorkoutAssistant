@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
+import android.util.Log
 import androidx.health.services.client.data.DataTypeAvailability
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -17,14 +18,11 @@ class MeasureDataViewModel(
     private val measureDataRepository: MeasureDataRepository
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow<UiState>(UiState.Startup)
-    val uiState: StateFlow<UiState> = _uiState
-
     private val _heartRateAvailable = MutableStateFlow(DataTypeAvailability.UNKNOWN)
     val heartRateAvailable: StateFlow<DataTypeAvailability> = _heartRateAvailable
 
-    private val _heartRateBpm = MutableStateFlow(0.0)
-    val heartRateBpm: StateFlow<Double> = _heartRateBpm
+    private val _heartRateBpm = MutableStateFlow<Int?>(null)
+    val heartRateBpm: StateFlow<Int?> = _heartRateBpm
 
     private var heartRateCollectJob: Job? = null
 
@@ -33,23 +31,18 @@ class MeasureDataViewModel(
         // Cancel any existing collection job to ensure we don't have multiple collectors
         stopMeasuringHeartRate()
 
-        viewModelScope.launch {
-            _uiState.value = if (measureDataRepository.hasHeartRateCapability()) {
-                UiState.HeartRateAvailable
-            } else {
-                UiState.HeartRateNotAvailable
-            }
-        }
-
         heartRateCollectJob = viewModelScope.launch {
             measureDataRepository.heartRateMeasureFlow()
-                .collect {
+                .collect { it ->
                     when (it) {
                         is MeasureMessage.MeasureAvailability -> {
+                            //Log.d("MeasureDataViewModel", "Heart rate availability: ${it.availability}")
                             _heartRateAvailable.value = it.availability
                         }
                         is MeasureMessage.MeasureData -> {
-                            val bpm = it.data.last().value
+                            //print the data in a log.d
+                            //Log.d("MeasureDataViewModel", "Heart rate data: ${it.data.joinToString { v -> v.value.toString()}}")
+                            val bpm = it.data.map { v -> v.value.toInt() }.average().toInt()
                             _heartRateBpm.value = bpm
                         }
                     }
@@ -66,21 +59,6 @@ class MeasureDataViewModel(
         super.onCleared()
         // Ensure all children coroutines are cancelled when the ViewModel is cleared
         stopMeasuringHeartRate()
-    }
-
-    @ExperimentalCoroutinesApi
-    suspend fun measureHeartRate() {
-        measureDataRepository.heartRateMeasureFlow().collect {
-            when (it) {
-                is MeasureMessage.MeasureAvailability -> {
-                    _heartRateAvailable.value = it.availability
-                }
-                is MeasureMessage.MeasureData -> {
-                    val bpm = it.data.last().value
-                    _heartRateBpm.value = bpm
-                }
-            }
-        }
     }
 }
 

@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,6 +48,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.google.android.gms.wearable.DataClient
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
+import com.gabstra.myworkoutassistant.shared.getVersionName
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -86,6 +89,8 @@ fun MissingAgeSettingMessage(
     appHelper: WearDataLayerAppHelper,
 ) {
     val context = LocalContext.current
+
+
     val scope = rememberCoroutineScope()
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -111,7 +116,7 @@ fun MissingAgeSettingMessage(
     }
 }
 
-@OptIn(ExperimentalHorologistApi::class)
+@OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController, viewModel: AppViewModel, appHelper: WearDataLayerAppHelper) {
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
@@ -124,6 +129,9 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
 
     val userAge by viewModel.userAge
     val phoneNode = viewModel.phoneNode
+
+    val context = LocalContext.current
+    val versionName = getVersionName(context);
 
     LaunchedEffect(Unit){
         scope.launch {
@@ -149,7 +157,16 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
         ) {
             item{
                 Text(
-                    modifier = Modifier.padding(0.dp, 0.dp,0.dp, 10.dp),
+                    modifier = Modifier.padding(0.dp, 0.dp,0.dp, 10.dp).combinedClickable(
+                        onClick = {},
+                        onLongClick = {
+                            Toast.makeText(
+                                context,
+                                "Build version code: $versionName",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    ),
                     text = "My Workout Assistant",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.caption1,

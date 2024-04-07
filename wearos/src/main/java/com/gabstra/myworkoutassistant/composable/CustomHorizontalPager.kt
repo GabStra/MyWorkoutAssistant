@@ -73,6 +73,7 @@ private fun Modifier.optionalClip(shapeState: State<RoundedCornerShape?>): Modif
 fun CustomHorizontalPager(
     modifier: Modifier,
     pagerState: PagerState,
+    userScrollEnabled : Boolean = true,
     content: @Composable ((Int) -> Unit),
 ) {
     val pageIndicatorState = remember(pagerState) { PageScreenIndicatorState(pagerState) }
@@ -81,6 +82,7 @@ fun CustomHorizontalPager(
         HorizontalPager(
             modifier = Modifier.fillMaxSize(),
             state = pagerState,
+            userScrollEnabled = userScrollEnabled,
             flingBehavior = PagerDefaults.flingBehavior(
                 state = pagerState,
                 snapPositionalThreshold = .01f,
