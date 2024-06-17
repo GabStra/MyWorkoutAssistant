@@ -101,14 +101,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
-        registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
     }
 
     override fun onStop() {
         super.onStop()
-        unregisterReceiver(myReceiver)
+        if(::myReceiver.isInitialized) {
+            unregisterReceiver(myReceiver)
+        }
     }
 
     override fun onDestroy() {
@@ -128,6 +128,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             WearApp(dataClient, appViewModel, appHelper){ navController ->
                 myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
+                val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
+                registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
             }
         }
     }
@@ -135,7 +137,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update the old intent
-
     }
 }
 
