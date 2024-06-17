@@ -52,11 +52,12 @@ fun NextExerciseInfo(
     viewModel: AppViewModel,
     state: WorkoutState.Set
 ){
+    val exerciseIndex = viewModel.setsByExercise.keys.indexOf(state.parentExercise)
+    val exerciseCount = viewModel.setsByExercise.keys.count()
+
     val exerciseSets = state.parentExercise.sets
 
-    val setIndex = remember(state,exerciseSets) {
-        exerciseSets.indexOfFirst { it === state.set }
-    }
+    val setIndex =  exerciseSets.indexOfFirst { it === state.set }
 
     Column(
         modifier = Modifier
@@ -73,13 +74,13 @@ fun NextExerciseInfo(
             Spacer(modifier = Modifier.height(5.dp))
             Text(
                     modifier = Modifier
-                        .basicMarquee(),
+                        .basicMarquee(iterations = Int.MAX_VALUE),
                     text = state.parentExercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                 )
             if(exerciseSets.count()!=1){
-                Text( text="${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
+                Text( text="${exerciseIndex+1}/${exerciseCount} - ${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
             }
             Spacer(modifier = Modifier.height(5.dp))
             when(state.set){

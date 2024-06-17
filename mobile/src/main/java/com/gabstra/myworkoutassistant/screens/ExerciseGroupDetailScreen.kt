@@ -78,16 +78,6 @@ fun ExerciseGroupDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        appViewModel.setScreenData(
-                            ScreenData.EditExerciseGroup(
-                                workout.id,
-                                exerciseGroup.id
-                            )
-                        );
-                    }) {
-                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Back")
-                    }
                 }
             )
         },

@@ -1,7 +1,8 @@
 plugins {
+    id("org.jetbrains.kotlin.plugin.compose") version "2.0.0"
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-kapt")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -31,6 +32,10 @@ android {
     }
 }
 
+composeCompiler {
+    enableStrongSkippingMode = true
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.9.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
@@ -39,6 +44,6 @@ dependencies {
     implementation("com.google.code.gson:gson:2.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
-    kapt("androidx.room:room-compiler:+")
+    ksp("androidx.room:room-compiler:+")
     implementation("androidx.room:room-ktx:+")
 }

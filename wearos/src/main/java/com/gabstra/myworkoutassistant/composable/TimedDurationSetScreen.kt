@@ -57,12 +57,16 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
     val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
+    var timerEnabledCalled by remember { mutableStateOf(false) }
 
     LaunchedEffect(stopScrolling) {
         if (stopScrolling) {
             onTimerEnabled()
-        } else {
-            onTimerDisabled()
+            timerEnabledCalled = true
+        }  else {
+            if (timerEnabledCalled) {
+                onTimerDisabled()
+            }
         }
     }
 
@@ -246,6 +250,6 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             startTimerJob()
         },
         handleOnAutomaticClose = {},
-        holdTimeInMillis = 2000
+        holdTimeInMillis = 1000
     )
 }

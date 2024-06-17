@@ -82,10 +82,10 @@ fun PreparingStandardScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(20.dp,60.dp,20.dp,0.dp)){
-        Text(modifier = Modifier.fillMaxWidth(), text = "Preparing Watch Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
+        Text(modifier = Modifier.fillMaxWidth(), text = "Preparing\nWatch HR Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(15.dp))
         Row(modifier = Modifier.width(180.dp).padding(horizontal = 20.dp)){
-            LoadingText(baseText = "Loading HR")
+            LoadingText(baseText = "Please wait")
         }
         if(canSkip){
             Spacer(modifier = Modifier.height(25.dp))

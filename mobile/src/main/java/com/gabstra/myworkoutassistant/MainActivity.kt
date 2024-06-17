@@ -357,6 +357,8 @@ fun MyWorkoutAssistantNavHost(
         }
 
         is ScreenData.EditExerciseGroup -> {
+            //CURRENTLY DISABLED
+
             val screenData = appViewModel.currentScreenData as ScreenData.EditExerciseGroup
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
@@ -426,6 +428,8 @@ fun MyWorkoutAssistantNavHost(
         }
 
         is ScreenData.EditExercise -> {
+            //CURRENTLY DISABLED
+
             val screenData = appViewModel.currentScreenData as ScreenData.EditExercise
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
@@ -465,10 +469,13 @@ fun MyWorkoutAssistantNavHost(
                 onCancel = {
                     appViewModel.goBack()
                 },
+                exerciseType = parentExercise.exerciseType
             )
         }
 
         is ScreenData.EditSet -> {
+            //CURRENTLY DISABLED
+
             val screenData = appViewModel.currentScreenData as ScreenData.EditSet
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
@@ -489,9 +496,11 @@ fun MyWorkoutAssistantNavHost(
                 onCancel = {
                     appViewModel.goBack()
                 },
-                set = screenData.selectedSet
+                set = screenData.selectedSet,
+                exerciseType = parentExercise.exerciseType
             )
         }
+
     }
 }
 

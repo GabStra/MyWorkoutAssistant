@@ -15,8 +15,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.SetType
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+
+fun ExerciseType.toReadableString(): String {
+    return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
+}
+
+fun getExerciseTypeDescriptions(): List<String> {
+    return ExerciseType.values().map { it.toReadableString() }
+}
+
+fun stringToExerciseType(value: String): ExerciseType? {
+    return ExerciseType.values().firstOrNull {
+        it.name.equals(value.replace(' ', '_').toUpperCase(), ignoreCase = true)
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,6 +46,10 @@ fun ExerciseForm(
     val nameState = remember { mutableStateOf(exercise?.name ?: "") }
     val restTimeState = remember { mutableStateOf(exercise?.restTimeInSec?.toString() ?: "0") }
     val skipWorkoutRest = remember { mutableStateOf(exercise?.skipWorkoutRest ?: false) }
+
+    val exerciseTypeDescriptions = getExerciseTypeDescriptions()
+    val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
+    val expanded = remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -45,6 +66,43 @@ fun ExerciseForm(
                 .fillMaxWidth()
                 .padding(8.dp),
         )
+
+        if(exercise == null){
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            ) {
+                Text(text = "Exercise Type:")
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = selectedExerciseType.value.name.replace('_', ' ').capitalize(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded.value = true }
+                            .padding(8.dp)
+                    )
+                    DropdownMenu(
+                        expanded = expanded.value,
+                        onDismissRequest = { expanded.value = false },
+                    ) {
+                        exerciseTypeDescriptions.forEach { ExerciseDescription ->
+                            DropdownMenuItem(
+                                onClick = {
+                                    selectedExerciseType.value = stringToExerciseType(ExerciseDescription)!!
+                                    expanded.value = false
+                                },
+                                text = {
+                                    Text(text = ExerciseDescription)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
 
         Column(
             modifier = Modifier
@@ -94,7 +152,8 @@ fun ExerciseForm(
                     restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
                     skipWorkoutRest = skipWorkoutRest.value,
                     enabled = exercise?.enabled ?: true,
-                    sets = exercise?.sets ?: listOf()
+                    sets = exercise?.sets ?: listOf(),
+                    exerciseType = selectedExerciseType.value
                 )
 
                 // Call the callback to insert/update the exercise

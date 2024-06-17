@@ -6,5 +6,6 @@ enum class Screen(val route: String) {
     Workout("workout"),
     Exercise("exercise"),
     Rest("Rest"),
-    WorkoutComplete("workoutComplete")
+    WorkoutComplete("workoutComplete"),
+    Loading("workoutSelection"),
 }

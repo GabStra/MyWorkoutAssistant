@@ -225,6 +225,6 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             startTimerJob()
         },
         handleOnAutomaticClose = {},
-        holdTimeInMillis = 2000
+        holdTimeInMillis = 1000
     )
 }

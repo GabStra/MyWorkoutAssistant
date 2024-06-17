@@ -1,13 +1,11 @@
 package com.gabstra.myworkoutassistant
 
 import android.content.Intent
-import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
-import com.gabstra.myworkoutassistant.shared.logLargeString
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
@@ -56,6 +54,12 @@ class DataLayerListenerService : WearableListenerService() {
                         if (backupChunk != null) {
                             if(backupChunk == "START"){
                                 backupChunks.clear()
+
+                                val intent = Intent(INTENT_ID).apply {
+                                    putExtra(APP_BACKUP_START_JSON, APP_BACKUP_START_JSON)
+                                }
+                                sendBroadcast(intent)
+
                             }else{
                                 backupChunks.add(backupChunk)
                             }
@@ -77,7 +81,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 val intent = Intent(INTENT_ID).apply {
-                                    putExtra(APP_BACKUP_JSON, backupJson)
+                                    putExtra(APP_BACKUP_END_JSON, backupJson)
                                 }
                                 sendBroadcast(intent)
 
@@ -104,6 +108,7 @@ class DataLayerListenerService : WearableListenerService() {
         private const val BACKUP_CHUNK_PATH = "/backupChunkPath"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"
         const val WORKOUT_STORE_JSON = "workoutStoreJson"
-        const val APP_BACKUP_JSON = "appBackupJson"
+        const val APP_BACKUP_START_JSON = "appBackupStartJson"
+        const val APP_BACKUP_END_JSON = "appBackupEndJson"
     }
 }

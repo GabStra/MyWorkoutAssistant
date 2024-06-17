@@ -96,7 +96,7 @@ class AppViewModel : ViewModel(){
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
         workoutStore = newWorkoutStore
-        _workouts.value = workoutStore.workouts
+        _workouts.value = workoutStore.workouts.filter { it.enabled && it.isActive }
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue =  currentYear - workoutStore.birthDateYear
     }
@@ -115,7 +115,7 @@ class AppViewModel : ViewModel(){
         workoutHistoryDao= db.workoutHistoryDao()
     }
 
-    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0))
+    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0,))
     val selectedWorkout: State<Workout> get() = _selectedWorkout
 
     private lateinit var workoutHistoryDao: WorkoutHistoryDao

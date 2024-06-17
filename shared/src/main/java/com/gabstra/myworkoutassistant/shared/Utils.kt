@@ -207,3 +207,73 @@ fun getVersionName(context: Context): String {
         ""
     }
 }
+
+enum class SetType {
+    COUNTUP_SET, BODY_WEIGHT_SET, COUNTDOWN_SET, WEIGHT_SET
+}
+
+enum class ExerciseType {
+    COUNTUP, BODY_WEIGHT, COUNTDOWN, WEIGHT
+}
+
+fun getSetTypeFromSet(set: Set): SetType {
+    return when (set) {
+        is WeightSet -> SetType.WEIGHT_SET
+        is BodyWeightSet -> SetType.BODY_WEIGHT_SET
+        is EnduranceSet -> SetType.COUNTUP_SET
+        is TimedDurationSet -> SetType.COUNTDOWN_SET
+    }
+}
+
+fun getExerciseTypeFromSet(set: Set): ExerciseType {
+    return when (getSetTypeFromSet(set)) {
+        SetType.WEIGHT_SET -> ExerciseType.WEIGHT
+        SetType.BODY_WEIGHT_SET -> ExerciseType.BODY_WEIGHT
+        SetType.COUNTUP_SET -> ExerciseType.COUNTUP
+        SetType.COUNTDOWN_SET -> ExerciseType.COUNTDOWN
+    }
+}
+
+fun getAllPreviousVersions(workouts: List<Workout>, currentWorkout: Workout): List<Workout> {
+    val previousVersions = mutableListOf<Workout>()
+    var workout = currentWorkout
+
+    while (workout.previousVersionId != null) {
+        val previousVersion = workouts.find { it.id == workout.previousVersionId }
+        if (previousVersion != null) {
+            previousVersions.add(previousVersion)
+            workout = previousVersion
+        } else {
+            break
+        }
+    }
+
+    return previousVersions
+}
+
+suspend fun getSortedWorkoutHistories(
+    workout: Workout,
+    workoutsRepo: List<Workout>,
+    workoutHistoryDao: WorkoutHistoryDao
+): List<WorkoutHistory> {
+    val workouts = mutableListOf<Workout>()
+    workouts.add(workout)
+
+    // Aggiungi tutte le versioni precedenti del workout in modo ricorsivo
+    workouts.addAll(getAllPreviousVersions(workoutsRepo, workout))
+
+    // Ordina i workout per data di creazione
+    workouts.sortBy { it.creationDate }
+
+    val workoutHistories = mutableListOf<WorkoutHistory>()
+
+    // Recupera tutte le storie dei workout ordinate per data
+    for (currentWorkout in workouts) {
+        workoutHistories.addAll(workoutHistoryDao.getWorkoutsByWorkoutId(currentWorkout.id))
+    }
+
+    // Ordina tutte le storie dei workout per data
+    workoutHistories.sortBy { it.date }
+
+    return workoutHistories
+}

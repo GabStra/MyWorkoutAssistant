@@ -6,6 +6,7 @@
 
 package com.gabstra.myworkoutassistant
 
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -25,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -37,6 +39,7 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.MeasureDataRepository
+import com.gabstra.myworkoutassistant.screens.LoadingScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
@@ -46,6 +49,43 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
+
+class MyReceiver(
+    private val navController: NavController,
+    private val appViewModel: AppViewModel,
+    private val workoutStoreRepository: WorkoutStoreRepository,
+    private val activity: Activity
+) : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        activity.runOnUiThread {
+            try{
+                val workoutStoreJson = intent.getStringExtra(DataLayerListenerService.WORKOUT_STORE_JSON)
+                val appBackupEndJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_END_JSON)
+
+                val appBackupStartJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_START_JSON)
+
+                if(appBackupStartJson != null){
+                    navController.navigate(Screen.Loading.route)
+                }
+
+                if(workoutStoreJson != null || appBackupEndJson != null){
+                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                }
+
+                if(workoutStoreJson != null){
+                    Toast.makeText(context, "Workouts updated", Toast.LENGTH_SHORT).show()
+                }
+
+                if(appBackupEndJson != null){
+                    Toast.makeText(context, "Data received", Toast.LENGTH_SHORT).show()
+                    navController.navigate(Screen.WorkoutSelection.route)
+                }
+            }catch (exception: Exception) {
+                Log.d("MainActivity", "Exception: $exception")
+            }
+        }
+    }
+}
 
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
@@ -83,32 +123,12 @@ class MainActivity : ComponentActivity() {
         val wearDataLayerRegistry  = WearDataLayerRegistry.fromContext(this, lifecycleScope)
         appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
 
-        myReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                try{
-                    val workoutStoreJson = intent.getStringExtra(DataLayerListenerService.WORKOUT_STORE_JSON)
-                    val appBackupJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_JSON)
-
-                    if(workoutStoreJson != null || appBackupJson != null){
-                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-                    }
-
-                    if(workoutStoreJson != null){
-                        Toast.makeText(context, "Workouts updated", Toast.LENGTH_SHORT).show()
-                    }
-
-                    if(appBackupJson != null){
-                        Toast.makeText(context, "Data received", Toast.LENGTH_SHORT).show()
-                    }
-                }catch (exception: Exception) {
-                    Log.d("MainActivity", "Exception: $exception")
-                }
-
-            }
-        }
+        lateinit var myReceiver: MyReceiver
 
         setContent {
-            WearApp(dataClient, appViewModel, appHelper)
+            WearApp(dataClient, appViewModel, appHelper){ navController ->
+                myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
+            }
         }
     }
 
@@ -135,7 +155,7 @@ fun KeepScreenOn() {
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
-fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearDataLayerAppHelper) {
+fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearDataLayerAppHelper, onNavControllerAvailable: (NavController) -> Unit) {
     MyWorkoutAssistantTheme {
         val navController = rememberNavController()
         val localContext = LocalContext.current
@@ -165,6 +185,9 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
             composable(Screen.Workout.route) {
                 WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
+            }
+            composable(Screen.Loading.route) {
+                LoadingScreen("Loading Backup")
             }
         }
     }

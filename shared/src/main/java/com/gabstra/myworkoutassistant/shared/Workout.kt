@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared
 
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import java.time.LocalDate
 import java.util.UUID
 
 data class Workout(
@@ -11,4 +12,8 @@ data class Workout(
     val restTimeInSec: Int,
     val enabled: Boolean = true,
     val usePolarDevice: Boolean = false,
+    val creationDate: LocalDate = LocalDate.now(),
+    val previousVersionId: UUID? = null,
+    val nextVersionId: UUID? = null,
+    val isActive: Boolean = true
 )

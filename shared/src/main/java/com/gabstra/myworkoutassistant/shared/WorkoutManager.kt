@@ -3,30 +3,42 @@ package com.gabstra.myworkoutassistant.shared
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import java.time.LocalDate
+import java.util.UUID
 
 class WorkoutManager {
     companion object {
-        fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout) : List<Workout> {
+        fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
+            val newVersion = updatedWorkout.copy(
+                id = UUID.randomUUID(), // Genera un nuovo ID per la nuova versione
+                creationDate = LocalDate.now(), // Imposta la data corrente
+                previousVersionId = oldWorkout.id // Imposta il riferimento alla versione precedente
+            )
+
+            val updatedOldWorkout = oldWorkout.copy(isActive = false, nextVersionId = newVersion.id)
+
             return workouts.map { workout ->
-                if (workout == oldWorkout) updatedWorkout else workout
-            }
+                if (workout == oldWorkout) updatedOldWorkout else workout
+            } + newVersion
         }
 
-        fun updateWorkoutComponent(workouts: List<Workout>,parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
-            return workouts.map { workout ->
-                if (workout == parentWorkout) {
-                    workout.copy(workoutComponents = updateWorkoutComponentsRecursively(workout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent))
-                } else {
-                    workout
-                }
-            }
+        fun updateWorkoutComponent(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
+            // Crea una nuova lista di componenti del workout aggiornata
+            val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
+
+            // Crea un nuovo workout con i componenti aggiornati
+            val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
+
+            // Utilizza la funzione updateWorkout per creare una nuova versione del workout
+            return updateWorkout(workouts, parentWorkout, updatedWorkout)
         }
 
+        // Funzione ricorsiva per aggiornare i componenti del workout
         private fun updateWorkoutComponentsRecursively(components: List<WorkoutComponent>, oldComponent: WorkoutComponent, updatedComponent: WorkoutComponent): List<WorkoutComponent> {
             return components.map { component ->
-                if(component == oldComponent) {
+                if (component == oldComponent) {
                     updatedComponent
-                } else{
+                } else {
                     when (component) {
                         is ExerciseGroup -> component.copy(workoutComponents = updateWorkoutComponentsRecursively(component.workoutComponents, oldComponent, updatedComponent))
                         else -> component
@@ -46,15 +58,17 @@ class WorkoutManager {
         }
 
         fun addWorkoutComponentToExerciseGroup(workouts: List<Workout>, workout: Workout, exerciseGroup: ExerciseGroup, newWorkoutComponent: WorkoutComponent): List<Workout> {
-            return workouts.map { it ->
-                if (it == workout) {
-                    it.copy(workoutComponents = addWorkoutComponentsRecursively(it.workoutComponents, exerciseGroup, newWorkoutComponent))
-                } else {
-                    it
-                }
-            }
+            // Crea una nuova lista di componenti del workout con il nuovo componente aggiunto all'ExerciseGroup
+            val updatedComponents = addWorkoutComponentsRecursively(workout.workoutComponents, exerciseGroup, newWorkoutComponent)
+
+            // Crea un nuovo workout con i componenti aggiornati
+            val updatedWorkout = workout.copy(workoutComponents = updatedComponents)
+
+            // Utilizza la funzione updateWorkout per creare una nuova versione del workout
+            return updateWorkout(workouts, workout, updatedWorkout)
         }
 
+        // Funzione ricorsiva per aggiungere componenti ai gruppi di esercizi
         private fun addWorkoutComponentsRecursively(components: List<WorkoutComponent>, parentWorkoutComponent: WorkoutComponent, newWorkoutComponent: WorkoutComponent): List<WorkoutComponent> {
             return components.map { component ->
                 when (component) {
@@ -86,7 +100,6 @@ class WorkoutManager {
             }
         }
 
-
         fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: com.gabstra.myworkoutassistant.shared.sets.Set, index: Int? = null): List<WorkoutComponent> {
             return components.map { component ->
                 when (component) {
@@ -116,7 +129,6 @@ class WorkoutManager {
                 }
             }
         }
-
 
         fun updateSetInExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, oldSet: com.gabstra.myworkoutassistant.shared.sets.Set, updatedSet: com.gabstra.myworkoutassistant.shared.sets.Set) : List<Workout> {
             return workouts.map { it ->

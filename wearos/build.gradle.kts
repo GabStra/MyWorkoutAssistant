@@ -26,9 +26,14 @@ versionProps["VERSION_NAME"] = newVersionName
 versionProps.store(versionPropsFile.writer(), null)
 
 plugins {
+    id("org.jetbrains.kotlin.plugin.compose") version "2.0.0"
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-kapt")
+    id("com.google.devtools.ksp")
+}
+
+composeCompiler {
+    enableStrongSkippingMode = true
 }
 
 android {
@@ -101,7 +106,7 @@ dependencies {
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("com.google.android.horologist:horologist-datalayer:0.5.19")
     implementation("com.google.android.horologist:horologist-datalayer-watch:0.5.19")
-    kapt("androidx.room:room-compiler:+")
+    ksp("androidx.room:room-compiler:+")
     implementation("androidx.room:room-ktx:+")
     implementation("androidx.health:health-services-client:1.1.0-alpha02")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.1.0")

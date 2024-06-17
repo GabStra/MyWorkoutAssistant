@@ -135,7 +135,7 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
         },
-        holdTimeInMillis = 2000
+        holdTimeInMillis = 1000
     )
 
     LifecycleObserver(

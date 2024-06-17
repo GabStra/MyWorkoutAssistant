@@ -25,15 +25,14 @@ import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
 import com.gabstra.myworkoutassistant.composables.TimedDurationSetForm
 import com.gabstra.myworkoutassistant.composables.WeightSetForm
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.SetType
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 
-enum class SetType {
-    COUNTUP_SET, BODY_WEIGHT_SET, COUNTDOWN_SET, WEIGHT_SET
-}
 
 fun SetType.toReadableString(): String {
     return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
@@ -58,15 +57,23 @@ fun getSetTypeFromSet(set: Set): SetType {
     }
 }
 
+fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
+    return when (exerciseType) {
+        ExerciseType.WEIGHT -> SetType.WEIGHT_SET
+        ExerciseType.BODY_WEIGHT -> SetType.BODY_WEIGHT_SET
+        ExerciseType.COUNTUP -> SetType.COUNTUP_SET
+        ExerciseType.COUNTDOWN -> SetType.COUNTDOWN_SET
+    }
+}
+
 @Composable
 fun SetForm(
     onSetUpsert: (Set) -> Unit,
     onCancel: () -> Unit,
-    set: Set? = null // Add exercise parameter with default value null
+    set: Set? = null, // Add exercise parameter with default value null
+    exerciseType : ExerciseType
 ) {
-    val selectedSetType = remember { mutableStateOf(if(set!=null) getSetTypeFromSet(set) else SetType.WEIGHT_SET) }
-    val setTypeDescriptions = getSetTypeDescriptions()
-    val expanded = remember { mutableStateOf(false) }
+    val selectedSetType = remember { mutableStateOf(getSetTypeFromExerciseType(exerciseType)) }
 
     Column(
         modifier = Modifier
@@ -87,25 +94,8 @@ fun SetForm(
                         text = selectedSetType.value.name.replace('_', ' ').capitalize(),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { expanded.value = true }
                             .padding(8.dp)
                     )
-                    DropdownMenu(
-                        expanded = expanded.value,
-                        onDismissRequest = { expanded.value = false },
-                    ) {
-                        setTypeDescriptions.forEach { setDescription ->
-                            DropdownMenuItem(
-                                onClick = {
-                                    selectedSetType.value = stringToSetType(setDescription)!!
-                                    expanded.value = false
-                                },
-                                text = {
-                                    Text(text = setDescription)
-                                }
-                            )
-                        }
-                    }
                 }
             }
             Spacer(modifier = Modifier.height(10.dp))

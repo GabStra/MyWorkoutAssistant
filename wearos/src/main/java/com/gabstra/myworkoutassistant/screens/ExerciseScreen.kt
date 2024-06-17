@@ -32,7 +32,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -52,7 +51,6 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
-import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
@@ -73,9 +71,6 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 
 fun Modifier.circleMask() = this.drawWithContent {
@@ -89,6 +84,62 @@ fun Modifier.circleMask() = this.drawWithContent {
     // Clip the path and draw the content
     clipPath(path) {
         this@drawWithContent.drawContent()
+    }
+}
+
+
+@Composable
+fun ExerciseDetail(
+    updatedState: WorkoutState.Set, // Assuming SetState is the type holding set
+    viewModel: AppViewModel,
+    onEditModeDisabled: () -> Unit,
+    onEditModeEnabled: () -> Unit,
+    onTimerDisabled: () -> Unit,
+    onTimerEnabled: () -> Unit
+) {
+    when (updatedState.set) {
+        is WeightSet -> WeightSetScreen(
+            viewModel = viewModel,
+            modifier = Modifier.fillMaxSize(),
+            state = updatedState,
+            forceStopEditMode = false,
+            bottom = { },
+            onEditModeDisabled = onEditModeDisabled,
+            onEditModeEnabled = onEditModeEnabled
+        )
+        is BodyWeightSet -> BodyWeightSetScreen(
+            viewModel = viewModel,
+            modifier = Modifier.fillMaxSize(),
+            state = updatedState,
+            forceStopEditMode = false,
+            bottom = { },
+            onEditModeDisabled = onEditModeDisabled,
+            onEditModeEnabled = onEditModeEnabled
+        )
+        is TimedDurationSet -> TimedDurationSetScreen(
+            viewModel = viewModel,
+            modifier = Modifier.fillMaxSize(),
+            state = updatedState,
+            onTimerEnd = {
+                viewModel.storeExecutedSetHistory(updatedState)
+                viewModel.goToNextState()
+            },
+            bottom = { },
+            onTimerDisabled = onTimerDisabled,
+            onTimerEnabled = onTimerEnabled
+        )
+        is EnduranceSet -> EnduranceSetScreen(
+            viewModel = viewModel,
+            modifier = Modifier.fillMaxSize(),
+            state = updatedState,
+            onTimerEnd = {
+                viewModel.storeExecutedSetHistory(updatedState)
+                viewModel.goToNextState()
+            },
+            bottom = { },
+            onTimerDisabled = onTimerDisabled,
+            onTimerEnabled = onTimerEnabled
+        )
     }
 }
 
@@ -107,9 +158,7 @@ fun ExerciseScreen(
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
 
-    var enableHorizontalPager by remember { mutableStateOf(true) }
-
-    val exerciseSets = state.parentExercise.sets
+    var allowHorizontalScrolling by remember { mutableStateOf(true) }
 
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
 
@@ -195,7 +244,7 @@ fun ExerciseScreen(
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .basicMarquee()
+                            .basicMarquee(iterations = Int.MAX_VALUE)
                             .combinedClickable(
                                 onClick = {},
                                 onLongClick = {
@@ -209,13 +258,14 @@ fun ExerciseScreen(
                     )
                 }
 
+
                 CustomHorizontalPager(
                     modifier = Modifier
                         .weight(1f)
                         .padding(0.dp, 20.dp, 0.dp, 0.dp),
                     pagerState = pagerState,
-                    userScrollEnabled = enableHorizontalPager
-                ) { page ->
+                    userScrollEnabled = allowHorizontalScrolling
+                    ) { page ->
                     when(page){
                         0 -> {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center){
@@ -223,66 +273,22 @@ fun ExerciseScreen(
                             }
                         }
                         1 -> {
-                            when(updatedState.set){
-                                is WeightSet -> WeightSetScreen(
-                                    viewModel = viewModel,
-                                    modifier = Modifier.fillMaxSize(),
-                                    state = updatedState,
-                                    forceStopEditMode = false,
-                                    bottom = {  },
-                                    onEditModeDisabled = {
-                                        enableHorizontalPager = true
-                                    },
-                                    onEditModeEnabled = {
-                                        enableHorizontalPager = false
-                                    }
-                                )
-                                is BodyWeightSet -> BodyWeightSetScreen(
-                                    viewModel = viewModel,
-                                    modifier = Modifier.fillMaxSize(),
-                                    state = updatedState,
-                                    forceStopEditMode = false,
-                                    bottom = {  },
-                                    onEditModeDisabled = {
-                                        enableHorizontalPager = true
-                                    },
-                                    onEditModeEnabled = {
-                                        enableHorizontalPager = false
-                                    }
-                                )
-                                is TimedDurationSet -> TimedDurationSetScreen(
-                                    viewModel = viewModel,
-                                    modifier = Modifier.fillMaxSize(),
-                                    state = updatedState,
-                                    onTimerEnd = {
-                                        viewModel.storeExecutedSetHistory(updatedState)
-                                        viewModel.goToNextState()
-                                    },
-                                    bottom = {  },
-                                    onTimerDisabled = {
-                                        enableHorizontalPager = true
-                                    },
-                                    onTimerEnabled = {
-                                        enableHorizontalPager = false
-                                    }
-                                )
-                                is EnduranceSet -> EnduranceSetScreen(
-                                    viewModel = viewModel,
-                                    modifier = Modifier.fillMaxSize(),
-                                    state = updatedState,
-                                    onTimerEnd = {
-                                        viewModel.storeExecutedSetHistory(updatedState)
-                                        viewModel.goToNextState()
-                                    },
-                                    bottom = {  },
-                                    onTimerDisabled = {
-                                        enableHorizontalPager = true
-                                    },
-                                    onTimerEnabled = {
-                                        enableHorizontalPager = false
-                                    }
-                                )
-                            }
+                            ExerciseDetail(
+                                updatedState = updatedState,
+                                viewModel = viewModel,
+                                onEditModeDisabled = {
+                                    allowHorizontalScrolling = true
+                                },
+                                onEditModeEnabled = {
+                                    allowHorizontalScrolling = false
+                                },
+                                onTimerDisabled = {
+                                    allowHorizontalScrolling = true
+                                },
+                                onTimerEnabled = {
+                                    allowHorizontalScrolling = false
+                                }
+                            )
                         }
                         2 -> {
                             Box(modifier = Modifier
@@ -354,7 +360,7 @@ fun ExerciseScreen(
         handleOnAutomaticClose = {
             showConfirmDialog = false
         },
-        holdTimeInMillis = 2000
+        holdTimeInMillis = 1000
     )
 
     CustomDialogYesOnLongPress(
@@ -375,7 +381,7 @@ fun ExerciseScreen(
         handleOnAutomaticClose = {
             showSkipDialog = false
         },
-        holdTimeInMillis = 2000
+        holdTimeInMillis = 1000
     )
 
     CustomDialogYesOnLongPress(
@@ -395,6 +401,6 @@ fun ExerciseScreen(
         handleOnAutomaticClose = {
             showGoBackDialog = false
         },
-        holdTimeInMillis = 2000
+        holdTimeInMillis = 1000
     )
 }

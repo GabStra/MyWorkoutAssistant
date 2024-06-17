@@ -61,14 +61,14 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
         label = {
             Text(
                 text = workout.name,
-                modifier = Modifier.basicMarquee(initialDelayMillis = 5000),
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 5000),
                 style = MaterialTheme.typography.body2
             )
         },
         secondaryLabel = {
             Text(
                 text = workout.description,
-                modifier = Modifier.basicMarquee(initialDelayMillis = 5000),
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 5000),
                 style = MaterialTheme.typography.caption3,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

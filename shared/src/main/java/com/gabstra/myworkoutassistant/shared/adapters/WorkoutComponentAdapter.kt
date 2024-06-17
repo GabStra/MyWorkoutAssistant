@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
@@ -33,6 +35,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
         when (src) {
             is Exercise -> {
                 jsonObject.add("sets", context.serialize(src.sets))
+                jsonObject.addProperty("exerciseType", src.exerciseType.name)
             }
             is ExerciseGroup -> {
                 jsonObject.add("workoutComponents", context.serialize(src.workoutComponents))
@@ -58,7 +61,16 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
             "Exercise" -> {
                 val setsType = object : TypeToken<List<Set>>() {}.type
                 val sets: List<Set> = context.deserialize(jsonObject.get("sets"), setsType)
-                Exercise(UUID.fromString(id), name, restTimeInSec,enabled,skipWorkoutRest, sets )
+                val exerciseType = if (jsonObject.has("exerciseType")) {
+                    ExerciseType.valueOf(jsonObject.get("exerciseType").asString)
+                } else {
+                    if (sets.isNotEmpty()) {
+                        getExerciseTypeFromSet(sets.first())
+                    } else {
+                        ExerciseType.BODY_WEIGHT
+                    }
+                }
+                Exercise(UUID.fromString(id), name, restTimeInSec, enabled, skipWorkoutRest, sets, exerciseType)
             }
             "ExerciseGroup" -> {
                 val workoutComponentsType = object : TypeToken<List<WorkoutComponent>>() {}.type

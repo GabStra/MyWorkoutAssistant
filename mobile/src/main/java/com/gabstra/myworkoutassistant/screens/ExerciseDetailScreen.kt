@@ -127,16 +127,6 @@ fun ExerciseDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        appViewModel.setScreenData(
-                            ScreenData.EditExercise(
-                                workout.id,
-                                exercise.id
-                            )
-                        );
-                    }) {
-                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Back")
-                    }
                 }
             )
         },
@@ -204,9 +194,7 @@ fun ExerciseDetailScreen(
                 items = sets,
                 selectedItems = selectedSets,
                 isSelectionModeActive,
-                onItemClick = {
-                    appViewModel.setScreenData(ScreenData.EditSet(workout.id, it, exercise.id))
-                },
+                onItemClick = { },
                 onEnableSelection = { isSelectionModeActive = true },
                 onDisableSelection = { isSelectionModeActive = false },
                 onSelectionChange = { newSelection -> selectedSets = newSelection },

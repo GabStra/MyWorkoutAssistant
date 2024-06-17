@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.text.Layout
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -66,41 +67,45 @@ import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
-import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
-import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
-import com.patrykandpatrick.vico.compose.chart.CartesianChartHost
+import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLabelComponent
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottomAxis
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStartAxis
+import com.patrykandpatrick.vico.compose.cartesian.decoration.rememberHorizontalLine
+import com.patrykandpatrick.vico.compose.cartesian.fullWidth
+import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 
-import com.patrykandpatrick.vico.compose.chart.layer.rememberLineCartesianLayer
-import com.patrykandpatrick.vico.compose.chart.layer.rememberLineSpec
-import com.patrykandpatrick.vico.compose.chart.layout.fullWidth
+import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 
-import com.patrykandpatrick.vico.compose.chart.rememberCartesianChart
-import com.patrykandpatrick.vico.compose.chart.scroll.rememberVicoScrollState
+import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
+import com.patrykandpatrick.vico.compose.common.of
+import com.patrykandpatrick.vico.compose.common.shape.rounded
+import com.patrykandpatrick.vico.core.cartesian.HorizontalLayout
 
-import com.patrykandpatrick.vico.core.axis.AxisPosition
-import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
-import com.patrykandpatrick.vico.core.model.CartesianChartModel
-import com.patrykandpatrick.vico.core.model.ColumnCartesianLayerModel
-import com.patrykandpatrick.vico.core.model.LineCartesianLayerModel
-import com.patrykandpatrick.vico.compose.chart.zoom.rememberVicoZoomState
-import com.patrykandpatrick.vico.compose.component.rememberShapeComponent
-import com.patrykandpatrick.vico.compose.component.rememberTextComponent
-import com.patrykandpatrick.vico.compose.dimensions.dimensionsOf
-import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
-import com.patrykandpatrick.vico.core.chart.decoration.ThresholdLine
-import com.patrykandpatrick.vico.core.chart.values.AxisValueOverrider
-import com.patrykandpatrick.vico.core.model.CartesianChartModelProducer
-import com.patrykandpatrick.vico.core.model.lineSeries
-import com.patrykandpatrick.vico.core.zoom.Zoom
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
-import com.patrykandpatrick.vico.core.component.shape.shader.DynamicShaders
-import com.patrykandpatrick.vico.compose.component.shape.shader.color
-import com.patrykandpatrick.vico.compose.component.shape.shader.verticalGradient
+
+import com.patrykandpatrick.vico.core.cartesian.Zoom
+import com.patrykandpatrick.vico.core.cartesian.axis.AxisItemPlacer
+import com.patrykandpatrick.vico.core.cartesian.axis.AxisPosition
+import com.patrykandpatrick.vico.core.cartesian.axis.BaseAxis
+import com.patrykandpatrick.vico.core.cartesian.data.AxisValueOverrider
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
+import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
+import com.patrykandpatrick.vico.core.common.Defaults
+import com.patrykandpatrick.vico.core.common.Dimensions
+import com.patrykandpatrick.vico.core.common.HorizontalPosition
+import com.patrykandpatrick.vico.core.common.VerticalPosition
+import com.patrykandpatrick.vico.core.common.shape.Shape
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -136,15 +141,15 @@ fun WorkoutHistoryScreen(
     var heartRateEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
 
 
-    val horizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, chartValues, _->
+    val horizontalAxisValueFormatter = CartesianValueFormatter { value, chartValues, _->
         workoutHistories[value.toInt()].date.format(formatter)
     }
 
-    val secondsHorizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, chartValues, _->
+    val secondsHorizontalAxisValueFormatter = CartesianValueFormatter { value, chartValues, _->
         formatTime(value.toInt())
     }
 
-    val durationAxisValueFormatter = AxisValueFormatter<AxisPosition.Vertical.Start> { value, chartValues, _->
+    val durationAxisValueFormatter = CartesianValueFormatter { value, chartValues, _->
         formatTime(value.toInt())
     }
 
@@ -155,6 +160,11 @@ fun WorkoutHistoryScreen(
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
             workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
+            //stop if no workout histories
+            if(workoutHistories.isEmpty()){
+                isLoading = false
+                return@withContext
+            }
 
             val volumes = mutableListOf<Pair<Int,Float>>()
             val durations = mutableListOf<Pair<Int,Float>>()
@@ -221,10 +231,10 @@ fun WorkoutHistoryScreen(
                         textAlign = TextAlign.Center
                     )
                     CartesianChartHost(
-                        zoomState = rememberVicoZoomState(initialZoom = Zoom.x(3f)),
+                        zoomState = rememberVicoZoomState(zoomEnabled = false),
                         chart = rememberCartesianChart(
-                            rememberLineCartesianLayer(axisValueOverrider = AxisValueOverrider.auto()),
-                            startAxis = rememberStartAxis(itemPlacer = AxisItemPlacer.Vertical.step({1f})),
+                            rememberLineCartesianLayer(spacing = 75.dp),
+                            startAxis = rememberStartAxis(),
                             bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter)),
                         model = volumeEntryModel!!,
                     )
@@ -238,10 +248,10 @@ fun WorkoutHistoryScreen(
                         textAlign = TextAlign.Center
                     )
                     CartesianChartHost(
-                        zoomState = rememberVicoZoomState(initialZoom = Zoom.x(3f)),
+                        zoomState = rememberVicoZoomState(zoomEnabled = false),
                         chart = rememberCartesianChart(
-                            rememberLineCartesianLayer(axisValueOverrider = AxisValueOverrider.auto()),
-                            startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter, itemPlacer = AxisItemPlacer.Vertical.step({1f})),
+                            rememberLineCartesianLayer(spacing = 75.dp),
+                            startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter),
                             bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
                         ),
                         model=durationEntryModel!!,
@@ -295,75 +305,44 @@ fun WorkoutHistoryScreen(
                     text = "HR over workout duration (1/2 sec intervals)",
                     textAlign = TextAlign.Center
                 )
+
                 CartesianChartHost(
-                    modifier = Modifier.padding(10.dp),
-                    zoomState = rememberVicoZoomState(initialZoom = Zoom.Content),
+                    modifier = Modifier
+                        .padding(10.dp),
+                    zoomState = rememberVicoZoomState(initialZoom = Zoom.Content, zoomEnabled = false),
+                    scrollState = rememberVicoScrollState(scrollEnabled = false),
                     chart = rememberCartesianChart(
-                        rememberLineCartesianLayer(
-                            axisValueOverrider = AxisValueOverrider.fixed(null,null,50f,getMaxHeartRate(userAge).toFloat())),
-                        startAxis =rememberStartAxis(itemPlacer = AxisItemPlacer.Vertical.step({ null },true),guideline = null,),
+                        rememberLineCartesianLayer(axisValueOverrider = AxisValueOverrider.fixed(null,null,50f,200f)),
                         decorations =
                         listOf(
-                            ThresholdLine(
-                                thresholdValue = getHeartRateFromPercentage(0.5f,userAge).toFloat(),
-                                lineComponent = rememberShapeComponent(color = Color.hsl(208f, 0.61f, 0.76f,.5f)),
-                                labelComponent = rememberTextComponent(
-                                    textSize = 0.sp,
-                                    color = Color.White,
-                                    lineCount = 1,
-                                    padding = dimensionsOf(4.dp),
-                                ),
-                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(0.5f,userAge).toFloat() },
+                                line = rememberLineComponent(color = Color.hsl(208f, 0.61f, 0.76f,.5f), thickness = 2.dp),
                             ),
-                            ThresholdLine(
-                                thresholdValue = getHeartRateFromPercentage(0.6f,userAge).toFloat(),
-                                lineComponent = rememberShapeComponent(color = Color.hsl(200f, 0.66f, 0.49f,.5f)),
-                                labelComponent = rememberTextComponent(
-                                    textSize = 0.sp,
-                                    color = Color.White,
-                                    lineCount = 1,
-                                    padding = dimensionsOf(4.dp),
-                                ),
-                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(0.6f,userAge).toFloat() },
+                                line = rememberLineComponent(color = Color.hsl(200f, 0.66f, 0.49f,.5f), thickness = 2.dp),
                             ),
-                            ThresholdLine(
-                                thresholdValue = getHeartRateFromPercentage(0.7f,userAge).toFloat(),
-                                lineComponent = rememberShapeComponent(
-                                    color = Color.hsl(113f, 0.79f, 0.34f,.5f)),
-                                labelComponent = rememberTextComponent(
-                                    textSize = 0.sp,
-                                    color = Color.White,
-                                    lineCount = 1,
-                                    padding = dimensionsOf(4.dp),
-                                ),
-                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(0.7f,userAge).toFloat() },
+                                line = rememberLineComponent(color = Color.hsl(113f, 0.79f, 0.34f,.5f),thickness = 2.dp),
                             ),
-                            ThresholdLine(
-                                thresholdValue = getHeartRateFromPercentage(0.8f,userAge).toFloat(),
-                                lineComponent = rememberShapeComponent(color = Color.hsl(27f, 0.97f, 0.54f,.5f)),
-                                labelComponent = rememberTextComponent(
-                                    textSize = 0.sp,
-                                    color = Color.White,
-                                    lineCount = 1,
-                                    padding = dimensionsOf(4.dp),
-                                ),
-                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(0.8f,userAge).toFloat() },
+                                line = rememberLineComponent(color = Color.hsl(27f, 0.97f, 0.54f,.5f), thickness = 2.dp),
                             ),
-                            ThresholdLine(
-                                thresholdValue = getHeartRateFromPercentage(0.9f,userAge).toFloat(),
-                                lineComponent = rememberShapeComponent(color = Color.hsl(9f, 0.88f, 0.45f,.5f)),
-                                labelComponent = rememberTextComponent(
-                                    textSize = 0.sp,
-                                    color = Color.White,
-                                    lineCount = 1,
-                                    padding = dimensionsOf(4.dp),
-                                ),
-                                labelVerticalPosition = ThresholdLine.LabelVerticalPosition.Bottom
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(0.9f,userAge).toFloat() },
+                                line = rememberLineComponent(color = Color.hsl(9f, 0.88f, 0.45f,.5f), thickness = 2.dp),
+                            ),
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(1f,userAge).toFloat() },
+                                line = rememberLineComponent(color = Color.Black, thickness = 2.dp),
                             ),
                         ),
+
                     ),
                     model = heartRateEntryModel!!,
-                    scrollState = rememberVicoScrollState(scrollEnabled = false),
                 )
             }
         }

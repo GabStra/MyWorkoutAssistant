@@ -73,7 +73,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
     ) {
         Text(
             text = workout.name,
-            modifier = Modifier.basicMarquee(),
+            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.title2
         )
