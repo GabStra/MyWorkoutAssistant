@@ -15,7 +15,7 @@ class WorkoutManager {
                 previousVersionId = oldWorkout.id // Imposta il riferimento alla versione precedente
             )
 
-            val updatedOldWorkout = oldWorkout.copy(isActive = false, nextVersionId = newVersion.id)
+            val updatedOldWorkout = updatedWorkout.copy(isActive = false, nextVersionId = newVersion.id)
 
             return workouts.map { workout ->
                 if (workout == oldWorkout) updatedOldWorkout else workout

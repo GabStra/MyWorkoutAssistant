@@ -77,7 +77,6 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun deviceConnecting(polarDeviceInfo: PolarDeviceInfo) {
-                Toast.makeText(applicationContext, "Connecting to ${polarDeviceInfo.deviceId}", Toast.LENGTH_SHORT).show()
             }
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
@@ -91,6 +90,7 @@ class PolarViewModel : ViewModel() {
             override fun disInformationReceived(identifier: String, uuid: UUID, value: String) {}
 
             override fun batteryLevelReceived(identifier: String, level: Int) {
+                Toast.makeText(applicationContext, "Connected to $deviceId - Battery level: $level", Toast.LENGTH_SHORT).show()
                 viewModelScope.launch {
                     _batteryLevelState.value = level
                 }

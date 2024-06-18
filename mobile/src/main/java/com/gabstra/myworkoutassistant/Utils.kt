@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
+import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
@@ -64,9 +65,8 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
     try {
         val jsonString = fromAppBackupToJSON(appBackup)
         val chunkSize = 1000 // Adjust the chunk size as needed
-
-        // Split the backup data into chunks
-        val chunks = jsonString.chunked(chunkSize)
+        val compressedData = compressString(jsonString)
+        val chunks = compressedData.asList().chunked(chunkSize)
 
         val startRequest = PutDataMapRequest.create("/backupChunkPath").apply {
             dataMap.putString("chunk", "START")
@@ -82,7 +82,7 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
             val isLastChunk = index == chunks.size - 1
 
             val request = PutDataMapRequest.create("/backupChunkPath").apply {
-                dataMap.putString("chunk", chunk)
+                dataMap.putByteArray("chunk", chunk.toByteArray())
                 dataMap.putBoolean("isLastChunk", isLastChunk)
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
             }.asPutDataRequest().setUrgent()

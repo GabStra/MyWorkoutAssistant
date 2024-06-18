@@ -28,6 +28,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
+import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
@@ -62,7 +63,7 @@ fun NextExerciseInfo(
     Column(
         modifier = Modifier
             .size(160.dp, 190.dp)
-            .padding(top = 75.dp),
+            .padding(top = 70.dp),
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally,
     ){
@@ -70,8 +71,6 @@ fun NextExerciseInfo(
             verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally,
         ){
-            Text(text = "Up Next",style = MaterialTheme.typography.body1)
-            Spacer(modifier = Modifier.height(5.dp))
             Text(
                     modifier = Modifier
                         .basicMarquee(iterations = Int.MAX_VALUE),
@@ -79,6 +78,7 @@ fun NextExerciseInfo(
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                 )
+            Spacer(modifier = Modifier.height(5.dp))
             if(exerciseSets.count()!=1){
                 Text( text="${exerciseIndex+1}/${exerciseCount} - ${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
             }
@@ -105,7 +105,8 @@ fun NextExerciseInfo(
 @Composable
 fun RestScreen(
     viewModel: AppViewModel,
-    state: WorkoutState.Rest
+    state: WorkoutState.Rest,
+    hearthRateChart: @Composable () -> Unit
 ) {
     val totalSeconds = state.restTimeInSec;
     var currentMillis by remember { mutableIntStateOf(totalSeconds * 1000) }
@@ -127,6 +128,8 @@ fun RestScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .padding(10.dp)
+            .circleMask()
             .combinedClickable(
                 onClick = {},
                 onLongClick = {
@@ -136,19 +139,10 @@ fun RestScreen(
             ),
         contentAlignment = Alignment.TopCenter
     ) {
-        CircularProgressIndicator(
-            progress = progress,
-            modifier = Modifier.fillMaxSize(),
-            startAngle = 290f,
-            endAngle = 250f,
-            strokeWidth = 4.dp,
-            indicatorColor = MaterialTheme.colors.primary
-        )
-
         Box(
             modifier = Modifier
                 .size(160.dp, 90.dp)
-                .padding(0.dp, 30.dp),
+                .padding(0.dp, 20.dp),
             contentAlignment = Alignment.TopCenter
         ){
             Text(
@@ -164,6 +158,23 @@ fun RestScreen(
             }
             else -> {}
         }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            progress = progress,
+            modifier = Modifier.fillMaxSize(),
+            startAngle = -70f,
+            endAngle = 70f,
+            strokeWidth = 4.dp,
+            indicatorColor = MaterialTheme.colors.primary
+        )
+
+        hearthRateChart()
     }
 }
 

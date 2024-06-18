@@ -1,10 +1,12 @@
 package com.gabstra.myworkoutassistant
 
 import android.content.Intent
+import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -68,9 +70,9 @@ class DataLayerListenerService : WearableListenerService() {
                             val isLastChunk = dataMap.getBoolean("isLastChunk", false)
 
                             if (isLastChunk) {
-                                // Combine all chunks and reconstruct the backup
-                                val backupJson = backupChunks.joinToString("")
-                                val appBackup = fromJSONtoAppBackup(backupJson)
+                                val backupData  = backupChunks.joinToString("")
+                                val decompressedData = decompressToString(backupData.toByteArray())
+                                val appBackup = fromJSONtoAppBackup(decompressedData)
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
                                 scope.launch {
@@ -81,7 +83,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 val intent = Intent(INTENT_ID).apply {
-                                    putExtra(APP_BACKUP_END_JSON, backupJson)
+                                    putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
                                 }
                                 sendBroadcast(intent)
 

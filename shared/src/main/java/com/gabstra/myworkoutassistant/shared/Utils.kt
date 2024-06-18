@@ -21,7 +21,11 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.gson.GsonBuilder
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.time.LocalDate
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
     val gson = GsonBuilder()
@@ -31,6 +35,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
         .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
         .registerTypeAdapter(TimedDurationSet::class.java, SetAdapter())
         .registerTypeAdapter(EnduranceSet::class.java, SetAdapter())
+        .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .create()
     return gson.toJson(workoutStore)
 }
@@ -40,6 +45,7 @@ fun fromJSONToWorkoutStore(json: String): WorkoutStore {
     val gson = GsonBuilder()
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
+        .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .create()
     return gson.fromJson(json, WorkoutStore::class.java)
 }
@@ -251,29 +257,14 @@ fun getAllPreviousVersions(workouts: List<Workout>, currentWorkout: Workout): Li
     return previousVersions
 }
 
-suspend fun getSortedWorkoutHistories(
-    workout: Workout,
-    workoutsRepo: List<Workout>,
-    workoutHistoryDao: WorkoutHistoryDao
-): List<WorkoutHistory> {
-    val workouts = mutableListOf<Workout>()
-    workouts.add(workout)
-
-    // Aggiungi tutte le versioni precedenti del workout in modo ricorsivo
-    workouts.addAll(getAllPreviousVersions(workoutsRepo, workout))
-
-    // Ordina i workout per data di creazione
-    workouts.sortBy { it.creationDate }
-
-    val workoutHistories = mutableListOf<WorkoutHistory>()
-
-    // Recupera tutte le storie dei workout ordinate per data
-    for (currentWorkout in workouts) {
-        workoutHistories.addAll(workoutHistoryDao.getWorkoutsByWorkoutId(currentWorkout.id))
+fun compressString(data: String): ByteArray {
+    val byteArrayOutputStream = ByteArrayOutputStream()
+    GZIPOutputStream(byteArrayOutputStream).use { gzipStream ->
+        gzipStream.write(data.toByteArray(Charsets.UTF_8))
     }
+    return byteArrayOutputStream.toByteArray()
+}
 
-    // Ordina tutte le storie dei workout per data
-    workoutHistories.sortBy { it.date }
-
-    return workoutHistories
+fun decompressToString(data: ByteArray): String {
+    return GZIPInputStream(ByteArrayInputStream(data)).bufferedReader(Charsets.UTF_8).use { it.readText() }
 }

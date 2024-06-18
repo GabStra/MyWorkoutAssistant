@@ -33,17 +33,19 @@ class MeasureDataViewModel(
 
         heartRateCollectJob = viewModelScope.launch {
             measureDataRepository.heartRateMeasureFlow()
-                .collect { it ->
-                    when (it) {
+                .collect { measureMessage ->
+                    when (measureMessage) {
                         is MeasureMessage.MeasureAvailability -> {
-                            //Log.d("MeasureDataViewModel", "Heart rate availability: ${it.availability}")
-                            _heartRateAvailable.value = it.availability
+                            _heartRateAvailable.value = measureMessage.availability
                         }
                         is MeasureMessage.MeasureData -> {
-                            //print the data in a log.d
-                            //Log.d("MeasureDataViewModel", "Heart rate data: ${it.data.joinToString { v -> v.value.toString()}}")
-                            val bpm = it.data.map { v -> v.value.toInt() }.average().toInt()
-                            _heartRateBpm.value = bpm
+                            val latestHeartRate = measureMessage.data
+                                .map { it.value.toInt() }
+                                .last() // Get the latest data point
+
+                            if(latestHeartRate != 0) {
+                                _heartRateBpm.value = latestHeartRate
+                            }
                         }
                     }
                 }

@@ -202,7 +202,9 @@ fun WorkoutsScreen(
     onClearAllHistories: () -> Unit,
     selectedTabIndex : Int
 ) {
-    val workouts by appViewModel.workoutsFlow.collectAsState()
+    val workoutsFlow by appViewModel.workoutsFlow.collectAsState()
+    val workouts = workoutsFlow.filter { it.enabled }
+
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
@@ -449,7 +451,7 @@ fun WorkoutsScreen(
                                     onClose = { isCardExpanded = false }
                                 )
                             },
-                            isDragDisabled = isCardExpanded
+                            isDragDisabled = true
                         )
                     }
                 }

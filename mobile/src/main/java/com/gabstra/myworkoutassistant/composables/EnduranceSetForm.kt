@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatMillisecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
@@ -45,7 +46,7 @@ fun EnduranceSetForm(
                 .padding(8.dp),
         ) {
             if(timeInSecondsState.value.isNotEmpty()){
-                Text(formatMillisecondsToMinutesSeconds(timeInSecondsState.value.toInt()))
+                Text(formatSecondsToMinutesSeconds(timeInSecondsState.value.toInt()))
                 Spacer(modifier = Modifier.height(15.dp))
             }
             // Rest time field
@@ -53,8 +54,12 @@ fun EnduranceSetForm(
                 value = timeInSecondsState.value,
                 onValueChange = { input ->
                     if (input.isEmpty() || (input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
-                        // Update the state only if the input is empty or all characters are digits
-                        timeInSecondsState.value = input
+                        val inputValue = input.toIntOrNull()
+                        if (inputValue != null && inputValue >= 3600) {
+                            timeInSecondsState.value = "3599"
+                        } else {
+                            timeInSecondsState.value = input
+                        }
                     }
                 },
                 label = { Text("Duration (in seconds)") },

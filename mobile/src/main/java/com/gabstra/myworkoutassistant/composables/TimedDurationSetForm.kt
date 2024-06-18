@@ -53,8 +53,12 @@ fun TimedDurationSetForm(
                 value = timeInSecondsState.value,
                 onValueChange = { input ->
                     if (input.isEmpty() || (input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
-                        // Update the state only if the input is empty or all characters are digits
-                        timeInSecondsState.value = input
+                        val inputValue = input.toIntOrNull()
+                        if (inputValue != null && inputValue >= 3600) {
+                            timeInSecondsState.value = "3599"
+                        } else {
+                            timeInSecondsState.value = input
+                        }
                     }
                 },
                 label = { Text("Duration (in seconds)") },

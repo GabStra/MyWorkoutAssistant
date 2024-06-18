@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import java.util.UUID
 
 @Dao
 interface SetHistoryDao {
@@ -15,6 +16,13 @@ interface SetHistoryDao {
 
     @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId AND setId = :setId")
     suspend fun getSetHistoryByWorkoutHistoryIdAndSetId(workoutHistoryId: Int, setId: Int): SetHistory?
+
+    @Query("SELECT * FROM set_history WHERE exerciseId = :exerciseId")
+    suspend fun getSetHistoriesByExerciseId(exerciseId: UUID): List<SetHistory>
+
+    @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId AND exerciseId = :exerciseId")
+    suspend fun getSetHistoriesByWorkoutHistoryIdAndExerciseId(workoutHistoryId: Int,exerciseId: UUID): List<SetHistory>
+
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(setHistory: SetHistory)

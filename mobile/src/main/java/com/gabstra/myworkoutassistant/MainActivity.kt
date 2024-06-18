@@ -29,6 +29,7 @@ import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
 import com.gabstra.myworkoutassistant.screens.ExerciseGroupDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseGroupForm
+import com.gabstra.myworkoutassistant.screens.ExerciseHistoryScreen
 import com.gabstra.myworkoutassistant.screens.SetForm
 import com.gabstra.myworkoutassistant.screens.SettingsScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
@@ -394,6 +395,26 @@ fun MyWorkoutAssistantNavHost(
             ExerciseDetailScreen(
                 appViewModel,
                 selectedWorkout,
+                setHistoryDao,
+                selectedExercise
+            ) {
+                appViewModel.goBack()
+            }
+        }
+
+        is ScreenData.ExerciseHistory -> {
+            val screenData = appViewModel.currentScreenData as ScreenData.ExerciseHistory
+            val workouts by appViewModel.workoutsFlow.collectAsState()
+            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            val selectedExercise = findWorkoutComponentByIdInWorkout(
+                selectedWorkout,
+                screenData.selectedExerciseId
+            ) as Exercise
+
+            ExerciseHistoryScreen(
+                appViewModel,
+                selectedWorkout,
+                workoutHistoryDao,
                 setHistoryDao,
                 selectedExercise
             ) {

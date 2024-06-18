@@ -224,7 +224,7 @@ fun ExerciseGroupDetailScreen(
                         onClose = { isDragDisabled = false }
                     )
                 },
-                isDragDisabled = isDragDisabled
+                isDragDisabled = true
             )
         }
     }

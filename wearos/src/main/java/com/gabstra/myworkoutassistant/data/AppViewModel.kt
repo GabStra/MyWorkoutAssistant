@@ -115,7 +115,7 @@ class AppViewModel : ViewModel(){
         workoutHistoryDao= db.workoutHistoryDao()
     }
 
-    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0,))
+    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0, creationDate = LocalDate.now()))
     val selectedWorkout: State<Workout> get() = _selectedWorkout
 
     private lateinit var workoutHistoryDao: WorkoutHistoryDao

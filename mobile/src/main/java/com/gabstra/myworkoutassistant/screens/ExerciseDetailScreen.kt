@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,14 +24,20 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -46,6 +54,8 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SetRenderer(set: Set) {
@@ -189,28 +199,67 @@ fun ExerciseDetailScreen(
                     .fillMaxSize(), text = "Add a new set", textAlign = TextAlign.Center
             )
         } else {
-            GenericSelectableList(
-                it,
-                items = sets,
-                selectedItems = selectedSets,
-                isSelectionModeActive,
-                onItemClick = { },
-                onEnableSelection = { isSelectionModeActive = true },
-                onDisableSelection = { isSelectionModeActive = false },
-                onSelectionChange = { newSelection -> selectedSets = newSelection },
-                onOrderChange = { newSets ->
-                    val updatedExercise = exercise.copy(sets = newSets)
-                    appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
-                    sets = newSets
-                },
-                itemContent = { it ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        SetRenderer(it)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(it),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                TabRow(
+                    selectedTabIndex = 0,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[0]),
+                            color = Color.White, // Set the indicator color
+                            height = 2.dp // Set the indicator thickness
+                        )
                     }
+                ) {
+                    Tab(
+                        selected = true,
+                        onClick = { },
+                        text = { Text("Overview") },
+                        selectedContentColor = Color.White, // Color when tab is selected
+                        unselectedContentColor = Color.LightGray // Color when tab is not selected
+                    )
+                    Tab(
+                        selected = false,
+                        onClick = {
+                            appViewModel.setScreenData(
+                                ScreenData.ExerciseHistory(workout.id, exercise.id),
+                                true
+                            )
+                        },
+                        text = { Text("History") },
+                        selectedContentColor = Color.White, // Color when tab is selected
+                        unselectedContentColor = Color.LightGray // Color when tab is not selected
+                    )
                 }
-            )
+
+                GenericSelectableList(
+                    it = PaddingValues(0.dp, 5.dp),
+                    items = sets,
+                    selectedItems = selectedSets,
+                    isSelectionModeActive,
+                    onItemClick = { },
+                    onEnableSelection = { isSelectionModeActive = true },
+                    onDisableSelection = { isSelectionModeActive = false },
+                    onSelectionChange = { newSelection -> selectedSets = newSelection },
+                    onOrderChange = { newSets ->
+                        val updatedExercise = exercise.copy(sets = newSets)
+                        appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
+                        sets = newSets
+                    },
+                    isDragDisabled = true,
+                    itemContent = { it ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            SetRenderer(it)
+                        }
+                    }
+                )
+            }
         }
     }
 }

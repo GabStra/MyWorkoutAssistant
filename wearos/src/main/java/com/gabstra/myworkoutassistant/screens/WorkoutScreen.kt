@@ -99,7 +99,25 @@ fun WorkoutScreen(
     val userAge by viewModel.userAge
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
 
-    BackHandler(true) {
+    val heartRateChartComposable =  @Composable {
+        if(selectedWorkout.usePolarDevice){
+            HeartRatePolar(
+                modifier = Modifier.fillMaxSize(),
+                viewModel,
+                polarViewModel,
+                userAge
+            )
+        }else{
+            HeartRateStandard(
+                modifier = Modifier.fillMaxSize(),
+                viewModel,
+                hrViewModel,
+                userAge
+            )
+        }
+    }
+
+        BackHandler(true) {
         showWorkoutInProgressDialog = true
         viewModel.pauseWorkout()
     }
@@ -110,7 +128,6 @@ fun WorkoutScreen(
         title = "Workout in progress",
         handleYesClick = {
             VibrateOnce(context)
-            showWorkoutInProgressDialog=false
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()
             }else{
@@ -123,6 +140,7 @@ fun WorkoutScreen(
                         inclusive = true
                     }
                 }
+                showWorkoutInProgressDialog=false
             }
         },
         handleNoClick = {
@@ -183,28 +201,15 @@ fun WorkoutScreen(
                 ExerciseScreen(
                     viewModel,
                     state,
-                    hearthRateChart = {
-                        if(selectedWorkout.usePolarDevice){
-                            HeartRatePolar(
-                                modifier = Modifier.fillMaxSize(),
-                                viewModel,
-                                polarViewModel,
-                                userAge
-                            )
-                        }else{
-                            HeartRateStandard(
-                                modifier = Modifier.fillMaxSize(),
-                                viewModel,
-                                hrViewModel,
-                                userAge
-                            )
-                        }
-                    }
+                    heartRateChartComposable
                 )
             }
             is WorkoutState.Rest -> {
                 val state = workoutState as WorkoutState.Rest
-                RestScreen(viewModel,state)
+                RestScreen(
+                    viewModel,
+                    state,
+                    heartRateChartComposable)
             }
             is WorkoutState.Finished -> {
                 val state = workoutState as WorkoutState.Finished

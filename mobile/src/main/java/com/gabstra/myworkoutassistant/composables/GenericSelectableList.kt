@@ -94,7 +94,6 @@ fun <T> GenericSelectableList(
                         if(newIndex != currentIndex){
                             val newItemAtIndex = tempDragChanges[newIndex]!!
                             tempDragChanges[currentIndex] = newItemAtIndex
-                            Log.d("WOW", "this index: $index currentIndex: $currentIndex, newIndex: $newIndex")
 
                             itemToRenderByIndex.value =  itemToRenderByIndex.value .toMutableMap().apply {
                                 val capturedIndex = currentIndex

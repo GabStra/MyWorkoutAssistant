@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import kotlinx.coroutines.delay
 
 
 fun Modifier.circleMask() = this.drawWithContent {
@@ -173,6 +174,9 @@ fun ExerciseScreen(
         showConfirmDialog = false
         showGoBackDialog = false
         showSkipDialog = false
+        allowHorizontalScrolling = false
+        delay(2000)
+        allowHorizontalScrolling = true
     }
 
     val completeOrSkipExerciseComposable = @Composable {
@@ -347,10 +351,10 @@ fun ExerciseScreen(
         title = "Complete exercise",
         message = "Do you want to save this data?",
         handleYesClick = {
-            showConfirmDialog=false
             VibrateOnce(context)
             viewModel.storeExecutedSetHistory(state)
             viewModel.goToNextState()
+            showConfirmDialog=false
         },
         handleNoClick = {
             showConfirmDialog = false
@@ -368,10 +372,10 @@ fun ExerciseScreen(
         title = "Skip exercise",
         message = "Do you want to skip this exercise?",
         handleYesClick = {
-            showSkipDialog = false
             VibrateOnce(context)
             viewModel.storeExecutedSetHistory(state)
             viewModel.goToNextState()
+            showSkipDialog = false
         },
         handleNoClick = {
             showSkipDialog = false
@@ -389,9 +393,9 @@ fun ExerciseScreen(
         title = "Go to previous set",
         message = "Do you want to go back?",
         handleYesClick = {
-            showGoBackDialog = false
             VibrateOnce(context)
             viewModel.goToPreviousSet()
+            showGoBackDialog = false
         },
         handleNoClick = {
             showGoBackDialog = false

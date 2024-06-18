@@ -38,25 +38,6 @@ fun SetType.toReadableString(): String {
     return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
 }
 
-fun getSetTypeDescriptions(): List<String> {
-    return SetType.values().map { it.toReadableString() }
-}
-
-fun stringToSetType(value: String): SetType? {
-    return SetType.values().firstOrNull {
-        it.name.equals(value.replace(' ', '_').toUpperCase(), ignoreCase = true)
-    }
-}
-
-fun getSetTypeFromSet(set: Set): SetType {
-    return when (set) {
-        is WeightSet -> SetType.WEIGHT_SET
-        is BodyWeightSet -> SetType.BODY_WEIGHT_SET
-        is EnduranceSet -> SetType.COUNTUP_SET
-        is TimedDurationSet -> SetType.COUNTDOWN_SET
-    }
-}
-
 fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
     return when (exerciseType) {
         ExerciseType.WEIGHT -> SetType.WEIGHT_SET

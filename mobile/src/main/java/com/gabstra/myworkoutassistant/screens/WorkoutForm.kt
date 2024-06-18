@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import java.time.LocalDate
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -91,7 +92,12 @@ fun WorkoutForm(
                     onValueChange = { input ->
                         if (input.isEmpty() || input.all { it -> it.isDigit() }) {
                             // Update the state only if the input is empty or all characters are digits
-                            restTimeState.value = input
+                            val inputValue = input.toIntOrNull()
+                            if (inputValue != null && inputValue >= 3600) {
+                                restTimeState.value = "3599"
+                            } else {
+                                restTimeState.value = input
+                            }
                         }
                     },
                     label = { Text("Rest Time Between Exercises (in seconds)") },
@@ -117,14 +123,19 @@ fun WorkoutForm(
             // Submit button
             Button(
                 onClick = {
+                    if (workoutNameState.value.isBlank()) {
+                        return@Button
+                    }
+
                     val restTimeInSec = restTimeState.value.toIntOrNull() ?: 0
                     val newWorkout = Workout(
                         id  = workout?.id ?: java.util.UUID.randomUUID(),
-                        name = workoutNameState.value,
-                        description = workoutDescriptionState.value,
+                        name = workoutNameState.value.trim(),
+                        description = workoutDescriptionState.value.trim(),
                         restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
                         workoutComponents = workout?.workoutComponents ?: listOf(),
                         usePolarDevice = usePolarDeviceState.value,
+                        creationDate = LocalDate.now()
                     )
 
                     // Call the callback to insert/update the workout

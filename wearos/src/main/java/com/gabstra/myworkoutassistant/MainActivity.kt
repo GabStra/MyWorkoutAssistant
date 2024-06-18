@@ -163,6 +163,8 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
 
+        onNavControllerAvailable(navController)
+
         val hrViewModel: MeasureDataViewModel =  viewModel(
             factory = MeasureDataViewModelFactory(
                 measureDataRepository = MeasureDataRepository(localContext)

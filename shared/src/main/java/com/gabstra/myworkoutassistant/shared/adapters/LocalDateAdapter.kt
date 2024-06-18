@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import android.util.Log
 import com.google.gson.*
 import java.lang.reflect.Type
 import java.time.LocalDate

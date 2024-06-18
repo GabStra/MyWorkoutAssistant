@@ -367,7 +367,6 @@ fun WorkoutDetailScreen(
                     onEnableSelection = { isSelectionModeActive = true },
                     onDisableSelection = { isSelectionModeActive = false },
                     onSelectionChange = { newSelection ->
-                        Log.d("WorkoutDetailScreen", newSelection.toString())
                         selectedWorkoutComponents = newSelection
                     },
                     onOrderChange = { newWorkoutComponents ->
@@ -404,7 +403,7 @@ fun WorkoutDetailScreen(
                             onClose = { isDragDisabled = false }
                         )
                     },
-                    isDragDisabled = isDragDisabled
+                    isDragDisabled = true
                 )
             }
         }
