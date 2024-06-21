@@ -229,6 +229,7 @@ fun WorkoutHistoryScreen(
         ) {
             if (volumeEntryModel != null) {
                 StandardChart(
+                    isZoomEnabled = true,
                     modifier = Modifier.padding(10.dp),
                     cartesianChartModel = volumeEntryModel!!,
                     title = "Volume over time",
@@ -238,11 +239,12 @@ fun WorkoutHistoryScreen(
             }
             if (durationEntryModel != null) {
                 StandardChart(
+                    isZoomEnabled = true,
                     modifier = Modifier.padding(10.dp),
                     cartesianChartModel = durationEntryModel!!,
                     title = "Workout duration over time",
                     markerPosition = durationMarkerTarget!!.first.toFloat(),
-                    markerText = formatTime(durationMarkerTarget!!.second.toInt()),
+                    markerTextFormatter = { formatTime(it.toInt()) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter
                 )
@@ -460,7 +462,7 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp),
-                    text = if (isLoading) "Loading..." else "No workout history found",
+                    text = if (isLoading) "Loading..." else "No history found",
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(10.dp))

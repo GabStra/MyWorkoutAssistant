@@ -23,6 +23,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -180,6 +181,7 @@ fun ExerciseDetailScreen(
         floatingActionButton = {
             if (selectedSets.isEmpty()) {
                 FloatingActionButton(
+                    containerColor = MaterialTheme.colorScheme.primary,
                     onClick = {
                         appViewModel.setScreenData(ScreenData.NewSet(workout.id, exercise.id));
                     }

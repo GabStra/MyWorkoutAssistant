@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -172,12 +170,12 @@ fun WorkoutsScreen(
     onClearAllHistories: () -> Unit,
     selectedTabIndex : Int
 ) {
-    val workoutsFlow by appViewModel.workoutsFlow.collectAsState()
-    val workouts = remember(workoutsFlow) { workoutsFlow.filter { it.enabled } }
+    val workouts by appViewModel.workoutsFlow.collectAsState()
+    val enabledWorkouts = workouts.filter { it.enabled }
 
-    val workoutsList = workoutsFlow.filter { it.enabled && it.isActive }
+    val activeAndEnabledWorkouts = workouts.filter { it.enabled && it.isActive }
 
-    val timesCompletedInAWeekObjective = workouts.filter { it.timesCompletedInAWeek != null }.associate { workout ->
+    val timesCompletedInAWeekObjective = enabledWorkouts.filter { it.timesCompletedInAWeek != null }.associate { workout ->
         workout.id to (workout.timesCompletedInAWeek ?: 0)
     }
 
@@ -218,7 +216,7 @@ fun WorkoutsScreen(
     }
 
     fun calculateObjectiveProgress(currentDate: LocalDate){
-        if(workouts.isEmpty()) return
+        if(enabledWorkouts.isEmpty()) return
         if(groupedWorkoutsHistories == null || workoutById == null) return
 
         val startOfWeek = getStartOfWeek(currentDate)
@@ -232,7 +230,7 @@ fun WorkoutsScreen(
 
         val workoutCountsById = workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
 
-        val progressList = workouts.filter{ workout -> timesCompletedInAWeekObjective.contains(workout.id) }.map { workout ->
+        val progressList = enabledWorkouts.filter{ workout -> timesCompletedInAWeekObjective.contains(workout.id) }.map { workout ->
             val target = timesCompletedInAWeekObjective[workout.id] ?: 0
             val actual = workoutCountsById[workout.id] ?: 0
             if (target > 0) (actual.toDouble() / target) else 0.0
@@ -241,9 +239,9 @@ fun WorkoutsScreen(
         objectiveProgress =  progressList.average()
     }
 
-    LaunchedEffect(workouts){
+    LaunchedEffect(enabledWorkouts){
         groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
-        workoutById = workouts.associateBy { it.id }
+        workoutById = enabledWorkouts.associateBy { it.id }
         calculateObjectiveProgress(LocalDate.now())
     }
 
@@ -307,7 +305,7 @@ fun WorkoutsScreen(
             if(selectedWorkouts.isNotEmpty()) BottomAppBar(
                 actions =  {
                     IconButton(onClick = {
-                        val newWorkouts = workoutsList.filter { workout ->
+                        val newWorkouts = activeAndEnabledWorkouts.filter { workout ->
                             selectedWorkouts.none { it === workout }
                         }
                         appViewModel.updateWorkouts(newWorkouts)
@@ -354,13 +352,14 @@ fun WorkoutsScreen(
         floatingActionButton= {
             if(selectedWorkouts.isEmpty())
                 FloatingActionButton(
+                    containerColor = MaterialTheme.colorScheme.primary,
                     onClick = {
                         appViewModel.setScreenData(ScreenData.NewWorkout());
                     }
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = null
+                        contentDescription = null,
                     )
                 }
         }
@@ -370,11 +369,21 @@ fun WorkoutsScreen(
                 .fillMaxSize()
                 .padding(it),
             verticalArrangement = Arrangement.Top,
+            horizontalAlignment = Alignment.CenterHorizontally
         ){
-            if(workoutsList.isEmpty()){
-                Text(modifier = Modifier
-                    .padding(10.dp)
-                    .fillMaxSize(),text = "Add a new workout", textAlign = TextAlign.Center)
+            if(activeAndEnabledWorkouts.isEmpty()){
+                Card(
+                    modifier = Modifier
+                        .padding(15.dp)
+                ){
+                    Text(
+                        text = "Add a new workout",
+                        textAlign = TextAlign.Center,
+                        color = Color.White,
+                        modifier = Modifier
+                            .padding(15.dp)
+                    )
+                }
             }else{
                 TabRow(
                     selectedTabIndex = selectedTabIndex,
@@ -422,13 +431,15 @@ fun WorkoutsScreen(
                                     ObjectiveProgressBar(progress = objectiveProgress.toFloat())
                                 }
                             }}
-                            item{WorkoutsCalendar(
-                                selectedDate = selectedDate,
-                                onDayClicked = { calendarState, day ->
-                                    onDayClicked(calendarState,day)
-                                },
-                                showStar = { day -> showStar(day) }
-                            )}
+                            item{
+                                WorkoutsCalendar(
+                                    selectedDate = selectedDate,
+                                    onDayClicked = { calendarState, day ->
+                                        onDayClicked(calendarState,day)
+                                    },
+                                    showStar = { day -> showStar(day) }
+                                )
+                            }
                             item{if(selectedDate != null){
                                 Column(modifier = Modifier.padding(8.dp)) {
                                     Text(
@@ -470,7 +481,7 @@ fun WorkoutsScreen(
                     1 -> {
                         GenericSelectableList(
                             PaddingValues(0.dp,5.dp),
-                            items = workoutsList,
+                            items = activeAndEnabledWorkouts,
                             selectedItems= selectedWorkouts,
                             isSelectionModeActive,
                             onItemClick = {

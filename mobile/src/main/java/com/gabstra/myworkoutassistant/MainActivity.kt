@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
@@ -147,7 +148,6 @@ fun MyWorkoutAssistantNavHost(
     LaunchedEffect(appViewModel.workouts) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
         sendWorkoutStore(dataClient, appViewModel.workoutStore)
-        Toast.makeText(context, "Automatic update", Toast.LENGTH_SHORT).show()
     }
 
     BackHandler(enabled = true) {
@@ -168,18 +168,31 @@ fun MyWorkoutAssistantNavHost(
                         val content = reader.readText()
                         val appBackup = fromJSONtoAppBackup(content)
                         workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
+
                         scope.launch {
-                            workoutHistoryDao.deleteAll()
-                            setHistoryDao.deleteAll()
-                            workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
-                            setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
+                            // Save the workout store
+                            workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
+
+                            // Perform the database operations in a coroutine
+                            val deleteAndInsertJob = launch {
+                                workoutHistoryDao.deleteAll()
+                                setHistoryDao.deleteAll()
+                                workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
+                                setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
+                            }
+
+                            // Wait for the delete and insert operations to complete
+                            deleteAndInsertJob.join()
+
+                            appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+
+                            // Show the success toast after all operations are complete
+                            Toast.makeText(
+                                context,
+                                "Data restored from backup",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
-                        Toast.makeText(
-                            context,
-                            "Data restored from backup",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
                     }
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Failed to import data from backup", e)
@@ -192,6 +205,7 @@ fun MyWorkoutAssistantNavHost(
     when (appViewModel.currentScreenData) {
         is ScreenData.Workouts -> {
             val screenData = appViewModel.currentScreenData as ScreenData.Workouts
+
             WorkoutsScreen(
                 appViewModel,
                 workoutHistoryDao,
@@ -237,6 +251,8 @@ fun MyWorkoutAssistantNavHost(
                         workoutHistoryDao.deleteAll()
                         setHistoryDao.deleteAll()
                         Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
+
+                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
                     }
                 },
                 selectedTabIndex = screenData.selectedTabIndex

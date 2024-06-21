@@ -42,12 +42,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottomAxis
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStartAxis
-import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
-import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
-import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
@@ -215,6 +209,14 @@ fun ExerciseHistoryScreen(
                             title = "Volume over time",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
                             bottomAxisValueFormatter = horizontalAxisValueFormatter
+                        )
+                    }else{
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            text = "No volume data found",
+                            textAlign = TextAlign.Center
                         )
                     }
                 }

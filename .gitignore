@@ -18,3 +18,5 @@ mobile/release/output-metadata.json
 wearos/release/output-metadata.json
 wearos/release/wearos-release.apk
 .idea/deploymentTargetDropDown.xml
+mobile/version.properties.mobile
+wearos/version.properties.wear
