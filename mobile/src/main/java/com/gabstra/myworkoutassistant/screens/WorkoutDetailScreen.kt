@@ -97,7 +97,8 @@ fun Menu(
 
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(Color.Black)
         ) {
             DropdownMenuItem(
                 text = { Text("Edit Workout") },

@@ -2,6 +2,10 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.text.Layout
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -53,7 +57,9 @@ import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
+import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -75,9 +81,11 @@ import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStartAxis
 import com.patrykandpatrick.vico.compose.cartesian.decoration.rememberHorizontalLine
 import com.patrykandpatrick.vico.compose.cartesian.fullWidth
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
+import com.patrykandpatrick.vico.compose.common.component.rememberLayeredComponent
 
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
@@ -94,18 +102,12 @@ import java.util.Locale
 import java.util.UUID
 
 import com.patrykandpatrick.vico.core.cartesian.Zoom
-import com.patrykandpatrick.vico.core.cartesian.axis.AxisItemPlacer
-import com.patrykandpatrick.vico.core.cartesian.axis.AxisPosition
-import com.patrykandpatrick.vico.core.cartesian.axis.BaseAxis
 import com.patrykandpatrick.vico.core.cartesian.data.AxisValueOverrider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
-import com.patrykandpatrick.vico.core.common.Defaults
-import com.patrykandpatrick.vico.core.common.Dimensions
-import com.patrykandpatrick.vico.core.common.HorizontalPosition
-import com.patrykandpatrick.vico.core.common.VerticalPosition
-import com.patrykandpatrick.vico.core.common.shape.Shape
+import com.patrykandpatrick.vico.core.cartesian.marker.CartesianMarkerValueFormatter
+import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
 import kotlinx.coroutines.delay
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -116,14 +118,14 @@ fun WorkoutHistoryScreen(
     workoutHistoryDao: WorkoutHistoryDao,
     workoutHistoryId: Int? = null,
     setHistoryDao: SetHistoryDao,
-    workout : Workout,
-    onGoBack : () -> Unit
-){
+    workout: Workout,
+    onGoBack: () -> Unit
+) {
     val currentLocale = Locale.getDefault()
 
     val userAge by appViewModel.userAge
 
-    val exerciseById =  remember(workout) {
+    val exerciseById = remember(workout) {
         WorkoutManager.getAllExercisesFromWorkout(workout).associateBy { it.id }
     }
 
@@ -141,16 +143,15 @@ fun WorkoutHistoryScreen(
     var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var heartRateEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
 
+    var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
-    val horizontalAxisValueFormatter = CartesianValueFormatter { value, chartValues, _->
+    val horizontalAxisValueFormatter = CartesianValueFormatter { value, chartValues, _ ->
         workoutHistories[value.toInt()].date.format(formatter)
     }
 
-    val secondsHorizontalAxisValueFormatter = CartesianValueFormatter { value, chartValues, _->
-        formatTime(value.toInt())
-    }
-
-    val durationAxisValueFormatter = CartesianValueFormatter { value, chartValues, _->
+    val durationAxisValueFormatter = CartesianValueFormatter { value, chartValues, _ ->
         formatTime(value.toInt())
     }
 
@@ -162,42 +163,63 @@ fun WorkoutHistoryScreen(
         withContext(Dispatchers.IO) {
             workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
             //stop if no workout histories
-            if(workoutHistories.isEmpty()){
+            if (workoutHistories.isEmpty()) {
                 delay(1000)
                 isLoading = false
                 return@withContext
             }
 
-            val volumes = mutableListOf<Pair<Int,Float>>()
-            val durations = mutableListOf<Pair<Int,Float>>()
-            for(workoutHistory in workoutHistories){
-                val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+            val volumes = mutableListOf<Pair<Int, Float>>()
+            val durations = mutableListOf<Pair<Int, Float>>()
+            for (workoutHistory in workoutHistories) {
+                val setHistories =
+                    setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
 
                 var volume = 0f
-                for(setHistory in setHistories){
-                    if(setHistory.setData is WeightSetData){
+                for (setHistory in setHistories) {
+                    if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
                         volume += setData.actualReps * setData.actualWeight
                     }
 
-                    if(setHistory.setData is BodyWeightSetData){
+                    if (setHistory.setData is BodyWeightSetData) {
                         val setData = setHistory.setData as BodyWeightSetData
                         volume += setData.actualReps
                     }
                 }
-                volumes.add(Pair(workoutHistories.indexOf(workoutHistory),volume))
-                durations.add(Pair(workoutHistories.indexOf(workoutHistory),workoutHistory.duration.toFloat()))
+                volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
+                durations.add(
+                    Pair(
+                        workoutHistories.indexOf(workoutHistory),
+                        workoutHistory.duration.toFloat()
+                    )
+                )
             }
 
             //check if volumes are not all 0
-            if(volumes.any { it.second != 0f }) {
-                volumeEntryModel = CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map{ it.second }).toTypedArray()) })
+            if (volumes.any { it.second != 0f }) {
+                if (volumes.count() == 1) {
+                    volumeMarkerTarget = volumes.last()
+                } else if (volumes.count() > 1) {
+                    volumeMarkerTarget = volumes.maxBy { it.second }
+                }
+
+                volumeEntryModel =
+                    CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map { it.second }).toTypedArray()) })
             }
 
-            durationEntryModel = CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map{ it.second }).toTypedArray()) })
-            selectedWorkoutHistory = if(workoutHistoryId!=null) workoutHistories.find { it.id == workoutHistoryId} else workoutHistories.lastOrNull()
+            if (durations.count() == 1) {
+                durationMarkerTarget = durations.last()
+            } else if (durations.count() > 1) {
+                durationMarkerTarget = durations.maxBy { it.second }
+            }
 
-            if(workoutHistoryId !=null && selectedWorkoutHistory != null){
+            durationEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
+            selectedWorkoutHistory =
+                if (workoutHistoryId != null) workoutHistories.find { it.id == workoutHistoryId } else workoutHistories.lastOrNull()
+
+            if (workoutHistoryId != null && selectedWorkoutHistory != null) {
                 selectedMode = 1
             }
 
@@ -206,15 +228,26 @@ fun WorkoutHistoryScreen(
     }
 
     LaunchedEffect(selectedWorkoutHistory) {
-        if(selectedWorkoutHistory == null) return@LaunchedEffect
+        if (selectedWorkoutHistory == null) return@LaunchedEffect
 
         heartRateEntryModel = null
-        if(selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }){
-            heartRateEntryModel = CartesianChartModel(LineCartesianLayerModel.build { series(selectedWorkoutHistory!!.heartBeatRecords) })
+        if (selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }) {
+
+            selectedWorkoutHistory!!.heartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
+                // Create a pair of the index of the max heartbeat and the value itself
+                heartBeatMarkerTarget = Pair(
+                    selectedWorkoutHistory!!.heartBeatRecords.indexOf(maxHeartBeat),
+                    maxHeartBeat
+                )
+            }
+
+            heartRateEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build { series(selectedWorkoutHistory!!.heartBeatRecords) })
         }
 
         withContext(Dispatchers.IO) {
-            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
+            val setHistories =
+                setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
             setHistoriesByExerciseId = setHistories.groupBy { it.exerciseId }
         }
     }
@@ -224,47 +257,33 @@ fun WorkoutHistoryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(10.dp),
-        ){
-            if(volumeEntryModel != null){
-                Column(Modifier.padding(10.dp)){
-                    Text(modifier = Modifier
-                        .fillMaxWidth(),
-                        text = "Volume over time",
-                        textAlign = TextAlign.Center
-                    )
-                    CartesianChartHost(
-                        zoomState = rememberVicoZoomState(zoomEnabled = false),
-                        chart = rememberCartesianChart(
-                            rememberLineCartesianLayer(spacing = 75.dp),
-                            startAxis = rememberStartAxis(),
-                            bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter)),
-                        model = volumeEntryModel!!,
-                    )
-                }
+        ) {
+            if (volumeEntryModel != null) {
+                StandardChart(
+                    modifier = Modifier.padding(10.dp),
+                    cartesianChartModel = volumeEntryModel!!,
+                    title = "Volume over time",
+                    markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                )
             }
-            if(durationEntryModel != null){
-                Column(Modifier.padding(10.dp)){
-                    Text(modifier = Modifier
-                        .fillMaxWidth(),
-                        text = "Workout duration over time",
-                        textAlign = TextAlign.Center
-                    )
-                    CartesianChartHost(
-                        zoomState = rememberVicoZoomState(zoomEnabled = false),
-                        chart = rememberCartesianChart(
-                            rememberLineCartesianLayer(spacing = 75.dp),
-                            startAxis = rememberStartAxis(valueFormatter = durationAxisValueFormatter),
-                            bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),
-                        ),
-                        model=durationEntryModel!!,
-                    )
-                }
+            if (durationEntryModel != null) {
+                StandardChart(
+                    modifier = Modifier.padding(10.dp),
+                    cartesianChartModel = durationEntryModel!!,
+                    title = "Workout duration over time",
+                    markerPosition = durationMarkerTarget!!.first.toFloat(),
+                    markerText = formatTime(durationMarkerTarget!!.second.toInt()),
+                    startAxisValueFormatter = durationAxisValueFormatter,
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                )
             }
         }
     }
 
     val workoutSelector = @Composable {
-        Row(modifier = Modifier.padding(15.dp,0.dp),
+        Row(
+            modifier = Modifier.padding(15.dp, 0.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
@@ -279,8 +298,9 @@ fun WorkoutHistoryScreen(
                 Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous")
             }
             Spacer(modifier = Modifier.width(10.dp))
-            Text(modifier = Modifier
-                .weight(1f),
+            Text(
+                modifier = Modifier
+                    .weight(1f),
                 text = selectedWorkoutHistory!!.date.format(formatter),
                 textAlign = TextAlign.Center
             )
@@ -300,57 +320,18 @@ fun WorkoutHistoryScreen(
     }
 
     val setsTabContent = @Composable {
-        if(heartRateEntryModel != null){
-            Column(Modifier.padding(10.dp)){
-                Text(modifier = Modifier
-                    .fillMaxWidth(),
-                    text = "HR over workout duration (1/2 sec intervals)",
-                    textAlign = TextAlign.Center
-                )
-
-                CartesianChartHost(
-                    modifier = Modifier
-                        .padding(10.dp),
-                    zoomState = rememberVicoZoomState(initialZoom = Zoom.Content, zoomEnabled = false),
-                    scrollState = rememberVicoScrollState(scrollEnabled = false),
-                    chart = rememberCartesianChart(
-                        rememberLineCartesianLayer(axisValueOverrider = AxisValueOverrider.fixed(null,null,50f,200f)),
-                        decorations =
-                        listOf(
-                            rememberHorizontalLine(
-                                y = { getHeartRateFromPercentage(0.5f,userAge).toFloat() },
-                                line = rememberLineComponent(color = Color.hsl(208f, 0.61f, 0.76f,.5f), thickness = 2.dp),
-                            ),
-                            rememberHorizontalLine(
-                                y = { getHeartRateFromPercentage(0.6f,userAge).toFloat() },
-                                line = rememberLineComponent(color = Color.hsl(200f, 0.66f, 0.49f,.5f), thickness = 2.dp),
-                            ),
-                            rememberHorizontalLine(
-                                y = { getHeartRateFromPercentage(0.7f,userAge).toFloat() },
-                                line = rememberLineComponent(color = Color.hsl(113f, 0.79f, 0.34f,.5f),thickness = 2.dp),
-                            ),
-                            rememberHorizontalLine(
-                                y = { getHeartRateFromPercentage(0.8f,userAge).toFloat() },
-                                line = rememberLineComponent(color = Color.hsl(27f, 0.97f, 0.54f,.5f), thickness = 2.dp),
-                            ),
-                            rememberHorizontalLine(
-                                y = { getHeartRateFromPercentage(0.9f,userAge).toFloat() },
-                                line = rememberLineComponent(color = Color.hsl(9f, 0.88f, 0.45f,.5f), thickness = 2.dp),
-                            ),
-                            rememberHorizontalLine(
-                                y = { getHeartRateFromPercentage(1f,userAge).toFloat() },
-                                line = rememberLineComponent(color = Color.Black, thickness = 2.dp),
-                            ),
-                        ),
-
-                    ),
-                    model = heartRateEntryModel!!,
-                )
-            }
+        if (heartRateEntryModel != null) {
+            HeartRateChart(
+                modifier = Modifier.padding(10.dp),
+                cartesianChartModel = heartRateEntryModel!!,
+                title = "HR over workout duration (1/2 sec intervals)",
+                userAge = userAge,
+            )
         }
 
-        Text(modifier = Modifier
-            .fillMaxWidth(),
+        Text(
+            modifier = Modifier
+                .fillMaxWidth(),
             text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
             textAlign = TextAlign.Center
         )
@@ -360,13 +341,18 @@ fun WorkoutHistoryScreen(
                 .fillMaxSize()
                 .padding(10.dp)
         ) {
-            setHistoriesByExerciseId.keys.toList().forEach(){ key ->
+            setHistoriesByExerciseId.keys.toList().forEach() { key ->
                 ExpandableCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(5.dp),
                     isOpen = true,
-                    title = { modifier -> WorkoutComponentTitle(modifier,exerciseById[key] as WorkoutComponent) },
+                    title = { modifier ->
+                        WorkoutComponentTitle(
+                            modifier,
+                            exerciseById[key] as WorkoutComponent
+                        )
+                    },
                     content = {
                         Column(
                             modifier = Modifier
@@ -375,7 +361,7 @@ fun WorkoutHistoryScreen(
                                 .clip(RoundedCornerShape(5.dp))
                                 .background(Color.Black),
                             horizontalAlignment = Alignment.CenterHorizontally
-                        ){
+                        ) {
                             SetHistoriesRenderer(setHistoriesByExerciseId[key]!!)
                         }
                     },
@@ -405,7 +391,11 @@ fun WorkoutHistoryScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.ShowChart, contentDescription = "Graphs", tint = if (selectedMode != 0) Color.White else Color.Black)
+                    Icon(
+                        Icons.AutoMirrored.Filled.ShowChart,
+                        contentDescription = "Graphs",
+                        tint = if (selectedMode != 0) Color.White else Color.Black
+                    )
                     Spacer(modifier = Modifier.width(5.dp))
                     Text("Graphs", color = if (selectedMode != 0) Color.White else Color.Black)
                 }
@@ -422,7 +412,11 @@ fun WorkoutHistoryScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Sets", tint = if (selectedMode != 1) Color.White else Color.Black)
+                    Icon(
+                        Icons.AutoMirrored.Filled.List,
+                        contentDescription = "Sets",
+                        tint = if (selectedMode != 1) Color.White else Color.Black
+                    )
                     Spacer(modifier = Modifier.width(5.dp))
                     Text("Sets", color = if (selectedMode != 1) Color.White else Color.Black)
                 }
@@ -441,13 +435,16 @@ fun WorkoutHistoryScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
                     }
                 }
             )
         },
         bottomBar = {
-            if(!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)){
+            if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
                 customBottomBar()
             }
         }
@@ -457,11 +454,10 @@ fun WorkoutHistoryScreen(
                 .fillMaxSize()
                 .padding(it),
             verticalArrangement = Arrangement.Top,
-        ){
+        ) {
             TabRow(
                 selectedTabIndex = 1,
-                indicator = {
-                    tabPositions ->
+                indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
                         Modifier.tabIndicatorOffset(tabPositions[1]),
                         color = Color.White, // Set the indicator color
@@ -471,7 +467,12 @@ fun WorkoutHistoryScreen(
             ) {
                 Tab(
                     selected = false,
-                    onClick = { appViewModel.setScreenData(ScreenData.WorkoutDetail(workout.id),true) },
+                    onClick = {
+                        appViewModel.setScreenData(
+                            ScreenData.WorkoutDetail(workout.id),
+                            true
+                        )
+                    },
                     text = { Text("Overview") },
                     selectedContentColor = Color.White, // Color when tab is selected
                     unselectedContentColor = Color.LightGray // Color when tab is not selected
@@ -479,28 +480,28 @@ fun WorkoutHistoryScreen(
                 Tab(
                     selected = true,
                     onClick = { },
-                    text = { Text("History")  },
+                    text = { Text("History") },
                     selectedContentColor = Color.White, // Color when tab is selected
                     unselectedContentColor = Color.LightGray // Color when tab is not selected
                 )
             }
 
-            if(workoutHistories.isEmpty() || selectedWorkoutHistory == null){
+            if (workoutHistories.isEmpty() || selectedWorkoutHistory == null) {
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp),
-                    text = if(isLoading) "Loading..." else "No workout history found",
+                    text = if (isLoading) "Loading..." else "No workout history found",
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-            }else{
-                LazyColumn(){
-                    when(selectedMode){
-                        0 -> item{graphsTabContent()}
+            } else {
+                LazyColumn() {
+                    when (selectedMode) {
+                        0 -> item { graphsTabContent() }
                         1 -> {
-                            item {workoutSelector()}
-                            item{setsTabContent()}
+                            item { workoutSelector() }
+                            item { setsTabContent() }
                         }
                     }
                 }

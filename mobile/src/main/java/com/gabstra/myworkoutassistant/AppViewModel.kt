@@ -100,6 +100,11 @@ class AppViewModel() : ViewModel() {
         workouts = newWorkouts
     }
 
+    fun updateWorkoutOld(oldWorkout: Workout, updatedWorkout: Workout) {
+        workouts = WorkoutManager.updateWorkoutOld(workouts,oldWorkout,updatedWorkout)
+    }
+
+
     fun updateWorkout(oldWorkout: Workout, updatedWorkout: Workout) {
         workouts = WorkoutManager.updateWorkout(workouts,oldWorkout,updatedWorkout)
     }

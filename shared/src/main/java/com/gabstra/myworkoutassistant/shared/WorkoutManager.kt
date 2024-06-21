@@ -8,6 +8,12 @@ import java.util.UUID
 
 class WorkoutManager {
     companion object {
+        fun updateWorkoutOld(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout) : List<Workout> {
+            return workouts.map { workout ->
+                if (workout == oldWorkout) updatedWorkout else workout
+            }
+        }
+
         fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
             val newVersion = updatedWorkout.copy(
                 id = UUID.randomUUID(), // Genera un nuovo ID per la nuova versione
@@ -23,13 +29,11 @@ class WorkoutManager {
         }
 
         fun updateWorkoutComponent(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
-            // Crea una nuova lista di componenti del workout aggiornata
+
             val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
 
-            // Crea un nuovo workout con i componenti aggiornati
             val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
 
-            // Utilizza la funzione updateWorkout per creare una nuova versione del workout
             return updateWorkout(workouts, parentWorkout, updatedWorkout)
         }
 

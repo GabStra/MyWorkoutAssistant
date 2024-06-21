@@ -15,5 +15,6 @@ data class Workout(
     val creationDate: LocalDate,
     val previousVersionId: UUID? = null,
     val nextVersionId: UUID? = null,
-    val isActive: Boolean = true
+    val isActive: Boolean = true,
+    val timesCompletedInAWeek: Int? = null,
 )

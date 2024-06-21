@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 data class MenuItem(
@@ -39,7 +41,8 @@ fun GenericFloatingActionButtonWithMenu(
         // Dropdown Menu
         DropdownMenu(
             expanded = showMenu,
-            onDismissRequest = { showMenu = false }
+            onDismissRequest = { showMenu = false },
+            modifier = Modifier.background(Color.Black)
         ) {
             menuItems.forEach { menuItem ->
                 DropdownMenuItem(

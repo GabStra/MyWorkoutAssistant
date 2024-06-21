@@ -245,8 +245,7 @@ fun WorkoutsCalendar(
     val scope = rememberCoroutineScope()
 
     SimpleCalendarTitle(
-        modifier = Modifier
-            .padding(horizontal = 8.dp, vertical = 12.dp),
+        modifier = Modifier,
         currentMonth = visibleMonth.yearMonth,
         goToPrevious = {
             scope.launch {

@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -70,6 +71,8 @@ fun ExerciseHistoryScreen(
     var isLoading by remember { mutableStateOf(true) }
 
     var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
+    var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
 
     val currentLocale = Locale.getDefault()
@@ -114,6 +117,12 @@ fun ExerciseHistoryScreen(
             }
 
             if (volumes.any { it.second != 0f }) {
+                if (volumes.count() == 1) {
+                    volumeMarkerTarget = volumes.last()
+                } else if (volumes.count() > 1) {
+                    volumeMarkerTarget = volumes.maxBy { it.second }
+                }
+
                 volumeEntryModel =
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map { it.second }).toTypedArray()) })
             }
@@ -195,23 +204,13 @@ fun ExerciseHistoryScreen(
                         .padding(10.dp),
                 ) {
                     if (volumeEntryModel != null) {
-                        Column(Modifier.padding(10.dp)) {
-                            Text(
-                                modifier = Modifier
-                                    .fillMaxWidth(),
-                                text = "Volume over time",
-                                textAlign = TextAlign.Center
-                            )
-                            CartesianChartHost(
-                                zoomState = rememberVicoZoomState(zoomEnabled = false),
-                                chart = rememberCartesianChart(
-                                    rememberLineCartesianLayer(spacing = 75.dp),
-                                    startAxis = rememberStartAxis(),
-                                    bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter)
-                                ),
-                                model = volumeEntryModel!!,
-                            )
-                        }
+                        StandardChart(
+                            modifier = Modifier.padding(10.dp),
+                            cartesianChartModel = volumeEntryModel!!,
+                            title = "Volume over time",
+                            markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter
+                        )
                     }
                 }
             }

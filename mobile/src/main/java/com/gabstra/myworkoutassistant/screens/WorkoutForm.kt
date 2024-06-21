@@ -42,7 +42,9 @@ fun WorkoutForm(
     val workoutNameState = remember { mutableStateOf(workout?.name ?: "") }
     val workoutDescriptionState = remember { mutableStateOf(workout?.description ?: "") }
     val restTimeState = remember { mutableStateOf(workout?.restTimeInSec?.toString() ?: "0") }
+    val timesCompletedInAWeekState = remember { mutableStateOf(workout?.timesCompletedInAWeek?.toString() ?: "0") }
     val usePolarDeviceState = remember { mutableStateOf(workout?.usePolarDevice ?: false) }
+
 
     Box(
         modifier = Modifier
@@ -55,7 +57,6 @@ fun WorkoutForm(
                 .padding(16.dp),
             verticalArrangement = Arrangement.Center,
         ) {
-
             // Workout name field
             OutlinedTextField(
                 value = workoutNameState.value,
@@ -93,6 +94,7 @@ fun WorkoutForm(
                         if (input.isEmpty() || input.all { it -> it.isDigit() }) {
                             // Update the state only if the input is empty or all characters are digits
                             val inputValue = input.toIntOrNull()
+
                             if (inputValue != null && inputValue >= 3600) {
                                 restTimeState.value = "3599"
                             } else {
@@ -101,6 +103,31 @@ fun WorkoutForm(
                         }
                     },
                     label = { Text("Rest Time Between Exercises (in seconds)") },
+                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = timesCompletedInAWeekState.value,
+                    onValueChange = { input ->
+                        if (input.isEmpty() || input.all { it -> it.isDigit() }) {
+                            val inputValue = input.toIntOrNull()
+
+                            if (inputValue != null && inputValue == 0) {
+                                timesCompletedInAWeekState.value = "1"
+                            } else {
+                                timesCompletedInAWeekState.value = input
+                            }
+                        }
+                    },
+                    label = { Text("Objective per week") },
                     keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -135,7 +162,8 @@ fun WorkoutForm(
                         restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
                         workoutComponents = workout?.workoutComponents ?: listOf(),
                         usePolarDevice = usePolarDeviceState.value,
-                        creationDate = LocalDate.now()
+                        creationDate = LocalDate.now(),
+                        timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull()
                     )
 
                     // Call the callback to insert/update the workout

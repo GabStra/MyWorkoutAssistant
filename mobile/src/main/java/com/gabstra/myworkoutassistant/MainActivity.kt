@@ -275,7 +275,7 @@ fun MyWorkoutAssistantNavHost(
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
             WorkoutForm(
                 onWorkoutUpsert = { updatedWorkout ->
-                    appViewModel.updateWorkout(selectedWorkout, updatedWorkout)
+                    appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
                     appViewModel.goBack()
                 },
                 onCancel = {

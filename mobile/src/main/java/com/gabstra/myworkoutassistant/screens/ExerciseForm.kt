@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.app.TimePickerDialog
 import android.widget.TimePicker
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
@@ -11,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -86,6 +88,7 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expanded.value,
                         onDismissRequest = { expanded.value = false },
+                        modifier = Modifier.background(Color.Black)
                     ) {
                         exerciseTypeDescriptions.forEach { ExerciseDescription ->
                             DropdownMenuItem(
