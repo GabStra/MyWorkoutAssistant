@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +29,7 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -35,9 +37,13 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as BodyWeightSetData
-    var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
+    var currentSet by remember(state.set.id) { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentSet) {
+        viewModel.updateCurrentSetData(currentSet)
+    }
 
     LaunchedEffect(forceStopEditMode) {
         if(forceStopEditMode) isRepsInEditMode = false
@@ -56,6 +62,7 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps-1
             )
+
             VibrateOnce(context)
         }
     }
@@ -65,6 +72,7 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps+1
             )
+
             VibrateOnce(context)
         }
     }
@@ -88,7 +96,7 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
                             currentSet = currentSet.copy(
                                 actualReps = previousSet.actualReps
                             )
-
+                            state.currentSetData = currentSet
                             VibrateTwice(context)
                         }
                     }

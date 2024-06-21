@@ -173,7 +173,7 @@ fun WorkoutsScreen(
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val enabledWorkouts = workouts.filter { it.enabled }
 
-    val activeAndEnabledWorkouts = workouts.filter { it.enabled && it.isActive }
+    val activeAndEnabledWorkouts = workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
 
     val timesCompletedInAWeekObjective = enabledWorkouts.filter { it.timesCompletedInAWeek != null }.associate { workout ->
         workout.id to (workout.timesCompletedInAWeek ?: 0)
@@ -308,7 +308,10 @@ fun WorkoutsScreen(
                         val newWorkouts = activeAndEnabledWorkouts.filter { workout ->
                             selectedWorkouts.none { it === workout }
                         }
-                        appViewModel.updateWorkouts(newWorkouts)
+
+                        val newWorkoutsWithUpdatedOrder = newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
+
+                        appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
                         scope.launch {
                             for (workout in selectedWorkouts) {
                                 val workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)

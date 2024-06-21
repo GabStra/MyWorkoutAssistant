@@ -163,6 +163,7 @@ fun WorkoutForm(
                         workoutComponents = workout?.workoutComponents ?: listOf(),
                         usePolarDevice = usePolarDeviceState.value,
                         creationDate = LocalDate.now(),
+                        order =  workout?.order ?: 0,
                         timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull()
                     )
 

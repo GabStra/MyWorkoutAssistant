@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -47,17 +48,21 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
-    val set = remember(state){ state.set as TimedDurationSet}
+    val set = state.set as TimedDurationSet
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
-    val previousSet = remember(state){ state.previousSetData as TimedDurationSetData }
-    var currentSet = remember(state){ state.currentSetData as TimedDurationSetData}
+    val previousSet =  state.previousSetData as TimedDurationSetData
+    var currentSet by remember { mutableStateOf(state.currentSetData as TimedDurationSetData) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
     val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
     var timerEnabledCalled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentSet) {
+        viewModel.updateCurrentSetData(currentSet)
+    }
 
     LaunchedEffect(stopScrolling) {
         if (stopScrolling) {
@@ -70,7 +75,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         }
     }
 
-    var currentMillis by remember(currentSet) { mutableIntStateOf(currentSet.startTimer) }
+    var currentMillis by remember(state.set.id) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
 
     var showBottom by remember { mutableStateOf(false) }
@@ -103,8 +108,6 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                     endTimer = currentMillis
                 )
 
-                state.currentSetData = currentSet
-
                 if (currentMillis <= 3000)
                     VibrateOnce(context);
             }
@@ -112,8 +115,6 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             currentSet = currentSet.copy(
                 endTimer = 0
             )
-
-            state.currentSetData = currentSet
 
             VibrateShortImpulse(context);
             onTimerEnd()
@@ -240,7 +241,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             currentSet = currentSet.copy(
                 endTimer =  currentMillis
             )
-            state.currentSetData = currentSet
+
             onTimerEnd()
             showStopDialog = false
         },

@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -11,22 +10,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -42,7 +36,6 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,7 +49,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
@@ -67,16 +59,13 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 @Composable
 fun Menu(
@@ -170,11 +159,7 @@ fun WorkoutDetailScreen(
                 IconButton(
                     enabled = selectedWorkoutComponents.size == 1,
                     onClick = {
-                        val newWorkoutComponent = when (val selectedWorkoutComponent =
-                            selectedWorkoutComponents.first()) {
-                            is Exercise -> selectedWorkoutComponent.copy(id = java.util.UUID.randomUUID())
-                            is ExerciseGroup -> selectedWorkoutComponent.copy(id = java.util.UUID.randomUUID())
-                        }
+                        val newWorkoutComponent = cloneWorkoutComponent(selectedWorkoutComponents.first())
 
                         appViewModel.addWorkoutComponent(workout, newWorkoutComponent)
                         selectedWorkoutComponents = emptyList()

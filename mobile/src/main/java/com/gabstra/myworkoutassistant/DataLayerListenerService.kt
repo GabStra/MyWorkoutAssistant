@@ -1,20 +1,20 @@
 package com.gabstra.myworkoutassistant
 
 import android.content.Intent
+import android.util.Log
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateSetInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkout
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.logLargeString
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -27,7 +27,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
-import java.util.UUID
 
 class DataLayerListenerService : WearableListenerService() {
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -69,14 +68,15 @@ class DataLayerListenerService : WearableListenerService() {
                                 var workoutComponents = workout.workoutComponents
 
                                 for (exercise in exercises){
-                                    val setsBySetId = exercise.sets.associateBy { it.id }
-
+                                    val setById = exercise.sets.associateBy { it.id }
                                     val setHistories = setHistoriesByExerciseId[exercise.id] ?: continue
 
                                     for(setHistory in setHistories){
+                                        val isExistingSet = setById.containsKey(setHistory.setId)
+
                                         workoutComponents =
-                                            if(setsBySetId.containsKey(setHistory.setId)) {
-                                                val set = setsBySetId[setHistory.setId] ?: continue
+                                            if(isExistingSet) {
+                                                val set = setById[setHistory.setId] ?: continue
                                                 if(!isSetDataValid(set,setHistory.setData)) continue
                                                 val newSet = getNewSetFromSetData(set,setHistory.setData) ?: continue
                                                 updateSetInExerciseRecursively(workoutComponents,exercise,set,newSet)
@@ -89,7 +89,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 val newWorkout = workout.copy(workoutComponents = workoutComponents)
-                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkoutOld(workoutStore.workouts, workout, newWorkout))
+                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkout(workoutStore.workouts, workout, newWorkout))
                                 workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
 
                                 val intent = Intent(INTENT_ID).apply {

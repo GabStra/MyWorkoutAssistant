@@ -9,6 +9,7 @@ data class Workout(
     val name: String,
     val description: String,
     val workoutComponents: List<WorkoutComponent>,
+    val order : Int,
     val restTimeInSec: Int,
     val enabled: Boolean = true,
     val usePolarDevice: Boolean = false,

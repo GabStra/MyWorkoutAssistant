@@ -1,5 +1,9 @@
 package com.gabstra.myworkoutassistant.shared
 
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -284,5 +288,26 @@ class WorkoutManager {
             return sets.toList()
         }
 
+        fun cloneWorkoutComponent(workoutComponent: WorkoutComponent): WorkoutComponent {
+            return when (workoutComponent) {
+                is Exercise -> {
+                    val newSets = workoutComponent.sets.map {
+                        when (it){
+                            is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                            is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                            is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
+                            is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
+                        }
+                    }
+                    workoutComponent.copy(id = java.util.UUID.randomUUID(), sets = newSets)
+                }
+                is ExerciseGroup -> {
+                    val newWorkoutComponents = workoutComponent.workoutComponents.map {
+                        cloneWorkoutComponent(it) // Recursive call
+                    }
+                    workoutComponent.copy(id = java.util.UUID.randomUUID(), workoutComponents = newWorkoutComponents)
+                }
+            }
+        }
     }
 }

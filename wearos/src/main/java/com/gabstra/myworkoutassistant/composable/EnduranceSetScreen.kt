@@ -54,12 +54,16 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
-    val previousSet = remember(state){ state.previousSetData as EnduranceSetData }
-    var currentSet = remember(state){ state.currentSetData as EnduranceSetData }
+    val previousSet = state.previousSetData as EnduranceSetData
+    var currentSet by remember(state.set.id) { mutableStateOf(state.currentSetData as EnduranceSetData) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
     val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
+
+    LaunchedEffect(currentSet) {
+        viewModel.updateCurrentSetData(currentSet)
+    }
 
     LaunchedEffect(stopScrolling) {
         if (stopScrolling) {
@@ -69,7 +73,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
         }
     }
 
-    var currentMillis by remember(set) { mutableIntStateOf(0) }
+    var currentMillis by remember(state.set.id) { mutableIntStateOf(0) }
     var showStopDialog by remember { mutableStateOf(false) }
 
     var showBottom by remember { mutableStateOf(false) }
@@ -122,7 +126,6 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                 currentSet = currentSet.copy(
                     endTimer = currentMillis
                 )
-                state.currentSetData = currentSet
 
                 if (currentMillis >= (currentSet.startTimer-3000))
                     VibrateOnce(context);
@@ -131,7 +134,6 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentSet.startTimer
             )
-            state.currentSetData = currentSet
 
             VibrateShortImpulse(context);
             onTimerEnd()
@@ -213,7 +215,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentMillis
             )
-            state.currentSetData = currentSet
+
             onTimerEnd()
             showStopDialog = false
         },

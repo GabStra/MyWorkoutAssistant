@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
                 try{
                     if( intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
                         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                        Toast.makeText(context, "Workout history received", Toast.LENGTH_SHORT).show()
                     }
                 }catch (_: Exception) {
                 }
@@ -167,13 +168,14 @@ fun MyWorkoutAssistantNavHost(
                         val reader = inputStream.bufferedReader()
                         val content = reader.readText()
                         val appBackup = fromJSONtoAppBackup(content)
-                        workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
                         scope.launch {
-                            // Save the workout store
-                            workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
+                            val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
+                                workout.isActive || (!workout.isActive && appBackup.WorkoutHistories.any { it.workoutId == workout.id })
+                            }
 
-                            // Perform the database operations in a coroutine
+                            workoutStoreRepository.saveWorkoutStore( appBackup.WorkoutStore.copy(workouts = allowedWorkouts))
+
                             val deleteAndInsertJob = launch {
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
@@ -374,8 +376,6 @@ fun MyWorkoutAssistantNavHost(
         }
 
         is ScreenData.EditExerciseGroup -> {
-            //CURRENTLY DISABLED
-
             val screenData = appViewModel.currentScreenData as ScreenData.EditExerciseGroup
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
@@ -465,8 +465,6 @@ fun MyWorkoutAssistantNavHost(
         }
 
         is ScreenData.EditExercise -> {
-            //CURRENTLY DISABLED
-
             val screenData = appViewModel.currentScreenData as ScreenData.EditExercise
             val workouts by appViewModel.workoutsFlow.collectAsState()
             val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!

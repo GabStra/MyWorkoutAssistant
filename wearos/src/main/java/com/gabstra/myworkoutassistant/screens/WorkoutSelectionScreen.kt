@@ -122,6 +122,9 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
     val workouts by viewModel.workouts.collectAsState()
 
+    //sort workouts by order number
+    val sortedWorkouts = workouts.sortedBy { it.order }
+
     val currentYear = remember {  Calendar.getInstance().get(Calendar.YEAR) }
 
     var waitTimeInSec by remember { mutableIntStateOf(0) }
@@ -188,7 +191,7 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                         MissingAgeSettingMessage(dataClient, viewModel, appHelper)
                     }
                 }else{
-                    items(workouts) { workout ->
+                    items(sortedWorkouts) { workout ->
                         WorkoutListItem(workout) {
                             navController.navigate(Screen.WorkoutDetail.route)
                             viewModel.setWorkout(workout)

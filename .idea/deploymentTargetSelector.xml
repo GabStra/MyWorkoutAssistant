@@ -4,7 +4,7 @@
     <selectionStates>
       <SelectionState runConfigName="mobile">
         <option name="selectionMode" value="DROPDOWN" />
-        <DropdownSelection timestamp="2024-06-21T14:19:16.694571400Z">
+        <DropdownSelection timestamp="2024-06-21T22:36:18.154169500Z">
           <Target type="DEFAULT_BOOT">
             <handle>
               <DeviceId pluginId="PhysicalDevice" identifier="serial=RFCR10104YX" />
@@ -15,7 +15,7 @@
       </SelectionState>
       <SelectionState runConfigName="wearos">
         <option name="selectionMode" value="DROPDOWN" />
-        <DropdownSelection timestamp="2024-06-21T14:19:05.324058100Z">
+        <DropdownSelection timestamp="2024-06-21T22:36:14.008581200Z">
           <Target type="DEFAULT_BOOT">
             <handle>
               <DeviceId pluginId="PhysicalDevice" identifier="serial=RFCR10104YX" />

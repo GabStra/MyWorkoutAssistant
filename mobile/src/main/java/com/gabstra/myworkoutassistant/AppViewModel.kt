@@ -114,7 +114,7 @@ class AppViewModel() : ViewModel() {
     }
 
     fun addNewWorkout(newWorkout: Workout) {
-        workouts = workouts + newWorkout
+        workouts = workouts + newWorkout.copy(order = workouts.size)
     }
 
     fun addWorkoutComponent(workout: Workout, newWorkoutComponent: WorkoutComponent) {

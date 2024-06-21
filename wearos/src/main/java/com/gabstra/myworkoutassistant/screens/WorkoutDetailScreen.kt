@@ -79,6 +79,8 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         )
         Spacer(modifier = Modifier.height(30.dp))
 
+        /*
+
         Button(
             onClick = {
                 VibrateOnce(context)
@@ -90,7 +92,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
             Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
         }
 
-        /*
+        */
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(15.dp)
@@ -124,6 +126,6 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
             }*/
         }
 
-         */
+
     }
 }

@@ -122,7 +122,7 @@ fun ExerciseDetail(
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
-                viewModel.storeExecutedSetHistory(updatedState)
+                viewModel.storeExecutedSetHistory()
                 viewModel.goToNextState()
             },
             bottom = { },
@@ -134,7 +134,7 @@ fun ExerciseDetail(
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
-                viewModel.storeExecutedSetHistory(updatedState)
+                viewModel.storeExecutedSetHistory()
                 viewModel.goToNextState()
             },
             bottom = { },
@@ -262,7 +262,6 @@ fun ExerciseScreen(
                     )
                 }
 
-
                 CustomHorizontalPager(
                     modifier = Modifier
                         .weight(1f)
@@ -352,7 +351,7 @@ fun ExerciseScreen(
         message = "Do you want to save this data?",
         handleYesClick = {
             VibrateOnce(context)
-            viewModel.storeExecutedSetHistory(state)
+            viewModel.storeExecutedSetHistory()
             viewModel.goToNextState()
             showConfirmDialog=false
         },
@@ -373,7 +372,7 @@ fun ExerciseScreen(
         message = "Do you want to skip this exercise?",
         handleYesClick = {
             VibrateOnce(context)
-            viewModel.storeExecutedSetHistory(state)
+            viewModel.storeExecutedSetHistory()
             viewModel.goToNextState()
             showSkipDialog = false
         },

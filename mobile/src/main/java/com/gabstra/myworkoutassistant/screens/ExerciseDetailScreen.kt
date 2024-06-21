@@ -138,6 +138,16 @@ fun ExerciseDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        appViewModel.setScreenData(
+                            ScreenData.EditExercise(
+                                workout.id,
+                                exercise.id
+                            )
+                        );
+                    }) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
+                    }
                 }
             )
         },

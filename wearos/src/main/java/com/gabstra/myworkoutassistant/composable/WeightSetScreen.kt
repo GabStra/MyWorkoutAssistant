@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +45,10 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
+    LaunchedEffect(currentSet) {
+        viewModel.updateCurrentSetData(currentSet)
+    }
+
     LaunchedEffect(isInEditMode) {
         if (isInEditMode) {
             onEditModeEnabled()
@@ -59,22 +64,20 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
         }
     }
 
-    LaunchedEffect(currentSet) {
-        // Update the WorkoutState.Set whenever currentSet changes
-        state.currentSetData = currentSet
-    }
 
     fun onMinusClick(){
         if (isRepsInEditMode && currentSet.actualReps>1){
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps-1
             )
+
             VibrateOnce(context)
         }
         if (isWeightInEditMode && (currentSet.actualWeight > 0.5)){
             currentSet = currentSet.copy(
                 actualWeight = currentSet.actualWeight.minus(0.5F)
             )
+
             VibrateOnce(context)
         }
 
@@ -85,12 +88,14 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps+1
             )
+
             VibrateOnce(context)
         }
         if (isWeightInEditMode){
             currentSet = currentSet.copy(
                 actualWeight = currentSet.actualWeight.plus(0.5F)
             )
+
             VibrateOnce(context)
         }
     }
@@ -166,6 +171,7 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
                             currentSet = currentSet.copy(
                                 actualWeight = previousSet.actualWeight
                             )
+
                             VibrateTwice(context)
                         }
                     }

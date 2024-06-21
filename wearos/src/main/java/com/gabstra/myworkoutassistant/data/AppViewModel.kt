@@ -20,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.logLargeString
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
@@ -116,7 +117,7 @@ class AppViewModel : ViewModel(){
         workoutHistoryDao= db.workoutHistoryDao()
     }
 
-    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0, creationDate = LocalDate.now()))
+    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0,0, creationDate = LocalDate.now()))
     val selectedWorkout: State<Workout> get() = _selectedWorkout
 
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
@@ -125,6 +126,12 @@ class AppViewModel : ViewModel(){
 
     private val _workoutState = MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val workoutState = _workoutState.asStateFlow()
+
+    private var _tempCurrentSetData: SetData? = null
+
+    fun updateCurrentSetData(newSetData: SetData) {
+        _tempCurrentSetData = newSetData
+    }
 
     private val _nextWorkoutState = MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val nextWorkoutState = _nextWorkoutState.asStateFlow()
@@ -203,7 +210,7 @@ class AppViewModel : ViewModel(){
 
     fun endWorkout(duration: Duration, onEnd: () -> Unit = {}) {
         viewModelScope.launch {
-            val newWorkoutHistory =  WorkoutHistory(
+            val newWorkoutHistory = WorkoutHistory(
                 workoutId= selectedWorkout.value.id,
                 date = LocalDate.now(),
                 duration = duration.seconds.toInt(),
@@ -229,17 +236,22 @@ class AppViewModel : ViewModel(){
         }
     }
 
-    fun storeExecutedSetHistory(state: WorkoutState.Set) {
+    fun storeExecutedSetHistory() {
+        val currentState = _workoutState.value
+
+        if (currentState !is WorkoutState.Set && _tempCurrentSetData != null) return
+        val setState = currentState as WorkoutState.Set
+
         val newSetHistory = SetHistory(
-            setId = state.set.id,
-            setData = state.currentSetData,
-            order = state.order,
-            exerciseId = state.parentExercise.id,
-            skipped = state.skipped
+            setId = setState.set.id,
+            setData = _tempCurrentSetData!!,
+            order = setState.order,
+            exerciseId = setState.parentExercise.id,
+            skipped = setState.skipped
         )
 
         // Search for an existing entry in the history
-        val existingIndex = executedSetsHistory.indexOfFirst { it.setId == state.set.id && it.order == state.order }
+        val existingIndex = executedSetsHistory.indexOfFirst { it.setId == setState.set.id && it.order == setState.order }
 
         if (existingIndex != -1) {
             // If found, replace the existing entry
@@ -248,6 +260,8 @@ class AppViewModel : ViewModel(){
             // If not found, add the new entry
             executedSetsHistory.add(newSetHistory)
         }
+
+        val histories = executedSetsHistory.takeLast(2)
     }
 
     private fun generateWorkoutStates() {
