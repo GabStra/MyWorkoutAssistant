@@ -1,11 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.text.Layout
-import android.text.Spannable
-import android.text.SpannableStringBuilder
-import android.text.style.ForegroundColorSpan
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -28,11 +23,9 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -53,14 +46,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
-import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -68,32 +59,9 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
-import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
-import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLabelComponent
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottomAxis
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStartAxis
-import com.patrykandpatrick.vico.compose.cartesian.decoration.rememberHorizontalLine
-import com.patrykandpatrick.vico.compose.cartesian.fullWidth
-import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
-import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
-import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
-import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
-import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
-import com.patrykandpatrick.vico.compose.common.component.rememberLayeredComponent
-
-import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
-import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
-
-import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
-import com.patrykandpatrick.vico.compose.common.of
-import com.patrykandpatrick.vico.compose.common.shape.rounded
-import com.patrykandpatrick.vico.core.cartesian.HorizontalLayout
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -101,13 +69,9 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 
-import com.patrykandpatrick.vico.core.cartesian.Zoom
-import com.patrykandpatrick.vico.core.cartesian.data.AxisValueOverrider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
-import com.patrykandpatrick.vico.core.cartesian.marker.CartesianMarkerValueFormatter
-import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
 import kotlinx.coroutines.delay
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -129,8 +93,12 @@ fun WorkoutHistoryScreen(
         WorkoutManager.getAllExercisesFromWorkout(workout).associateBy { it.id }
     }
 
-    val formatter = remember(currentLocale) {
+    val dateFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
+    }
+
+    val timeFormatter = remember(currentLocale) {
+        DateTimeFormatter.ofPattern("HH:mm:ss", currentLocale)
     }
 
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
@@ -147,8 +115,9 @@ fun WorkoutHistoryScreen(
     var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
-    val horizontalAxisValueFormatter = CartesianValueFormatter { value, chartValues, _ ->
-        workoutHistories[value.toInt()].date.format(formatter)
+    val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+        val currentWorkoutHistory = workoutHistories[value.toInt()]
+        currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
     }
 
     val durationAxisValueFormatter = CartesianValueFormatter { value, chartValues, _ ->
@@ -301,7 +270,7 @@ fun WorkoutHistoryScreen(
             Text(
                 modifier = Modifier
                     .weight(1f),
-                text = selectedWorkoutHistory!!.date.format(formatter),
+                text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(timeFormatter),
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.width(10.dp))

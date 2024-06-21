@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
@@ -24,6 +25,7 @@ import com.google.gson.GsonBuilder
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
+import java.time.LocalTime
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -36,6 +38,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
         .registerTypeAdapter(TimedDurationSet::class.java, SetAdapter())
         .registerTypeAdapter(EnduranceSet::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .create()
     return gson.toJson(workoutStore)
 }
@@ -46,6 +49,7 @@ fun fromJSONToWorkoutStore(json: String): WorkoutStore {
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .create()
     return gson.fromJson(json, WorkoutStore::class.java)
 }
@@ -71,6 +75,7 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
         .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .create()
 
     return gson.toJson(appBackup)
@@ -89,6 +94,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .setPrettyPrinting()
         .create()
 
@@ -100,6 +106,7 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(SetData::class.java, SetDataAdapter())
         .create()
     return gson.fromJson(json, AppBackup::class.java)

@@ -8,8 +8,11 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -23,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalTime
 import java.util.UUID
 
 class DataLayerListenerService : WearableListenerService() {
@@ -36,7 +40,8 @@ class DataLayerListenerService : WearableListenerService() {
             when (uri.path) {
                 WORKOUT_HISTORY_STORE_PATH -> {
                     val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                    val workoutHistoryStoreJson = dataMap.getString("json")
+                    val compressedJson = dataMap.getByteArray("compressedJson")
+                    val workoutHistoryStoreJson = decompressToString(compressedJson!!)
 
                     scope.launch {
                         try{
@@ -46,17 +51,10 @@ class DataLayerListenerService : WearableListenerService() {
 
                             val gson = GsonBuilder()
                                 .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+                                .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
                                 .registerTypeAdapter(SetData::class.java, SetDataAdapter())
                                 .create()
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
-
-                            val existingWorkouts = workoutHistoryDao.getWorkoutsByWorkoutIdAndDate(workoutHistoryStore.WorkoutHistory.workoutId,workoutHistoryStore.WorkoutHistory.date)
-
-                            if(existingWorkouts.isNotEmpty()){
-                                for(workout in existingWorkouts){
-                                    workoutHistoryDao.deleteById(workout.id)
-                                }
-                            }
 
                             val workoutHistoryId = workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory).toInt()
                             workoutHistoryStore.ExerciseHistories.forEach { it.workoutHistoryId = workoutHistoryId }
@@ -68,7 +66,6 @@ class DataLayerListenerService : WearableListenerService() {
                             val workout = workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
                             if(workout != null){
                                 val exercises = WorkoutManager.getAllExercisesFromWorkout(workout)
-
                                 var workoutComponents = workout.workoutComponents
 
                                 for (exercise in exercises){
@@ -92,7 +89,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 val newWorkout = workout.copy(workoutComponents = workoutComponents)
-                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkout(workoutStore.workouts, workout, newWorkout))
+                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkoutOld(workoutStore.workouts, workout, newWorkout))
                                 workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
 
                                 val intent = Intent(INTENT_ID).apply {

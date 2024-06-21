@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant
 
 import android.content.Intent
 import android.util.Log
+import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -24,7 +25,7 @@ class DataLayerListenerService : WearableListenerService() {
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
 
-    private var backupChunks = mutableListOf<String>()
+    private var backupChunks = mutableListOf<ByteArray>()
 
     override fun onCreate() {
         super.onCreate()
@@ -40,39 +41,37 @@ class DataLayerListenerService : WearableListenerService() {
                 when (uri.path) {
                     WORKOUT_STORE_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val workoutStoreJson = dataMap.getString("json")
-                        if(workoutStoreJson != null){
-                            workoutStoreRepository.saveWorkoutStoreFromJson(workoutStoreJson)
-                            val intent = Intent(INTENT_ID).apply {
-                                putExtra(WORKOUT_STORE_JSON, workoutStoreJson)
-                            }
-                            sendBroadcast(intent)
+                        val compressedJson = dataMap.getByteArray("compressedJson")
+                        val workoutStoreJson = decompressToString(compressedJson!!)
+                        workoutStoreRepository.saveWorkoutStoreFromJson(workoutStoreJson)
+                        val intent = Intent(INTENT_ID).apply {
+                            putExtra(WORKOUT_STORE_JSON, workoutStoreJson)
                         }
+                        sendBroadcast(intent)
                     }
                     BACKUP_CHUNK_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val backupChunk = dataMap.getString("chunk")
+                        val isStart = dataMap.getBoolean("isStart",false)
+                        val backupChunk = dataMap.getByteArray("chunk")
+
+                        if(isStart){
+                            backupChunks.clear()
+
+                            val intent = Intent(INTENT_ID).apply {
+                                putExtra(APP_BACKUP_START_JSON, APP_BACKUP_START_JSON)
+                            }
+                            sendBroadcast(intent)
+                        }
 
                         if (backupChunk != null) {
-                            if(backupChunk == "START"){
-                                backupChunks.clear()
+                            backupChunks.add(backupChunk)
 
-                                val intent = Intent(INTENT_ID).apply {
-                                    putExtra(APP_BACKUP_START_JSON, APP_BACKUP_START_JSON)
-                                }
-                                sendBroadcast(intent)
-
-                            }else{
-                                backupChunks.add(backupChunk)
-                            }
-
-                            // Check if this is the last chunk
                             val isLastChunk = dataMap.getBoolean("isLastChunk", false)
 
                             if (isLastChunk) {
-                                val backupData  = backupChunks.joinToString("")
-                                val decompressedData = decompressToString(backupData.toByteArray())
-                                val appBackup = fromJSONtoAppBackup(decompressedData)
+                                val backupData = combineChunks(backupChunks)
+                                val jsonBackup = decompressToString(backupData)
+                                val appBackup = fromJSONtoAppBackup(jsonBackup)
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
                                 scope.launch {

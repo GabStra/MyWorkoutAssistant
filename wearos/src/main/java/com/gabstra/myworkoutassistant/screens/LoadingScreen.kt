@@ -10,12 +10,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.KeepScreenOn
 import com.gabstra.myworkoutassistant.composable.LoadingText
 
 @Composable
 fun LoadingScreen(text: String = "Loading...") {
-    KeepScreenOn()
 
     Column(
         modifier = Modifier.fillMaxSize(),

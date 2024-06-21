@@ -48,8 +48,9 @@ import java.util.concurrent.CancellationException
 fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
     try {
         val jsonString = fromWorkoutStoreToJSON(workoutStore)
+        val compressedData = compressString(jsonString)
         val request = PutDataMapRequest.create("/workoutStore").apply {
-            dataMap.putString("json",jsonString)
+            dataMap.putByteArray("compressedJson",compressedData)
             dataMap.putString("timestamp",System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
 
@@ -69,8 +70,7 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         val chunks = compressedData.asList().chunked(chunkSize)
 
         val startRequest = PutDataMapRequest.create("/backupChunkPath").apply {
-            dataMap.putString("chunk", "START")
-            dataMap.putBoolean("isLastChunk", false)
+            dataMap.putBoolean("isStart", true)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
 
@@ -83,7 +83,9 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
 
             val request = PutDataMapRequest.create("/backupChunkPath").apply {
                 dataMap.putByteArray("chunk", chunk.toByteArray())
-                dataMap.putBoolean("isLastChunk", isLastChunk)
+                if(isLastChunk) {
+                    dataMap.putBoolean("isLastChunk", true)
+                }
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
             }.asPutDataRequest().setUrgent()
 

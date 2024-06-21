@@ -23,7 +23,9 @@ import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.logLargeString
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -45,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalTime
 import java.util.concurrent.CancellationException
 
 fun FormatTime(seconds: Int): String {
@@ -143,17 +146,16 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
     try {
         val gson = GsonBuilder()
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+            .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
             .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
             .create()
         val jsonString = gson.toJson(workoutHistoryStore)
-
-        logLargeString("WORKOUT_HISTORY_JSON", jsonString)
-
+        val compressedData = compressString(jsonString)
         val request = PutDataMapRequest.create("/workoutHistoryStore").apply {
-            dataMap.putString("json",jsonString)
+            dataMap.putByteArray("compressedJson",compressedData)
             dataMap.putString("timestamp",System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
 
@@ -249,3 +251,16 @@ fun Modifier.repeatActionOnLongPress(
         )
     }
 )
+
+fun combineChunks(chunks: List<ByteArray>): ByteArray {
+    val totalLength = chunks.sumOf { it.size }
+    val combinedArray = ByteArray(totalLength)
+
+    var currentPosition = 0
+    for (chunk in chunks) {
+        chunk.copyInto(combinedArray, currentPosition)
+        currentPosition += chunk.size
+    }
+
+    return combinedArray
+}

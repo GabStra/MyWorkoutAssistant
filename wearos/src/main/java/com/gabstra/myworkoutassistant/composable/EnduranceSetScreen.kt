@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -68,11 +69,6 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
         }
     }
 
-    LaunchedEffect(currentSet) {
-        // Update the WorkoutState.Set whenever currentSet changes
-        state.currentSetData = currentSet
-    }
-
     var currentMillis by remember(set) { mutableIntStateOf(0) }
     var showStopDialog by remember { mutableStateOf(false) }
 
@@ -126,6 +122,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                 currentSet = currentSet.copy(
                     endTimer = currentMillis
                 )
+                state.currentSetData = currentSet
 
                 if (currentMillis >= (currentSet.startTimer-3000))
                     VibrateOnce(context);
@@ -134,9 +131,9 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentSet.startTimer
             )
+            state.currentSetData = currentSet
 
             VibrateShortImpulse(context);
-
             onTimerEnd()
 
             if(!set.autoStop){
@@ -216,6 +213,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentMillis
             )
+            state.currentSetData = currentSet
             onTimerEnd()
             showStopDialog = false
         },

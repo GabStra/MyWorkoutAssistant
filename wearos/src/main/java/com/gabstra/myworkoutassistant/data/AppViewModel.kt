@@ -33,6 +33,7 @@ import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
@@ -206,7 +207,8 @@ class AppViewModel : ViewModel(){
                 workoutId= selectedWorkout.value.id,
                 date = LocalDate.now(),
                 duration = duration.seconds.toInt(),
-                heartBeatRecords = heartBeatHistory
+                heartBeatRecords = heartBeatHistory,
+                time = LocalTime.now()
             )
 
             val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()

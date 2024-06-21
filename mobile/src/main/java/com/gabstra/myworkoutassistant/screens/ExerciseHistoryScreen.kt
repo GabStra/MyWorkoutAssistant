@@ -77,12 +77,17 @@ fun ExerciseHistoryScreen(
 
     val currentLocale = Locale.getDefault()
 
-    val formatter = remember(currentLocale) {
+    val dateFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
     }
 
-    val horizontalAxisValueFormatter = CartesianValueFormatter { value, chartValues, _ ->
-        workoutHistories[value.toInt()].date.format(formatter)
+    val timeFormatter = remember(currentLocale) {
+        DateTimeFormatter.ofPattern("HH:mm:ss", currentLocale)
+    }
+
+    val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+        val currentWorkoutHistory = workoutHistories[value.toInt()]
+        currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
     }
 
     LaunchedEffect(Unit) {
@@ -193,7 +198,7 @@ fun ExerciseHistoryScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp),
-                    text = if (isLoading) "Loading..." else "No workout history found",
+                    text = if (isLoading) "Loading..." else "No history found",
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(10.dp))

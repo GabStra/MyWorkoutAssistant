@@ -41,7 +41,6 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
-import com.gabstra.myworkoutassistant.KeepScreenOn
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
@@ -174,8 +173,6 @@ fun WorkoutScreen(
             }
         }
     )
-
-    KeepScreenOn()
 
     Box(
         modifier = Modifier

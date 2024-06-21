@@ -147,7 +147,7 @@ fun Menu(
 }
 
 @Composable
-fun WorkoutTitle(modifier: Modifier,workout: Workout){
+fun WorkoutTitle(modifier: Modifier, workout: Workout){
     Row (
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = modifier.padding(15.dp)
@@ -173,7 +173,7 @@ fun WorkoutsScreen(
     selectedTabIndex : Int
 ) {
     val workoutsFlow by appViewModel.workoutsFlow.collectAsState()
-    val workouts = workoutsFlow.filter { it.enabled }
+    val workouts = remember(workoutsFlow) { workoutsFlow.filter { it.enabled } }
 
     val workoutsList = workoutsFlow.filter { it.enabled && it.isActive }
 

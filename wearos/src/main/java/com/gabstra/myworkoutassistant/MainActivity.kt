@@ -30,6 +30,7 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModelFactory
@@ -140,19 +141,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun KeepScreenOn() {
-    val context = LocalContext.current
-    val activity = context.findActivity()
-    val window = activity?.window
-
-    DisposableEffect(Unit) {
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-    }
-}
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
@@ -178,6 +166,8 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         LaunchedEffect(nodes){
             appViewModel.phoneNode = nodes.firstOrNull()
         }
+
+        KeepOn()
 
         NavHost(navController, startDestination = Screen.WorkoutSelection.route) {
             composable(Screen.WorkoutSelection.route) {

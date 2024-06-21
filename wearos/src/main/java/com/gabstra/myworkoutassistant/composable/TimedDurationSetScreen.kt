@@ -70,11 +70,6 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         }
     }
 
-    LaunchedEffect(currentSet) {
-        // Update the WorkoutState.Set whenever currentSet changes
-        state.currentSetData = currentSet
-    }
-
     var currentMillis by remember(currentSet) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
 
@@ -108,6 +103,8 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                     endTimer = currentMillis
                 )
 
+                state.currentSetData = currentSet
+
                 if (currentMillis <= 3000)
                     VibrateOnce(context);
             }
@@ -115,6 +112,8 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             currentSet = currentSet.copy(
                 endTimer = 0
             )
+
+            state.currentSetData = currentSet
 
             VibrateShortImpulse(context);
             onTimerEnd()
@@ -241,6 +240,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             currentSet = currentSet.copy(
                 endTimer =  currentMillis
             )
+            state.currentSetData = currentSet
             onTimerEnd()
             showStopDialog = false
         },
