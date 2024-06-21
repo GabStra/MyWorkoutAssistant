@@ -181,8 +181,6 @@ fun WorkoutsScreen(
         workout.id to (workout.timesCompletedInAWeek ?: 0)
     }
 
-    Log.d("Wow - times",timesCompletedInAWeekObjective.toString())
-
     val hasObjectives = timesCompletedInAWeekObjective.values.any { it > 0 }
 
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
@@ -194,8 +192,6 @@ fun WorkoutsScreen(
     var workoutById by remember { mutableStateOf<Map<UUID, Workout>?>(null) }
 
     var selectedCalendarWorkouts by remember { mutableStateOf<List<Pair<WorkoutHistory,Workout>>?>(null) }
-
-
 
     var isCardExpanded by remember {
         mutableStateOf(false)
@@ -222,6 +218,9 @@ fun WorkoutsScreen(
     }
 
     fun calculateObjectiveProgress(currentDate: LocalDate){
+        if(workouts.isEmpty()) return
+        if(groupedWorkoutsHistories == null || workoutById == null) return
+
         val startOfWeek = getStartOfWeek(currentDate)
         val endOfWeek = getEndOfWeek(currentDate)
 
@@ -233,15 +232,11 @@ fun WorkoutsScreen(
 
         val workoutCountsById = workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
 
-        Log.d("Wow - records",workoutCountsById.toString())
-
         val progressList = workouts.filter{ workout -> timesCompletedInAWeekObjective.contains(workout.id) }.map { workout ->
             val target = timesCompletedInAWeekObjective[workout.id] ?: 0
             val actual = workoutCountsById[workout.id] ?: 0
             if (target > 0) (actual.toDouble() / target) else 0.0
         }
-
-        Log.d("Wow",progressList.toString())
 
         objectiveProgress =  progressList.average()
     }
