@@ -372,7 +372,6 @@ fun ExerciseScreen(
         message = "Do you want to skip this exercise?",
         handleYesClick = {
             VibrateOnce(context)
-            viewModel.storeExecutedSetHistory()
             viewModel.goToNextState()
             showSkipDialog = false
         },

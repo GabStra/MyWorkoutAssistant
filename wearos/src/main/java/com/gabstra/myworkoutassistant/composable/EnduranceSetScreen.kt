@@ -134,7 +134,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentSet.startTimer
             )
-
+            viewModel.updateCurrentSetData(currentSet)
             VibrateShortImpulse(context);
             onTimerEnd()
 
@@ -215,7 +215,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentMillis
             )
-
+            viewModel.updateCurrentSetData(currentSet)
             onTimerEnd()
             showStopDialog = false
         },
