@@ -5,6 +5,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Card
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -19,6 +22,7 @@ import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -27,23 +31,20 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 fun findNewIndex(newCenterY: Float, currentIndex: Int, centerPointByIndex: MutableMap<Int, Pair<Float, Float>>): Int {
     val minDiff = 60f // Adjust this threshold as needed
-    val upperBound = newCenterY + minDiff
-    val lowerBound = newCenterY - minDiff
+    val potentialIndices = centerPointByIndex.keys.filter { it != currentIndex }
 
-    // Find the first index within the specified range, skipping the current index
-    var newIndex = -1
-    for (i in centerPointByIndex.keys) {
-        if (i != currentIndex && centerPointByIndex[i]!!.second in lowerBound..upperBound) {
-            newIndex = i
-            break
-        }
-    }
-
-    // If a suitable index is found, return it; otherwise, keep the current index
-    return newIndex.takeIf { it != -1 } ?: currentIndex
+    // Find the index with the smallest Y-coordinate difference within the minDiff threshold
+    return potentialIndices.minByOrNull { index ->
+        abs(centerPointByIndex[index]!!.second - newCenterY)
+    }?.takeIf {
+        abs(centerPointByIndex[it]!!.second - newCenterY) <= minDiff
+    } ?: currentIndex
 }
 
 
@@ -66,6 +67,32 @@ fun <T> GenericSelectableList(
     val itemToRenderByIndex = remember { mutableStateOf(mutableMapOf<Int, @Composable () -> Unit>()) }
     val draggedItem = remember { mutableStateOf<T?>(null) }
     val tempDragChanges = remember { mutableMapOf<Int, T>() }
+    val listState = rememberLazyListState() // LazyListState for controlling scrolling
+
+    LaunchedEffect(draggedItem.value) {
+        while (draggedItem.value != null) {
+            val draggedItemIndex = items.indexOf(draggedItem.value)
+            if (draggedItemIndex != -1) {
+                val currentCenterY = centerPointByIndex[draggedItemIndex]?.second ?: 0f
+                val offsetY = listState.firstVisibleItemScrollOffset
+                val visibleAreaStart = listState.layoutInfo.viewportStartOffset
+                val visibleAreaEnd = listState.layoutInfo.viewportEndOffset
+                val visibleAreaHeight = visibleAreaEnd - visibleAreaStart
+                val scrollThreshold = visibleAreaHeight / 10 // Scroll threshold at the edges
+
+                when {
+                    currentCenterY < visibleAreaStart + scrollThreshold -> {
+                        listState.scrollBy(-20f) // Scroll up when dragging near the top
+                    }
+                    currentCenterY > visibleAreaEnd - scrollThreshold -> {
+                        listState.scrollBy(20f) // Scroll down when dragging near the bottom
+                    }
+                }
+            }
+            delay(16) // Control the scroll speed, approx. 60 frames per second
+        }
+    }
+
 
     // Conditional modifier for dragging
     fun Modifier.conditionalPointerInput(item: T,index:Int,offsetY: MutableFloatState): Modifier =
@@ -140,7 +167,18 @@ fun <T> GenericSelectableList(
 
                         tempDragChanges.clear() // Clear temporary changes
                         offsetY.floatValue = 0f // Reset the offset
-                    })
+                        draggedItem.value = null
+                    },
+                    onDragCancel = {
+                        // Handle drag cancellation
+                        itemToRenderByIndex.value = itemToRenderByIndex.value.toMutableMap().apply {
+                            this.clear()
+                        }
+                        tempDragChanges.clear()
+                        offsetY.floatValue = 0f
+                        draggedItem.value = null
+                    }
+                )
             }
         }
 
@@ -163,7 +201,7 @@ fun <T> GenericSelectableList(
         selection = selectedItems,
         onSelectionChange = { newSelection ->  onSelectionChange(newSelection) },
         itemContent = { item ->
-            val offsetY = remember{mutableFloatStateOf(0f)}
+            val offsetY = remember { mutableFloatStateOf(0f) }
             val index = items.indexOf(item)
             Box(
                 modifier = Modifier
@@ -217,5 +255,6 @@ fun <T> GenericSelectableList(
                 }
             }
         },
+        listState
     )
 }

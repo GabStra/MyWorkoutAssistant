@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -94,6 +96,10 @@ fun ExerciseGroupDetailScreen(
         bottomBar = {
             if(selectedWorkoutComponents.isNotEmpty()) BottomAppBar(
                 actions =  {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ){
                     IconButton(onClick = {
                         val updatedExerciseGroup = exerciseGroup.copy (
                             workoutComponents = workoutComponents.filter { component ->
@@ -153,6 +159,7 @@ fun ExerciseGroupDetailScreen(
                         }) {
                         Text("Disable")
                     }
+                }
                 }
             )
         },

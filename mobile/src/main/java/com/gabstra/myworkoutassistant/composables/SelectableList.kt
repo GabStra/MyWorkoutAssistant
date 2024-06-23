@@ -7,14 +7,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import my.nanihadesuka.compose.LazyColumnScrollbar
+import my.nanihadesuka.compose.ScrollbarSettings
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -25,32 +30,41 @@ fun <T> SelectableList(
     items: List<T>,
     selection: List<T>,
     onSelectionChange: (List<T>) -> Unit,
-    itemContent: @Composable (T) -> Unit
+    itemContent: @Composable (T) -> Unit,
+    listState: LazyListState = rememberLazyListState()
 ) {
-    LazyColumn(
-        modifier = modifier
+    LazyColumnScrollbar(
+        state = listState,
+        modifier = modifier,
+        settings = ScrollbarSettings.Default.copy(alwaysShowScrollbar = true, thumbSelectedColor = MaterialTheme.colorScheme.primary)
     ) {
-        items(items) { item ->
-            Row(
-                modifier = Modifier,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (selectionMode) {
-                    Checkbox(
-                        checked = selection.any { it === item },
-                        onCheckedChange = { checked ->
-                            val newSelection =
-                                if (checked) {
-                                    selection + item
-                                } else {
-                                    selection.filter{ it !== item }
-                                }
-                            onSelectionChange(newSelection)
-                        }
-                    )
+        LazyColumn(
+            state = listState,
+            modifier = modifier.padding(end=20.dp),
+            userScrollEnabled = false
+        ) {
+            items(items) { item ->
+                Row(
+                    modifier = Modifier,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (selectionMode) {
+                        Checkbox(
+                            checked = selection.any { it === item },
+                            onCheckedChange = { checked ->
+                                val newSelection =
+                                    if (checked) {
+                                        selection + item
+                                    } else {
+                                        selection.filter{ it !== item }
+                                    }
+                                onSelectionChange(newSelection)
+                            }
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    itemContent(item)
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                itemContent(item)
             }
         }
     }

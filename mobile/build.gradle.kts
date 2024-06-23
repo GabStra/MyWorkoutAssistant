@@ -93,6 +93,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")
 
     val lifecycle_version = "2.8.2"
 

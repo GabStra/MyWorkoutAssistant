@@ -154,36 +154,41 @@ fun ExerciseDetailScreen(
         bottomBar = {
             if (selectedSets.isNotEmpty()) BottomAppBar(
                 actions = {
-                    IconButton(onClick = {
-                        val newSets = sets.filter { set ->
-                            selectedSets.none { it === set }
-                        }
-                        sets = newSets
-                        val updatedExercise = exercise.copy(sets = newSets)
-
-                        appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
-                        selectedSets = emptyList()
-                        isSelectionModeActive = false
-                    }) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
-                    }
-                    IconButton(
-                        enabled = selectedSets.size == 1,
-                        onClick = {
-                            val selectedSet = selectedSets.first()
-                            val newSet = when (selectedSet) {
-                                is WeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
-                                is BodyWeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
-                                is EnduranceSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
-                                is TimedDurationSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ){
+                        IconButton(onClick = {
+                            val newSets = sets.filter { set ->
+                                selectedSets.none { it === set }
                             }
-                            appViewModel.addSetToExercise(workout, exercise, newSet)
-                            
-                            sets = sets + newSet
+                            sets = newSets
+                            val updatedExercise = exercise.copy(sets = newSets)
+
+                            appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
                             selectedSets = emptyList()
                             isSelectionModeActive = false
                         }) {
-                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+                        }
+                        IconButton(
+                            enabled = selectedSets.size == 1,
+                            onClick = {
+                                val selectedSet = selectedSets.first()
+                                val newSet = when (selectedSet) {
+                                    is WeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                    is BodyWeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                    is EnduranceSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                    is TimedDurationSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                }
+                                appViewModel.addSetToExercise(workout, exercise, newSet)
+
+                                sets = sets + newSet
+                                selectedSets = emptyList()
+                                isSelectionModeActive = false
+                            }) {
+                            Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
+                        }
                     }
                 }
             )
