@@ -495,7 +495,8 @@ fun WorkoutsScreen(
                             onDisableSelection = { isSelectionModeActive = false },
                             onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
                             onOrderChange = { newWorkouts->
-                                appViewModel.updateWorkouts(newWorkouts)
+                                val workoutsWithOrderUpdated = newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
+                                appViewModel.updateWorkouts(workoutsWithOrderUpdated)
                             },
                             itemContent = { it ->
                                 ExpandableCard(
@@ -509,7 +510,7 @@ fun WorkoutsScreen(
                                     onClose = { isCardExpanded = false }
                                 )
                             },
-                            isDragDisabled = true
+                            isDragDisabled = false
                         )
                     }
                 }

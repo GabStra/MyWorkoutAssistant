@@ -54,7 +54,7 @@ fun ExerciseGroupDetailScreen(
     exerciseGroup: ExerciseGroup,
     onGoBack : () -> Unit
 ){
-    var workoutComponents by remember { mutableStateOf(exerciseGroup.workoutComponents) }
+    var workoutComponents by remember(exerciseGroup) { mutableStateOf(exerciseGroup.workoutComponents) }
 
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }

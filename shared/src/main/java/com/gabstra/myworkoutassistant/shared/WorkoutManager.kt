@@ -55,14 +55,12 @@ class WorkoutManager {
             }
         }
 
-        fun addWorkoutComponent(workouts: List<Workout>, workout: Workout, newWorkoutComponent: WorkoutComponent): List<Workout>  {
-            return workouts.map { it ->
-                if (it == workout) {
-                    it.copy(workoutComponents = it.workoutComponents + newWorkoutComponent)
-                } else {
-                    it
-                }
-            }
+        fun addWorkoutComponent(workouts: List<Workout>, workout: Workout, newWorkoutComponent: WorkoutComponent): List<Workout> {
+            val updatedComponents = workout.workoutComponents + newWorkoutComponent
+
+            val updatedWorkout = workout.copy(workoutComponents = updatedComponents)
+
+            return updateWorkout(workouts, workout, updatedWorkout)
         }
 
         fun addWorkoutComponentToExerciseGroup(workouts: List<Workout>, workout: Workout, exerciseGroup: ExerciseGroup, newWorkoutComponent: WorkoutComponent): List<Workout> {

@@ -307,7 +307,16 @@ fun MyWorkoutAssistantNavHost(
             val screenData = appViewModel.currentScreenData as ScreenData.WorkoutDetail
             val workouts by appViewModel.workoutsFlow.collectAsState()
 
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
 
             WorkoutDetailScreen(
                 appViewModel,
@@ -337,7 +346,17 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.ExerciseGroupDetail -> {
             val screenData = appViewModel.currentScreenData as ScreenData.ExerciseGroupDetail
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val selectedExerciseGroup = findWorkoutComponentByIdInWorkout(
                 selectedWorkout,
                 screenData.selectedExerciseGroupId
@@ -350,7 +369,17 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.NewExerciseGroup -> {
             val screenData = appViewModel.currentScreenData as ScreenData.NewExerciseGroup
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val parentExerciseGroup =
                 if (screenData.parentExerciseGroupId != null) findWorkoutComponentByIdInWorkout(
                     selectedWorkout,
@@ -441,7 +470,17 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.NewExercise -> {
             val screenData = appViewModel.currentScreenData as ScreenData.NewExercise
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val parentExerciseGroup =
                 if (screenData.parentExerciseGroupId != null) findWorkoutComponentByIdInWorkout(
                     selectedWorkout,
