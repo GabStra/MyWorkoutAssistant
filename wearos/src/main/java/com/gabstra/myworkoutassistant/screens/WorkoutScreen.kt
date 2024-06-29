@@ -116,7 +116,7 @@ fun WorkoutScreen(
         }
     }
 
-        BackHandler(true) {
+    BackHandler(true) {
         showWorkoutInProgressDialog = true
         viewModel.pauseWorkout()
     }

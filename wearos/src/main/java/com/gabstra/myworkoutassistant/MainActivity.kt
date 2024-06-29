@@ -66,11 +66,7 @@ class MyReceiver(
                 val appBackupStartJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_START_JSON)
 
                 if(appBackupStartJson != null){
-                    navController.navigate(Screen.Loading.route){
-                        popUpTo(Screen.WorkoutSelection.route) {
-                            inclusive = true
-                        }
-                    }
+                    navController.navigate(Screen.Loading.route)
                 }
 
                 if(workoutStoreJson != null || appBackupEndJson != null){
@@ -83,7 +79,9 @@ class MyReceiver(
 
                 if(appBackupEndJson != null){
                     Toast.makeText(context, "Data received", Toast.LENGTH_SHORT).show()
-                    navController.navigate(Screen.WorkoutSelection.route)
+                    navController.navigate(Screen.WorkoutSelection.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
                 }
             }catch (exception: Exception) {
                 Log.d("MainActivity", "Exception: $exception")

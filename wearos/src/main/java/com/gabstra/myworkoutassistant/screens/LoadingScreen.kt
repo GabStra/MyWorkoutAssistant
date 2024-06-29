@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,8 @@ import com.gabstra.myworkoutassistant.composable.LoadingText
 
 @Composable
 fun LoadingScreen(text: String = "Loading...") {
+    BackHandler(true) {
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
