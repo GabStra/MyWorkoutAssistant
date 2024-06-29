@@ -66,7 +66,11 @@ class MyReceiver(
                 val appBackupStartJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_START_JSON)
 
                 if(appBackupStartJson != null){
-                    navController.navigate(Screen.Loading.route)
+                    navController.navigate(Screen.Loading.route){
+                        popUpTo(Screen.WorkoutSelection.route) {
+                            inclusive = true
+                        }
+                    }
                 }
 
                 if(workoutStoreJson != null || appBackupEndJson != null){
