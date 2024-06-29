@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -31,10 +34,19 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit, onEditModeEnabled : () -> Unit, onEditModeDisabled: () -> Unit){
+fun WeightSetScreen (
+    viewModel: AppViewModel,
+    modifier: Modifier,
+    state: WorkoutState.Set,
+    forceStopEditMode: Boolean,
+    bottom: @Composable () -> Unit,
+    onEditModeEnabled : () -> Unit,
+    onEditModeDisabled: () -> Unit
+){
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData
@@ -42,6 +54,12 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
+
+    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val updateInteractionTime = {
+        lastInteractionTime = System.currentTimeMillis()
+    }
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
@@ -52,6 +70,13 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
     LaunchedEffect(isInEditMode) {
         if (isInEditMode) {
             onEditModeEnabled()
+            while (isInEditMode) {
+                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                    isRepsInEditMode = false
+                    isWeightInEditMode = false
+                }
+                delay(1000) // Check every second
+            }
         } else {
             onEditModeDisabled()
         }
@@ -110,6 +135,7 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
                     onLongClick = {
                         if (!forceStopEditMode) {
                             isRepsInEditMode = !isRepsInEditMode
+                            updateInteractionTime()
                             isWeightInEditMode = false
                         }
 
@@ -162,6 +188,7 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
                     onLongClick = {
                         if (!forceStopEditMode) {
                             isWeightInEditMode = !isWeightInEditMode
+                            updateInteractionTime()
                             isRepsInEditMode = false
                         }
                         VibrateOnce(context)
@@ -210,7 +237,14 @@ fun WeightSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Workout
     ){
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = null,
+                        indication = null
+                    ) {
+                        updateInteractionTime()
+                    },
                 onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },

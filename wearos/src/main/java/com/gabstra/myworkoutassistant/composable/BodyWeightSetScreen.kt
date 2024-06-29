@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,6 +32,7 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -40,6 +43,12 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     var currentSet by remember(state.set.id) { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
+
+    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val updateInteractionTime = {
+        lastInteractionTime = System.currentTimeMillis()
+    }
 
     LaunchedEffect(currentSet) {
         viewModel.updateCurrentSetData(currentSet)
@@ -52,6 +61,12 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     LaunchedEffect(isRepsInEditMode) {
         if (isRepsInEditMode) {
             onEditModeEnabled()
+            while (isRepsInEditMode) {
+                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                    isRepsInEditMode = false
+                }
+                delay(1000) // Check every second
+            }
         } else {
             onEditModeDisabled()
         }
@@ -87,6 +102,7 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
                     onLongClick = {
                         if (!forceStopEditMode) {
                             isRepsInEditMode = !isRepsInEditMode
+                            updateInteractionTime()
                         }
 
                         VibrateOnce(context)
@@ -140,7 +156,14 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     ){
         if (isRepsInEditMode) {
             ControlButtonsVertical(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = null,
+                        indication = null
+                    ) {
+                        updateInteractionTime()
+                    },
                 onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },

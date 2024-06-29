@@ -2,9 +2,12 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -31,6 +34,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.UiState
+import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
@@ -39,6 +43,7 @@ import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlin.math.roundToInt
 
 private fun getProgressIndicatorSegments() = listOf(
     ProgressIndicatorSegment(.166f, Color.hsl(0f, 0.02f, 0.68f)),
@@ -59,14 +64,14 @@ fun HeartRateCircularChart(
     val context = LocalContext.current
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
 
-    val isDataStale = remember { mutableStateOf(false) }
+    var isDataStale by remember { mutableStateOf(false) }
 
     // Simplified data stale counter using LaunchedEffect for automatic cancellation
     LaunchedEffect(hr) {
         if (hr > 0) {
-            isDataStale.value = false
+            isDataStale = false
             delay(5000)  // wait for 5 seconds
-            isDataStale.value = true
+            isDataStale = true
         }
     }
 
@@ -87,34 +92,57 @@ fun HeartRateCircularChart(
         }
     }
 
-    val mapPercentage = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
+
     val segments = remember { getProgressIndicatorSegments() }
 
-    HeartRateView(modifier, hr, isDataStale.value, mapPercentage, segments)
+    HeartRateView(modifier, hr, isDataStale, mhrPercentage, segments)
 }
 
-@OptIn(ExperimentalHorologistApi::class)
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun RowScope.combinedClickable(
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+): Modifier = Modifier.combinedClickable(
+    onClick = onClick,
+    onLongClick = onLongClick
+)
+
+@OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HeartRateView(
     modifier: Modifier,
     hr: Int,
     isDataStale: Boolean,
-    mapPercentage: Float,
+    mhrPercentage: Float,
     segments: List<ProgressIndicatorSegment>
 ) {
+    val mapPercentage = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
+
+    var isDisplayingHr by remember { mutableStateOf(true) }
+    val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "${String.format("%.1f", mhrPercentage).replace(',','.')}%"
+    val context = LocalContext.current
+
     Box(
         modifier = modifier,
         contentAlignment = Alignment.BottomCenter
     ) {
-        // Heart rate display logic
         Row(
             horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .combinedClickable(
+                    onClick = { },
+                    onLongClick = {
+                        isDisplayingHr = !isDisplayingHr
+                        VibrateOnce(context)
+                    }
+                )
         ) {
             if (hr != 0) PulsingHeartWithBpm(hr) else HeartIcon(modifier = Modifier.size(12.dp))
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(5.dp))
             Text(
-                text = if (hr == 0) "-" else hr.toString(),
+                text = textToDisplay,
                 style = MaterialTheme.typography.caption2,
                 color = if (isDataStale) Color.Gray else Color.White
             )

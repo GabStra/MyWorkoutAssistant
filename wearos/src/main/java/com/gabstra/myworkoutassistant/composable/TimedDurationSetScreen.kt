@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,6 +61,21 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
 
     val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
     var timerEnabledCalled by remember { mutableStateOf(false) }
+
+    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val updateInteractionTime = {
+        lastInteractionTime = System.currentTimeMillis()
+    }
+
+    LaunchedEffect(isTimerInEditMode) {
+        while (isTimerInEditMode) {
+            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                isTimerInEditMode = false
+            }
+            delay(1000) // Check every second
+        }
+    }
 
     LaunchedEffect(currentSet) {
         viewModel.updateCurrentSetData(currentSet)
@@ -161,7 +178,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                 onLongClick = {
                     if (showStartButton) {
                         isTimerInEditMode = !isTimerInEditMode
-
+                        updateInteractionTime()
                         VibrateOnce(context)
                     }
                 },
@@ -185,7 +202,14 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
     ) {
         if (isTimerInEditMode) {
             ControlButtonsVertical(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = null,
+                        indication = null
+                    ) {
+                        updateInteractionTime()
+                    },
                 onMinusTap = { onMinusClick() },
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },
