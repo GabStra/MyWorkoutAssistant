@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.UiState
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
+import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -46,12 +47,12 @@ import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 private fun getProgressIndicatorSegments() = listOf(
-    ProgressIndicatorSegment(.166f, Color.hsl(0f, 0.02f, 0.68f)),
-    ProgressIndicatorSegment(.166f, Color.hsl(208f, 0.61f, 0.76f)),
-    ProgressIndicatorSegment(.166f, Color.hsl(200f, 0.66f, 0.49f)),
-    ProgressIndicatorSegment(.166f, Color.hsl(113f, 0.79f, 0.34f)),
-    ProgressIndicatorSegment(.166f, Color.hsl(27f, 0.97f, 0.54f)),
-    ProgressIndicatorSegment(.166f, Color.hsl(9f, 0.88f, 0.45f)),
+    ProgressIndicatorSegment(.166f, colorsByZone[0]),
+    ProgressIndicatorSegment(.166f, colorsByZone[1]),
+    ProgressIndicatorSegment(.166f, colorsByZone[2]),
+    ProgressIndicatorSegment(.166f, colorsByZone[3]),
+    ProgressIndicatorSegment(.166f, colorsByZone[4]),
+    ProgressIndicatorSegment(.166f, colorsByZone[5]),
 )
 
 @Composable

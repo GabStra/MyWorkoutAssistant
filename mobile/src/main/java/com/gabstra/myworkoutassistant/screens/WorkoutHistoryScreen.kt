@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -53,6 +54,7 @@ import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
+import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -60,6 +62,9 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
+import com.gabstra.myworkoutassistant.shared.colorsByZone
+import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
+import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -74,6 +79,7 @@ import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.delay
+import kotlin.math.floor
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -115,6 +121,8 @@ fun WorkoutHistoryScreen(
     var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
+
 
     val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
         val currentWorkoutHistory = workoutHistories[value.toInt()]
@@ -195,33 +203,46 @@ fun WorkoutHistoryScreen(
                 selectedMode = 1
             }
 
-            isLoading = false
+            if(selectedWorkoutHistory == null){
+                isLoading = false
+            }
+
         }
     }
 
     LaunchedEffect(selectedWorkoutHistory) {
-        if (selectedWorkoutHistory == null) return@LaunchedEffect
-
-        heartRateEntryModel = null
-        if (selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }) {
-
-            selectedWorkoutHistory!!.heartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
-                // Create a pair of the index of the max heartbeat and the value itself
-                heartBeatMarkerTarget = Pair(
-                    selectedWorkoutHistory!!.heartBeatRecords.indexOf(maxHeartBeat),
-                    maxHeartBeat
-                )
-            }
-
-            heartRateEntryModel =
-                CartesianChartModel(LineCartesianLayerModel.build { series(selectedWorkoutHistory!!.heartBeatRecords) })
-        }
+        if (selectedWorkoutHistory == null)  return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
+            heartRateEntryModel = null
+            if (selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }) {
+
+                selectedWorkoutHistory!!.heartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
+                    // Create a pair of the index of the max heartbeat and the value itself
+                    heartBeatMarkerTarget = Pair(
+                        selectedWorkoutHistory!!.heartBeatRecords.indexOf(maxHeartBeat),
+                        maxHeartBeat
+                    )
+                }
+
+                zoneCounter = mapOf(5 to 0, 4 to 0, 3 to 0, 2 to 0, 1 to 0, 0 to 0)
+
+                for (heartBeat in selectedWorkoutHistory!!.heartBeatRecords) {
+                    val percentage = getMaxHearthRatePercentage(heartBeat, userAge)
+                    val zone = mapPercentageToZone(percentage)
+                    zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
+                }
+
+                heartRateEntryModel =
+                    CartesianChartModel(LineCartesianLayerModel.build { series(selectedWorkoutHistory!!.heartBeatRecords) })
+            }
+
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
             setHistoriesByExerciseId = setHistories.groupBy { it.exerciseId }
         }
+
+        isLoading = false
     }
 
     val graphsTabContent = @Composable {
@@ -301,6 +322,31 @@ fun WorkoutHistoryScreen(
                 title = "HR over workout duration (1/2 sec intervals)",
                 userAge = userAge,
             )
+        }
+
+        if(zoneCounter!= null){
+            //in a column display a progress bar for each zone
+            Column(
+                modifier = Modifier.padding(15.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                //Invert the order of the zones
+                zoneCounter!!.forEach { (zone, count) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ){
+                        Text("Zone $zone")
+                        Spacer(modifier = Modifier.width(10.dp))
+                        LinearProgressIndicator(
+                            progress = { count.toFloat() / selectedWorkoutHistory!!.heartBeatRecords.size },
+                            modifier = Modifier.weight(1f),
+                            color = colorsByZone[zone]
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(formatSecondsToMinutesSeconds(floor(count / 2.0).toInt()))
+                    }
+                }
+            }
         }
 
         Text(
@@ -460,12 +506,12 @@ fun WorkoutHistoryScreen(
                 )
             }
 
-            if (workoutHistories.isEmpty() || selectedWorkoutHistory == null) {
+            if (isLoading) {
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp),
-                    text = if (isLoading) "Loading..." else "No history found",
+                    text = if (workoutHistories.isEmpty() || selectedWorkoutHistory == null) "No history found" else "Loading...",
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(10.dp))

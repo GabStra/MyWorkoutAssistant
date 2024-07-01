@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
+import androidx.compose.ui.graphics.Color
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
@@ -173,6 +174,15 @@ fun getNewSetFromSetData(set: Set, setData: SetData): Set? {
 
     return null
 }
+
+val colorsByZone = arrayOf(
+    Color.hsl(0f, 0.02f, 0.68f),
+    Color.hsl(208f, 0.61f, 0.76f),
+    Color.hsl(200f, 0.66f, 0.49f),
+    Color.hsl(113f, 0.79f, 0.34f),
+    Color.hsl(27f, 0.97f, 0.54f),
+    Color.hsl(9f, 0.88f, 0.45f)
+)
 
 fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
     val mhr = 208 - (0.7f * age)

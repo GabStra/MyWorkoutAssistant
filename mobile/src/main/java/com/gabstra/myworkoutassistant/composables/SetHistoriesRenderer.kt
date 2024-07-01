@@ -32,8 +32,7 @@ fun SetHistoriesRenderer(setHistories: List<SetHistory>) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         for (set in setHistories) {
-            val setData = set.setData
-            when (setData) {
+            when (val setData = set.setData) {
                 is WeightSetData -> {
                     Row(
                         modifier = Modifier
@@ -66,7 +65,7 @@ fun SetHistoriesRenderer(setHistories: List<SetHistory>) {
                 is EnduranceSetData -> {
                     Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)")
                     Spacer(modifier = Modifier.height(5.dp))
-                    Text("Done: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)")
+                    Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)")
                 }
             }
 

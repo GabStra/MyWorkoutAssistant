@@ -18,4 +18,5 @@ data class Workout(
     val nextVersionId: UUID? = null,
     val isActive: Boolean = true,
     val timesCompletedInAWeek: Int? = null,
+    val globalId: UUID
 )

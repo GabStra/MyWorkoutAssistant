@@ -175,6 +175,8 @@ fun WorkoutsScreen(
 
     val activeAndEnabledWorkouts = workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
 
+    val activeWorkouts = workouts.filter { it.isActive }.sortedBy { it.order }
+
     val timesCompletedInAWeekObjective = enabledWorkouts.filter { it.timesCompletedInAWeek != null }.associate { workout ->
         workout.id to (workout.timesCompletedInAWeek ?: 0)
     }
@@ -188,6 +190,8 @@ fun WorkoutsScreen(
 
     var groupedWorkoutsHistories by remember { mutableStateOf<Map<LocalDate, List<WorkoutHistory>>?>(null) }
     var workoutById by remember { mutableStateOf<Map<UUID, Workout>?>(null) }
+
+    var weeklyWorkoutsByActualTarget by remember { mutableStateOf<Map<Workout, Pair<Int,Int>>?>(null) }
 
     var selectedCalendarWorkouts by remember { mutableStateOf<List<Pair<WorkoutHistory,Workout>>?>(null) }
 
@@ -228,19 +232,48 @@ fun WorkoutsScreen(
             groupedWorkoutsHistories?.get(date) ?: emptyList()  // Default to empty list if no workouts for the day
         }
 
-        val workoutCountsById = workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
+        if(workoutHistoriesInAWeek.isEmpty()) return
 
-        val progressList = enabledWorkouts.filter{ workout -> timesCompletedInAWeekObjective.contains(workout.id) }.map { workout ->
-            val target = timesCompletedInAWeekObjective[workout.id] ?: 0
-            val actual = workoutCountsById[workout.id] ?: 0
-            if (target > 0) (actual.toDouble() / target) else 0.0
+        val weeklyWorkouts = workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
+            enabledWorkouts.firstOrNull { it.id == workoutHistory.workoutId }
         }
 
-        objectiveProgress =  progressList.average()
+        val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.distinct()
+
+        val totalWeeklyWorkouts = weeklyWorkouts +
+                activeAndEnabledWorkouts.filter { !uniqueGlobalIds.contains(it.globalId) && timesCompletedInAWeekObjective.contains(it.id) }
+
+        val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
+        val workoutCountsByGlobalId = weeklyWorkouts.groupingBy { it.globalId }.eachCount()
+
+        // Calculate progress list
+        val progressList = workoutsByGlobalId.map { (globalId, workouts) ->
+            val totalTarget = workouts.sumOf { timesCompletedInAWeekObjective[it.id] ?: 0 }
+            val averageTarget = totalTarget / workouts.size
+            val actual = workoutCountsByGlobalId[globalId] ?: 0
+            if (averageTarget > 0) (actual.toDouble() / averageTarget) else 0.0
+        }
+
+        weeklyWorkoutsByActualTarget = workoutsByGlobalId.map { (globalId, workouts) ->
+            val totalTarget = workouts.sumOf { timesCompletedInAWeekObjective[it.id] ?: 0 }
+            val averageTarget = totalTarget / workouts.size
+            val actual = workoutCountsByGlobalId[globalId] ?: 0
+
+            //get the active workout in workouts
+            var activeWorkout = workouts.firstOrNull { it.isActive }
+            if(activeWorkout == null) activeWorkout = workouts.first()
+            activeWorkout to Pair(actual,averageTarget)
+        }.toMap().toSortedMap(compareBy { it.order})
+
+
+        // Calculate average objective progress
+        objectiveProgress = progressList.average()
     }
 
     LaunchedEffect(enabledWorkouts){
-        groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
+        groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
+            enabledWorkouts.any { it.id == workoutHistory.workoutId }
+        }.groupBy { it.date }
         workoutById = enabledWorkouts.associateBy { it.id }
         calculateObjectiveProgress(LocalDate.now())
     }
@@ -418,20 +451,56 @@ fun WorkoutsScreen(
 
                                 val currentMonth = currentDate.format(DateTimeFormatter.ofPattern("MMM"))
 
+                                ExpandableCard(
+                                    isExpandable = weeklyWorkoutsByActualTarget != null && weeklyWorkoutsByActualTarget!!.isNotEmpty(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(15.dp),
+                                    title = { modifier ->
+                                        Column(modifier){
+                                            Text(
+                                                text = "Week progress (${getStartOfWeek(currentDate).dayOfMonth} - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth): ${(objectiveProgress * 100).toInt()}%",
+                                                color = Color.White,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(start= 10.dp,top = 10.dp, bottom = 10.dp)
+                                            )
+                                            ObjectiveProgressBar(progress = objectiveProgress.toFloat())
+                                        }
+                                    },
+                                    content = {
+                                        Column(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                                        ){
+                                            weeklyWorkoutsByActualTarget?.forEach { (workout, pair) ->
+                                                Row(
+                                                    modifier = Modifier.padding(5.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ){
+                                                    Text(
+                                                        text = workout.name,
+                                                        modifier = Modifier.weight(1f),
+                                                        color = Color.White
+                                                    )
+                                                    Text(
+                                                        text = "${pair.first}/${pair.second}",
+                                                        color = Color.White
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onOpen = { isCardExpanded = true },
+                                    onClose = { isCardExpanded = false }
+                                )
+
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(15.dp)
                                 ){
-                                    Text(
-                                        text = "Weekly progress (${getStartOfWeek(currentDate).dayOfMonth} - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth): ${"%.2f".format(objectiveProgress * 100)}%",
-                                        textAlign = TextAlign.Center,
-                                        color = Color.White,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp)
-                                    )
-                                    ObjectiveProgressBar(progress = objectiveProgress.toFloat())
+
                                 }
                             }}
                             item{
@@ -484,7 +553,7 @@ fun WorkoutsScreen(
                     1 -> {
                         GenericSelectableList(
                             PaddingValues(0.dp,5.dp),
-                            items = activeAndEnabledWorkouts,
+                            items = activeWorkouts,
                             selectedItems= selectedWorkouts,
                             isSelectionModeActive,
                             onItemClick = {

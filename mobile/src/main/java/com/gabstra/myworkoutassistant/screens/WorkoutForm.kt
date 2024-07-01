@@ -164,7 +164,8 @@ fun WorkoutForm(
                         usePolarDevice = usePolarDeviceState.value,
                         creationDate = LocalDate.now(),
                         order =  workout?.order ?: 0,
-                        timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull()
+                        timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
+                        globalId = workout?.globalId ?: java.util.UUID.randomUUID(),
                     )
 
                     // Call the callback to insert/update the workout
