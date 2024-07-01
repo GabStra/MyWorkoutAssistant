@@ -18,6 +18,20 @@ class WorkoutManager {
             }
         }
 
+        fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout,id: UUID): List<Workout> {
+            val newVersion = updatedWorkout.copy(
+                id = id, // Genera un nuovo ID per la nuova versione
+                creationDate = LocalDate.now(), // Imposta la data corrente
+                previousVersionId = oldWorkout.id // Imposta il riferimento alla versione precedente
+            )
+
+            val updatedOldWorkout = updatedWorkout.copy(isActive = false, nextVersionId = newVersion.id)
+
+            return workouts.map { workout ->
+                if (workout == oldWorkout) updatedOldWorkout else workout
+            } + newVersion
+        }
+
         fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
             val newVersion = updatedWorkout.copy(
                 id = UUID.randomUUID(), // Genera un nuovo ID per la nuova versione

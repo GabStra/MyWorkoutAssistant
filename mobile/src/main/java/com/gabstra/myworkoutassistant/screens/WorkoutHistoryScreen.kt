@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -130,6 +131,8 @@ fun WorkoutHistoryScreen(
 
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
+            Log.d("WorkoutHistoryScreen", "Workout id: ${workout.id}")
+
             workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
             //stop if no workout histories
             if (workoutHistories.isEmpty()) {

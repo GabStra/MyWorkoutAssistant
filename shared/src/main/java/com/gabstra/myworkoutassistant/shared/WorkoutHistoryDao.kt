@@ -14,6 +14,10 @@ interface WorkoutHistoryDao {
     @Query("SELECT * FROM workout_history WHERE id = :id")
     suspend fun getWorkoutHistoryById(id: Int): WorkoutHistory?
 
+    //create a query to check if a workout history exists for a specific workout that returns a bool
+    @Query("SELECT EXISTS(SELECT * FROM workout_history WHERE workoutId = :workoutId)")
+    suspend fun workoutHistoryExists(workoutId: UUID): Boolean
+
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId ORDER BY date DESC LIMIT 1")
     suspend fun getLatestWorkoutHistoryByWorkoutId(workoutId: UUID): WorkoutHistory?
 

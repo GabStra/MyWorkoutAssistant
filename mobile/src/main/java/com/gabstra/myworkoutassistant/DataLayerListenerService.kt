@@ -8,6 +8,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
@@ -27,6 +28,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
+import java.util.UUID
 
 class DataLayerListenerService : WearableListenerService() {
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -55,7 +57,11 @@ class DataLayerListenerService : WearableListenerService() {
                                 .create()
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
 
-                            val workoutHistoryId = workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory).toInt()
+                            val newId = UUID.randomUUID()
+
+                            var newWorkoutHistory = workoutHistoryStore.WorkoutHistory.copy(workoutId = newId)
+
+                            val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()
                             workoutHistoryStore.ExerciseHistories.forEach { it.workoutHistoryId = workoutHistoryId }
                             setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
 
@@ -89,7 +95,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 val newWorkout = workout.copy(workoutComponents = workoutComponents)
-                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkout(workoutStore.workouts, workout, newWorkout))
+                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkout(workoutStore.workouts, workout, newWorkout, newId))
                                 workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
 
                                 val intent = Intent(INTENT_ID).apply {
