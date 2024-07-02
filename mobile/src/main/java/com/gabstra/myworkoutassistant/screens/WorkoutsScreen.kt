@@ -272,7 +272,7 @@ fun WorkoutsScreen(
 
     LaunchedEffect(enabledWorkouts){
         groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
-            enabledWorkouts.any { it.id == workoutHistory.workoutId }
+            enabledWorkouts.any { it.id == workoutHistory.workoutId } && workoutHistory.isDone
         }.groupBy { it.date }
         workoutById = enabledWorkouts.associateBy { it.id }
         calculateObjectiveProgress(LocalDate.now())

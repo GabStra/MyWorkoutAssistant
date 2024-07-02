@@ -87,7 +87,7 @@ import kotlin.math.floor
 fun WorkoutHistoryScreen(
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
-    workoutHistoryId: Int? = null,
+    workoutHistoryId: UUID? = null,
     setHistoryDao: SetHistoryDao,
     workout: Workout,
     onGoBack: () -> Unit

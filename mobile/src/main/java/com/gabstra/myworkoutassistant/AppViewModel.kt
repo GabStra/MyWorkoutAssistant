@@ -24,7 +24,7 @@ sealed class ScreenData() {
     class NewWorkout() : ScreenData()
     class EditWorkout(val workoutId: UUID) : ScreenData()
     class WorkoutDetail(val workoutId: UUID) : ScreenData()
-    class WorkoutHistory(val workoutId: UUID,val workoutHistoryId: Int? = null) : ScreenData()
+    class WorkoutHistory(val workoutId: UUID,val workoutHistoryId: UUID? = null) : ScreenData()
     class ExerciseGroupDetail(val workoutId: UUID, val selectedExerciseGroupId: UUID) : ScreenData()
     class ExerciseDetail(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
     class ExerciseHistory(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()

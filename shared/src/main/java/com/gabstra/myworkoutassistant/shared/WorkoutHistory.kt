@@ -8,11 +8,12 @@ import java.util.UUID
 
 @Entity(tableName = "workout_history")
 data class WorkoutHistory(
-    @PrimaryKey(autoGenerate = true)
-    val id: Int = 0,
+    @PrimaryKey(autoGenerate = false)
+    val id: UUID,
     val workoutId: UUID,
     val date: LocalDate,
     val time: LocalTime,
     val duration: Int,
-    val heartBeatRecords: List<Int>
+    val heartBeatRecords: List<Int>,
+    val isDone : Boolean
 )

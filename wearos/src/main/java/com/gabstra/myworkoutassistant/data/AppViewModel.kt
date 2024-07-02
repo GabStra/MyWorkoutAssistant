@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
-import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -20,7 +19,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
-import com.gabstra.myworkoutassistant.shared.logLargeString
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
@@ -151,13 +149,16 @@ class AppViewModel : ViewModel(){
 
     private val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
 
+    private var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
+
+    private var startWorkoutTime by mutableStateOf<LocalDateTime?> (null)
+
     val setsByExercise: Map<Exercise, List<WorkoutState.Set>> get () = setStates
         .groupBy { it.parentExercise }
 
     fun setWorkout(workout: Workout){
         _selectedWorkout.value = workout;
     }
-
 
     fun startWorkout(){
         viewModelScope.launch {
@@ -176,8 +177,8 @@ class AppViewModel : ViewModel(){
         }
     }
 
-    fun sendWorkoutHistoryToPhone(){
-        viewModelScope.launch {
+    fun sendWorkoutHistoryToPhone(onEnd: (Boolean) -> Unit = {}){
+        viewModelScope.launch(Dispatchers.IO) {
             val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
             if(workoutHistory !=null){
                 val exerciseHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
@@ -189,6 +190,9 @@ class AppViewModel : ViewModel(){
                             ExerciseHistories =  exerciseHistories
                         ))
                 }
+                onEnd(true)
+            }else{
+                onEnd(false)
             }
         }
     }
@@ -208,26 +212,48 @@ class AppViewModel : ViewModel(){
         heartBeatHistory.add(heartBeat)
     }
 
-    fun endWorkout(duration: Duration, onEnd: () -> Unit = {}) {
-        viewModelScope.launch {
-            val newWorkoutHistory = WorkoutHistory(
-                workoutId= selectedWorkout.value.id,
-                date = LocalDate.now(),
-                duration = duration.seconds.toInt(),
-                heartBeatRecords = heartBeatHistory,
-                time = LocalTime.now()
-            )
+    fun pushAndStoreWorkoutData(isDone: Boolean, onEnd: () -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 
-            workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
+            if(currentWorkoutHistory == null){
+                currentWorkoutHistory = WorkoutHistory(
+                    id = UUID.randomUUID(),
+                    workoutId= selectedWorkout.value.id,
+                    date = LocalDate.now(),
+                    duration = duration.seconds.toInt(),
+                    heartBeatRecords = heartBeatHistory,
+                    time = LocalTime.now(),
+                    isDone = isDone
+                )
 
-            val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()
-            executedSetsHistory.forEach { it.workoutHistoryId = workoutHistoryId }
+                workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
+                workoutHistoryDao.insert(currentWorkoutHistory!!)
+            }else{
+                currentWorkoutHistory = currentWorkoutHistory!!.copy(
+                    duration = duration.seconds.toInt(),
+                    heartBeatRecords = heartBeatHistory,
+                    time = LocalTime.now(),
+                    isDone = isDone
+                )
+                workoutHistoryDao.updateWorkoutHistory(
+                    currentWorkoutHistory!!.id,
+                    currentWorkoutHistory!!.workoutId,
+                    currentWorkoutHistory!!.date,
+                    currentWorkoutHistory!!.time,
+                    currentWorkoutHistory!!.duration,
+                    currentWorkoutHistory!!.heartBeatRecords,
+                    currentWorkoutHistory!!.isDone
+                )
+            }
+
+            executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
             setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
 
             dataClient?.let {
                 sendWorkoutHistoryStore(
                     it,WorkoutHistoryStore(
-                        WorkoutHistory = newWorkoutHistory,
+                        WorkoutHistory = currentWorkoutHistory!!,
                         ExerciseHistories =  executedSetsHistory
                     ))
             }
@@ -245,6 +271,7 @@ class AppViewModel : ViewModel(){
         val setState = currentState as WorkoutState.Set
 
         val newSetHistory = SetHistory(
+            id = UUID.randomUUID(),
             setId = setState.set.id,
             setData = _tempCurrentSetData!!,
             order = setState.order,
@@ -320,7 +347,9 @@ class AppViewModel : ViewModel(){
     }
 
     fun setWorkoutStart(){
-        workoutStateQueue.addLast(WorkoutState.Finished(LocalDateTime.now()))
+        val startTime = LocalDateTime.now()
+        startWorkoutTime = startTime
+        workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
     }
 
     fun goToNextState(){

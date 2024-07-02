@@ -22,9 +22,9 @@ import java.util.UUID
 )
 
 data class SetHistory(
-    @PrimaryKey(autoGenerate = true)
-    val id: Int = 0,
-    var workoutHistoryId: Int? = null,
+    @PrimaryKey(autoGenerate = false)
+    val id: UUID,
+    var workoutHistoryId: UUID? = null,
     val exerciseId : UUID,
     val setId: UUID,
     val order: Int,

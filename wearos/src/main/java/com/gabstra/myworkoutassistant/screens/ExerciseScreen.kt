@@ -72,6 +72,8 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.delay
+import java.time.Duration
+import java.time.LocalDateTime
 
 
 fun Modifier.circleMask() = this.drawWithContent {
@@ -202,9 +204,8 @@ fun ExerciseScreen(
                     .size(30.dp)
                     .clip(CircleShape),
                 onClick ={
-                    VibrateOnce(context) // Make sure this is a correctly implemented function to vibrate once.
-                    showConfirmDialog =
-                        true // Ensure you have state management to handle showing a dialog.
+                    VibrateOnce(context)
+                    showConfirmDialog = true
                 },
             ) {
                 Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
@@ -352,6 +353,7 @@ fun ExerciseScreen(
         handleYesClick = {
             VibrateOnce(context)
             viewModel.storeExecutedSetHistory()
+            viewModel.pushAndStoreWorkoutData(false)
             viewModel.goToNextState()
             showConfirmDialog=false
         },

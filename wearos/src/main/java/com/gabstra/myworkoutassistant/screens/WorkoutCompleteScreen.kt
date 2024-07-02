@@ -6,17 +6,12 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.Screen
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,22 +20,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Devices
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import androidx.navigation.compose.rememberNavController
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.ButtonDefaults
-import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import androidx.wear.tooling.preview.devices.WearDevices
-import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
-import com.google.android.gms.wearable.DataClient
+import kotlinx.coroutines.delay
 
 import java.time.Duration
 import java.time.LocalDateTime
@@ -55,7 +42,6 @@ fun WorkoutCompleteScreen(
     polarViewModel: PolarViewModel
 ){
     val workout by viewModel.selectedWorkout
-
     val context = LocalContext.current
 
     val duration = remember {
@@ -66,9 +52,32 @@ fun WorkoutCompleteScreen(
     val minutes = remember { duration.toMinutes() % 60 }
     val seconds = remember { duration.seconds % 60 }
 
-    var hideAll by remember { mutableStateOf(false) }
+    var dataSent by remember { mutableStateOf(false) }
 
-    var isClickable by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit){
+        cancelWorkoutInProgressNotification(context)
+        if(!workout.usePolarDevice){
+            hrViewModel.stopMeasuringHeartRate()
+        }else{
+            polarViewModel.disconnectFromDevice()
+        }
+
+        viewModel.pushAndStoreWorkoutData(true){
+            dataSent = true
+        }
+
+        val startTime = System.currentTimeMillis()
+        while (!dataSent && System.currentTimeMillis() - startTime < 5000){
+            delay(1000)
+        }
+
+
+        navController.navigate(Screen.WorkoutSelection.route){
+            popUpTo(Screen.WorkoutSelection.route) {
+                inclusive = true
+            }
+        }
+    }
 
     Column(
         verticalArrangement = Arrangement.Center,
@@ -76,59 +85,21 @@ fun WorkoutCompleteScreen(
         modifier = Modifier
             .fillMaxSize()
     ) {
-        if(!hideAll){
-            Text(
-                text = "Time spent: ${String.format("%02d:%02d:%02d", hours, minutes, seconds)}",
-                style = MaterialTheme.typography.body2,
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = workout.name,
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.title3
-            )
-            Text(
-                text = "Completed",
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.body2
-            )
-
-            Spacer(modifier = Modifier.height(25.dp))
-            Button(
-                onClick = {
-                    isClickable = false;
-                    hideAll=true
-                    viewModel.endWorkout(duration){
-                        cancelWorkoutInProgressNotification(context)
-                        if(!workout.usePolarDevice){
-                            hrViewModel.stopMeasuringHeartRate()
-                        }else{
-                            polarViewModel.disconnectFromDevice()
-                        }
-                        navController.navigate(Screen.WorkoutSelection.route){
-                            popUpTo(Screen.WorkoutSelection.route) {
-                                inclusive = true
-                            }
-                        }
-                    }
-                },
-                enabled = isClickable,
-                modifier = Modifier.size(35.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-            ) {
-                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
-            }
-        }else{
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 40.dp),
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                LoadingText("Saving data")
-            }
-        }
+        Text(
+            text = "Time spent: ${String.format("%02d:%02d:%02d", hours, minutes, seconds)}",
+            style = MaterialTheme.typography.body2,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = workout.name,
+            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.title3
+        )
+        Text(
+            text = "Completed",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.body2
+        )
     }
 }

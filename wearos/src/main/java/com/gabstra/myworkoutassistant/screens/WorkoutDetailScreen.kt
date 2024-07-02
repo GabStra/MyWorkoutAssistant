@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import android.Manifest
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
@@ -19,12 +20,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.SendToMobile
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SendToMobile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -100,12 +104,17 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
             Button(
                 onClick = {
                     VibrateOnce(context)
-                    viewModel.sendWorkoutHistoryToPhone()
+                    viewModel.sendWorkoutHistoryToPhone(){ success ->
+                        if(success)
+                            Toast.makeText(context, "Workout History sent to phone", Toast.LENGTH_SHORT).show()
+                        else
+                            Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT).show()
+                    }
                 },
                 modifier = Modifier.size(35.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.secondary)
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
             ) {
-                Icon(imageVector = Icons.Default.Settings, contentDescription = "History")
+                Icon(imageVector = Icons.AutoMirrored.Filled.SendToMobile, contentDescription = "Send to phone")
             }
 
             Button(

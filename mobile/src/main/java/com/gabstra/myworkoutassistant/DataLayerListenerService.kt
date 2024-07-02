@@ -1,9 +1,7 @@
 package com.gabstra.myworkoutassistant
 
 import android.content.Intent
-import android.util.Log
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateSetInExerciseRecursively
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkout
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
@@ -15,7 +13,6 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
-import com.gabstra.myworkoutassistant.shared.logLargeString
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -28,7 +25,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
-import java.util.UUID
 
 class DataLayerListenerService : WearableListenerService() {
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -44,7 +40,7 @@ class DataLayerListenerService : WearableListenerService() {
                     val compressedJson = dataMap.getByteArray("compressedJson")
                     val workoutHistoryStoreJson = decompressToString(compressedJson!!)
 
-                    scope.launch {
+                    scope.launch(Dispatchers.IO) {
                         try{
                             val db = AppDatabase.getDatabase(this@DataLayerListenerService)
                             val setHistoryDao = db.setHistoryDao()
@@ -57,10 +53,24 @@ class DataLayerListenerService : WearableListenerService() {
                                 .create()
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
 
-                            val workoutHistoryId = workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory).toInt()
-                            workoutHistoryStore.ExerciseHistories.forEach { it.workoutHistoryId = workoutHistoryId }
-                            setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
+                            val workoutHistory = workoutHistoryStore.WorkoutHistory
+                            val existingWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutHistory.id)
 
+                            if(existingWorkoutHistory != null){
+                                workoutHistoryDao.updateWorkoutHistory(
+                                    workoutHistory.id,
+                                    workoutHistory.workoutId,
+                                    workoutHistory.date,
+                                    workoutHistory.time,
+                                    workoutHistory.duration,
+                                    workoutHistory.heartBeatRecords,
+                                    workoutHistory.isDone
+                                )
+                            }else{
+                                workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
+                            }
+
+                            setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
                             val setHistoriesByExerciseId = workoutHistoryStore.ExerciseHistories.groupBy { it.exerciseId }
 
                             val workoutStore = workoutStoreRepository.getWorkoutStore()

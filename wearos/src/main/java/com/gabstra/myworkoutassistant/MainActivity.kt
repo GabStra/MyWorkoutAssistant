@@ -58,7 +58,7 @@ class MyReceiver(
     private val activity: Activity
 ) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        activity.runOnUiThread {
+        activity.run {
             try{
                 val workoutStoreJson = intent.getStringExtra(DataLayerListenerService.WORKOUT_STORE_JSON)
                 val appBackupEndJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_END_JSON)
@@ -83,6 +83,7 @@ class MyReceiver(
                         popUpTo(0) { inclusive = true }
                     }
                 }
+
             }catch (exception: Exception) {
                 Log.d("MainActivity", "Exception: $exception")
             }
@@ -169,8 +170,6 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             appViewModel.phoneNode = nodes.firstOrNull()
         }
 
-        KeepOn()
-
         NavHost(navController, startDestination = Screen.WorkoutSelection.route) {
             composable(Screen.WorkoutSelection.route) {
                 WorkoutSelectionScreen(dataClient,navController, appViewModel, appHelper)
@@ -179,9 +178,11 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                 WorkoutDetailScreen(navController, appViewModel, hrViewModel)
             }
             composable(Screen.Workout.route) {
+                KeepOn()
                 WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
             }
             composable(Screen.Loading.route) {
+                KeepOn()
                 LoadingScreen("Loading Backup")
             }
         }

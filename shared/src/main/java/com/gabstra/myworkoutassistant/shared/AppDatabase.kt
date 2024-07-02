@@ -11,7 +11,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.SetDataTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
-@Database(entities = [SetHistory::class, WorkoutHistory::class], version = 19, exportSchema = false)
+@Database(entities = [SetHistory::class, WorkoutHistory::class], version = 20, exportSchema = false)
 @TypeConverters(DateTypeConverter::class, TimeTypeConverter::class, SetDataTypeConverter::class, UUIDConverter::class,ListIntConverter::class)
 
 abstract class AppDatabase : RoomDatabase() {
