@@ -117,7 +117,7 @@ class AppViewModel : ViewModel(){
         workoutHistoryDao= db.workoutHistoryDao()
     }
 
-    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0,0, creationDate = LocalDate.now()))
+    private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0,0, creationDate = LocalDate.now(), globalId = UUID.randomUUID()))
     val selectedWorkout: State<Workout> get() = _selectedWorkout
 
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
@@ -218,6 +218,8 @@ class AppViewModel : ViewModel(){
                 time = LocalTime.now()
             )
 
+            workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
+
             val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()
             executedSetsHistory.forEach { it.workoutHistoryId = workoutHistoryId }
             setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
@@ -260,8 +262,6 @@ class AppViewModel : ViewModel(){
             // If not found, add the new entry
             executedSetsHistory.add(newSetHistory)
         }
-
-        val histories = executedSetsHistory.takeLast(2)
     }
 
     private fun generateWorkoutStates() {

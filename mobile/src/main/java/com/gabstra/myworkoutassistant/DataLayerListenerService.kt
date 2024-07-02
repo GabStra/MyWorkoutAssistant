@@ -57,11 +57,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 .create()
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
 
-                            val newId = UUID.randomUUID()
-
-                            var newWorkoutHistory = workoutHistoryStore.WorkoutHistory.copy(workoutId = newId)
-
-                            val workoutHistoryId = workoutHistoryDao.insert(newWorkoutHistory).toInt()
+                            val workoutHistoryId = workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory).toInt()
                             workoutHistoryStore.ExerciseHistories.forEach { it.workoutHistoryId = workoutHistoryId }
                             setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
 
@@ -95,7 +91,7 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 val newWorkout = workout.copy(workoutComponents = workoutComponents)
-                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkout(workoutStore.workouts, workout, newWorkout, newId))
+                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkoutOld(workoutStore.workouts, workout, newWorkout))
                                 workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
 
                                 val intent = Intent(INTENT_ID).apply {
