@@ -178,7 +178,7 @@ class AppViewModel : ViewModel(){
     }
 
     fun sendWorkoutHistoryToPhone(onEnd: (Boolean) -> Unit = {}){
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.Main) {
             val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
             if(workoutHistory !=null){
                 val exerciseHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)

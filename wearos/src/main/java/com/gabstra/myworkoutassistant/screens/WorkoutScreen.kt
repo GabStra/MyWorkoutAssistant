@@ -127,20 +127,19 @@ fun WorkoutScreen(
         title = "Workout in progress",
         handleYesClick = {
             VibrateOnce(context)
+            viewModel.pushAndStoreWorkoutData(false)
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()
             }else{
                 polarViewModel.disconnectFromDevice()
             }
             cancelWorkoutInProgressNotification(context)
-            coroutineScope.launch {
-                navController.navigate(Screen.WorkoutSelection.route){
-                    popUpTo(Screen.WorkoutSelection.route) {
-                        inclusive = true
-                    }
+            navController.navigate(Screen.WorkoutSelection.route){
+                popUpTo(Screen.WorkoutSelection.route) {
+                    inclusive = true
                 }
-                showWorkoutInProgressDialog=false
             }
+            showWorkoutInProgressDialog = false
         },
         handleNoClick = {
             VibrateOnce(context)
