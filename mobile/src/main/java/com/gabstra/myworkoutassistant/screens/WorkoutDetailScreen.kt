@@ -394,7 +394,7 @@ fun WorkoutDetailScreen(
                             onClose = { isDragDisabled = false }
                         )
                     },
-                    isDragDisabled = false
+                    isDragDisabled = true
                 )
             }
         }

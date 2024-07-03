@@ -337,50 +337,64 @@ fun WorkoutsScreen(
         bottomBar = {
             if(selectedWorkouts.isNotEmpty()) BottomAppBar(
                 actions =  {
-                    IconButton(onClick = {
-                        val newWorkouts = activeAndEnabledWorkouts.filter { workout ->
-                            selectedWorkouts.none { it === workout }
-                        }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        IconButton(onClick = {
+                            val newWorkouts = activeAndEnabledWorkouts.filter { workout ->
+                                selectedWorkouts.none { it === workout }
+                            }
 
-                        val newWorkoutsWithUpdatedOrder = newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
+                            val newWorkoutsWithUpdatedOrder =
+                                newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
 
-                        appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
-                        scope.launch {
-                            for (workout in selectedWorkouts) {
-                                val workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
-                                for(workoutHistory in workoutHistories) {
-                                    setHistoryDao.deleteByWorkoutHistoryId(workoutHistory.id)
+                            appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
+                            scope.launch {
+                                for (workout in selectedWorkouts) {
+                                    val workoutHistories =
+                                        workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
+                                    for (workoutHistory in workoutHistories) {
+                                        setHistoryDao.deleteByWorkoutHistoryId(workoutHistory.id)
+                                    }
+                                    workoutHistoryDao.deleteAllByWorkoutId(workout.id)
                                 }
-                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                groupedWorkoutsHistories =
+                                    workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
                             }
-                            groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
+                            selectedWorkouts = emptyList()
+                            isSelectionModeActive = false
+                        }) {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
                         }
-                        selectedWorkouts = emptyList()
-                        isSelectionModeActive = false
-                    }) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
-                    }
-                    Button(
-                        modifier = Modifier.padding(5.dp),
-                        onClick = {
-                            for (workout in selectedWorkouts) {
-                                appViewModel.updateWorkout(workout,workout.copy(enabled = true))
-                            }
-                            selectedWorkouts = emptyList()
-                            isSelectionModeActive = false
-                        }) {
-                        Text("Enable")
-                    }
-                    Button(
-                        modifier = Modifier.padding(5.dp),
-                        onClick = {
-                            for (workout in selectedWorkouts) {
-                                appViewModel.updateWorkout(workout,workout.copy(enabled = false))
-                            }
-                            selectedWorkouts = emptyList()
-                            isSelectionModeActive = false
-                        }) {
-                        Text("Disable")
+                        Button(
+                            modifier = Modifier.padding(5.dp),
+                            onClick = {
+                                for (workout in selectedWorkouts) {
+                                    appViewModel.updateWorkout(
+                                        workout,
+                                        workout.copy(enabled = true)
+                                    )
+                                }
+                                selectedWorkouts = emptyList()
+                                isSelectionModeActive = false
+                            }) {
+                            Text("Enable")
+                        }
+                        Button(
+                            modifier = Modifier.padding(5.dp),
+                            onClick = {
+                                for (workout in selectedWorkouts) {
+                                    appViewModel.updateWorkout(
+                                        workout,
+                                        workout.copy(enabled = false)
+                                    )
+                                }
+                                selectedWorkouts = emptyList()
+                                isSelectionModeActive = false
+                            }) {
+                            Text("Disable")
+                        }
                     }
                 }
             )
@@ -579,7 +593,7 @@ fun WorkoutsScreen(
                                     onClose = { isCardExpanded = false }
                                 )
                             },
-                            isDragDisabled = false
+                            isDragDisabled = true
                         )
                     }
                 }
