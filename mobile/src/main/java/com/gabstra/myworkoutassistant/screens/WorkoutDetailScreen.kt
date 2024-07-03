@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -284,13 +285,18 @@ fun WorkoutDetailScreen(
         },
     ) { it ->
         if (workout.workoutComponents.isEmpty()) {
-            Text(
+            Card(
                 modifier = Modifier
-                    .padding(it)
-                    .fillMaxSize(),
-                text = "Add a new workout component",
-                textAlign = TextAlign.Center
-            )
+                    .padding(15.dp)
+            ){
+                Text(
+                    text = "Add a new workout component",
+                    textAlign = TextAlign.Center,
+                    color = Color.White,
+                    modifier = Modifier
+                        .padding(15.dp)
+                )
+            }
         } else {
             Column(
                 modifier = Modifier

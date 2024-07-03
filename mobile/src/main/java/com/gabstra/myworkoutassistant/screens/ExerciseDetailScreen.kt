@@ -210,11 +210,18 @@ fun ExerciseDetailScreen(
         },
     ) { it ->
         if (sets.isEmpty()) {
-            Text(
+            Card(
                 modifier = Modifier
-                    .padding(it)
-                    .fillMaxSize(), text = "Add a new set", textAlign = TextAlign.Center
-            )
+                    .padding(15.dp)
+            ){
+                Text(
+                    text = "Add a new set",
+                    textAlign = TextAlign.Center,
+                    color = Color.White,
+                    modifier = Modifier
+                        .padding(15.dp)
+                )
+            }
         } else {
             Column(
                 modifier = Modifier
