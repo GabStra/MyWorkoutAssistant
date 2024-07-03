@@ -184,6 +184,17 @@ val colorsByZone = arrayOf(
     Color.hsl(9f, 0.88f, 0.45f)
 )
 
+//define an array that for each zone, contains the upper and lower limit in percentage
+val zoneRanges = arrayOf(
+    0f to 50f,
+    50f to 60f,
+    60f to 70f,
+    70f to 80f,
+    80f to 90f,
+    90f to 100f
+)
+
+
 fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
     val mhr = 208 - (0.7f * age)
     return (heartRate / mhr) * 100

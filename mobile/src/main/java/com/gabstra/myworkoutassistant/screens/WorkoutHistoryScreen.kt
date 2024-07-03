@@ -63,11 +63,13 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.colorsByZone
+import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.zoneRanges
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -225,11 +227,12 @@ fun WorkoutHistoryScreen(
                     )
                 }
 
-                zoneCounter = mapOf(5 to 0, 4 to 0, 3 to 0, 2 to 0, 1 to 0, 0 to 0)
+                zoneCounter = mapOf(5 to 0, 4 to 0, 3 to 0, 2 to 0, 1 to 0)
 
                 for (heartBeat in selectedWorkoutHistory!!.heartBeatRecords) {
                     val percentage = getMaxHearthRatePercentage(heartBeat, userAge)
                     val zone = mapPercentageToZone(percentage)
+                    if(zone == 0) continue
                     zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
                 }
 
@@ -332,19 +335,29 @@ fun WorkoutHistoryScreen(
             ) {
                 //Invert the order of the zones
                 zoneCounter!!.forEach { (zone, count) ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ){
+                    Column(modifier = Modifier.fillMaxWidth()){
+                        val progress = count.toFloat() / zoneCounter!!.values.sum()
                         Text("Zone $zone")
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(Modifier.height(5.dp))
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            val (lowerBound, upperBound) = zoneRanges[zone]
+                            val lowHr = getHeartRateFromPercentage(lowerBound, userAge)
+                            val highHr = getHeartRateFromPercentage(upperBound, userAge)
+                            Text(
+                                "$lowHr - $highHr bpm",
+                                Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text("${(progress*100).toInt()}% ${formatSecondsToMinutesSeconds(floor(count / 2.0).toInt())}", Modifier.weight(1f), textAlign = TextAlign.End)
+                        }
+                        Spacer(Modifier.height(5.dp))
                         LinearProgressIndicator(
-                            progress = { count.toFloat() / selectedWorkoutHistory!!.heartBeatRecords.size },
-                            modifier = Modifier.weight(1f),
-                            color = colorsByZone[zone]
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
+                            color = colorsByZone[zone],
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(formatSecondsToMinutesSeconds(floor(count / 2.0).toInt()))
                     }
+
                 }
             }
         }

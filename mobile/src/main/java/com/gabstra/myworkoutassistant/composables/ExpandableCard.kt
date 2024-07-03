@@ -35,6 +35,7 @@ fun ExpandableCard(
     isExpandable:Boolean = true,
     isOpen: Boolean = false,
     title: @Composable (modifier: Modifier) -> Unit,
+    subContent : @Composable () -> Unit = {},
     content: @Composable () -> Unit,
     onOpen: () -> Unit,
     onClose: () -> Unit,
@@ -70,6 +71,7 @@ fun ExpandableCard(
                     Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
                 }
             }
+            subContent()
             if(openStatus){
                 content()
             }

@@ -471,16 +471,17 @@ fun WorkoutsScreen(
                                         .fillMaxWidth()
                                         .padding(15.dp),
                                     title = { modifier ->
-                                        Column(modifier){
-                                            Text(
-                                                text = "Week progress (${getStartOfWeek(currentDate).dayOfMonth} - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth): ${(objectiveProgress * 100).toInt()}%",
-                                                color = Color.White,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(start= 10.dp,top = 10.dp, bottom = 10.dp)
-                                            )
-                                            ObjectiveProgressBar(progress = objectiveProgress.toFloat())
-                                        }
+                                        Text(
+                                            text = "Weekly progress (${getStartOfWeek(currentDate).dayOfMonth} - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth): ${(objectiveProgress * 100).toInt()}%",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = Color.White,
+                                            modifier = modifier
+                                                .fillMaxWidth()
+                                                .padding(start= 15.dp)
+                                        )
+                                    },
+                                    subContent = {
+                                        ObjectiveProgressBar(progress = objectiveProgress.toFloat())
                                     },
                                     content = {
                                         Column(
@@ -508,14 +509,6 @@ fun WorkoutsScreen(
                                     onOpen = { isCardExpanded = true },
                                     onClose = { isCardExpanded = false }
                                 )
-
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(15.dp)
-                                ){
-
-                                }
                             }}
                             item{
                                 WorkoutsCalendar(
