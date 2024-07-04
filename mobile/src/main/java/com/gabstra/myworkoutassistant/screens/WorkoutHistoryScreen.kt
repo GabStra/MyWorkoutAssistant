@@ -28,6 +28,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -141,8 +142,6 @@ fun WorkoutHistoryScreen(
 
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
-            Log.d("WorkoutHistoryScreen", "Workout id: ${workout.id}")
-
             workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
             //stop if no workout histories
             if (workoutHistories.isEmpty()) {
@@ -322,22 +321,50 @@ fun WorkoutHistoryScreen(
             HeartRateChart(
                 modifier = Modifier.padding(10.dp),
                 cartesianChartModel = heartRateEntryModel!!,
-                title = "HR over workout duration (1/2 sec intervals)",
+                title = "HR over workout duration",
                 userAge = userAge,
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val minHeartRate =  selectedWorkoutHistory!!.heartBeatRecords.min()
+                val maxHeartRate =  selectedWorkoutHistory!!.heartBeatRecords.max()
+
+                Text(
+                    text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
+                    Modifier.weight(1f),
+                )
+                Spacer(Modifier.weight(1f))
+                Column {
+                    Text(
+                        text = "Min: $minHeartRate bpm",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        text = "Max: $maxHeartRate bpm",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
         }
+
+
 
         if(zoneCounter!= null){
             //in a column display a progress bar for each zone
             Column(
                 modifier = Modifier.padding(15.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 //Invert the order of the zones
                 zoneCounter!!.forEach { (zone, count) ->
                     Column(modifier = Modifier.fillMaxWidth()){
                         val progress = count.toFloat() / zoneCounter!!.values.sum()
-                        Text("Zone $zone")
+                        Text(
+                            text = "Zone $zone",
+                        )
                         Spacer(Modifier.height(5.dp))
                         Row(modifier = Modifier.fillMaxWidth()) {
                             val (lowerBound, upperBound) = zoneRanges[zone]
@@ -346,14 +373,23 @@ fun WorkoutHistoryScreen(
                             Text(
                                 "$lowHr - $highHr bpm",
                                 Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
                             )
                             Spacer(Modifier.weight(1f))
-                            Text("${(progress*100).toInt()}% ${formatSecondsToMinutesSeconds(floor(count / 2.0).toInt())}", Modifier.weight(1f), textAlign = TextAlign.End)
+                            Text(
+                                text ="${(progress*100).toInt()}% ${formatSecondsToMinutesSeconds(floor(count / 2.0).toInt())}",
+                                Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.End
+                            )
                         }
                         Spacer(Modifier.height(5.dp))
                         LinearProgressIndicator(
                             progress = { progress },
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(16.dp)
+                                .clip(RoundedCornerShape(16.dp)),
                             color = colorsByZone[zone],
                         )
                     }
@@ -361,13 +397,6 @@ fun WorkoutHistoryScreen(
                 }
             }
         }
-
-        Text(
-            modifier = Modifier
-                .fillMaxWidth(),
-            text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
-            textAlign = TextAlign.Center
-        )
 
         Column(
             modifier = Modifier

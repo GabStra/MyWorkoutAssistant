@@ -206,7 +206,7 @@ fun getMaxHeartRate(age: Int): Int {
 
 fun getHeartRateFromPercentage(percentage: Float, age: Int): Int {
     val mhr = getMaxHeartRate(age)
-    val heartRate = percentage * mhr
+    val heartRate = (percentage/100) * mhr
     return heartRate.toInt()
 }
 

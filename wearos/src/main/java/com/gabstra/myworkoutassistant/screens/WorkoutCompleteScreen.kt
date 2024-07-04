@@ -67,7 +67,7 @@ fun WorkoutCompleteScreen(
         }
 
         val startTime = System.currentTimeMillis()
-        while (!dataSent && System.currentTimeMillis() - startTime < 5000){
+        while (!dataSent && System.currentTimeMillis() - startTime < 10000){
             delay(1000)
         }
 

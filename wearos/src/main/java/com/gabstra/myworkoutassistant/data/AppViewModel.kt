@@ -209,7 +209,7 @@ class AppViewModel : ViewModel(){
     }
 
     fun registerHeartBeat(heartBeat: Int){
-        heartBeatHistory.add(heartBeat)
+        if(heartBeat > 0) heartBeatHistory.add(heartBeat)
     }
 
     fun pushAndStoreWorkoutData(isDone: Boolean, onEnd: () -> Unit = {}) {

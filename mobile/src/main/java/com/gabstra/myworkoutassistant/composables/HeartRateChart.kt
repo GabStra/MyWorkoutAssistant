@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
@@ -30,6 +32,7 @@ import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.of
 import com.patrykandpatrick.vico.core.cartesian.Zoom
+import com.patrykandpatrick.vico.core.cartesian.axis.AxisItemPlacer
 import com.patrykandpatrick.vico.core.cartesian.data.AxisValueOverrider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
@@ -78,30 +81,29 @@ fun HeartRateChart(
             scrollState = rememberVicoScrollState(scrollEnabled = false),
             chart = rememberCartesianChart(
                 rememberLineCartesianLayer(axisValueOverrider = AxisValueOverrider.fixed(null,null,50f,200f)),
-                decorations =
-                listOf(
+                decorations = listOf(
                     rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(0.5f,userAge).toFloat() },
+                        y = { getHeartRateFromPercentage(50f,userAge).toFloat() },
                         line = rememberLineComponent(color = Color.hsl(208f, 0.61f, 0.76f,.5f), thickness = 2.dp),
                     ),
                     rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(0.6f,userAge).toFloat() },
+                        y = { getHeartRateFromPercentage(60f,userAge).toFloat() },
                         line = rememberLineComponent(color = Color.hsl(200f, 0.66f, 0.49f,.5f), thickness = 2.dp),
                     ),
                     rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(0.7f,userAge).toFloat() },
+                        y = { getHeartRateFromPercentage(70f,userAge).toFloat() },
                         line = rememberLineComponent(color = Color.hsl(113f, 0.79f, 0.34f,.5f),thickness = 2.dp),
                     ),
                     rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(0.8f,userAge).toFloat() },
+                        y = { getHeartRateFromPercentage(80f,userAge).toFloat() },
                         line = rememberLineComponent(color = Color.hsl(27f, 0.97f, 0.54f,.5f), thickness = 2.dp),
                     ),
                     rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(0.9f,userAge).toFloat() },
+                        y = { getHeartRateFromPercentage(90f,userAge).toFloat() },
                         line = rememberLineComponent(color = Color.hsl(9f, 0.88f, 0.45f,.5f), thickness = 2.dp),
                     ),
                     rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(1f,userAge).toFloat() },
+                        y = { getHeartRateFromPercentage(100f,userAge).toFloat() },
                         line = rememberLineComponent(color = Color.Black, thickness = 2.dp),
                     ),
                 ),
