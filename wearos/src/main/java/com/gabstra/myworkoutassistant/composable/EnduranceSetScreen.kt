@@ -79,7 +79,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     }
 
     LaunchedEffect(currentSet) {
-        viewModel.updateCurrentSetData(currentSet)
+        state.currentSetData = currentSet
     }
 
     LaunchedEffect(stopScrolling) {
@@ -137,7 +137,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-            while (currentMillis < set.timeInMillis) {
+            while (currentMillis < currentSet.startTimer) {
                 delay(1000) // Update every sec.
                 currentMillis += 1000
 
@@ -152,7 +152,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentSet.startTimer
             )
-            viewModel.updateCurrentSetData(currentSet)
+
             VibrateShortImpulse(context);
             onTimerEnd()
 
@@ -240,7 +240,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(
                 endTimer = currentMillis
             )
-            viewModel.updateCurrentSetData(currentSet)
+
             onTimerEnd()
             showStopDialog = false
         },

@@ -125,12 +125,6 @@ class AppViewModel : ViewModel(){
     private val _workoutState = MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val workoutState = _workoutState.asStateFlow()
 
-    private var _tempCurrentSetData: SetData? = null
-
-    fun updateCurrentSetData(newSetData: SetData) {
-        _tempCurrentSetData = newSetData
-    }
-
     private val _nextWorkoutState = MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val nextWorkoutState = _nextWorkoutState.asStateFlow()
 
@@ -170,6 +164,7 @@ class AppViewModel : ViewModel(){
                 setStates.clear()
                 executedSetsHistory.clear()
                 heartBeatHistory.clear()
+                startWorkoutTime = null
                 loadWorkoutHistory()
                 generateWorkoutStates()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
@@ -236,15 +231,8 @@ class AppViewModel : ViewModel(){
                     time = LocalTime.now(),
                     isDone = isDone
                 )
-                workoutHistoryDao.updateWorkoutHistory(
-                    currentWorkoutHistory!!.id,
-                    currentWorkoutHistory!!.workoutId,
-                    currentWorkoutHistory!!.date,
-                    currentWorkoutHistory!!.time,
-                    currentWorkoutHistory!!.duration,
-                    currentWorkoutHistory!!.heartBeatRecords,
-                    currentWorkoutHistory!!.isDone
-                )
+
+                workoutHistoryDao.insert(currentWorkoutHistory!!)
             }
 
             executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
@@ -266,21 +254,19 @@ class AppViewModel : ViewModel(){
 
     fun storeExecutedSetHistory() {
         val currentState = _workoutState.value
-
-        if (currentState !is WorkoutState.Set && _tempCurrentSetData != null) return
-        val setState = currentState as WorkoutState.Set
+        if (currentState !is WorkoutState.Set) return
 
         val newSetHistory = SetHistory(
             id = UUID.randomUUID(),
-            setId = setState.set.id,
-            setData = _tempCurrentSetData!!,
-            order = setState.order,
-            exerciseId = setState.parentExercise.id,
-            skipped = setState.skipped
+            setId = currentState.set.id,
+            setData = currentState.currentSetData,
+            order = currentState.order,
+            exerciseId = currentState.parentExercise.id,
+            skipped = currentState.skipped
         )
 
         // Search for an existing entry in the history
-        val existingIndex = executedSetsHistory.indexOfFirst { it.setId == setState.set.id && it.order == setState.order }
+        val existingIndex = executedSetsHistory.indexOfFirst { it.setId == currentState.set.id && it.order == currentState.order }
 
         if (existingIndex != -1) {
             // If found, replace the existing entry

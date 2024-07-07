@@ -181,6 +181,12 @@ fun ExerciseScreen(
         allowHorizontalScrolling = true
     }
 
+    LaunchedEffect(allowHorizontalScrolling) {
+        if (!allowHorizontalScrolling) {
+            pagerState.animateScrollToPage(1)
+        }
+    }
+
     val completeOrSkipExerciseComposable = @Composable {
         Row(
             verticalAlignment = Alignment.CenterVertically,

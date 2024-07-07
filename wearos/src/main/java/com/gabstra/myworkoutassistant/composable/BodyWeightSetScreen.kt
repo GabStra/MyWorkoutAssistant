@@ -40,7 +40,7 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as BodyWeightSetData
-    var currentSet by remember(state.set.id) { mutableStateOf(state.currentSetData as BodyWeightSetData) }
+    var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
 
@@ -51,7 +51,7 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     }
 
     LaunchedEffect(currentSet) {
-        viewModel.updateCurrentSetData(currentSet)
+        state.currentSetData = currentSet
     }
 
     LaunchedEffect(forceStopEditMode) {
@@ -142,11 +142,6 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
                 )
             }
         }
-    }
-
-    LaunchedEffect(currentSet) {
-        // Update the WorkoutState.Set whenever currentSet changes
-        state.currentSetData = currentSet
     }
 
     Column(

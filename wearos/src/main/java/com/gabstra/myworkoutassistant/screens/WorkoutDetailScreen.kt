@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.SendToMobile
 import androidx.compose.material.icons.filled.Settings
@@ -81,7 +82,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.title2
         )
-        Spacer(modifier = Modifier.height(30.dp))
+        Spacer(modifier = Modifier.height(15.dp))
 
         /*
 
@@ -98,43 +99,42 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
 
         */
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(15.dp)
+        Column(
+            verticalArrangement = Arrangement.spacedBy(15.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Button(
-                onClick = {
-                    VibrateOnce(context)
-                    viewModel.sendWorkoutHistoryToPhone(){ success ->
-                        if(success)
-                            Toast.makeText(context, "Workout History sent to phone", Toast.LENGTH_SHORT).show()
-                        else
-                            Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                modifier = Modifier.size(35.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
-            ) {
-                Icon(imageVector = Icons.AutoMirrored.Filled.SendToMobile, contentDescription = "Send to phone")
-            }
-
             Button(
                 onClick = {
                     VibrateOnce(context)
                     permissionLauncher.launch(basePermissions.toTypedArray())
                 },
-                modifier = Modifier.size(35.dp),
+                modifier = Modifier.height(35.dp).width(90.dp),
                 colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
             ) {
-                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                    Text(text = "Start")
+                }
             }
 
-
-
-            /*Button(onClick = { println("workoutSettings") }) {
-                Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
-            }*/
+            Button(
+                onClick = {
+                    VibrateOnce(context)
+                    viewModel.sendWorkoutHistoryToPhone() { success ->
+                        if (success)
+                            Toast.makeText(context, "Workout History sent to phone", Toast.LENGTH_SHORT).show()
+                        else
+                            Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier.height(35.dp).width(150.dp),
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Icon(imageVector = Icons.AutoMirrored.Filled.SendToMobile, contentDescription = "Send to phone")
+                    Text(text = "Send history")
+                }
+            }
         }
-
-
     }
 }

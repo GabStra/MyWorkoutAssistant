@@ -78,7 +78,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
     }
 
     LaunchedEffect(currentSet) {
-        viewModel.updateCurrentSetData(currentSet)
+        state.currentSetData = currentSet
     }
 
     LaunchedEffect(stopScrolling) {
@@ -132,7 +132,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             currentSet = currentSet.copy(
                 endTimer = 0
             )
-            viewModel.updateCurrentSetData(currentSet)
+
             VibrateShortImpulse(context);
             onTimerEnd()
             if(!set.autoStop){
@@ -265,7 +265,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             currentSet = currentSet.copy(
                 endTimer =  currentMillis
             )
-            viewModel.updateCurrentSetData(currentSet)
+
             onTimerEnd()
             showStopDialog = false
         },

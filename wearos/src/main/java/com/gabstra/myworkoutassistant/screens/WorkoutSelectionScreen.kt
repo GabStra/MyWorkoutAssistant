@@ -2,10 +2,13 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -87,20 +90,26 @@ fun MissingAgeSettingMessage(
     dataClient: DataClient,
     viewModel: AppViewModel,
     appHelper: WearDataLayerAppHelper,
+    titleComposable: @Composable () -> Unit
 ) {
     val context = LocalContext.current
 
 
     val scope = rememberCoroutineScope()
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        titleComposable()
+        Spacer(modifier = Modifier.height(15.dp))
         Text(
-            modifier = Modifier.padding(vertical = 10.dp),
-            text = "Please set your age in the app on your phone",
+            text = "Input your age on the phone",
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.caption1,
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(15.dp))
         Button(
             onClick = {
                 scope.launch {
@@ -136,6 +145,24 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
     val context = LocalContext.current
     val versionName = getVersionName(context);
 
+    val titleComposable = @Composable {
+        Text(
+            modifier = Modifier.padding(0.dp, 0.dp,0.dp, 10.dp).combinedClickable(
+                onClick = {},
+                onLongClick = {
+                    Toast.makeText(
+                        context,
+                        "Build version code: $versionName",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            ),
+            text = "My Workout Assistant",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.caption1,
+        )
+    }
+
     LaunchedEffect(Unit){
         scope.launch {
             while (true) {
@@ -146,51 +173,34 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
         }
     }
 
-    Scaffold(
-        positionIndicator = {
-            PositionIndicator(
-                scalingLazyListState = scalingLazyListState
-            )
-        }
-    ){
+    if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5 && workouts.isEmpty()){
+        Text(
+            modifier = Modifier.padding(vertical = 10.dp),
+            text = "Please install the app on your phone",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.caption1,
+        )
 
-        ScalingLazyColumn(
-            modifier = Modifier.padding(10.dp, vertical = 0.dp),
-            state = scalingLazyListState,
-        ) {
-            item{
-                Text(
-                    modifier = Modifier.padding(0.dp, 0.dp,0.dp, 10.dp).combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            Toast.makeText(
-                                context,
-                                "Build version code: $versionName",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    ),
-                    text = "My Workout Assistant",
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.caption1,
-                )
-            }
-
-            if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5 && workouts.isEmpty()){
-                item {
-                    Text(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        text = "Please install the app on your phone",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.caption1,
+        return
+    }else{
+        if(userAge == currentYear && phoneNode != null){
+            MissingAgeSettingMessage(dataClient, viewModel, appHelper,titleComposable)
+        }else{
+            Scaffold(
+                positionIndicator = {
+                    PositionIndicator(
+                        scalingLazyListState = scalingLazyListState
                     )
                 }
-            }else{
-                if(userAge == currentYear && phoneNode != null){
-                    item {
-                        MissingAgeSettingMessage(dataClient, viewModel, appHelper)
+            ){
+                ScalingLazyColumn(
+                    modifier = Modifier.padding(10.dp, vertical = 0.dp),
+                    state = scalingLazyListState,
+                ) {
+                    item{
+                        titleComposable()
                     }
-                }else{
+
                     items(sortedWorkouts) { workout ->
                         WorkoutListItem(workout) {
                             navController.navigate(Screen.WorkoutDetail.route)

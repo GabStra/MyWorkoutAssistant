@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,10 +62,13 @@ fun WeightSetScreen (
         lastInteractionTime = System.currentTimeMillis()
     }
 
+    val currentVolume = (currentSet.actualReps*currentSet.actualWeight).toInt()
+    val previousVolume = (previousSet.actualReps*previousSet.actualWeight).toInt()
+
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
     LaunchedEffect(currentSet) {
-        viewModel.updateCurrentSetData(currentSet)
+        state.currentSetData = currentSet
     }
 
     LaunchedEffect(isInEditMode) {
@@ -91,7 +95,8 @@ fun WeightSetScreen (
 
 
     fun onMinusClick(){
-        if (isRepsInEditMode && currentSet.actualReps>1){
+        updateInteractionTime()
+        if (isRepsInEditMode && (currentSet.actualReps > 1)){
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps-1
             )
@@ -109,7 +114,8 @@ fun WeightSetScreen (
     }
 
     fun onPlusClick(){
-        if (isRepsInEditMode && currentSet.actualReps>1){
+        updateInteractionTime()
+        if (isRepsInEditMode){
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps+1
             )
@@ -154,9 +160,6 @@ fun WeightSetScreen (
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.End
         ) {
-            TrendIcon(currentSet.actualReps, previousSet.actualReps)
-            Spacer(modifier = Modifier.width(5.dp))
-
             Row(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.End
@@ -206,9 +209,6 @@ fun WeightSetScreen (
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.End
         ) {
-            TrendIcon(currentSet.actualWeight, previousSet.actualWeight)
-            Spacer(modifier = Modifier.width(5.dp))
-
             Row(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.End
@@ -258,14 +258,19 @@ fun WeightSetScreen (
             )
 
         }else{
-            Column(modifier = Modifier
-                .padding(0.dp, 0.dp, 30.dp, 2.dp)
-                .weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
-                repsRow()
-                Spacer(modifier = Modifier.height(5.dp))
-                weightRow()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(0.dp, 0.dp, 30.dp, 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                TrendIcon(currentVolume, previousVolume)
+                Column(Modifier.width(95.dp)){
+                    repsRow()
+                    Spacer(modifier = Modifier.height(5.dp))
+                    weightRow()
+                }
             }
-
+            
             Box(contentAlignment = Alignment.BottomCenter) {
                 bottom()
             }
