@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
@@ -125,7 +126,7 @@ fun ExerciseDetailScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(),
+                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                         text=exercise.name
                     )
                 },
@@ -210,17 +211,24 @@ fun ExerciseDetailScreen(
         },
     ) { it ->
         if (sets.isEmpty()) {
-            Card(
+            Column(
                 modifier = Modifier
-                    .padding(15.dp)
-            ){
-                Text(
-                    text = "Add a new set",
-                    textAlign = TextAlign.Center,
-                    color = Color.White,
+                    .fillMaxSize()
+                    .padding(it),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Card(
                     modifier = Modifier
                         .padding(15.dp)
-                )
+                ) {
+                    Text(
+                        text = "Add a new set",
+                        textAlign = TextAlign.Center,
+                        color = Color.White,
+                        modifier = Modifier
+                            .padding(15.dp)
+                    )
+                }
             }
         } else {
             Column(

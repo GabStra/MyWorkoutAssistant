@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -72,7 +74,7 @@ fun ExerciseGroupDetailScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(),
+                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                         text=exerciseGroup.name
                     )
                 },
@@ -195,17 +197,24 @@ fun ExerciseGroupDetailScreen(
 
 
         if(workoutComponents.isEmpty()){
-            Card(
+            Column(
                 modifier = Modifier
-                    .padding(15.dp)
+                    .fillMaxSize()
+                    .padding(it),
+                horizontalAlignment = Alignment.CenterHorizontally
             ){
-                Text(
-                    text = "Add a new workout component",
-                    textAlign = TextAlign.Center,
-                    color = Color.White,
+                Card(
                     modifier = Modifier
                         .padding(15.dp)
-                )
+                ){
+                    Text(
+                        text = "Add a new workout component",
+                        textAlign = TextAlign.Center,
+                        color = Color.White,
+                        modifier = Modifier
+                            .padding(15.dp)
+                    )
+                }
             }
         }else{
             GenericSelectableList(

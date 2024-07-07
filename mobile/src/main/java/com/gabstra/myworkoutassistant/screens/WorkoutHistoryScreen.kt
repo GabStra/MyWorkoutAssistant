@@ -126,7 +126,6 @@ fun WorkoutHistoryScreen(
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
 
-
     val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
         val currentWorkoutHistory = workoutHistories[value.toInt()]
         currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
@@ -143,7 +142,11 @@ fun WorkoutHistoryScreen(
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
             workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
-            //stop if no workout histories
+
+            if(workoutHistoryId == null) {
+                workoutHistories = workoutHistories.filter { it.isDone }
+            }
+
             if (workoutHistories.isEmpty()) {
                 delay(1000)
                 isLoading = false
@@ -214,8 +217,11 @@ fun WorkoutHistoryScreen(
     LaunchedEffect(selectedWorkoutHistory) {
         if (selectedWorkoutHistory == null)  return@LaunchedEffect
 
+        zoneCounter = null
+        heartRateEntryModel = null
+
         withContext(Dispatchers.IO) {
-            heartRateEntryModel = null
+
             if (selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }) {
 
                 selectedWorkoutHistory!!.heartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
@@ -242,9 +248,9 @@ fun WorkoutHistoryScreen(
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
             setHistoriesByExerciseId = setHistories.groupBy { it.exerciseId }
-        }
 
-        isLoading = false
+            isLoading = false
+        }
     }
 
     val graphsTabContent = @Composable {
@@ -317,7 +323,7 @@ fun WorkoutHistoryScreen(
     }
 
     val setsTabContent = @Composable {
-        if (heartRateEntryModel != null) {
+        if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
             HeartRateChart(
                 modifier = Modifier.padding(10.dp),
                 cartesianChartModel = heartRateEntryModel!!,
@@ -349,8 +355,6 @@ fun WorkoutHistoryScreen(
                 }
             }
         }
-
-
 
         if(zoneCounter!= null){
             //in a column display a progress bar for each zone
@@ -491,7 +495,7 @@ fun WorkoutHistoryScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(),
+                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                         text = workout.name
                     )
                 },
@@ -548,12 +552,12 @@ fun WorkoutHistoryScreen(
                 )
             }
 
-            if (isLoading) {
+            if (isLoading || workoutHistories.isEmpty()) {
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp),
-                    text = if (workoutHistories.isEmpty() || selectedWorkoutHistory == null) "No history found" else "Loading...",
+                    text = if (isLoading) "Loading..." else "No history found",
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(10.dp))

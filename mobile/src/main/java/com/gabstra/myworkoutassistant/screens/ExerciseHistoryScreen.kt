@@ -133,7 +133,7 @@ fun ExerciseHistoryScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(),
+                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                         text = exercise.name
                     )
                 },
@@ -187,7 +187,7 @@ fun ExerciseHistoryScreen(
                 )
             }
 
-            if (workoutHistories.isEmpty()) {
+            if (isLoading || workoutHistories.isEmpty()) {
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()

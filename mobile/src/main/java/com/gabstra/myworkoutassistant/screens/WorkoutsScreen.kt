@@ -1,21 +1,25 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 
@@ -68,6 +72,7 @@ import com.kizitonwose.calendar.core.CalendarDay
 import com.kizitonwose.calendar.core.DayPosition
 import com.kizitonwose.calendar.core.nextMonth
 import com.kizitonwose.calendar.core.previousMonth
+import kotlinx.coroutines.Dispatchers
 
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
@@ -145,13 +150,21 @@ fun Menu(
 }
 
 @Composable
-fun WorkoutTitle(modifier: Modifier, workout: Workout){
+fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean){
     Row (
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = modifier.padding(15.dp)
     ){
+        if (!isDone) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Incomplete",
+                modifier = Modifier.align(Alignment.CenterVertically)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
         Text(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name
         )
     }
@@ -227,14 +240,17 @@ fun WorkoutsScreen(
         val endOfWeek = getEndOfWeek(currentDate)
 
         // Collect workouts for each day in the week range
-        val workoutHistoriesInAWeek = (0..ChronoUnit.DAYS.between(startOfWeek, endOfWeek)).flatMap { offset ->
+        var workoutHistoriesInAWeek = (0..ChronoUnit.DAYS.between(startOfWeek, endOfWeek)).flatMap { offset ->
             val date = startOfWeek.plusDays(offset)
             groupedWorkoutsHistories?.get(date) ?: emptyList()  // Default to empty list if no workouts for the day
         }
 
+        workoutHistoriesInAWeek = workoutHistoriesInAWeek.filter{ it.isDone }
+
         if(workoutHistoriesInAWeek.isEmpty()) return
 
-        val weeklyWorkouts = workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
+        val weeklyWorkouts = workoutHistoriesInAWeek
+            .mapNotNull { workoutHistory ->
             enabledWorkouts.firstOrNull { it.id == workoutHistory.workoutId }
         }
 
@@ -272,7 +288,7 @@ fun WorkoutsScreen(
 
     LaunchedEffect(enabledWorkouts){
         groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
-            enabledWorkouts.any { it.id == workoutHistory.workoutId } && workoutHistory.isDone
+            enabledWorkouts.any { it.id == workoutHistory.workoutId }
         }.groupBy { it.date }
         workoutById = enabledWorkouts.associateBy { it.id }
         calculateObjectiveProgress(LocalDate.now())
@@ -350,7 +366,7 @@ fun WorkoutsScreen(
                                 newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
 
                             appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
-                            scope.launch {
+                            scope.launch(Dispatchers.IO) {
                                 for (workout in selectedWorkouts) {
                                     val workoutHistories =
                                         workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
@@ -359,8 +375,7 @@ fun WorkoutsScreen(
                                     }
                                     workoutHistoryDao.deleteAllByWorkoutId(workout.id)
                                 }
-                                groupedWorkoutsHistories =
-                                    workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
+                                groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
                             }
                             selectedWorkouts = emptyList()
                             isSelectionModeActive = false
@@ -418,7 +433,6 @@ fun WorkoutsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it),
-            verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally
         ){
             if(activeAndEnabledWorkouts.isEmpty()){
@@ -548,7 +562,7 @@ fun WorkoutsScreen(
                                                         appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id,workoutHistory.id))
                                                     }
                                                 ){
-                                                    WorkoutTitle(Modifier,workout)
+                                                    WorkoutTitle(Modifier,workout,workoutHistory.isDone)
                                                 }
                                             }
                                         }
@@ -580,7 +594,7 @@ fun WorkoutsScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .alpha(if (it.enabled) 1f else 0.4f),
-                                    title = { modifier ->  WorkoutTitle(modifier,it) },
+                                    title = { modifier ->  WorkoutTitle(modifier,it,true) },
                                     content = { WorkoutRenderer(it) },
                                     onOpen = { isCardExpanded = true },
                                     onClose = { isCardExpanded = false }

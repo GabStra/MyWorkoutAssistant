@@ -37,7 +37,14 @@ fun WorkoutRenderer(workout: Workout){
                     .clip(RoundedCornerShape(5.dp)).background(Color.Black),
                 horizontalAlignment = Alignment.CenterHorizontally
             ){
-                Text( modifier = Modifier.fillMaxWidth().padding(5.dp).basicMarquee(),text = workoutComponent.name, textAlign = TextAlign.Center)
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(5.dp)
+                        .basicMarquee(iterations = Int.MAX_VALUE),
+                    text = workoutComponent.name,
+                    textAlign = TextAlign.Center
+                )
                 Spacer(modifier = Modifier.height(10.dp))
                 when (workoutComponent) {
                     is Exercise -> ExerciseRenderer(workoutComponent)

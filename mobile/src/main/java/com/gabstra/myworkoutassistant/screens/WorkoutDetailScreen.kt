@@ -111,13 +111,15 @@ fun Menu(
 
 @Composable
 fun WorkoutComponentTitle(modifier: Modifier, workoutComponent: WorkoutComponent) {
+    val suffix = if(workoutComponent is ExerciseGroup) " (Group)" else ""
+
     Row(
         horizontalArrangement = Arrangement.End,
         modifier = modifier.padding(15.dp),
     ) {
         Text(
-            modifier = Modifier.weight(2.7f),
-            text = workoutComponent.name
+            modifier = Modifier.weight(2.7f).basicMarquee(iterations = Int.MAX_VALUE),
+            text = workoutComponent.name+suffix,
         )
     }
 }
@@ -285,17 +287,24 @@ fun WorkoutDetailScreen(
         },
     ) { it ->
         if (workout.workoutComponents.isEmpty()) {
-            Card(
+            Column(
                 modifier = Modifier
-                    .padding(15.dp)
+                    .fillMaxSize()
+                    .padding(it),
+                horizontalAlignment = Alignment.CenterHorizontally
             ){
-                Text(
-                    text = "Add a new workout component",
-                    textAlign = TextAlign.Center,
-                    color = Color.White,
+                Card(
                     modifier = Modifier
                         .padding(15.dp)
-                )
+                ){
+                    Text(
+                        text = "Add a new workout component",
+                        textAlign = TextAlign.Center,
+                        color = Color.White,
+                        modifier = Modifier
+                            .padding(15.dp)
+                    )
+                }
             }
         } else {
             Column(
