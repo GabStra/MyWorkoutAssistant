@@ -58,6 +58,8 @@ fun PreparingStandardScreen(
     val scope = rememberCoroutineScope()
     var currentMillis by remember { mutableIntStateOf(0) }
     var canSkip by remember { mutableStateOf(false) }
+    val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+
     LaunchedEffect(Unit){
         scope.launch {
             while (true) {
@@ -73,8 +75,13 @@ fun PreparingStandardScreen(
     LaunchedEffect(state,currentMillis) {
         val isReady = state.dataLoaded && currentMillis >=2000
         if (isReady) {
-            viewModel.goToNextState()
-            viewModel.setWorkoutStart()
+            if(hasWorkoutRecord){
+                viewModel.resumeLastState()
+            }else{
+                viewModel.goToNextState()
+                viewModel.setWorkoutStart()
+            }
+
             onReady()
         }
     }

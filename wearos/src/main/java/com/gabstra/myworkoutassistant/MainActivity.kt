@@ -153,6 +153,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         val localContext = LocalContext.current
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
+        appViewModel.initWorkoutRecordDao(localContext)
 
         onNavControllerAvailable(navController)
 

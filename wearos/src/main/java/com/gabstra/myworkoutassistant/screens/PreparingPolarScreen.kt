@@ -58,6 +58,8 @@ fun PreparingPolarScreen(
     var currentMillis by remember { mutableIntStateOf(0) }
     var canSkip by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+
 
     LaunchedEffect(Unit){
         if(viewModel.polarDeviceId.isEmpty()){
@@ -84,8 +86,12 @@ fun PreparingPolarScreen(
     LaunchedEffect(deviceConnectionInfo, state,currentMillis) {
         val isReady = (deviceConnectionInfo != null) && state.dataLoaded && currentMillis >=2000
         if (isReady) {
-            viewModel.goToNextState()
-            viewModel.setWorkoutStart()
+            if(hasWorkoutRecord){
+                viewModel.resumeLastState()
+            }else{
+                viewModel.goToNextState()
+                viewModel.setWorkoutStart()
+            }
             onReady()
         }
     }

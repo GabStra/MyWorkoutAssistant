@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,7 @@ fun WorkoutCompleteScreen(
     val hours = remember { duration.toHours() }
     val minutes = remember { duration.toMinutes() % 60 }
     val seconds = remember { duration.seconds % 60 }
+    val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
     var dataSent by remember { mutableStateOf(false) }
 
@@ -64,6 +66,7 @@ fun WorkoutCompleteScreen(
 
         viewModel.pushAndStoreWorkoutData(true){
             dataSent = true
+            if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
         }
 
         val startTime = System.currentTimeMillis()

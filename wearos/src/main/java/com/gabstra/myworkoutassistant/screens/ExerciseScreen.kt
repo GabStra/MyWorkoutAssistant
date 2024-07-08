@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.tween
@@ -72,8 +71,6 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.delay
-import java.time.Duration
-import java.time.LocalDateTime
 
 
 fun Modifier.circleMask() = this.drawWithContent {
@@ -124,7 +121,7 @@ fun ExerciseDetail(
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
-                viewModel.storeExecutedSetHistory()
+                viewModel.storeSetData()
                 viewModel.goToNextState()
             },
             bottom = { },
@@ -136,7 +133,7 @@ fun ExerciseDetail(
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
-                viewModel.storeExecutedSetHistory()
+                viewModel.storeSetData()
                 viewModel.goToNextState()
             },
             bottom = { },
@@ -358,7 +355,7 @@ fun ExerciseScreen(
         message = "Do you want to save this data?",
         handleYesClick = {
             VibrateOnce(context)
-            viewModel.storeExecutedSetHistory()
+            viewModel.storeSetData()
             viewModel.pushAndStoreWorkoutData(false)
             viewModel.goToNextState()
             showConfirmDialog=false

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -15,6 +16,8 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.WorkoutRecord
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.initializeSetData
@@ -115,8 +118,15 @@ class AppViewModel : ViewModel(){
         workoutHistoryDao= db.workoutHistoryDao()
     }
 
+    fun initWorkoutRecordDao(context: Context){
+        val db = AppDatabase.getDatabase(context)
+        workoutRecordDao = db.workoutRecordDao()
+    }
+
     private val _selectedWorkout = mutableStateOf(Workout(java.util.UUID.randomUUID(),"","", listOf(),0,0, creationDate = LocalDate.now(), globalId = UUID.randomUUID()))
     val selectedWorkout: State<Workout> get() = _selectedWorkout
+
+    private lateinit var workoutRecordDao: WorkoutRecordDao
 
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
 
@@ -150,9 +160,108 @@ class AppViewModel : ViewModel(){
     val setsByExercise: Map<Exercise, List<WorkoutState.Set>> get () = setStates
         .groupBy { it.parentExercise }
 
+    private var _workoutRecord by mutableStateOf<WorkoutRecord?>(null)
+
+    private val _isResuming = MutableStateFlow<Boolean>(false)
+    val isResuming = _isResuming.asStateFlow()
+
+    private val _hasWorkoutRecord = MutableStateFlow<Boolean>(false)
+    val hasWorkoutRecord = _hasWorkoutRecord.asStateFlow()
+
     fun setWorkout(workout: Workout){
         _selectedWorkout.value = workout;
+        getWorkoutRecord(workout)
     }
+
+    private fun getWorkoutRecord(workout: Workout){
+        viewModelScope.launch {
+            withContext(Dispatchers.IO){
+                _workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
+
+                _hasWorkoutRecord.value = _workoutRecord != null
+                Log.d("AppViewModel", "Workout record ${_workoutRecord} for workout ${workout.id} found: ${_hasWorkoutRecord.value}")
+            }
+        }
+    }
+
+    private fun upsertWorkoutRecord(setId: UUID){
+        viewModelScope.launch {
+            withContext(Dispatchers.IO){
+                if(_workoutRecord == null) {
+                    _workoutRecord = WorkoutRecord(
+                        id = UUID.randomUUID(),
+                        workoutId = selectedWorkout.value.id,
+                        setId = setId,
+                        hearBeatHistory = heartBeatHistory.toList(),
+                        startTime = startWorkoutTime!!
+                    )
+                }else{
+                    _workoutRecord = _workoutRecord!!.copy(
+                        setId = setId,
+                        hearBeatHistory = heartBeatHistory.toList()
+                    )
+                }
+
+                Log.d("AppViewModel", "Upserting workout record ${_workoutRecord}")
+                workoutRecordDao.insert(_workoutRecord!!)
+            }
+        }
+    }
+
+    fun deleteWorkoutRecord(){
+        viewModelScope.launch {
+            withContext(Dispatchers.IO){
+                _workoutRecord?.let {
+                    workoutRecordDao.deleteById(it.id)
+                    _workoutRecord = null
+                }
+            }
+        }
+    }
+
+    fun resumeWorkoutFromRecord(onEnd: () -> Unit = {}){
+        viewModelScope.launch {
+            withContext(Dispatchers.IO){
+                Log.d("AppViewModel", "Resuming workout from record ${_workoutRecord}")
+                _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
+                workoutStateQueue.clear()
+                workoutStateHistory.clear()
+                _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+                setStates.clear()
+                executedSetsHistory.clear()
+                heartBeatHistory.addAll(_workoutRecord!!.hearBeatHistory)
+                startWorkoutTime = _workoutRecord!!.startTime
+                loadWorkoutHistory()
+                generateWorkoutStates()
+                workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
+                _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+            }
+        }
+    }
+
+    fun resumeLastState(){
+        if(_workoutRecord == null) return
+
+        _isResuming.value = true
+        val targetSetId = _workoutRecord!!.setId
+
+        if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
+            _isResuming.value = false
+            return // Already at the desired state
+        }
+
+        // Loop until the desired state is found or no more states are available
+        while (_workoutState.value !is WorkoutState.Finished) {
+            goToNextState()
+
+            // Check if the current state is the target state
+            if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
+                break // Desired state reached
+            }
+        }
+        _isResuming.value = false
+    }
+
 
     fun startWorkout(){
         viewModelScope.launch {
@@ -246,13 +355,11 @@ class AppViewModel : ViewModel(){
                     ))
             }
 
-            executedSetsHistory.clear()
-
             onEnd()
         }
     }
 
-    fun storeExecutedSetHistory() {
+    fun storeSetData() {
         val currentState = _workoutState.value
         if (currentState !is WorkoutState.Set) return
 
@@ -275,6 +382,8 @@ class AppViewModel : ViewModel(){
             // If not found, add the new entry
             executedSetsHistory.add(newSetHistory)
         }
+
+        upsertWorkoutRecord(currentState.set.id)
     }
 
     private fun generateWorkoutStates() {

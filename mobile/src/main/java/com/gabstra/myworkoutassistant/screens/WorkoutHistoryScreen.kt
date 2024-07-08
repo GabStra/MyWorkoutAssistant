@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -553,14 +554,18 @@ fun WorkoutHistoryScreen(
             }
 
             if (isLoading || workoutHistories.isEmpty()) {
-                Text(
+                Card(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    text = if (isLoading) "Loading..." else "No history found",
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(10.dp))
+                        .padding(15.dp)
+                ){
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        text = if (isLoading) "Loading..." else "No history found",
+                        textAlign = TextAlign.Center
+                    )
+                }
             } else {
                 LazyColumn() {
                     when (selectedMode) {
