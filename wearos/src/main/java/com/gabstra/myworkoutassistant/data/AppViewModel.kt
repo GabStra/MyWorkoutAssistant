@@ -39,6 +39,7 @@ import java.time.LocalTime
 import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 
 
 sealed class WorkoutState {
@@ -140,7 +141,7 @@ class AppViewModel : ViewModel(){
 
     private val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
 
-    private val heartBeatHistory: MutableList<Int> = mutableListOf()
+    private val heartBeatHistory: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
 
     private val workoutStateQueue: LinkedList<WorkoutState> = LinkedList()
 
@@ -177,44 +178,36 @@ class AppViewModel : ViewModel(){
         viewModelScope.launch {
             withContext(Dispatchers.IO){
                 _workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
-
                 _hasWorkoutRecord.value = _workoutRecord != null
-                Log.d("AppViewModel", "Workout record ${_workoutRecord} for workout ${workout.id} found: ${_hasWorkoutRecord.value}")
             }
         }
     }
 
-    private fun upsertWorkoutRecord(setId: UUID){
-        viewModelScope.launch {
-            withContext(Dispatchers.IO){
-                if(_workoutRecord == null) {
-                    _workoutRecord = WorkoutRecord(
-                        id = UUID.randomUUID(),
-                        workoutId = selectedWorkout.value.id,
-                        setId = setId,
-                        hearBeatHistory = heartBeatHistory.toList(),
-                        startTime = startWorkoutTime!!
-                    )
-                }else{
-                    _workoutRecord = _workoutRecord!!.copy(
-                        setId = setId,
-                        hearBeatHistory = heartBeatHistory.toList()
-                    )
-                }
-
-                Log.d("AppViewModel", "Upserting workout record ${_workoutRecord}")
-                workoutRecordDao.insert(_workoutRecord!!)
+    fun upsertWorkoutRecord(setId: UUID){
+        viewModelScope.launch(Dispatchers.IO) {
+            if(_workoutRecord == null) {
+                _workoutRecord = WorkoutRecord(
+                    id = UUID.randomUUID(),
+                    workoutId = selectedWorkout.value.id,
+                    setId = setId,
+                    workoutHistoryId = currentWorkoutHistory!!.id
+                )
+            }else{
+                _workoutRecord = _workoutRecord!!.copy(
+                    setId = setId,
+                )
             }
+
+            workoutRecordDao.insert(_workoutRecord!!)
         }
     }
 
     fun deleteWorkoutRecord(){
-        viewModelScope.launch {
-            withContext(Dispatchers.IO){
-                _workoutRecord?.let {
-                    workoutRecordDao.deleteById(it.id)
-                    _workoutRecord = null
-                }
+        viewModelScope.launch(Dispatchers.IO) {
+            _workoutRecord?.let {
+                workoutRecordDao.deleteById(it.id)
+                _workoutRecord = null
+                _hasWorkoutRecord.value = false
             }
         }
     }
@@ -222,19 +215,20 @@ class AppViewModel : ViewModel(){
     fun resumeWorkoutFromRecord(onEnd: () -> Unit = {}){
         viewModelScope.launch {
             withContext(Dispatchers.IO){
-                Log.d("AppViewModel", "Resuming workout from record ${_workoutRecord}")
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
                 workoutStateQueue.clear()
                 workoutStateHistory.clear()
                 _isHistoryEmpty.value = workoutStateHistory.isEmpty()
                 setStates.clear()
                 executedSetsHistory.clear()
-                heartBeatHistory.addAll(_workoutRecord!!.hearBeatHistory)
-                startWorkoutTime = _workoutRecord!!.startTime
+                currentWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
+                heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
+                startWorkoutTime = currentWorkoutHistory!!.startTime
                 loadWorkoutHistory()
                 generateWorkoutStates()
                 workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+                onEnd()
             }
         }
     }
@@ -247,21 +241,18 @@ class AppViewModel : ViewModel(){
 
         if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
             _isResuming.value = false
-            return // Already at the desired state
+            return
         }
 
-        // Loop until the desired state is found or no more states are available
         while (_workoutState.value !is WorkoutState.Finished) {
             goToNextState()
 
-            // Check if the current state is the target state
             if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
-                break // Desired state reached
+                break
             }
         }
         _isResuming.value = false
     }
-
 
     fun startWorkout(){
         viewModelScope.launch {
@@ -326,8 +317,9 @@ class AppViewModel : ViewModel(){
                     workoutId= selectedWorkout.value.id,
                     date = LocalDate.now(),
                     duration = duration.seconds.toInt(),
-                    heartBeatRecords = heartBeatHistory,
+                    heartBeatRecords = heartBeatHistory.toList(),
                     time = LocalTime.now(),
+                    startTime = startWorkoutTime!!,
                     isDone = isDone
                 )
 
@@ -336,7 +328,7 @@ class AppViewModel : ViewModel(){
             }else{
                 currentWorkoutHistory = currentWorkoutHistory!!.copy(
                     duration = duration.seconds.toInt(),
-                    heartBeatRecords = heartBeatHistory,
+                    heartBeatRecords = heartBeatHistory.toList(),
                     time = LocalTime.now(),
                     isDone = isDone
                 )
@@ -382,8 +374,6 @@ class AppViewModel : ViewModel(){
             // If not found, add the new entry
             executedSetsHistory.add(newSetHistory)
         }
-
-        upsertWorkoutRecord(currentState.set.id)
     }
 
     private fun generateWorkoutStates() {

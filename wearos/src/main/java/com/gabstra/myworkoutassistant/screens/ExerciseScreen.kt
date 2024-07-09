@@ -356,7 +356,10 @@ fun ExerciseScreen(
         handleYesClick = {
             VibrateOnce(context)
             viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false)
+            viewModel.pushAndStoreWorkoutData(false){
+                viewModel.upsertWorkoutRecord(state.set.id)
+            }
+
             viewModel.goToNextState()
             showConfirmDialog=false
         },

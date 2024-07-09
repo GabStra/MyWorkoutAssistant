@@ -10,7 +10,6 @@ data class WorkoutRecord (
     @PrimaryKey(autoGenerate = false)
     val id: UUID,
     val workoutId: UUID,
+    val workoutHistoryId: UUID,
     val setId: UUID,
-    val startTime: LocalDateTime,
-    val hearBeatHistory: List<Int>,
 )

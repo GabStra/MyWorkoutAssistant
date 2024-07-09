@@ -331,7 +331,7 @@ fun WorkoutsScreen(
         selectedDate = day
     }
 
-    fun showStar(day: CalendarDay): Boolean {
+    fun highlightDay(day: CalendarDay): Boolean {
         return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
     }
 
@@ -530,7 +530,7 @@ fun WorkoutsScreen(
                                     onDayClicked = { calendarState, day ->
                                         onDayClicked(calendarState,day)
                                     },
-                                    showStar = { day -> showStar(day) }
+                                    shouldHighlight = { day -> highlightDay(day) }
                                 )
                             }
                             item{if(selectedDate != null){
