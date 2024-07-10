@@ -174,13 +174,20 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
     }
 
     if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5 && workouts.isEmpty()){
-        Text(
-            modifier = Modifier.padding(vertical = 10.dp),
-            text = "Please install the app on your phone",
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.caption1,
-        )
-
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            titleComposable()
+            Spacer(modifier = Modifier.height(15.dp))
+            Text(
+                modifier = Modifier.padding(vertical = 10.dp),
+                text = "Please install the app on your phone",
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.caption1,
+            )
+        }
         return
     }else{
         if(userAge == currentYear && phoneNode != null){

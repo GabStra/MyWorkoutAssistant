@@ -22,3 +22,4 @@ mobile/version.properties.mobile
 wearos/version.properties.wear
 .kotlin/sessions/kotlin-compiler-16890124605456943693.salive
 .idea/deploymentTargetSelector.xml
+.kotlin/
