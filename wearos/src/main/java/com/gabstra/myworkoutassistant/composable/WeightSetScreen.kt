@@ -1,8 +1,10 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.graphics.Color
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -259,7 +261,7 @@ fun WeightSetScreen (
 
         }else{
             Row(
-                modifier = Modifier.fillMaxWidth().padding(0.dp, 0.dp, 30.dp, 2.dp),
+                modifier = Modifier.fillMaxWidth().padding(0.dp, 0.dp, 15.dp, 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.End
             ) {

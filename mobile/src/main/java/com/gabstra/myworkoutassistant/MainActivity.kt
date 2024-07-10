@@ -148,7 +148,6 @@ fun MyWorkoutAssistantNavHost(
 
     LaunchedEffect(appViewModel.workouts) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
-        sendWorkoutStore(dataClient, appViewModel.workoutStore)
     }
 
     BackHandler(enabled = true) {

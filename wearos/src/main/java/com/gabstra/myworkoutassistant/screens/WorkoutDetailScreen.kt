@@ -105,11 +105,10 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         item{
             Text(
                 text = workout.name,
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE).padding(5.dp),
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE).padding(20.dp),
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.title2
             )
-            Spacer(modifier = Modifier.height(10.dp))
         }
 
         item{
@@ -141,7 +140,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                         .height(50.dp)
                         .width(150.dp)
                         .padding(5.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(text = "Resume")

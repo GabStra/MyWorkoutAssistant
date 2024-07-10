@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant
 
 import android.content.Intent
+import android.util.Log
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateSetInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -8,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
@@ -24,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 class DataLayerListenerService : WearableListenerService() {
@@ -49,6 +52,7 @@ class DataLayerListenerService : WearableListenerService() {
                             val gson = GsonBuilder()
                                 .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
                                 .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
+                                .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
                                 .registerTypeAdapter(SetData::class.java, SetDataAdapter())
                                 .create()
                             val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
