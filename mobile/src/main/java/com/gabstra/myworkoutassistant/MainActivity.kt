@@ -193,6 +193,8 @@ fun MyWorkoutAssistantNavHost(
                                 "Data restored from backup",
                                 Toast.LENGTH_SHORT
                             ).show()
+
+                            sendAppBackup(dataClient, appBackup)
                         }
                     }
                 } catch (e: Exception) {
@@ -505,7 +507,18 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.EditExercise -> {
             val screenData = appViewModel.currentScreenData as ScreenData.EditExercise
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val selectedExercise = findWorkoutComponentByIdInWorkout(
                 selectedWorkout,
                 screenData.selectedExerciseId
@@ -529,7 +542,17 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.NewSet -> {
             val screenData = appViewModel.currentScreenData as ScreenData.NewSet
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val parentExercise = findWorkoutComponentByIdInWorkout(
                 selectedWorkout,
                 screenData.parentExerciseId
@@ -551,7 +574,18 @@ fun MyWorkoutAssistantNavHost(
 
             val screenData = appViewModel.currentScreenData as ScreenData.EditSet
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val parentExercise = findWorkoutComponentByIdInWorkout(
                 selectedWorkout,
                 screenData.parentExerciseId

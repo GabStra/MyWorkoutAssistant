@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.SendToMobile
 import androidx.compose.runtime.Composable
@@ -44,6 +45,7 @@ import androidx.wear.compose.material.Text
 import  androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.Icon
+import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
@@ -168,46 +170,63 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
             while (true) {
                 delay(1000) // Update every sec.
                 waitTimeInSec += 1
-                if(waitTimeInSec >= 5) break
+                if(waitTimeInSec >= 3) break
             }
         }
     }
 
-    if(!viewModel.isPhoneConnectedAndHasApp && waitTimeInSec == 5 && workouts.isEmpty()){
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            titleComposable()
-            Spacer(modifier = Modifier.height(15.dp))
-            Text(
-                modifier = Modifier.padding(vertical = 10.dp),
-                text = "Please install the app on your phone",
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1,
-            )
-        }
-        return
+    if(waitTimeInSec < 3){
+        KeepOn()
+        LoadingScreen("Loading",Modifier.width(80.dp))
     }else{
+        if(!viewModel.isPhoneConnectedAndHasApp){
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                titleComposable()
+                Spacer(modifier = Modifier.height(15.dp))
+                Text(
+                    modifier = Modifier.padding(vertical = 10.dp),
+                    text = "Please install the app on your phone",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1,
+                )
+            }
+            return
+        }
+
         if(userAge == currentYear && phoneNode != null){
             MissingAgeSettingMessage(dataClient, viewModel, appHelper,titleComposable)
-        }else{
-            Scaffold(
-                positionIndicator = {
-                    PositionIndicator(
-                        scalingLazyListState = scalingLazyListState
-                    )
-                }
-            ){
-                ScalingLazyColumn(
-                    modifier = Modifier.padding(10.dp, vertical = 0.dp),
-                    state = scalingLazyListState,
-                ) {
-                    item{
-                        titleComposable()
-                    }
+            return
+        }
 
+        Scaffold(
+            positionIndicator = {
+                PositionIndicator(
+                    scalingLazyListState = scalingLazyListState
+                )
+            }
+        ){
+            ScalingLazyColumn(
+                modifier = Modifier.padding(10.dp, vertical = 0.dp),
+                state = scalingLazyListState,
+            ) {
+                item{
+                    titleComposable()
+                }
+
+                if(sortedWorkouts.isEmpty()){
+                    item{
+                        Text(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            text = "No workouts available",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.caption1,
+                        )
+                    }
+                }else{
                     items(sortedWorkouts) { workout ->
                         WorkoutListItem(workout) {
                             navController.navigate(Screen.WorkoutDetail.route)
@@ -215,6 +234,8 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                         }
                     }
                 }
+
+
             }
         }
     }

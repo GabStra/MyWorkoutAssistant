@@ -18,12 +18,15 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -78,7 +81,6 @@ class MyReceiver(
                 }
 
                 if(appBackupEndJson != null){
-                    Toast.makeText(context, "Data received", Toast.LENGTH_SHORT).show()
                     navController.navigate(Screen.WorkoutSelection.route) {
                         popUpTo(0) { inclusive = true }
                     }
@@ -184,7 +186,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
             composable(Screen.Loading.route) {
                 KeepOn()
-                LoadingScreen("Loading")
+                LoadingScreen("Syncing with phone", Modifier.width(180.dp))
             }
         }
     }

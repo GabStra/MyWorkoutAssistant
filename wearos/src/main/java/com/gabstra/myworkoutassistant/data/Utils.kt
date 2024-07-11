@@ -62,7 +62,7 @@ fun FormatTime(seconds: Int): String {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
 }
-fun VibrateOnce(context: Context,durationInMillis:Long=20) {
+fun VibrateOnce(context: Context,durationInMillis:Long=50) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
     vibrator?.let {
@@ -79,9 +79,9 @@ fun VibrateTwice(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val timings = longArrayOf(
         0,
-        75,
-        20,
-        75,
+        100,
+        100,
+        100,
     ) // Start immediately, vibrate 100ms, pause 100ms, vibrate 100ms.
 
     vibrator?.let {

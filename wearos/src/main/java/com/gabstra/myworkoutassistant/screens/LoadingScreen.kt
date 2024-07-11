@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composable.LoadingText
 
 @Composable
-fun LoadingScreen(text: String = "Loading...") {
+fun LoadingScreen(text: String = "Loading...",modifier: Modifier) {
     BackHandler(true) {
     }
 
@@ -23,7 +23,7 @@ fun LoadingScreen(text: String = "Loading...") {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(modifier = Modifier.width(80.dp)) {
+        Row(modifier = modifier) {
             LoadingText(baseText = text)
         }
     }

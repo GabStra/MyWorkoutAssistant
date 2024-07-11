@@ -151,6 +151,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             VibrateOnce(context);
             delay(1000)
             VibrateTwice(context)
+            delay(500)
             startTimerJob()
         }
     }

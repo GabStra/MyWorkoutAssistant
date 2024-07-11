@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -182,7 +183,7 @@ fun WorkoutScreen(
     ) {
         CurrentTime()
         if(isResuming){
-            LoadingScreen("Resuming workout")
+            LoadingScreen("Resuming workout",Modifier.width(150.dp))
         }else{
             when(workoutState){
                 is WorkoutState.Preparing -> {

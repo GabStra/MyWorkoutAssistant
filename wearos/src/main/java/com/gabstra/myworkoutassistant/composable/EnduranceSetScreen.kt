@@ -172,6 +172,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             VibrateOnce(context);
             delay(1000)
             VibrateTwice(context)
+            delay(500)
             startTimerJob()
         }
     }
