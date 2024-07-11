@@ -184,7 +184,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
             composable(Screen.Loading.route) {
                 KeepOn()
-                LoadingScreen("Loading Backup")
+                LoadingScreen("Loading")
             }
         }
     }

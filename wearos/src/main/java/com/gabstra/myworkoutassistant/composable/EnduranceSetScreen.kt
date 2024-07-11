@@ -165,6 +165,13 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
+            VibrateOnce(context);
+            delay(1000)
+            VibrateOnce(context);
+            delay(1000)
+            VibrateOnce(context);
+            delay(1000)
+            VibrateTwice(context)
             startTimerJob()
         }
     }
