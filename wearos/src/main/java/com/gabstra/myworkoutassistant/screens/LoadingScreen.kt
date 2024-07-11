@@ -23,7 +23,7 @@ fun LoadingScreen(text: String = "Loading...") {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(modifier = Modifier.width(140.dp)) {
+        Row(modifier = Modifier.width(80.dp)) {
             LoadingText(baseText = text)
         }
     }
