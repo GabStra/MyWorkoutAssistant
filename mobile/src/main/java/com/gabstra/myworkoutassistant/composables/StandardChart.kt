@@ -39,7 +39,7 @@ fun StandardChart(
     cartesianChartModel: CartesianChartModel,
     title: String,
     isZoomEnabled: Boolean = false,
-    markerPosition: Float,
+    markerPosition: Float? = null,
     markerTextFormatter: ((Float) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
@@ -85,7 +85,7 @@ fun StandardChart(
                 rememberLineCartesianLayer(spacing = 75.dp),
                 startAxis = rememberStartAxis(valueFormatter = startAxisValueFormatter),
                 bottomAxis = rememberBottomAxis(valueFormatter = bottomAxisValueFormatter),
-                persistentMarkers = mapOf(markerPosition.toFloat() to marker),
+                persistentMarkers = if(markerPosition != null) mapOf(markerPosition.toFloat() to marker) else null,
             ),
             model = cartesianChartModel,
             marker = marker,

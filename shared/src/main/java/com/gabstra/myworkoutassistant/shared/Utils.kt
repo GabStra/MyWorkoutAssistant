@@ -114,6 +114,7 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
+        .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(SetData::class.java, SetDataAdapter())
         .create()
     return gson.fromJson(json, AppBackup::class.java)

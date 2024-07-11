@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -69,6 +68,8 @@ import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.zoneRanges
@@ -120,10 +121,12 @@ fun WorkoutHistoryScreen(
 
     var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
+    var workoutDurationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var heartRateEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
 
     var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var workoutDurationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
 
@@ -132,7 +135,11 @@ fun WorkoutHistoryScreen(
         currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
     }
 
-    val durationAxisValueFormatter = CartesianValueFormatter { value, chartValues, _ ->
+    val durationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+        formatTime(value.toInt()/1000)
+    }
+
+    val workoutDurationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
         formatTime(value.toInt())
     }
 
@@ -156,11 +163,13 @@ fun WorkoutHistoryScreen(
 
             val volumes = mutableListOf<Pair<Int, Float>>()
             val durations = mutableListOf<Pair<Int, Float>>()
+            val workoutDurations = mutableListOf<Pair<Int, Float>>()
             for (workoutHistory in workoutHistories) {
                 val setHistories =
                     setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
 
                 var volume = 0f
+                var duration = 0f
                 for (setHistory in setHistories) {
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
@@ -171,9 +180,20 @@ fun WorkoutHistoryScreen(
                         val setData = setHistory.setData as BodyWeightSetData
                         volume += setData.actualReps
                     }
+
+                    if (setHistory.setData is TimedDurationSetData) {
+                        val setData = setHistory.setData as TimedDurationSetData
+                        duration += setData.startTimer - setData.endTimer
+                    }
+
+                    if (setHistory.setData is EnduranceSetData) {
+                        val setData = setHistory.setData as EnduranceSetData
+                        duration += setData.endTimer
+                    }
                 }
                 volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
-                durations.add(
+                durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
+                workoutDurations.add(
                     Pair(
                         workoutHistories.indexOf(workoutHistory),
                         workoutHistory.duration.toFloat()
@@ -193,14 +213,25 @@ fun WorkoutHistoryScreen(
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map { it.second }).toTypedArray()) })
             }
 
-            if (durations.count() == 1) {
-                durationMarkerTarget = durations.last()
-            } else if (durations.count() > 1) {
-                durationMarkerTarget = durations.maxBy { it.second }
+            if (durations.any { it.second != 0f }) {
+                if (durations.count() == 1) {
+                    durationMarkerTarget = durations.last()
+                } else if (volumes.count() > 1) {
+                    durationMarkerTarget = durations.maxBy { it.second }
+                }
+
+                durationEntryModel =
+                    CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
             }
 
-            durationEntryModel =
-                CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
+            if (workoutDurations.count() == 1) {
+                workoutDurationMarkerTarget = workoutDurations.last()
+            } else if (workoutDurations.count() > 1) {
+                workoutDurationMarkerTarget = workoutDurations.maxBy { it.second }
+            }
+
+            workoutDurationEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build { series(*(workoutDurations.map { it.second }).toTypedArray()) })
             selectedWorkoutHistory =
                 if (workoutHistoryId != null) workoutHistories.find { it.id == workoutHistoryId } else workoutHistories.lastOrNull()
 
@@ -259,6 +290,7 @@ fun WorkoutHistoryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (volumeEntryModel != null) {
                 StandardChart(
@@ -272,13 +304,24 @@ fun WorkoutHistoryScreen(
             }
             if (durationEntryModel != null) {
                 StandardChart(
-                    isZoomEnabled = true,
                     modifier = Modifier.padding(10.dp),
                     cartesianChartModel = durationEntryModel!!,
-                    title = "Workout duration over time",
                     markerPosition = durationMarkerTarget!!.first.toFloat(),
-                    markerTextFormatter = { formatTime(it.toInt()) },
+                    title = "Duration over time",
+                    markerTextFormatter = { formatTime(it.toInt()/1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                )
+            }
+            if (workoutDurationEntryModel != null) {
+                StandardChart(
+                    isZoomEnabled = true,
+                    modifier = Modifier.padding(10.dp),
+                    cartesianChartModel = workoutDurationEntryModel!!,
+                    title = "Workout duration over time",
+                    markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
+                    markerTextFormatter = { formatTime(it.toInt()) },
+                    startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter
                 )
             }
@@ -366,7 +409,11 @@ fun WorkoutHistoryScreen(
                 //Invert the order of the zones
                 zoneCounter!!.forEach { (zone, count) ->
                     Column(modifier = Modifier.fillMaxWidth()){
-                        val progress = count.toFloat() / zoneCounter!!.values.sum()
+                        val total = zoneCounter!!.values.sum()
+                        var progress = count.toFloat() / total
+                        if(progress.isNaN()){
+                            progress = 0f
+                        }
                         Text(
                             text = "Zone $zone",
                         )

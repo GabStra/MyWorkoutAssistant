@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,11 +36,14 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.StandardChart
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
@@ -65,7 +69,9 @@ fun ExerciseHistoryScreen(
     var isLoading by remember { mutableStateOf(true) }
 
     var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
+    var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
 
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
 
@@ -77,6 +83,10 @@ fun ExerciseHistoryScreen(
 
     val timeFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("HH:mm:ss", currentLocale)
+    }
+
+    val durationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+        formatTime(value.toInt()/1000)
     }
 
     val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
@@ -95,12 +105,14 @@ fun ExerciseHistoryScreen(
             }
 
             val volumes = mutableListOf<Pair<Int, Float>>()
+            val durations = mutableListOf<Pair<Int, Float>>()
             for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
                     workoutHistory.id,
                     exercise.id
                 )
                 var volume = 0f
+                var duration = 0f
                 for (setHistory in setHistories) {
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
@@ -111,8 +123,19 @@ fun ExerciseHistoryScreen(
                         val setData = setHistory.setData as BodyWeightSetData
                         volume += setData.actualReps
                     }
+
+                    if (setHistory.setData is TimedDurationSetData) {
+                        val setData = setHistory.setData as TimedDurationSetData
+                        duration += setData.startTimer - setData.endTimer
+                    }
+
+                    if (setHistory.setData is EnduranceSetData) {
+                        val setData = setHistory.setData as EnduranceSetData
+                        duration += setData.endTimer
+                    }
                 }
                 volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
+                durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
             }
 
             if (volumes.any { it.second != 0f }) {
@@ -125,6 +148,19 @@ fun ExerciseHistoryScreen(
                 volumeEntryModel =
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map { it.second }).toTypedArray()) })
             }
+
+            if (durations.any { it.second != 0f }) {
+                if (durations.count() == 1) {
+                    durationMarkerTarget = durations.last()
+                } else if (volumes.count() > 1) {
+                    durationMarkerTarget = durations.maxBy { it.second }
+                }
+
+                durationEntryModel =
+                    CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
+            }
+
+            isLoading = false
         }
     }
 
@@ -188,19 +224,24 @@ fun ExerciseHistoryScreen(
             }
 
             if (isLoading || workoutHistories.isEmpty()) {
-                Text(
+                Card(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    text = if (isLoading) "Loading..." else "No history found",
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(10.dp))
+                        .padding(15.dp)
+                ){
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        text = if (isLoading) "Loading..." else "No history found",
+                        textAlign = TextAlign.Center
+                    )
+                }
             } else {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (volumeEntryModel != null) {
                         StandardChart(
@@ -210,13 +251,17 @@ fun ExerciseHistoryScreen(
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
                             bottomAxisValueFormatter = horizontalAxisValueFormatter
                         )
-                    }else{
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp),
-                            text = "No volume data found",
-                            textAlign = TextAlign.Center
+                    }
+
+                    if (durationEntryModel != null) {
+                        StandardChart(
+                            modifier = Modifier.padding(10.dp),
+                            cartesianChartModel = durationEntryModel!!,
+                            markerPosition = durationMarkerTarget!!.first.toFloat(),
+                            title = "Duration over time",
+                            markerTextFormatter = { formatTime(it.toInt()/1000) },
+                            startAxisValueFormatter = durationAxisValueFormatter,
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter
                         )
                     }
                 }
