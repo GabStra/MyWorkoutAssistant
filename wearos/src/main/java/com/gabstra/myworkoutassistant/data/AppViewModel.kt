@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -265,6 +266,7 @@ class AppViewModel : ViewModel(){
                 executedSetsHistory.clear()
                 heartBeatHistory.clear()
                 startWorkoutTime = null
+                currentWorkoutHistory = null
                 loadWorkoutHistory()
                 generateWorkoutStates()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
@@ -281,7 +283,7 @@ class AppViewModel : ViewModel(){
                 dataClient?.let {
                     sendWorkoutHistoryStore(
                         it,WorkoutHistoryStore(
-                            WorkoutHistory =workoutHistory,
+                            WorkoutHistory = workoutHistory,
                             ExerciseHistories =  exerciseHistories
                         ))
                 }
@@ -307,7 +309,7 @@ class AppViewModel : ViewModel(){
         if(heartBeat > 0) heartBeatHistory.add(heartBeat)
     }
 
-    fun pushAndStoreWorkoutData(isDone: Boolean, onEnd: () -> Unit = {}) {
+    fun pushAndStoreWorkoutData(isDone: Boolean, context: Context? = null, onEnd: () -> Unit = {}) {
         viewModelScope.launch(Dispatchers.IO) {
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 
@@ -339,15 +341,19 @@ class AppViewModel : ViewModel(){
             executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
             setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
 
-            dataClient?.let {
-                sendWorkoutHistoryStore(
-                    it,WorkoutHistoryStore(
+            withContext(Dispatchers.Main){
+                val result = sendWorkoutHistoryStore(
+                    dataClient!!,WorkoutHistoryStore(
                         WorkoutHistory = currentWorkoutHistory!!,
                         ExerciseHistories =  executedSetsHistory
                     ))
-            }
 
-            onEnd()
+                if(context != null && !result){
+                    Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                }
+
+                onEnd()
+            }
         }
     }
 

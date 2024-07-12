@@ -144,7 +144,7 @@ fun Context.findActivity(): Activity? {
     return null
 }
 
-fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore) {
+fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore) : Boolean {
     try {
         val gson = GsonBuilder()
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
@@ -163,10 +163,10 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(request)
-    } catch (cancellationException: CancellationException) {
-        cancellationException.printStackTrace()
-    } catch (exception: Exception) {
+        return true
+    } catch(exception: Exception) {
         exception.printStackTrace()
+        return false
     }
 }
 

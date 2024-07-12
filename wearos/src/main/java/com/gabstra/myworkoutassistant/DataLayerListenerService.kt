@@ -95,8 +95,9 @@ class DataLayerListenerService : WearableListenerService() {
         }catch (exception: Exception) {
             exception.printStackTrace()
             backupChunks.clear()
+        }finally {
+            super.onDataChanged(dataEvents)
         }
-
     }
 
     override fun onDestroy() {

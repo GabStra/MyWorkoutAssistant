@@ -35,93 +35,141 @@ class DataLayerListenerService : WearableListenerService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        dataEvents.forEach { dataEvent ->
-            val uri = dataEvent.dataItem.uri
-            when (uri.path) {
-                WORKOUT_HISTORY_STORE_PATH -> {
-                    val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                    val compressedJson = dataMap.getByteArray("compressedJson")
-                    val workoutHistoryStoreJson = decompressToString(compressedJson!!)
+        try {
+            dataEvents.forEach { dataEvent ->
+                val uri = dataEvent.dataItem.uri
+                when (uri.path) {
+                    WORKOUT_HISTORY_STORE_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val compressedJson = dataMap.getByteArray("compressedJson")
+                        val workoutHistoryStoreJson = decompressToString(compressedJson!!)
 
-                    scope.launch(Dispatchers.IO) {
-                        try{
-                            val db = AppDatabase.getDatabase(this@DataLayerListenerService)
-                            val setHistoryDao = db.setHistoryDao()
-                            val workoutHistoryDao = db.workoutHistoryDao()
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val db = AppDatabase.getDatabase(this@DataLayerListenerService)
+                                val setHistoryDao = db.setHistoryDao()
+                                val workoutHistoryDao = db.workoutHistoryDao()
 
-                            val gson = GsonBuilder()
-                                .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
-                                .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
-                                .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
-                                .registerTypeAdapter(SetData::class.java, SetDataAdapter())
-                                .create()
-                            val workoutHistoryStore = gson.fromJson(workoutHistoryStoreJson, WorkoutHistoryStore::class.java)
+                                val gson = GsonBuilder()
+                                    .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+                                    .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
+                                    .registerTypeAdapter(
+                                        LocalDateTime::class.java,
+                                        LocalDateTimeAdapter()
+                                    )
+                                    .registerTypeAdapter(SetData::class.java, SetDataAdapter())
+                                    .create()
+                                val workoutHistoryStore = gson.fromJson(
+                                    workoutHistoryStoreJson,
+                                    WorkoutHistoryStore::class.java
+                                )
 
-                            val workoutHistory = workoutHistoryStore.WorkoutHistory
+                                val workoutHistory = workoutHistoryStore.WorkoutHistory
 
-                            workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
+                                workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
 
-                            setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
-                            val setHistoriesByExerciseId = workoutHistoryStore.ExerciseHistories.groupBy { it.exerciseId }
+                                setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
+                                val setHistoriesByExerciseId =
+                                    workoutHistoryStore.ExerciseHistories.groupBy { it.exerciseId }
 
-                            val workoutStore = workoutStoreRepository.getWorkoutStore()
-                            val workout = workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
-                            if(workout != null){
-                                val exercises = WorkoutManager.getAllExercisesFromWorkout(workout)
-                                var workoutComponents = workout.workoutComponents
+                                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                                val workout =
+                                    workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
+                                if (workout != null) {
+                                    val exercises =
+                                        WorkoutManager.getAllExercisesFromWorkout(workout)
+                                    var workoutComponents = workout.workoutComponents
 
-                                for (exercise in exercises){
-                                    val setById = exercise.sets.associateBy { it.id }
-                                    val setHistories = setHistoriesByExerciseId[exercise.id] ?: continue
+                                    for (exercise in exercises) {
+                                        val setById = exercise.sets.associateBy { it.id }
+                                        val setHistories =
+                                            setHistoriesByExerciseId[exercise.id] ?: continue
 
-                                    for(setHistory in setHistories){
-                                        val isExistingSet = setById.containsKey(setHistory.setId)
+                                        for (setHistory in setHistories) {
+                                            val isExistingSet =
+                                                setById.containsKey(setHistory.setId)
 
-                                        workoutComponents =
-                                            if(isExistingSet) {
-                                                val set = setById[setHistory.setId] ?: continue
-                                                if(!isSetDataValid(set,setHistory.setData)) continue
-                                                val newSet = getNewSetFromSetData(set,setHistory.setData) ?: continue
-                                                updateSetInExerciseRecursively(workoutComponents,exercise,set,newSet)
-                                            }else{
-                                                val previousSet = exercise.sets[setHistory.order - 1]
-                                                val newSet = getNewSetFromSetData(previousSet,setHistory.setData) ?: continue
-                                                WorkoutManager.addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
-                                            }
+                                            workoutComponents =
+                                                if (isExistingSet) {
+                                                    val set = setById[setHistory.setId] ?: continue
+                                                    if (!isSetDataValid(
+                                                            set,
+                                                            setHistory.setData
+                                                        )
+                                                    ) continue
+                                                    val newSet = getNewSetFromSetData(
+                                                        set,
+                                                        setHistory.setData
+                                                    ) ?: continue
+                                                    updateSetInExerciseRecursively(
+                                                        workoutComponents,
+                                                        exercise,
+                                                        set,
+                                                        newSet
+                                                    )
+                                                } else {
+                                                    val previousSet =
+                                                        exercise.sets[setHistory.order - 1]
+                                                    val newSet = getNewSetFromSetData(
+                                                        previousSet,
+                                                        setHistory.setData
+                                                    ) ?: continue
+                                                    WorkoutManager.addSetToExerciseRecursively(
+                                                        workoutComponents,
+                                                        exercise,
+                                                        newSet,
+                                                        setHistory.order
+                                                    )
+                                                }
+                                        }
                                     }
+
+                                    val newWorkout =
+                                        workout.copy(workoutComponents = workoutComponents)
+                                    val updatedWorkoutStore = workoutStore.copy(
+                                        workouts = updateWorkoutOld(
+                                            workoutStore.workouts,
+                                            workout,
+                                            newWorkout
+                                        )
+                                    )
+                                    workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+
+                                    val intent = Intent(INTENT_ID).apply {
+                                        putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
+                                    }
+                                    sendBroadcast(intent)
                                 }
 
-                                val newWorkout = workout.copy(workoutComponents = workoutComponents)
-                                val updatedWorkoutStore = workoutStore.copy(workouts = updateWorkoutOld(workoutStore.workouts, workout, newWorkout))
-                                workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-
-                                val intent = Intent(INTENT_ID).apply {
-                                    putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
-                                }
-                                sendBroadcast(intent)
+                            } catch (exception: Exception) {
+                                exception.printStackTrace()
                             }
-
-                        }catch (exception: Exception) {
-                            exception.printStackTrace()
                         }
                     }
-                }
-                OPEN_PAGE_PATH -> {
-                    val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                    val valueToPass = dataMap.getString(PAGE) // Replace "key" with your actual key
 
-                    // Start an activity and pass the extracted value
-                    val intent = Intent(this, MainActivity::class.java).apply {
-                        putExtra(PAGE, valueToPass) // Replace "extra_key" with your actual extra key
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // Required for starting an activity from a service
-                        addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // This flag helps to reuse the existing instance
+                    OPEN_PAGE_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val valueToPass =
+                            dataMap.getString(PAGE) // Replace "key" with your actual key
+
+                        // Start an activity and pass the extracted value
+                        val intent = Intent(this, MainActivity::class.java).apply {
+                            putExtra(
+                                PAGE,
+                                valueToPass
+                            ) // Replace "extra_key" with your actual extra key
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // Required for starting an activity from a service
+                            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // This flag helps to reuse the existing instance
+                        }
+                        startActivity(intent)
                     }
-                    startActivity(intent)
                 }
             }
+        } catch (exception: Exception) {
+            exception.printStackTrace()
+        } finally {
+            super.onDataChanged(dataEvents)
         }
-
-        super.onDataChanged(dataEvents)
     }
 
     override fun onDestroy() {

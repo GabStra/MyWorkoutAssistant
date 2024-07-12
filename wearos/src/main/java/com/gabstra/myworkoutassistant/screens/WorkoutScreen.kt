@@ -129,7 +129,7 @@ fun WorkoutScreen(
         title = "Workout in progress",
         handleYesClick = {
             VibrateOnce(context)
-            viewModel.pushAndStoreWorkoutData(false)
+            viewModel.pushAndStoreWorkoutData(false,context)
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()
             }else{

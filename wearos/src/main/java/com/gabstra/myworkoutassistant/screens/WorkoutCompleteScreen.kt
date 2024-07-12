@@ -64,7 +64,7 @@ fun WorkoutCompleteScreen(
             polarViewModel.disconnectFromDevice()
         }
 
-        viewModel.pushAndStoreWorkoutData(true){
+        viewModel.pushAndStoreWorkoutData(true,context){
             dataSent = true
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
         }

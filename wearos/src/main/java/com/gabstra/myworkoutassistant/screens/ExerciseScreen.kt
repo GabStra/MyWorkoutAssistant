@@ -97,6 +97,8 @@ fun ExerciseDetail(
     onTimerDisabled: () -> Unit,
     onTimerEnabled: () -> Unit
 ) {
+    val context = LocalContext.current
+
     when (updatedState.set) {
         is WeightSet -> WeightSetScreen(
             viewModel = viewModel,
@@ -122,7 +124,10 @@ fun ExerciseDetail(
             state = updatedState,
             onTimerEnd = {
                 viewModel.storeSetData()
-                viewModel.goToNextState()
+                viewModel.pushAndStoreWorkoutData(false,context){
+                    viewModel.upsertWorkoutRecord(updatedState.set.id)
+                    viewModel.goToNextState()
+                }
             },
             bottom = { },
             onTimerDisabled = onTimerDisabled,
@@ -134,7 +139,10 @@ fun ExerciseDetail(
             state = updatedState,
             onTimerEnd = {
                 viewModel.storeSetData()
-                viewModel.goToNextState()
+                viewModel.pushAndStoreWorkoutData(false,context){
+                    viewModel.upsertWorkoutRecord(updatedState.set.id)
+                    viewModel.goToNextState()
+                }
             },
             bottom = { },
             onTimerDisabled = onTimerDisabled,
@@ -356,11 +364,11 @@ fun ExerciseScreen(
         handleYesClick = {
             VibrateOnce(context)
             viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false){
+            viewModel.pushAndStoreWorkoutData(false,context){
                 viewModel.upsertWorkoutRecord(state.set.id)
+                viewModel.goToNextState()
             }
 
-            viewModel.goToNextState()
             showConfirmDialog=false
         },
         handleNoClick = {
@@ -380,8 +388,9 @@ fun ExerciseScreen(
         message = "Do you want to skip this exercise?",
         handleYesClick = {
             VibrateOnce(context)
-            viewModel.pushAndStoreWorkoutData(false)
-            viewModel.goToNextState()
+            viewModel.pushAndStoreWorkoutData(false,context){
+                viewModel.goToNextState()
+            }
             showSkipDialog = false
         },
         handleNoClick = {
