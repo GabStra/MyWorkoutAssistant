@@ -46,7 +46,6 @@ fun WeightSetScreen (
     modifier: Modifier,
     state: WorkoutState.Set,
     forceStopEditMode: Boolean,
-    bottom: @Composable () -> Unit,
     onEditModeEnabled : () -> Unit,
     onEditModeDisabled: () -> Unit
 ){
@@ -271,10 +270,6 @@ fun WeightSetScreen (
                     Spacer(modifier = Modifier.height(5.dp))
                     weightRow()
                 }
-            }
-            
-            Box(contentAlignment = Alignment.BottomCenter) {
-                bottom()
             }
         }
     }

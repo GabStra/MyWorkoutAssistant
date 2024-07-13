@@ -200,6 +200,8 @@ class AppViewModel : ViewModel(){
             }
 
             workoutRecordDao.insert(_workoutRecord!!)
+
+            _hasWorkoutRecord.value = true
         }
     }
 

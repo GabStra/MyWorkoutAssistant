@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
                 try{
                     if( intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
                         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                        appViewModel.notifyUpdateReceived()
                         Toast.makeText(context, "Workout history received", Toast.LENGTH_SHORT).show()
                     }
                 }catch (_: Exception) {
@@ -432,7 +433,17 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.ExerciseDetail -> {
             val screenData = appViewModel.currentScreenData as ScreenData.ExerciseDetail
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val selectedExercise = findWorkoutComponentByIdInWorkout(
                 selectedWorkout,
                 screenData.selectedExerciseId
@@ -451,7 +462,17 @@ fun MyWorkoutAssistantNavHost(
         is ScreenData.ExerciseHistory -> {
             val screenData = appViewModel.currentScreenData as ScreenData.ExerciseHistory
             val workouts by appViewModel.workoutsFlow.collectAsState()
-            val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+            var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+            var currentWorkout = selectedWorkout
+
+            while(!currentWorkout.isActive){
+                val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                currentWorkout = nextWorkout
+            }
+
+            selectedWorkout = currentWorkout
+
             val selectedExercise = findWorkoutComponentByIdInWorkout(
                 selectedWorkout,
                 screenData.selectedExerciseId

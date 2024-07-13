@@ -36,7 +36,7 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, bottom: @Composable () -> Unit, onEditModeEnabled : () -> Unit, onEditModeDisabled: () -> Unit) {
+fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, onEditModeEnabled : () -> Unit, onEditModeDisabled: () -> Unit) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as BodyWeightSetData
@@ -173,10 +173,6 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
         }else{
             Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
                 repsRow()
-            }
-
-            Box(contentAlignment = Alignment.BottomCenter) {
-                bottom()
             }
         }
     }

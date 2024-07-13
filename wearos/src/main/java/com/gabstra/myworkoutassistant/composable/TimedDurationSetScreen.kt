@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit, onTimerEnabled : () -> Unit, onTimerDisabled: () -> Unit) {
+fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, onTimerEnabled : () -> Unit, onTimerDisabled: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -95,8 +95,6 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
     var currentMillis by remember(state.set.id) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
 
-    var showBottom by remember { mutableStateOf(false) }
-
     fun onMinusClick(){
         if (currentSet.startTimer > 5000){
             val newTimerValue = currentSet.startTimer - 5000
@@ -133,11 +131,10 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                 endTimer = 0
             )
 
+            state.currentSetData = currentSet
+
             VibrateShortImpulse(context);
             onTimerEnd()
-            if(!set.autoStop){
-                showBottom = true
-            }
         }
     }
 
@@ -257,8 +254,6 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                     ) {
                         Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
                     }
-                } else if(showBottom){
-                    bottom()
                 }
             }
         }

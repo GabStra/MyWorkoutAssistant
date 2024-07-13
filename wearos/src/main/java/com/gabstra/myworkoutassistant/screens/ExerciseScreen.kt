@@ -105,7 +105,6 @@ fun ExerciseDetail(
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             forceStopEditMode = false,
-            bottom = { },
             onEditModeDisabled = onEditModeDisabled,
             onEditModeEnabled = onEditModeEnabled
         )
@@ -114,7 +113,6 @@ fun ExerciseDetail(
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             forceStopEditMode = false,
-            bottom = { },
             onEditModeDisabled = onEditModeDisabled,
             onEditModeEnabled = onEditModeEnabled
         )
@@ -129,7 +127,6 @@ fun ExerciseDetail(
                     viewModel.goToNextState()
                 }
             },
-            bottom = { },
             onTimerDisabled = onTimerDisabled,
             onTimerEnabled = onTimerEnabled
         )
@@ -144,7 +141,6 @@ fun ExerciseDetail(
                     viewModel.goToNextState()
                 }
             },
-            bottom = { },
             onTimerDisabled = onTimerDisabled,
             onTimerEnabled = onTimerEnabled
         )

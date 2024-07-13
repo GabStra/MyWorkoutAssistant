@@ -179,7 +179,7 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
         KeepOn()
         LoadingScreen("Loading",Modifier.width(80.dp))
     }else{
-        if(!viewModel.isPhoneConnectedAndHasApp){
+        if(!viewModel.isPhoneConnectedAndHasApp && sortedWorkouts.isEmpty()){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,

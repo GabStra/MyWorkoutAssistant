@@ -47,6 +47,13 @@ class AppViewModel() : ViewModel() {
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
 
+    private val _updateNotificationFlow = MutableStateFlow<String?>(null)
+    val updateNotificationFlow = _updateNotificationFlow.asStateFlow()
+
+    fun notifyUpdateReceived() {
+        _updateNotificationFlow.value = System.currentTimeMillis().toString()
+    }
+
     fun setScreenData(screenData: ScreenData,skipStack: Boolean = false) {
         currentScreenData = screenData
         if(!skipStack){
@@ -88,6 +95,8 @@ class AppViewModel() : ViewModel() {
             _workoutsFlow.value = value
             workoutStore = workoutStore.copy(workouts = value)
         }
+
+
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
         workoutStore = newWorkoutStore

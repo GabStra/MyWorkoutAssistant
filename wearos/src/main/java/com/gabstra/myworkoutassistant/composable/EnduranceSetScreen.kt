@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, bottom: @Composable () -> Unit, onTimerEnabled : () -> Unit, onTimerDisabled: () -> Unit) {
+fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, onTimerEnabled : () -> Unit, onTimerDisabled: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -93,8 +93,6 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     var currentMillis by remember(state.set.id) { mutableIntStateOf(0) }
     var showStopDialog by remember { mutableStateOf(false) }
 
-    var showBottom by remember { mutableStateOf(false) }
-
     fun onMinusClick(){
         if (currentSet.startTimer > 5000){
             currentSet = currentSet.copy(startTimer = currentSet.startTimer - 5000)
@@ -137,7 +135,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-            while (currentMillis < currentSet.startTimer) {
+            while (true) {
                 delay(1000) // Update every sec.
                 currentMillis += 1000
 
@@ -147,18 +145,16 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
 
                 if (currentMillis >= (currentSet.startTimer-3000))
                     VibrateOnce(context);
+
+                if(currentMillis >= currentSet.startTimer && set.autoStop){
+                    break
+                }
             }
 
-            currentSet = currentSet.copy(
-                endTimer = currentSet.startTimer
-            )
+            state.currentSetData = currentSet
 
             VibrateShortImpulse(context);
             onTimerEnd()
-
-            if(!set.autoStop){
-                showBottom = true
-            }
         }
     }
 
@@ -232,8 +228,6 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                     ) {
                         Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
                     }
-                } else if(showBottom){
-                    bottom()
                 }
             }
         }

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -164,7 +166,9 @@ fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean){
             Spacer(modifier = Modifier.width(8.dp))
         }
         Text(
-            modifier = Modifier.weight(1f).basicMarquee(iterations = Int.MAX_VALUE),
+            modifier = Modifier
+                .weight(1f)
+                .basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name
         )
     }
@@ -183,6 +187,10 @@ fun WorkoutsScreen(
     onClearAllHistories: () -> Unit,
     selectedTabIndex : Int
 ) {
+    val context = LocalContext.current
+
+    val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
+
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val enabledWorkouts = workouts.filter { it.enabled }
 
@@ -200,6 +208,10 @@ fun WorkoutsScreen(
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
     var objectiveProgress by remember { mutableStateOf(0.0) }
+
+    var selectedDay by remember {
+        mutableStateOf<LocalDate>(LocalDate.now())
+    }
 
     var groupedWorkoutsHistories by remember { mutableStateOf<Map<LocalDate, List<WorkoutHistory>>?>(null) }
     var workoutById by remember { mutableStateOf<Map<UUID, Workout>?>(null) }
@@ -222,7 +234,7 @@ fun WorkoutsScreen(
 
     val tabTitles = listOf("Status","Workouts")
 
-    var selectedDate by remember { mutableStateOf<CalendarDay?>(null) }
+    var selectedDate by remember { mutableStateOf<CalendarDay?>(CalendarDay(LocalDate.now(),DayPosition.MonthDate)) }
 
     fun getStartOfWeek(date: LocalDate): LocalDate {
         return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
@@ -286,11 +298,22 @@ fun WorkoutsScreen(
         objectiveProgress = progressList.average()
     }
 
-    LaunchedEffect(enabledWorkouts){
+    LaunchedEffect(enabledWorkouts,updateMessage){
         groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
             enabledWorkouts.any { it.id == workoutHistory.workoutId }
         }.groupBy { it.date }
         workoutById = enabledWorkouts.associateBy { it.id }
+
+        val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
+
+        selectedCalendarWorkouts = try {
+            workoutHistories?.map { workoutHistory ->
+                Pair(workoutHistory,workoutById?.get(workoutHistory.workoutId)!!)
+            } ?: emptyList()
+        }catch (e:Exception){
+            emptyList()
+        }
+
         calculateObjectiveProgress(LocalDate.now())
     }
 
@@ -302,7 +325,8 @@ fun WorkoutsScreen(
 
     fun onDayClicked(calendarState: CalendarState, day: CalendarDay){
         if(groupedWorkoutsHistories == null || workoutById == null) return
-        val workoutHistories = groupedWorkoutsHistories?.get(day.date)
+        selectedDay = day.date
+        val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
 
         selectedCalendarWorkouts = try {
             workoutHistories?.map { workoutHistory ->
@@ -491,7 +515,7 @@ fun WorkoutsScreen(
                                             color = Color.White,
                                             modifier = modifier
                                                 .fillMaxWidth()
-                                                .padding(start= 15.dp)
+                                                .padding(start = 15.dp)
                                         )
                                     },
                                     subContent = {

@@ -53,18 +53,13 @@ class DataLayerListenerService : WearableListenerService() {
                                 val gson = GsonBuilder()
                                     .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
                                     .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
-                                    .registerTypeAdapter(
-                                        LocalDateTime::class.java,
-                                        LocalDateTimeAdapter()
-                                    )
+                                    .registerTypeAdapter(LocalDateTime::class.java,LocalDateTimeAdapter())
                                     .registerTypeAdapter(SetData::class.java, SetDataAdapter())
                                     .create()
                                 val workoutHistoryStore = gson.fromJson(
                                     workoutHistoryStoreJson,
                                     WorkoutHistoryStore::class.java
                                 )
-
-                                val workoutHistory = workoutHistoryStore.WorkoutHistory
 
                                 workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
 
