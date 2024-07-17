@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -46,6 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -152,11 +154,11 @@ fun Menu(
 }
 
 @Composable
-fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean){
-    Row (
+fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean) {
+    Row(
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = modifier.padding(15.dp)
-    ){
+    ) {
         if (!isDone) {
             Icon(
                 imageVector = Icons.Default.Close,
@@ -185,22 +187,22 @@ fun WorkoutsScreen(
     onRestoreClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
     onClearAllHistories: () -> Unit,
-    selectedTabIndex : Int
+    selectedTabIndex: Int
 ) {
-    val context = LocalContext.current
-
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val enabledWorkouts = workouts.filter { it.enabled }
 
-    val activeAndEnabledWorkouts = workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
+    val activeAndEnabledWorkouts =
+        workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
 
     val activeWorkouts = workouts.filter { it.isActive }.sortedBy { it.order }
 
-    val timesCompletedInAWeekObjective = enabledWorkouts.filter { it.timesCompletedInAWeek != null }.associate { workout ->
-        workout.id to (workout.timesCompletedInAWeek ?: 0)
-    }
+    val timesCompletedInAWeekObjective =
+        enabledWorkouts.filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek !=0  }.associate { workout ->
+            workout.id to (workout.timesCompletedInAWeek ?: 0)
+        }
 
     val hasObjectives = timesCompletedInAWeekObjective.values.any { it > 0 }
 
@@ -213,12 +215,24 @@ fun WorkoutsScreen(
         mutableStateOf<LocalDate>(LocalDate.now())
     }
 
-    var groupedWorkoutsHistories by remember { mutableStateOf<Map<LocalDate, List<WorkoutHistory>>?>(null) }
+    var groupedWorkoutsHistories by remember {
+        mutableStateOf<Map<LocalDate, List<WorkoutHistory>>?>(
+            null
+        )
+    }
     var workoutById by remember { mutableStateOf<Map<UUID, Workout>?>(null) }
 
-    var weeklyWorkoutsByActualTarget by remember { mutableStateOf<Map<Workout, Pair<Int,Int>>?>(null) }
+    var weeklyWorkoutsByActualTarget by remember {
+        mutableStateOf<Map<Workout, Pair<Int, Int>>?>(
+            null
+        )
+    }
 
-    var selectedCalendarWorkouts by remember { mutableStateOf<List<Pair<WorkoutHistory,Workout>>?>(null) }
+    var selectedCalendarWorkouts by remember {
+        mutableStateOf<List<Pair<WorkoutHistory, Workout>>?>(
+            null
+        )
+    }
 
     var isCardExpanded by remember {
         mutableStateOf(false)
@@ -232,9 +246,16 @@ fun WorkoutsScreen(
 
     val scope = rememberCoroutineScope()
 
-    val tabTitles = listOf("Status","Workouts")
+    val tabTitles = listOf("Status", "Workouts")
 
-    var selectedDate by remember { mutableStateOf<CalendarDay?>(CalendarDay(LocalDate.now(),DayPosition.MonthDate)) }
+    var selectedDate by remember {
+        mutableStateOf<CalendarDay?>(
+            CalendarDay(
+                LocalDate.now(),
+                DayPosition.MonthDate
+            )
+        )
+    }
 
     fun getStartOfWeek(date: LocalDate): LocalDate {
         return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
@@ -244,32 +265,38 @@ fun WorkoutsScreen(
         return date.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
     }
 
-    fun calculateObjectiveProgress(currentDate: LocalDate){
-        if(enabledWorkouts.isEmpty()) return
-        if(groupedWorkoutsHistories == null || workoutById == null) return
+    fun calculateObjectiveProgress(currentDate: LocalDate) {
+        weeklyWorkoutsByActualTarget = null
+        objectiveProgress = 0.0
+
+        if (enabledWorkouts.isEmpty()) return
+        if (groupedWorkoutsHistories == null || workoutById == null) return
 
         val startOfWeek = getStartOfWeek(currentDate)
         val endOfWeek = getEndOfWeek(currentDate)
 
         // Collect workouts for each day in the week range
-        var workoutHistoriesInAWeek = (0..ChronoUnit.DAYS.between(startOfWeek, endOfWeek)).flatMap { offset ->
-            val date = startOfWeek.plusDays(offset)
-            groupedWorkoutsHistories?.get(date) ?: emptyList()  // Default to empty list if no workouts for the day
-        }
+        var workoutHistoriesInAWeek =
+            (0..ChronoUnit.DAYS.between(startOfWeek, endOfWeek)).flatMap { offset ->
+                val date = startOfWeek.plusDays(offset)
+                groupedWorkoutsHistories?.get(date)
+                    ?: emptyList()  // Default to empty list if no workouts for the day
+            }
 
-        workoutHistoriesInAWeek = workoutHistoriesInAWeek.filter{ it.isDone }
+        workoutHistoriesInAWeek = workoutHistoriesInAWeek.filter { it.isDone }
 
-        if(workoutHistoriesInAWeek.isEmpty()) return
+        if (workoutHistoriesInAWeek.isEmpty()) return
 
-        val weeklyWorkouts = workoutHistoriesInAWeek
-            .mapNotNull { workoutHistory ->
-            enabledWorkouts.firstOrNull { it.id == workoutHistory.workoutId }
+        val weeklyWorkouts = workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
+            enabledWorkouts.find { it.id == workoutHistory.workoutId && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0  }
         }
 
         val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.distinct()
 
         val totalWeeklyWorkouts = weeklyWorkouts +
-                activeAndEnabledWorkouts.filter { !uniqueGlobalIds.contains(it.globalId) && timesCompletedInAWeekObjective.contains(it.id) }
+                activeAndEnabledWorkouts.filter {
+                    !uniqueGlobalIds.contains(it.globalId) && it.timesCompletedInAWeek != null  && it.timesCompletedInAWeek != 0
+                }
 
         val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
         val workoutCountsByGlobalId = weeklyWorkouts.groupingBy { it.globalId }.eachCount()
@@ -289,28 +316,29 @@ fun WorkoutsScreen(
 
             //get the active workout in workouts
             var activeWorkout = workouts.firstOrNull { it.isActive }
-            if(activeWorkout == null) activeWorkout = workouts.first()
-            activeWorkout to Pair(actual,averageTarget)
-        }.toMap().toSortedMap(compareBy { it.order})
+            if (activeWorkout == null) activeWorkout = workouts.first()
+            activeWorkout to Pair(actual, averageTarget)
+        }.toMap().toSortedMap(compareBy { it.order })
 
 
         // Calculate average objective progress
         objectiveProgress = progressList.average()
     }
 
-    LaunchedEffect(enabledWorkouts,updateMessage){
-        groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
-            enabledWorkouts.any { it.id == workoutHistory.workoutId }
-        }.groupBy { it.date }
+    LaunchedEffect(enabledWorkouts, updateMessage) {
+        groupedWorkoutsHistories =
+            workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
+                enabledWorkouts.any { it.id == workoutHistory.workoutId }
+            }.groupBy { it.date }
         workoutById = enabledWorkouts.associateBy { it.id }
 
         val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
 
         selectedCalendarWorkouts = try {
             workoutHistories?.map { workoutHistory ->
-                Pair(workoutHistory,workoutById?.get(workoutHistory.workoutId)!!)
+                Pair(workoutHistory, workoutById?.get(workoutHistory.workoutId)!!)
             } ?: emptyList()
-        }catch (e:Exception){
+        } catch (e: Exception) {
             emptyList()
         }
 
@@ -318,25 +346,25 @@ fun WorkoutsScreen(
     }
 
     LaunchedEffect(selectedDate) {
-        if(selectedDate == null) return@LaunchedEffect
+        if (selectedDate == null) return@LaunchedEffect
 
         calculateObjectiveProgress(selectedDate!!.date)
     }
 
-    fun onDayClicked(calendarState: CalendarState, day: CalendarDay){
-        if(groupedWorkoutsHistories == null || workoutById == null) return
+    fun onDayClicked(calendarState: CalendarState, day: CalendarDay) {
+        if (groupedWorkoutsHistories == null || workoutById == null) return
         selectedDay = day.date
         val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
 
         selectedCalendarWorkouts = try {
             workoutHistories?.map { workoutHistory ->
-                Pair(workoutHistory,workoutById?.get(workoutHistory.workoutId)!!)
+                Pair(workoutHistory, workoutById?.get(workoutHistory.workoutId)!!)
             } ?: emptyList()
-        }catch (e:Exception){
+        } catch (e: Exception) {
             emptyList()
         }
 
-        if(day.position == DayPosition.InDate){
+        if (day.position == DayPosition.InDate) {
             scope.launch {
                 calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
                 selectedDate = day
@@ -344,7 +372,7 @@ fun WorkoutsScreen(
             return
         }
 
-        if(day.position == DayPosition.OutDate){
+        if (day.position == DayPosition.OutDate) {
             scope.launch {
                 calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
                 selectedDate = day
@@ -375,11 +403,13 @@ fun WorkoutsScreen(
             )
         },
         bottomBar = {
-            if(selectedWorkouts.isNotEmpty()) BottomAppBar(
-                actions =  {
+            if (selectedWorkouts.isNotEmpty()) BottomAppBar(
+                containerColor = Color.DarkGray,
+                actions = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = {
                             val newWorkouts = activeAndEnabledWorkouts.filter { workout ->
@@ -399,7 +429,8 @@ fun WorkoutsScreen(
                                     }
                                     workoutHistoryDao.deleteAllByWorkoutId(workout.id)
                                 }
-                                groupedWorkoutsHistories = workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
+                                groupedWorkoutsHistories =
+                                    workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
                             }
                             selectedWorkouts = emptyList()
                             isSelectionModeActive = false
@@ -438,8 +469,8 @@ fun WorkoutsScreen(
                 }
             )
         },
-        floatingActionButton= {
-            if(selectedWorkouts.isEmpty())
+        floatingActionButton = {
+            if (selectedWorkouts.isEmpty() && selectedTabIndex == 1)
                 FloatingActionButton(
                     containerColor = MaterialTheme.colorScheme.primary,
                     onClick = {
@@ -458,12 +489,12 @@ fun WorkoutsScreen(
                 .fillMaxSize()
                 .padding(it),
             horizontalAlignment = Alignment.CenterHorizontally
-        ){
-            if(activeAndEnabledWorkouts.isEmpty()){
+        ) {
+            if (activeAndEnabledWorkouts.isEmpty()) {
                 Card(
                     modifier = Modifier
                         .padding(15.dp)
-                ){
+                ) {
                     Text(
                         text = "Add a new workout",
                         textAlign = TextAlign.Center,
@@ -472,11 +503,10 @@ fun WorkoutsScreen(
                             .padding(15.dp)
                     )
                 }
-            }else{
+            } else {
                 TabRow(
                     selectedTabIndex = selectedTabIndex,
-                    indicator = {
-                            tabPositions ->
+                    indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
                             Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
                             color = Color.White, // Set the indicator color
@@ -487,7 +517,7 @@ fun WorkoutsScreen(
                     tabTitles.forEachIndexed { index, title ->
                         Tab(
                             selected = index == selectedTabIndex,
-                            onClick = { appViewModel.updateScreenData(ScreenData.Workouts(index)) },
+                            onClick = { appViewModel.setHomeTab(index) },
                             text = { Text(title) },
                             selectedContentColor = Color.White, // Color when tab is selected
                             unselectedContentColor = Color.LightGray // Color when tab is not selected
@@ -497,119 +527,151 @@ fun WorkoutsScreen(
 
                 when (selectedTabIndex) {
                     0 -> {
-                        LazyColumn(){
-                            item{ if(hasObjectives){
-                                val currentDate = selectedDate?.date ?: LocalDate.now()
+                        LazyColumn() {
+                            item {
+                                if (hasObjectives) {
+                                    val currentDate = selectedDate?.date ?: LocalDate.now()
 
-                                val currentMonth = currentDate.format(DateTimeFormatter.ofPattern("MMM"))
+                                    val currentMonth =
+                                        currentDate.format(DateTimeFormatter.ofPattern("MMM"))
 
-                                ExpandableCard(
-                                    isExpandable = weeklyWorkoutsByActualTarget != null && weeklyWorkoutsByActualTarget!!.isNotEmpty(),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(15.dp),
-                                    title = { modifier ->
-                                        Text(
-                                            text = "Weekly progress (${getStartOfWeek(currentDate).dayOfMonth} - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth): ${(objectiveProgress * 100).toInt()}%",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = Color.White,
-                                            modifier = modifier
-                                                .fillMaxWidth()
-                                                .padding(start = 15.dp)
-                                        )
-                                    },
-                                    subContent = {
-                                        ObjectiveProgressBar(progress = objectiveProgress.toFloat())
-                                    },
-                                    content = {
-                                        Column(
-                                            modifier = Modifier.padding(10.dp),
-                                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                                        ){
-                                            weeklyWorkoutsByActualTarget?.forEach { (workout, pair) ->
-                                                Row(
-                                                    modifier = Modifier.padding(5.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ){
-                                                    Text(
-                                                        text = workout.name,
-                                                        modifier = Modifier.weight(1f),
-                                                        color = Color.White
-                                                    )
-                                                    Text(
-                                                        text = "${pair.first}/${pair.second}",
-                                                        color = Color.White
-                                                    )
+                                    val recordsExist = weeklyWorkoutsByActualTarget != null && weeklyWorkoutsByActualTarget!!.isNotEmpty()
+
+                                    ExpandableCard(
+                                        isExpandable = recordsExist,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(15.dp),
+                                        title = { modifier ->
+                                            Row(
+                                                modifier = modifier
+                                                    .fillMaxWidth()
+                                                    .padding(start = 15.dp, end = 15.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ){
+                                                Text(
+                                                    modifier = Modifier.weight(1f),
+                                                    text = "Weekly progress (${
+                                                        getStartOfWeek(
+                                                            currentDate
+                                                        ).dayOfMonth
+                                                    } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    color = Color.White,
+                                                )
+                                                Text(
+                                                    text = "${(objectiveProgress * 100).toInt()}%",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    textAlign = TextAlign.End,
+                                                    color = Color.White,
+                                                )
+                                            }
+
+                                        },
+                                        content = {
+                                            Column(
+                                                modifier = Modifier.padding(10.dp),
+                                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                ObjectiveProgressBar(progress = objectiveProgress.toFloat())
+                                                weeklyWorkoutsByActualTarget?.forEach { (workout, pair) ->
+                                                    Row(
+                                                        modifier = Modifier.padding(5.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Text(
+                                                            text = workout.name,
+                                                            modifier = Modifier.weight(1f),
+                                                            color = Color.White
+                                                        )
+                                                        Text(
+                                                            text = "${pair.first}/${pair.second}",
+                                                            color = Color.White
+                                                        )
+                                                    }
                                                 }
                                             }
-                                        }
-                                    },
-                                    onOpen = { isCardExpanded = true },
-                                    onClose = { isCardExpanded = false }
-                                )
-                            }}
-                            item{
+                                        },
+                                        onOpen = { isCardExpanded = true },
+                                        onClose = { isCardExpanded = false }
+                                    )
+                                }
+                            }
+                            item {
                                 WorkoutsCalendar(
                                     selectedDate = selectedDate,
                                     onDayClicked = { calendarState, day ->
-                                        onDayClicked(calendarState,day)
+                                        onDayClicked(calendarState, day)
                                     },
                                     shouldHighlight = { day -> highlightDay(day) }
                                 )
                             }
-                            item{if(selectedDate != null){
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    Text(
-                                        text = selectedDate!!.date.format(formatter),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 10.dp),
-                                        color = Color.Gray,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    if(selectedCalendarWorkouts.isNullOrEmpty()){
+                            item {
+                                if (selectedDate != null) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
                                         Text(
-                                            text = "No workouts on this day",
+                                            text = selectedDate!!.date.format(formatter),
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(vertical = 10.dp),
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.titleLarge,
-                                            color = Color.Gray
+                                            color = Color.Gray,
+                                            textAlign = TextAlign.Center
                                         )
-                                    }else{
-                                        Column{
-                                            selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
-                                                Card(
-                                                    modifier = Modifier.padding(5.dp),
-                                                    onClick = {
-                                                        appViewModel.setScreenData(ScreenData.WorkoutHistory(workout.id,workoutHistory.id))
+                                        if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                                            Text(
+                                                text = "No workouts on this day",
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 10.dp),
+                                                textAlign = TextAlign.Center,
+                                                style = MaterialTheme.typography.titleLarge,
+                                                color = Color.Gray
+                                            )
+                                        } else {
+                                            Column {
+                                                selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
+                                                    Card(
+                                                        modifier = Modifier.padding(5.dp),
+                                                        onClick = {
+                                                            appViewModel.setScreenData(
+                                                                ScreenData.WorkoutHistory(
+                                                                    workout.id,
+                                                                    workoutHistory.id
+                                                                )
+                                                            )
+                                                        }
+                                                    ) {
+                                                        WorkoutTitle(
+                                                            Modifier,
+                                                            workout,
+                                                            workoutHistory.isDone
+                                                        )
                                                     }
-                                                ){
-                                                    WorkoutTitle(Modifier,workout,workoutHistory.isDone)
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }}
+                            }
                         }
                     }
+
                     1 -> {
                         GenericSelectableList(
-                            PaddingValues(0.dp,5.dp),
+                            PaddingValues(0.dp, 5.dp),
                             items = activeWorkouts,
-                            selectedItems= selectedWorkouts,
+                            selectedItems = selectedWorkouts,
                             isSelectionModeActive,
                             onItemClick = {
-                                if(isCardExpanded) return@GenericSelectableList
+                                if (isCardExpanded) return@GenericSelectableList
                                 appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
                             },
                             onEnableSelection = { isSelectionModeActive = true },
                             onDisableSelection = { isSelectionModeActive = false },
-                            onSelectionChange = { newSelection -> selectedWorkouts = newSelection} ,
-                            onOrderChange = { newWorkouts->
-                                val workoutsWithOrderUpdated = newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
+                            onSelectionChange = { newSelection -> selectedWorkouts = newSelection },
+                            onOrderChange = { newWorkouts ->
+                                val workoutsWithOrderUpdated =
+                                    newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
                                 appViewModel.updateWorkouts(workoutsWithOrderUpdated)
                             },
                             itemContent = { it ->
@@ -618,7 +680,7 @@ fun WorkoutsScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .alpha(if (it.enabled) 1f else 0.4f),
-                                    title = { modifier ->  WorkoutTitle(modifier,it,true) },
+                                    title = { modifier -> WorkoutTitle(modifier, it, true) },
                                     content = { WorkoutRenderer(it) },
                                     onOpen = { isCardExpanded = true },
                                     onClose = { isCardExpanded = false }

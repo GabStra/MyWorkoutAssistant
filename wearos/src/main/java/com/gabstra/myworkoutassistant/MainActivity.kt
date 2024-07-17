@@ -87,7 +87,7 @@ class MyReceiver(
                 }
 
             }catch (exception: Exception) {
-                Log.d("MainActivity", "Exception: $exception")
+                throw exception
             }
         }
     }

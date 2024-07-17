@@ -91,7 +91,7 @@ fun SetRenderer(set: Set) {
             is EnduranceSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis/1000)} (mm:ss)",
+                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis / 1000)} (mm:ss)",
                     textAlign = TextAlign.Center,
                 )
             }
@@ -99,7 +99,7 @@ fun SetRenderer(set: Set) {
             is TimedDurationSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis/1000)} (mm:ss)",
+                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis / 1000)} (mm:ss)",
                     textAlign = TextAlign.Center,
                 )
             }
@@ -117,7 +117,7 @@ fun ExerciseDetailScreen(
     exercise: Exercise,
     onGoBack: () -> Unit
 ) {
-    var sets  by remember { mutableStateOf(exercise.sets) }
+    var sets by remember { mutableStateOf(exercise.sets) }
     var selectedSets by remember { mutableStateOf(listOf<com.gabstra.myworkoutassistant.shared.sets.Set>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
@@ -127,7 +127,7 @@ fun ExerciseDetailScreen(
                 title = {
                     Text(
                         modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
-                        text=exercise.name
+                        text = exercise.name
                     )
                 },
                 navigationIcon = {
@@ -154,11 +154,13 @@ fun ExerciseDetailScreen(
         },
         bottomBar = {
             if (selectedSets.isNotEmpty()) BottomAppBar(
+                containerColor = Color.DarkGray,
                 actions = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ){
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         IconButton(onClick = {
                             val newSets = sets.filter { set ->
                                 selectedSets.none { it === set }
@@ -177,10 +179,10 @@ fun ExerciseDetailScreen(
                             onClick = {
                                 val selectedSet = selectedSets.first()
                                 val newSet = when (selectedSet) {
-                                    is WeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
-                                    is BodyWeightSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
-                                    is EnduranceSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
-                                    is TimedDurationSet -> selectedSet.copy(id= java.util.UUID.randomUUID())
+                                    is WeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                    is BodyWeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                    is EnduranceSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                    is TimedDurationSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
                                 }
                                 appViewModel.addSetToExercise(workout, exercise, newSet)
 
@@ -188,7 +190,10 @@ fun ExerciseDetailScreen(
                                 selectedSets = emptyList()
                                 isSelectionModeActive = false
                             }) {
-                            Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy"
+                            )
                         }
                     }
                 }

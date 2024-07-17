@@ -199,7 +199,6 @@ fun MyWorkoutAssistantNavHost(
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("MainActivity", "Failed to import data from backup", e)
                     Toast.makeText(context, "Failed to import data from backup", Toast.LENGTH_SHORT)
                         .show()
                 }
@@ -208,8 +207,6 @@ fun MyWorkoutAssistantNavHost(
 
     when (appViewModel.currentScreenData) {
         is ScreenData.Workouts -> {
-            val screenData = appViewModel.currentScreenData as ScreenData.Workouts
-
             WorkoutsScreen(
                 appViewModel,
                 workoutHistoryDao,
@@ -259,7 +256,7 @@ fun MyWorkoutAssistantNavHost(
                         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
                     }
                 },
-                selectedTabIndex = screenData.selectedTabIndex
+                selectedTabIndex = appViewModel.selectedHomeTab
             )
         }
 

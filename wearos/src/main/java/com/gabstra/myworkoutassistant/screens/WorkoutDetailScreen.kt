@@ -63,10 +63,6 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
-    LaunchedEffect(hasWorkoutRecord) {
-        Log.d("WorkoutDetailScreen", "hasWorkoutRecord: $hasWorkoutRecord")
-    }
-
     val basePermissions = listOf(
         Manifest.permission.BODY_SENSORS,
         Manifest.permission.BLUETOOTH_SCAN,

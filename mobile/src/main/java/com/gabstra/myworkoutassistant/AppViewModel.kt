@@ -50,8 +50,15 @@ class AppViewModel() : ViewModel() {
     private val _updateNotificationFlow = MutableStateFlow<String?>(null)
     val updateNotificationFlow = _updateNotificationFlow.asStateFlow()
 
+    var selectedHomeTab by mutableIntStateOf(0)
+        private set
+
     fun notifyUpdateReceived() {
         _updateNotificationFlow.value = System.currentTimeMillis().toString()
+    }
+
+    fun setHomeTab(tabIndex: Int) {
+        selectedHomeTab = tabIndex
     }
 
     fun setScreenData(screenData: ScreenData,skipStack: Boolean = false) {

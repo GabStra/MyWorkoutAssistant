@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -59,11 +60,14 @@ fun <T> DetailScreen(
                 title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
                     }
                 },
                 actions = {
-                    IconButton(onClick = onSettingsClick ) {
+                    IconButton(onClick = onSettingsClick) {
                         Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
@@ -71,8 +75,9 @@ fun <T> DetailScreen(
         },
         bottomBar = {
             if (selectedItems.isNotEmpty()) BottomAppBar(
+                containerColor = Color.DarkGray,
                 actions = {
-                    if(onUpdateItems != null){
+                    if (onUpdateItems != null) {
                         IconButton(onClick = {
                             onUpdateItems(items.filterNot { it in selectedItems })
                             selectedItems = emptyList()
@@ -90,14 +95,18 @@ fun <T> DetailScreen(
             if (isAddButtonVisible && selectedItems.isEmpty())
                 FloatingActionButton(
                     containerColor = MaterialTheme.colorScheme.primary,
-                    onClick =  onAddClick
+                    onClick = onAddClick
                 ) {
                     Icon(imageVector = Icons.Default.Add, contentDescription = null)
                 }
         }
     ) {
         if (items.isEmpty()) {
-            Text(modifier = Modifier.fillMaxSize(), text = "No items available", textAlign = TextAlign.Center)
+            Text(
+                modifier = Modifier.fillMaxSize(),
+                text = "No items available",
+                textAlign = TextAlign.Center
+            )
         } else {
             SelectableList(
                 selectionMode,
@@ -107,7 +116,7 @@ fun <T> DetailScreen(
                     .clickable {
                         if (selectionMode) {
                             selectionMode = false
-                            selectedItems= emptyList()
+                            selectedItems = emptyList()
                         }
                     },
                 items = items,

@@ -186,3 +186,11 @@ fun formatTime(seconds: Int): String {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
 }
+
+fun getEnabledStatusOfWorkoutComponent(workoutComponent: WorkoutComponent): Boolean {
+    return when (workoutComponent) {
+        is Exercise -> workoutComponent.enabled
+        is ExerciseGroup -> workoutComponent.enabled
+        else -> false // Default case if the component type is unknown
+    }
+}
