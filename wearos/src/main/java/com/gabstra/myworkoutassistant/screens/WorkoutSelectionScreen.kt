@@ -66,14 +66,20 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
         label = {
             Text(
                 text = workout.name,
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 5000),
+                modifier = Modifier.basicMarquee(
+                    iterations = Int.MAX_VALUE,
+                    initialDelayMillis = 5000
+                ),
                 style = MaterialTheme.typography.body2
             )
         },
         secondaryLabel = {
             Text(
                 text = workout.description,
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 5000),
+                modifier = Modifier.basicMarquee(
+                    iterations = Int.MAX_VALUE,
+                    initialDelayMillis = 5000
+                ),
                 style = MaterialTheme.typography.caption3,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -129,14 +135,19 @@ fun MissingAgeSettingMessage(
 
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
-fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController, viewModel: AppViewModel, appHelper: WearDataLayerAppHelper) {
+fun WorkoutSelectionScreen(
+    dataClient: DataClient,
+    navController: NavController,
+    viewModel: AppViewModel,
+    appHelper: WearDataLayerAppHelper
+) {
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
     val workouts by viewModel.workouts.collectAsState()
 
     //sort workouts by order number
     val sortedWorkouts = workouts.sortedBy { it.order }
 
-    val currentYear = remember {  Calendar.getInstance().get(Calendar.YEAR) }
+    val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
     var waitTimeInSec by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
@@ -149,37 +160,41 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
 
     val titleComposable = @Composable {
         Text(
-            modifier = Modifier.padding(0.dp, 0.dp,0.dp, 10.dp).combinedClickable(
-                onClick = {},
-                onLongClick = {
-                    Toast.makeText(
-                        context,
-                        "Build version code: $versionName",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            ),
+            modifier = Modifier
+                .padding(0.dp, 0.dp, 0.dp, 10.dp)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        Toast
+                            .makeText(
+                                context,
+                                "Build version code: $versionName",
+                                Toast.LENGTH_LONG
+                            )
+                            .show()
+                    }
+                ),
             text = "My Workout Assistant",
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.caption1,
         )
     }
 
-    LaunchedEffect(Unit){
+    LaunchedEffect(Unit) {
         scope.launch {
             while (true) {
                 delay(1000) // Update every sec.
                 waitTimeInSec += 1
-                if(waitTimeInSec >= 3) break
+                if (waitTimeInSec >= 3) break
             }
         }
     }
 
-    if(waitTimeInSec < 3){
+    if (waitTimeInSec < 3) {
         KeepOn()
-        LoadingScreen("Loading",Modifier.width(80.dp))
-    }else{
-        if(!viewModel.isPhoneConnectedAndHasApp && sortedWorkouts.isEmpty()){
+        LoadingScreen("Loading", Modifier.width(80.dp))
+    } else {
+        if (!viewModel.isPhoneConnectedAndHasApp && sortedWorkouts.isEmpty()) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
@@ -197,8 +212,8 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
             return
         }
 
-        if(userAge == currentYear && phoneNode != null){
-            MissingAgeSettingMessage(dataClient, viewModel, appHelper,titleComposable)
+        if (userAge == currentYear && phoneNode != null) {
+            MissingAgeSettingMessage(dataClient, viewModel, appHelper, titleComposable)
             return
         }
 
@@ -208,17 +223,17 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                     scalingLazyListState = scalingLazyListState
                 )
             }
-        ){
+        ) {
             ScalingLazyColumn(
                 modifier = Modifier.padding(10.dp, vertical = 0.dp),
                 state = scalingLazyListState,
             ) {
-                item{
+                item {
                     titleComposable()
                 }
 
-                if(sortedWorkouts.isEmpty()){
-                    item{
+                if (sortedWorkouts.isEmpty()) {
+                    item {
                         Text(
                             modifier = Modifier.padding(vertical = 10.dp),
                             text = "No workouts available",
@@ -226,7 +241,7 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                             style = MaterialTheme.typography.caption1,
                         )
                     }
-                }else{
+                } else {
                     items(sortedWorkouts) { workout ->
                         WorkoutListItem(workout) {
                             navController.navigate(Screen.WorkoutDetail.route)
@@ -234,8 +249,6 @@ fun WorkoutSelectionScreen(dataClient: DataClient, navController: NavController,
                         }
                     }
                 }
-
-
             }
         }
     }

@@ -158,6 +158,18 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
         }
     }
 
+    val isPaused by viewModel.isPaused
+
+    LaunchedEffect(isPaused) {
+        if (isPaused) {
+            timerJob?.takeIf { it.isActive }?.cancel()
+        } else {
+            if (timerJob?.isActive != true && !isTimerInEditMode) {
+                startTimerJob()
+            }
+        }
+    }
+
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)

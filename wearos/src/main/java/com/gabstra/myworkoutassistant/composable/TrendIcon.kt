@@ -35,12 +35,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
             )
         }
 
-         else -> {
-             Icon(
-                 imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
-                 contentDescription = "Same",
-                 modifier = Modifier.size(30.dp).alpha(0f)
-             )
-         }
+        else -> {
+        }
     }
 }

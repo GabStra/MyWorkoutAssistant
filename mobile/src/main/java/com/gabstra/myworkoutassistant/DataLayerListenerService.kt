@@ -64,13 +64,14 @@ class DataLayerListenerService : WearableListenerService() {
                                 workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
 
                                 setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
-                                val setHistoriesByExerciseId =
-                                    workoutHistoryStore.ExerciseHistories.groupBy { it.exerciseId }
 
                                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                                 val workout =
                                     workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
                                 if (workout != null) {
+                                    val setHistoriesByExerciseId =
+                                        workoutHistoryStore.ExerciseHistories.groupBy { it.exerciseId }
+
                                     val exercises =
                                         WorkoutManager.getAllExercisesFromWorkout(workout)
                                     var workoutComponents = workout.workoutComponents

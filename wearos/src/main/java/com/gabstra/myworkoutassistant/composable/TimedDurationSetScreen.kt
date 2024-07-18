@@ -153,29 +153,19 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         }
     }
 
-    // State to track if this is the first time the composable is being run
-    val initialRun = remember { mutableStateOf(true) }
-
-    // Observe isPaused from your viewModel
     val isPaused by viewModel.isPaused
 
     LaunchedEffect(isPaused) {
-        if (initialRun.value) {
-            // If it's the first run, just set initialRun to false and do nothing else
-            initialRun.value = false
+        if (isPaused) {
+            timerJob?.takeIf { it.isActive }?.cancel()
         } else {
-            // For subsequent runs (when isPaused changes), check your condition and act accordingly
-            if (timerJob != null) {
-                if (timerJob!!.isActive && isPaused) {
-                    timerJob?.cancel()
-                } else {
-                    startTimerJob()
-                }
+            if (timerJob?.isActive != true && !isTimerInEditMode) {
+                startTimerJob()
             }
         }
     }
 
-    var textComposable = @Composable {
+    val textComposable = @Composable {
         Text(
             modifier = Modifier.combinedClickable(
                 onClick = {

@@ -16,7 +16,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +29,7 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
+import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -44,8 +47,10 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import kotlinx.coroutines.Job
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -110,17 +115,46 @@ fun RestScreen(
 ) {
     val totalSeconds = state.restTimeInSec;
     var currentMillis by remember { mutableIntStateOf(totalSeconds * 1000) }
+
+    val scope = rememberCoroutineScope()
+    var timerJob by remember { mutableStateOf<Job?>(null) }
+
+    var showSkipDialog by remember { mutableStateOf(false) }
+
     val context = LocalContext.current
 
-    LaunchedEffect(key1 = totalSeconds) {
-        delay(500)
-        while (currentMillis > 0) {
-            delay(1000) // Update every 18 milliseconds.
-            currentMillis -= 1000
-        }
+    fun startTimerJob() {
+        timerJob?.cancel()
+        timerJob = scope.launch {
 
-        VibrateShortImpulse(context);
-        viewModel.goToNextState()
+            while (currentMillis > 0) {
+                delay(1000) // Update every sec.
+                currentMillis -= 1000
+
+                if (currentMillis <= 3000)
+                    VibrateOnce(context);
+            }
+
+            VibrateShortImpulse(context);
+            viewModel.goToNextState()
+        }
+    }
+
+    val isPaused by viewModel.isPaused
+
+    LaunchedEffect(isPaused) {
+        if (isPaused) {
+            timerJob?.takeIf { it.isActive }?.cancel()
+        } else {
+            if (timerJob?.isActive != true) {
+                startTimerJob()
+            }
+        }
+    }
+
+    LaunchedEffect(totalSeconds) {
+        delay(500)
+        startTimerJob()
     }
 
     val progress = (currentMillis.toFloat() / (totalSeconds * 1000))
@@ -133,8 +167,9 @@ fun RestScreen(
             .combinedClickable(
                 onClick = {},
                 onLongClick = {
-                    VibrateOnce(context);
-                    viewModel.goToNextState()
+                    VibrateOnce(context)
+                    timerJob?.cancel()
+                    showSkipDialog = true
                 }
             ),
         contentAlignment = Alignment.TopCenter
@@ -176,5 +211,23 @@ fun RestScreen(
 
         hearthRateChart()
     }
+
+    CustomDialogYesOnLongPress(
+        show = showSkipDialog,
+        title = "Skip rest",
+        message = "Do you want to proceed?",
+        handleYesClick = {
+            VibrateOnce(context)
+            viewModel.goToNextState()
+            showSkipDialog = false
+        },
+        handleNoClick = {
+            VibrateOnce(context)
+            showSkipDialog = false
+            startTimerJob()
+        },
+        handleOnAutomaticClose = {},
+        holdTimeInMillis = 1000
+    )
 }
 

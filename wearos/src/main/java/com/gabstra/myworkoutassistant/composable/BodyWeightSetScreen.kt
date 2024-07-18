@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
@@ -95,7 +96,6 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     val repsRow = @Composable {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
                 .combinedClickable(
                     onClick = {
                     },
@@ -120,17 +120,13 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.End
         ) {
-            TrendIcon(currentSet.actualReps, previousSet.actualReps)
-            Spacer(modifier = Modifier.width(5.dp))
-
             Row(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.End
             ) {
-
                 Text(
                     text = "${currentSet.actualReps}",
-                    style = MaterialTheme.typography.display3
+                    style = MaterialTheme.typography.title1
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
@@ -164,15 +160,31 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
-                    Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,0.dp)) {
-                        repsRow()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        TrendIcon(currentSet.actualReps, previousSet.actualReps)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(horizontalAlignment = Alignment.End){
+                            repsRow()
+                        }
                     }
                 }
             )
 
         }else{
-            Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,2.dp).weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.End) {
-                repsRow()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                TrendIcon(currentSet.actualReps, previousSet.actualReps)
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(horizontalAlignment = Alignment.End){
+                    repsRow()
+                }
             }
         }
     }

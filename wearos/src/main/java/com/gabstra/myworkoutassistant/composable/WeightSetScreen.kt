@@ -135,7 +135,6 @@ fun WeightSetScreen (
     val repsRow = @Composable {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
                 .combinedClickable(
                     onClick = {
                     },
@@ -165,7 +164,6 @@ fun WeightSetScreen (
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.End
             ) {
-
                 Text(
                     text = "${currentSet.actualReps}",
                     style = MaterialTheme.typography.title1
@@ -185,7 +183,6 @@ fun WeightSetScreen (
     val weightRow = @Composable {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
                 .combinedClickable(
                     onClick = {
                     },
@@ -251,21 +248,30 @@ fun WeightSetScreen (
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
-                    Column(modifier = Modifier.padding(0.dp,0.dp,30.dp,0.dp)) {
-                        if (isRepsInEditMode) repsRow()
-                        if (isWeightInEditMode) weightRow()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        TrendIcon(currentVolume, previousVolume)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(horizontalAlignment = Alignment.End){
+                            if (isRepsInEditMode) repsRow()
+                            if (isWeightInEditMode) weightRow()
+                        }
                     }
                 }
             )
 
         }else{
             Row(
-                modifier = Modifier.fillMaxWidth().padding(0.dp, 0.dp, 15.dp, 2.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.Center
             ) {
                 TrendIcon(currentVolume, previousVolume)
-                Column(Modifier.width(95.dp)){
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(horizontalAlignment = Alignment.End){
                     repsRow()
                     Spacer(modifier = Modifier.height(5.dp))
                     weightRow()

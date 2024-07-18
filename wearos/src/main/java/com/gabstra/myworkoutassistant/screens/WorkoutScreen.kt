@@ -2,10 +2,13 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -185,42 +188,49 @@ fun WorkoutScreen(
         if(isResuming){
             LoadingScreen("Resuming workout",Modifier.width(150.dp))
         }else{
-            when(workoutState){
-                is WorkoutState.Preparing -> {
-                    val state = workoutState as WorkoutState.Preparing
-                    if(!selectedWorkout.usePolarDevice)
-                        PreparingStandardScreen(viewModel,hrViewModel,state,onReady = {
-                            showWorkoutInProgressNotification(context)
-                        })
-                    else
-                        PreparingPolarScreen(viewModel,navController,polarViewModel,state,onReady = {
-                            showWorkoutInProgressNotification(context)
-                        })
-                }
-                is WorkoutState.Set -> {
-                    val state = workoutState as WorkoutState.Set
-                    ExerciseScreen(
-                        viewModel,
-                        state,
-                        heartRateChartComposable
-                    )
-                }
-                is WorkoutState.Rest -> {
-                    val state = workoutState as WorkoutState.Rest
-                    RestScreen(
-                        viewModel,
-                        state,
-                        heartRateChartComposable)
-                }
-                is WorkoutState.Finished -> {
-                    val state = workoutState as WorkoutState.Finished
-                    WorkoutCompleteScreen(
-                        navController,
-                        viewModel,
-                        state,
-                        hrViewModel,
-                        polarViewModel
-                    )
+            AnimatedContent(
+                targetState = workoutState,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                }, label = ""
+            ) { updatedWorkoutState ->
+                when(updatedWorkoutState){
+                    is WorkoutState.Preparing -> {
+                        val state = updatedWorkoutState as WorkoutState.Preparing
+                        if(!selectedWorkout.usePolarDevice)
+                            PreparingStandardScreen(viewModel,hrViewModel,state,onReady = {
+                                showWorkoutInProgressNotification(context)
+                            })
+                        else
+                            PreparingPolarScreen(viewModel,navController,polarViewModel,state,onReady = {
+                                showWorkoutInProgressNotification(context)
+                            })
+                    }
+                    is WorkoutState.Set -> {
+                        val state = updatedWorkoutState as WorkoutState.Set
+                        ExerciseScreen(
+                            viewModel,
+                            state,
+                            heartRateChartComposable
+                        )
+                    }
+                    is WorkoutState.Rest -> {
+                        val state = updatedWorkoutState as WorkoutState.Rest
+                        RestScreen(
+                            viewModel,
+                            state,
+                            heartRateChartComposable)
+                    }
+                    is WorkoutState.Finished -> {
+                        val state = updatedWorkoutState as WorkoutState.Finished
+                        WorkoutCompleteScreen(
+                            navController,
+                            viewModel,
+                            state,
+                            hrViewModel,
+                            polarViewModel
+                        )
+                    }
                 }
             }
         }
