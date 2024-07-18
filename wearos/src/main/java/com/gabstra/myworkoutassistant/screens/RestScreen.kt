@@ -116,6 +116,8 @@ fun RestScreen(
     val totalSeconds = state.restTimeInSec;
     var currentMillis by remember { mutableIntStateOf(totalSeconds * 1000) }
 
+    var hasBeenStartedOnce by remember { mutableStateOf(false) }
+
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
@@ -138,11 +140,20 @@ fun RestScreen(
             VibrateShortImpulse(context);
             viewModel.goToNextState()
         }
+
+
+        if(!hasBeenStartedOnce){
+            hasBeenStartedOnce = true
+        }
     }
 
     val isPaused by viewModel.isPaused
 
     LaunchedEffect(isPaused) {
+        if(!hasBeenStartedOnce){
+            return@LaunchedEffect
+        }
+
         if (isPaused) {
             timerJob?.takeIf { it.isActive }?.cancel()
         } else {

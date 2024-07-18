@@ -53,7 +53,7 @@ class AppViewModel() : ViewModel() {
     var selectedHomeTab by mutableIntStateOf(0)
         private set
 
-    fun notifyUpdateReceived() {
+    fun triggerUpdate() {
         _updateNotificationFlow.value = System.currentTimeMillis().toString()
     }
 

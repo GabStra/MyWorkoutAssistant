@@ -52,6 +52,8 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
+    var hasBeenStartedOnce by remember { mutableStateOf(false) }
+
     val set = state.set as EnduranceSet
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
@@ -156,11 +158,19 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             VibrateShortImpulse(context);
             onTimerEnd()
         }
+
+        if(!hasBeenStartedOnce){
+            hasBeenStartedOnce = true
+        }
     }
 
     val isPaused by viewModel.isPaused
 
     LaunchedEffect(isPaused) {
+        if(!hasBeenStartedOnce){
+            return@LaunchedEffect
+        }
+
         if (isPaused) {
             timerJob?.takeIf { it.isActive }?.cancel()
         } else {

@@ -1,13 +1,11 @@
 package com.gabstra.myworkoutassistant
 
-import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -38,29 +36,18 @@ import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.SetHistory
-import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
-import com.gabstra.myworkoutassistant.shared.setdata.SetData
-import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
-import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
-import java.time.LocalDate
 import java.util.Date
 import java.util.Locale
 
@@ -95,7 +82,7 @@ class MainActivity : ComponentActivity() {
                 try{
                     if( intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
                         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-                        appViewModel.notifyUpdateReceived()
+                        appViewModel.triggerUpdate()
                         Toast.makeText(context, "Workout history received", Toast.LENGTH_SHORT).show()
                     }
                 }catch (_: Exception) {
@@ -187,6 +174,7 @@ fun MyWorkoutAssistantNavHost(
                             deleteAndInsertJob.join()
 
                             appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                            appViewModel.triggerUpdate()
 
                             // Show the success toast after all operations are complete
                             Toast.makeText(
@@ -246,6 +234,12 @@ fun MyWorkoutAssistantNavHost(
                 },
                 onRestoreClick = {
                     jsonPickerLauncher.launch(arrayOf("application/json"))
+                },
+                onClearUnfinishedWorkouts = {
+                    scope.launch {
+                        workoutHistoryDao.deleteAllUnfinished()
+                        appViewModel.triggerUpdate()
+                    }
                 },
                 onClearAllHistories = {
                     scope.launch {

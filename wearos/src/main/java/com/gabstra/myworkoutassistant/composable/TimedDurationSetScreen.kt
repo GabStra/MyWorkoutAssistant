@@ -54,6 +54,8 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
+    var hasBeenStartedOnce by remember { mutableStateOf(false) }
+
     val previousSet =  state.previousSetData as TimedDurationSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as TimedDurationSetData) }
 
@@ -136,6 +138,10 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             VibrateShortImpulse(context);
             onTimerEnd()
         }
+
+        if(!hasBeenStartedOnce){
+            hasBeenStartedOnce = true
+        }
     }
 
     LaunchedEffect(set) {
@@ -156,6 +162,10 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
     val isPaused by viewModel.isPaused
 
     LaunchedEffect(isPaused) {
+        if(!hasBeenStartedOnce){
+            return@LaunchedEffect
+        }
+
         if (isPaused) {
             timerJob?.takeIf { it.isActive }?.cancel()
         } else {

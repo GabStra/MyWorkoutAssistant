@@ -185,12 +185,12 @@ fun WorkoutSelectionScreen(
             while (true) {
                 delay(1000) // Update every sec.
                 waitTimeInSec += 1
-                if (waitTimeInSec >= 3) break
+                if (waitTimeInSec >= 2) break
             }
         }
     }
 
-    if (waitTimeInSec < 3) {
+    if (waitTimeInSec < 2) {
         KeepOn()
         LoadingScreen("Loading", Modifier.width(80.dp))
     } else {

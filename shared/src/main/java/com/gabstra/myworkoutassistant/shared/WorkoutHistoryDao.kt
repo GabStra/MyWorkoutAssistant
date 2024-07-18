@@ -46,6 +46,9 @@ interface WorkoutHistoryDao {
     @Query("DELETE FROM workout_history")
     suspend fun deleteAll()
 
+    @Query("DELETE FROM workout_history WHERE isDone = 0")
+    suspend fun deleteAllUnfinished()
+
     //delete all workout history for a specific workout
     @Query("DELETE FROM workout_history WHERE workoutId = :workoutId")
     suspend fun deleteAllByWorkoutId(workoutId: UUID)

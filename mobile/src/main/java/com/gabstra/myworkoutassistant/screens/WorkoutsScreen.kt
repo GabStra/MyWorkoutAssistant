@@ -94,6 +94,7 @@ fun Menu(
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
+    onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -143,6 +144,13 @@ fun Menu(
                 }
             )
             DropdownMenuItem(
+                text = { Text("Clear unfinished workouts") },
+                onClick = {
+                    onClearUnfinishedWorkouts()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
                 text = { Text("Clear all histories") },
                 onClick = {
                     onClearAllHistories()
@@ -186,6 +194,7 @@ fun WorkoutsScreen(
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
+    onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
     selectedTabIndex: Int
 ) {
@@ -397,6 +406,7 @@ fun WorkoutsScreen(
                         onOpenSettingsClick = onOpenSettingsClick,
                         onBackupClick = onBackupClick,
                         onRestoreClick = onRestoreClick,
+                        onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
                         onClearAllHistories = onClearAllHistories
                     )
                 }
