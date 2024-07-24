@@ -247,7 +247,7 @@ fun ExerciseHistoryScreen(
                         StandardChart(
                             modifier = Modifier.padding(10.dp),
                             cartesianChartModel = volumeEntryModel!!,
-                            title = "Volume over time",
+                            title = "Cumulative Volume over time",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
                             bottomAxisValueFormatter = horizontalAxisValueFormatter
                         )
@@ -258,7 +258,7 @@ fun ExerciseHistoryScreen(
                             modifier = Modifier.padding(10.dp),
                             cartesianChartModel = durationEntryModel!!,
                             markerPosition = durationMarkerTarget!!.first.toFloat(),
-                            title = "Duration over time",
+                            title = "Cumulative Duration over time",
                             markerTextFormatter = { formatTime(it.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter

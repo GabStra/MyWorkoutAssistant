@@ -132,7 +132,7 @@ fun WorkoutHistoryScreen(
 
     val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
         val currentWorkoutHistory = workoutHistories[value.toInt()]
-        currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
+        currentWorkoutHistory.date.format(dateFormatter)
     }
 
     val durationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
@@ -295,19 +295,19 @@ fun WorkoutHistoryScreen(
             if (volumeEntryModel != null) {
                 StandardChart(
                     isZoomEnabled = true,
-                    modifier = Modifier.padding(10.dp),
+                    modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
-                    title = "Volume over time",
+                    title = "Cumulative Volume over time",
                     markerPosition = volumeMarkerTarget!!.first.toFloat(),
                     bottomAxisValueFormatter = horizontalAxisValueFormatter
                 )
             }
             if (durationEntryModel != null) {
                 StandardChart(
-                    modifier = Modifier.padding(10.dp),
+                    modifier = Modifier,
                     cartesianChartModel = durationEntryModel!!,
                     markerPosition = durationMarkerTarget!!.first.toFloat(),
-                    title = "Duration over time",
+                    title = "Cumulative Duration over time",
                     markerTextFormatter = { formatTime(it.toInt()/1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter
@@ -316,7 +316,7 @@ fun WorkoutHistoryScreen(
             if (workoutDurationEntryModel != null) {
                 StandardChart(
                     isZoomEnabled = true,
-                    modifier = Modifier.padding(10.dp),
+                    modifier = Modifier,
                     cartesianChartModel = workoutDurationEntryModel!!,
                     title = "Workout duration over time",
                     markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
@@ -372,6 +372,7 @@ fun WorkoutHistoryScreen(
                 modifier = Modifier.padding(10.dp),
                 cartesianChartModel = heartRateEntryModel!!,
                 title = "HR over workout duration",
+                entriesCount =  selectedWorkoutHistory!!.heartBeatRecords.size,
                 userAge = userAge,
             )
 
