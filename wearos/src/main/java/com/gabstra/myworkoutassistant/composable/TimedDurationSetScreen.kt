@@ -35,13 +35,18 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.PlayBeep
 import com.gabstra.myworkoutassistant.data.PlayNBeeps
+import com.gabstra.myworkoutassistant.data.VibrateAndBeep
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
+import com.gabstra.myworkoutassistant.data.VibrateShortImpulseAndBeep
 import com.gabstra.myworkoutassistant.data.VibrateTwice
+import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -127,12 +132,9 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                     endTimer = currentMillis
                 )
 
-                if (currentMillis <= 3000){
-                    VibrateOnce(context);
-                    PlayBeep();
+                if (currentMillis in 1..3000) {
+                    VibrateAndBeep(context)
                 }
-
-
             }
 
             currentSet = currentSet.copy(
@@ -140,9 +142,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             )
 
             state.currentSetData = currentSet
-
-            VibrateShortImpulse(context);
-            PlayNBeeps(scope,3);
+            VibrateShortImpulseAndBeep(context)
             onTimerEnd()
         }
 
@@ -154,17 +154,13 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateOnce(context);
-            PlayBeep();
+            VibrateAndBeep(context)
             delay(1000)
-            VibrateOnce(context);
-            PlayBeep();
+            VibrateAndBeep(context)
             delay(1000)
-            VibrateOnce(context);
-            PlayBeep();
+            VibrateAndBeep(context)
             delay(1000)
-            VibrateTwice(context)
-            PlayNBeeps(scope,2)
+            VibrateTwiceAndBeep(context)
             delay(500)
             startTimerJob()
         }

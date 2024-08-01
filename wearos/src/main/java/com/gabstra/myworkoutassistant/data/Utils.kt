@@ -46,10 +46,13 @@ import com.google.android.horologist.data.AppHelperResultCode
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -119,18 +122,109 @@ fun VibrateShortImpulse(context: Context) {
     }
 }
 
+fun VibrateAndBeep(context: Context, vibrationDuration: Long = 50, beepDuration: Int = 50) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+
+    runBlocking {
+        launch(Dispatchers.Default) {
+            vibrator?.let {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    it.vibrate(VibrationEffect.createOneShot(vibrationDuration, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    it.vibrate(vibrationDuration)
+                }
+            }
+        }
+        launch(Dispatchers.Default) {
+            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, beepDuration)
+        }
+    }
+}
+
+fun VibrateTwiceAndBeep(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+    val timings = longArrayOf(
+        0,
+        100,
+        100,
+        100,
+    )
+
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+
+    runBlocking {
+        launch(Dispatchers.IO) {
+                vibrator?.let {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        it.vibrate(VibrationEffect.createWaveform(timings, -1)) // -1 means don't repeat.
+                    } else {
+                        @Suppress("DEPRECATION")
+                        it.vibrate(timings, -1)
+                    }
+                }
+        }
+        launch(Dispatchers.IO) {
+            repeat(2) {
+                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                delay(100)  // 200 ms delay between beeps
+            }
+        }
+        delay(500)
+    }
+}
+
+suspend fun VibrateShortImpulseAndBeep(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+    val timings = longArrayOf(
+        0,
+        100,
+        100,
+        100,
+        100,
+        100
+    )
+
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+
+    runBlocking {
+        launch(Dispatchers.IO) {
+            vibrator?.let {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    it.vibrate(VibrationEffect.createWaveform(timings, -1)) // -1 means don't repeat.
+                } else {
+                    @Suppress("DEPRECATION")
+                    it.vibrate(timings, -1)
+                }
+            }
+        }
+        launch(Dispatchers.IO) {
+            repeat(3) {
+                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                delay(100)  // 200 ms delay between beeps
+            }
+        }
+        delay(500)
+    }
+}
+
+
 fun PlayBeep() {
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
     toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50)
 }
 
-fun PlayNBeeps(scope: CoroutineScope, n:Int) {
+fun PlayNBeeps(n:Int) {
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-    scope.launch {
-        repeat(n) {
-            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-            delay(50)  // 200 ms delay between beeps
+    runBlocking{
+        launch(Dispatchers.Default) {
+            repeat(n) {
+                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                delay(100)
+            }
         }
+        delay(500)
     }
 }
 

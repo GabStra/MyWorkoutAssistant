@@ -37,8 +37,12 @@ import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
+import com.gabstra.myworkoutassistant.data.PlayBeep
+import com.gabstra.myworkoutassistant.data.PlayNBeeps
+import com.gabstra.myworkoutassistant.data.VibrateAndBeep
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
+import com.gabstra.myworkoutassistant.data.VibrateShortImpulseAndBeep
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -133,11 +137,11 @@ fun RestScreen(
                 delay(1000) // Update every sec.
                 currentMillis -= 1000
 
-                if (currentMillis <= 3000)
-                    VibrateOnce(context);
+                if (currentMillis in 1..3000)
+                    VibrateAndBeep(context)
             }
 
-            VibrateShortImpulse(context);
+            VibrateShortImpulseAndBeep(context)
             viewModel.goToNextState()
         }
 
