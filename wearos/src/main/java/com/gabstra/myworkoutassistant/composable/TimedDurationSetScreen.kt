@@ -33,6 +33,8 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
+import com.gabstra.myworkoutassistant.data.PlayBeep
+import com.gabstra.myworkoutassistant.data.PlayNBeeps
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateTwice
@@ -125,8 +127,12 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                     endTimer = currentMillis
                 )
 
-                if (currentMillis <= 3000)
+                if (currentMillis <= 3000){
                     VibrateOnce(context);
+                    PlayBeep();
+                }
+
+
             }
 
             currentSet = currentSet.copy(
@@ -136,6 +142,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             state.currentSetData = currentSet
 
             VibrateShortImpulse(context);
+            PlayNBeeps(scope,3);
             onTimerEnd()
         }
 
@@ -148,12 +155,16 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         if (set.autoStart) {
             delay(500)
             VibrateOnce(context);
+            PlayBeep();
             delay(1000)
             VibrateOnce(context);
+            PlayBeep();
             delay(1000)
             VibrateOnce(context);
+            PlayBeep();
             delay(1000)
             VibrateTwice(context)
+            PlayNBeeps(scope,2)
             delay(500)
             startTimerJob()
         }

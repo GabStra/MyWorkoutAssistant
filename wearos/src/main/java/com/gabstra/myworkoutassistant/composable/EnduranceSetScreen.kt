@@ -34,12 +34,13 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 
 import com.gabstra.myworkoutassistant.data.FormatTime
+import com.gabstra.myworkoutassistant.data.PlayBeep
+import com.gabstra.myworkoutassistant.data.PlayNBeeps
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
-import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -145,8 +146,11 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                     endTimer = currentMillis
                 )
 
-                if (currentMillis >= (currentSet.startTimer-3000))
+                if (currentMillis >= (currentSet.startTimer-3000)){
                     VibrateOnce(context);
+                    PlayBeep()
+                }
+
 
                 if(currentMillis >= currentSet.startTimer && set.autoStop){
                     break
@@ -156,6 +160,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             state.currentSetData = currentSet
 
             VibrateShortImpulse(context);
+            PlayNBeeps(scope,3);
             onTimerEnd()
         }
 

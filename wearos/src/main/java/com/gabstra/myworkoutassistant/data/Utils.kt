@@ -6,6 +6,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -14,6 +16,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -80,7 +83,7 @@ fun VibrateTwice(context: Context) {
     val timings = longArrayOf(
         0,
         100,
-        100,
+        50,
         100,
     ) // Start immediately, vibrate 100ms, pause 100ms, vibrate 100ms.
 
@@ -112,6 +115,21 @@ fun VibrateShortImpulse(context: Context) {
         } else {
             @Suppress("DEPRECATION")
             it.vibrate(timings, -1)
+        }
+    }
+}
+
+fun PlayBeep() {
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+    toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50)
+}
+
+fun PlayNBeeps(scope: CoroutineScope, n:Int) {
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+    scope.launch {
+        repeat(n) {
+            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+            delay(50)  // 200 ms delay between beeps
         }
     }
 }
