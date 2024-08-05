@@ -385,6 +385,7 @@ class AppViewModel : ViewModel(){
     }
 
     private fun generateWorkoutStates() {
+        val workoutComponents = selectedWorkout.value.workoutComponents
         for ((index, workoutComponent) in selectedWorkout.value.workoutComponents.withIndex()) {
             if(!workoutComponent.enabled) continue
 
@@ -393,8 +394,11 @@ class AppViewModel : ViewModel(){
                 is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent)
             }
 
-            if (selectedWorkout.value.restTimeInSec >0 && index < selectedWorkout.value.workoutComponents.size - 1 && !workoutComponent.skipWorkoutRest) {
-                workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
+            if (selectedWorkout.value.restTimeInSec > 0 && index < workoutComponents.size - 1) {
+                val nextComponent = workoutComponents.getOrNull(index + 1)
+                if (nextComponent != null && nextComponent.enabled && !workoutComponent.skipWorkoutRest) {
+                    workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
+                }
             }
         }
     }

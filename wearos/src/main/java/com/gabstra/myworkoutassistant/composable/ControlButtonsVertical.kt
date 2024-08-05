@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPressOrTap
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 
 @Composable
@@ -39,7 +40,7 @@ fun ControlButtonsVertical(
             modifier = Modifier
                 .size(30.dp)
                 .clip(CircleShape)
-                .background(Color.Green)
+                .background(MyColors.Green)
                 .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onPlusLongPress, onTap = onPlusTap),
             contentAlignment = Alignment.Center
         ) {

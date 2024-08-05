@@ -202,9 +202,15 @@ fun MyWorkoutAssistantNavHost(
                 onSyncClick = {
                     scope.launch {
                         withContext(Dispatchers.IO){
-                            val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-                            val setHistories = setHistoryDao.getAllSetHistories()
-                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories)
+                            val latestWorkoutHistories = appViewModel.workouts.mapNotNull { workout ->
+                                workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
+                            }
+
+                            val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
+                                setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+                            }
+
+                            val appBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories)
                             sendAppBackup(dataClient, appBackup)
                         }
                         Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()

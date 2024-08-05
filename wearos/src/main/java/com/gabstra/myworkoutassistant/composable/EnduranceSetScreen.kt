@@ -24,6 +24,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
@@ -43,6 +44,7 @@ import com.gabstra.myworkoutassistant.data.VibrateShortImpulseAndBeep
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import kotlinx.coroutines.Job
@@ -59,6 +61,8 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
+
+    var isOverLimit by remember { mutableStateOf(false) }
 
     val set = state.set as EnduranceSet
 
@@ -113,7 +117,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
         VibrateOnce(context)
     }
 
-    var textComposable = @Composable {
+    val textComposable = @Composable {
         Text(
             modifier = Modifier.combinedClickable(
                 onClick = {
@@ -135,6 +139,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                     }
                 }
             ),
+            color = if(isOverLimit) MyColors.Green else Color.Unspecified,
             text = FormatTime((if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000),
             style = if(isTimerInEditMode)  MaterialTheme.typography.display2 else MaterialTheme.typography.display1,
         )
@@ -151,13 +156,15 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                     endTimer = currentMillis
                 )
 
+                if(isOverLimit) continue
+
                 if (currentMillis >= (currentSet.startTimer-3000) && currentMillis < currentSet.startTimer) {
                     VibrateAndBeep(context)
                 }
 
-
-                if(currentMillis >= currentSet.startTimer && set.autoStop){
-                    break
+                if(currentMillis >= currentSet.startTimer){
+                    if(set.autoStop) break
+                    else isOverLimit = true
                 }
             }
 
@@ -236,7 +243,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                         onClick = {
                             VibrateOnce(context)
                             startTimerJob()
-                            showStartButton=false
+                            showStartButton = false
                         },
                         modifier = Modifier.size(35.dp),
                         colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
