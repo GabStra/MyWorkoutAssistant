@@ -385,20 +385,15 @@ class AppViewModel : ViewModel(){
     }
 
     private fun generateWorkoutStates() {
-        val workoutComponents = selectedWorkout.value.workoutComponents
-        for ((index, workoutComponent) in selectedWorkout.value.workoutComponents.withIndex()) {
-            if(!workoutComponent.enabled) continue
-
+        val workoutComponents = selectedWorkout.value.workoutComponents.filter { it.enabled }
+        for ((index, workoutComponent) in workoutComponents.withIndex()) {
             when(workoutComponent){
                 is Exercise -> addStatesFromExercise(workoutComponent)
                 is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent)
             }
 
-            if (selectedWorkout.value.restTimeInSec > 0 && index < workoutComponents.size - 1) {
-                val nextComponent = workoutComponents.getOrNull(index + 1)
-                if (nextComponent != null && nextComponent.enabled && !workoutComponent.skipWorkoutRest) {
-                    workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
-                }
+            if (selectedWorkout.value.restTimeInSec > 0 && index < workoutComponents.size - 1 && !workoutComponent.skipWorkoutRest) {
+                workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
             }
         }
     }
@@ -429,16 +424,15 @@ class AppViewModel : ViewModel(){
     }
 
     private fun addStatesFromExerciseGroup(exerciseGroup: ExerciseGroup){
-        for ((index, workoutComponent) in exerciseGroup.workoutComponents.withIndex()) {
-            if(!workoutComponent.enabled) continue
-
+        val workoutComponents = exerciseGroup.workoutComponents.filter { it.enabled }
+        for ((index, workoutComponent) in workoutComponents.withIndex()) {
             when(workoutComponent){
                 is Exercise -> addStatesFromExercise(workoutComponent)
                 is ExerciseGroup -> addStatesFromExerciseGroup(workoutComponent)
             }
 
-            if (exerciseGroup.restTimeInSec >0 && index < exerciseGroup.workoutComponents.size - 1) {
-                workoutStateQueue.addLast(WorkoutState.Rest(selectedWorkout.value.restTimeInSec))
+            if (exerciseGroup.restTimeInSec > 0 && index < workoutComponents.size - 1 && !workoutComponent.skipWorkoutRest) {
+                workoutStateQueue.addLast(WorkoutState.Rest(exerciseGroup.restTimeInSec))
             }
         }
     }

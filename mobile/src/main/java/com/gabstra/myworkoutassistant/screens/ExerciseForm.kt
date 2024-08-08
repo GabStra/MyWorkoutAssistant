@@ -5,7 +5,9 @@ import android.widget.TimePicker
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +48,7 @@ fun ExerciseForm(
 ) {
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(exercise?.name ?: "") }
+    val notesState = remember { mutableStateOf(exercise?.notes ?: "") }
     val restTimeState = remember { mutableStateOf(exercise?.restTimeInSec?.toString() ?: "0") }
     val skipWorkoutRest = remember { mutableStateOf(exercise?.skipWorkoutRest ?: false) }
 
@@ -149,6 +152,22 @@ fun ExerciseForm(
             Text(text = "Skip workout rest")
         }
 
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            TextField(
+                value = notesState.value,
+                onValueChange = { notesState.value = it },
+                label = { Text("Notes") },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 5,
+                singleLine = false
+            )
+        }
+
         // Submit button
         Button(
             onClick = {
@@ -164,7 +183,8 @@ fun ExerciseForm(
                     skipWorkoutRest = skipWorkoutRest.value,
                     enabled = exercise?.enabled ?: true,
                     sets = exercise?.sets ?: listOf(),
-                    exerciseType = selectedExerciseType.value
+                    exerciseType = selectedExerciseType.value,
+                    notes = notesState.value.trim(),
                 )
 
                 // Call the callback to insert/update the exercise

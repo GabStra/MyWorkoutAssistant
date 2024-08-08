@@ -413,7 +413,7 @@ fun MyWorkoutAssistantNavHost(
             ) as ExerciseGroup
             ExerciseGroupForm(
                 onWorkoutComponentUpsert = { updatedExerciseGroup ->
-                    appViewModel.updateWorkoutComponent(
+                    appViewModel.updateWorkoutComponentOld(
                         selectedWorkout,
                         selectedExerciseGroup,
                         updatedExerciseGroup
@@ -543,7 +543,7 @@ fun MyWorkoutAssistantNavHost(
             ) as Exercise
             ExerciseForm(
                 onExerciseUpsert = { updatedExercise ->
-                    appViewModel.updateWorkoutComponent(
+                    appViewModel.updateWorkoutComponentOld(
                         selectedWorkout,
                         selectedExercise,
                         updatedExercise

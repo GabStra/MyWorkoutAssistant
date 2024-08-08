@@ -36,6 +36,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
             is Exercise -> {
                 jsonObject.add("sets", context.serialize(src.sets))
                 jsonObject.addProperty("exerciseType", src.exerciseType.name)
+                jsonObject.addProperty("notes", src.notes)
             }
             is ExerciseGroup -> {
                 jsonObject.add("workoutComponents", context.serialize(src.workoutComponents))
@@ -49,6 +50,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
         val id = jsonObject.get("id").asString
         val type = jsonObject.get("type").asString
         val name = jsonObject.get("name").asString
+
         val enabled = jsonObject.get("enabled").asBoolean
         val skipWorkoutRest = if (jsonObject.has("skipWorkoutRest")) {
             jsonObject.get("skipWorkoutRest").asBoolean
@@ -70,12 +72,17 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
                         ExerciseType.BODY_WEIGHT
                     }
                 }
-                Exercise(UUID.fromString(id), name, restTimeInSec, enabled, skipWorkoutRest, sets, exerciseType)
+                val notes =if (jsonObject.has("notes")) {
+                    jsonObject.get("notes").asString
+                } else {
+                    ""
+                }
+                Exercise(UUID.fromString(id), name, restTimeInSec, enabled, skipWorkoutRest, notes, sets, exerciseType)
             }
             "ExerciseGroup" -> {
                 val workoutComponentsType = object : TypeToken<List<WorkoutComponent>>() {}.type
                 val workoutComponents: List<WorkoutComponent> = context.deserialize(jsonObject.get("workoutComponents"), workoutComponentsType)
-                ExerciseGroup(UUID.fromString(id), name, restTimeInSec,enabled,skipWorkoutRest , workoutComponents)
+                ExerciseGroup(UUID.fromString(id), name, restTimeInSec,enabled,skipWorkoutRest, workoutComponents)
             }
             else -> throw RuntimeException("Unsupported workout component type")
         }

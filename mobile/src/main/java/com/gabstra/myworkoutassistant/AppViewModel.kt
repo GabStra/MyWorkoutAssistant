@@ -129,6 +129,10 @@ class AppViewModel() : ViewModel() {
         workouts = WorkoutManager.updateWorkoutComponent(workouts,parentWorkout,oldWorkoutComponent,updatedWorkoutComponent)
     }
 
+    fun updateWorkoutComponentOld(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
+        workouts = WorkoutManager.updateWorkoutComponentOld(workouts,parentWorkout,oldWorkoutComponent,updatedWorkoutComponent)
+    }
+
     fun addNewWorkout(newWorkout: Workout) {
         workouts = workouts + newWorkout.copy(order = workouts.size)
     }

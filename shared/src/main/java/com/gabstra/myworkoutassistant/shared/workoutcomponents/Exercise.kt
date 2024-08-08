@@ -10,6 +10,7 @@ data class Exercise(
     override val restTimeInSec: Int,
     override val enabled: Boolean,
     override val skipWorkoutRest: Boolean,
+    val notes: String,
     val sets: List<Set>,
     val exerciseType: ExerciseType
 ) : WorkoutComponent(id, name, restTimeInSec, enabled, skipWorkoutRest)

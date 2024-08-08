@@ -85,7 +85,7 @@ fun CustomHorizontalPager(
             userScrollEnabled = userScrollEnabled,
             flingBehavior = PagerDefaults.flingBehavior(
                 state = pagerState,
-                snapPositionalThreshold = .01f,
+                snapPositionalThreshold = .2f,
                 pagerSnapDistance = PagerSnapDistance.atMost(0),
                 snapAnimationSpec = tween(150, 0),
             ),

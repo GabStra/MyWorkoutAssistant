@@ -18,20 +18,6 @@ class WorkoutManager {
             }
         }
 
-        fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout,id: UUID): List<Workout> {
-            val newVersion = updatedWorkout.copy(
-                id = id, // Genera un nuovo ID per la nuova versione
-                creationDate = LocalDate.now(), // Imposta la data corrente
-                previousVersionId = oldWorkout.id // Imposta il riferimento alla versione precedente
-            )
-
-            val updatedOldWorkout = updatedWorkout.copy(isActive = false, nextVersionId = newVersion.id)
-
-            return workouts.map { workout ->
-                if (workout == oldWorkout) updatedOldWorkout else workout
-            } + newVersion
-        }
-
         fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
             val newVersion = updatedWorkout.copy(
                 id = UUID.randomUUID(), // Genera un nuovo ID per la nuova versione
@@ -53,6 +39,15 @@ class WorkoutManager {
             val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
 
             return updateWorkout(workouts, parentWorkout, updatedWorkout)
+        }
+
+        fun updateWorkoutComponentOld(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
+
+            val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
+
+            val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
+
+            return updateWorkoutOld(workouts, parentWorkout, updatedWorkout)
         }
 
         // Funzione ricorsiva per aggiornare i componenti del workout

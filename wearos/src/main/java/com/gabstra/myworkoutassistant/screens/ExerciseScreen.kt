@@ -15,13 +15,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -46,6 +49,7 @@ import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
 
@@ -169,7 +173,7 @@ fun ExerciseScreen(
     val pagerState = rememberPagerState(
         initialPage = 1,
         pageCount = {
-        3
+        4
     })
 
     LaunchedEffect(state) {
@@ -302,6 +306,39 @@ fun ExerciseScreen(
                             )
                         }
                         2 -> {
+                            Box(modifier = Modifier
+                                .fillMaxSize()
+                                .padding(0.dp, 10.dp, 0.dp, 0.dp)){
+                                Text(
+                                    modifier = Modifier.fillMaxSize(),
+                                    text = "Notes",
+                                    style = MaterialTheme.typography.body1,
+                                    textAlign = TextAlign.Center
+                                )
+                                val scrollState = rememberScrollState()
+                                val notes = updatedState.parentExercise.notes
+                                Box(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Row{
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(20.dp, 25.dp, 20.dp, 25.dp)
+                                                .verticalScroll(scrollState)
+                                        ) {
+                                            Text(
+                                                text = notes.ifEmpty { "No notes available" },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                style = MaterialTheme.typography.body1,
+                                                textAlign = TextAlign.Start
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        3 -> {
                             Box(modifier = Modifier
                                 .fillMaxSize()
                                 .padding(0.dp, 10.dp, 0.dp, 0.dp)){
