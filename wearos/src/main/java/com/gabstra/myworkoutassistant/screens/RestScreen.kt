@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -84,36 +86,32 @@ fun NextExerciseInfo(
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally,
     ){
-        Column(
-            verticalArrangement = Arrangement.Top,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ){
-            Text(
-                    modifier = Modifier
-                        .basicMarquee(iterations = Int.MAX_VALUE),
-                    text = state.parentExercise.name,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.title3,
-                )
-            Spacer(modifier = Modifier.height(5.dp))
-            if(exerciseSets.count()!=1){
-                Text( text="${exerciseIndex+1}/${exerciseCount} - ${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
-            }
-            Spacer(modifier = Modifier.height(5.dp))
-            when(state.set){
-                is WeightSet -> WeightSetDataViewerMinimal(
-                    state.currentSetData as WeightSetData
-                )
-                is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                    state.currentSetData as BodyWeightSetData
-                )
-                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                    state.currentSetData as TimedDurationSetData
-                )
-                is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                    state.currentSetData as EnduranceSetData
-                )
-            }
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .basicMarquee(iterations = Int.MAX_VALUE),
+            text = state.parentExercise.name,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.title3,
+        )
+        Spacer(modifier = Modifier.height(5.dp))
+        if(exerciseSets.count()!=1){
+            Text( text="${exerciseIndex+1}/${exerciseCount} - ${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
+        }
+        Spacer(modifier = Modifier.height(5.dp))
+        when(state.set){
+            is WeightSet -> WeightSetDataViewerMinimal(
+                state.currentSetData as WeightSetData
+            )
+            is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                state.currentSetData as BodyWeightSetData
+            )
+            is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                state.currentSetData as TimedDurationSetData
+            )
+            is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                state.currentSetData as EnduranceSetData
+            )
         }
     }
 }
@@ -191,7 +189,8 @@ fun RestScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(10.dp),
+            .padding(10.dp)
+            .circleMask(),
         contentAlignment = Alignment.TopCenter
     ) {
         val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
@@ -271,7 +270,7 @@ fun RestScreen(
         CircularProgressIndicator(
             progress = progress,
             modifier = Modifier.fillMaxSize(),
-            startAngle = -70f,
+            startAngle = -60f,
             endAngle = 70f,
             strokeWidth = 4.dp,
             indicatorColor = MaterialTheme.colors.primary

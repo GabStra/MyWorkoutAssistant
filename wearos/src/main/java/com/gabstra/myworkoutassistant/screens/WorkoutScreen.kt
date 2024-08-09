@@ -123,6 +123,7 @@ fun WorkoutScreen(
     }
 
     BackHandler(true) {
+        if(workoutState is WorkoutState.Finished) return@BackHandler
         showWorkoutInProgressDialog = true
         viewModel.pauseWorkout()
     }
@@ -181,7 +182,7 @@ fun WorkoutScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(2.dp),
+            .padding(5.dp),
         contentAlignment = Alignment.TopCenter
     ) {
         CurrentTime()
