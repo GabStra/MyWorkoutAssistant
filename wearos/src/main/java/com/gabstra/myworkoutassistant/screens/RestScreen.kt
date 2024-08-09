@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.data.VibrateAndBeep
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulseAndBeep
+import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -154,7 +155,7 @@ fun RestScreen(
                     VibrateAndBeep(context)
             }
 
-            VibrateShortImpulseAndBeep(context)
+            VibrateTwiceAndBeep(context)
             viewModel.goToNextState()
         }
 
@@ -228,7 +229,7 @@ fun RestScreen(
                                         .verticalScroll(scrollState)
                                 ) {
                                     Text(
-                                        text = notes.ifEmpty { "No notes available" },
+                                        text = notes.ifEmpty { "NOT AVAILABLE" },
                                         modifier = Modifier.fillMaxWidth(),
                                         style = MaterialTheme.typography.body1,
                                         textAlign = TextAlign.Start

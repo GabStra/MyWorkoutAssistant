@@ -169,7 +169,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             }
 
             state.currentSetData = currentSet
-            VibrateShortImpulseAndBeep(context)
+            VibrateTwiceAndBeep(context)
             onTimerEnd()
         }
 

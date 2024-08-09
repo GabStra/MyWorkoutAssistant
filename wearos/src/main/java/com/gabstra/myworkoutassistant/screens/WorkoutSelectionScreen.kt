@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -144,13 +145,10 @@ fun WorkoutSelectionScreen(
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
     val workouts by viewModel.workouts.collectAsState()
 
-    //sort workouts by order number
     val sortedWorkouts = workouts.sortedBy { it.order }
-
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
-    var waitTimeInSec by remember { mutableIntStateOf(0) }
-    val scope = rememberCoroutineScope()
+    var showLoadingScreen by remember { mutableStateOf(true) }
 
     val userAge by viewModel.userAge
     val phoneNode = viewModel.phoneNode
@@ -181,18 +179,13 @@ fun WorkoutSelectionScreen(
     }
 
     LaunchedEffect(Unit) {
-        scope.launch {
-            while (true) {
-                delay(1000) // Update every sec.
-                waitTimeInSec += 1
-                if (waitTimeInSec >= 2) break
-            }
-        }
+        delay(2000)
+        showLoadingScreen = false
     }
 
-    if (waitTimeInSec < 2) {
+    if (showLoadingScreen) {
         KeepOn()
-        LoadingScreen("Loading", Modifier.width(80.dp))
+        LoadingScreen("Loading")
     } else {
         if (!viewModel.isPhoneConnectedAndHasApp && sortedWorkouts.isEmpty()) {
             Column(

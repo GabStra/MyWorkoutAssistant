@@ -328,7 +328,7 @@ fun ExerciseScreen(
                                                 .verticalScroll(scrollState)
                                         ) {
                                             Text(
-                                                text = notes.ifEmpty { "No notes available" },
+                                                text = notes.ifEmpty { "NOT AVAILABLE" },
                                                 modifier = Modifier.fillMaxWidth(),
                                                 style = MaterialTheme.typography.body1,
                                                 textAlign = TextAlign.Start

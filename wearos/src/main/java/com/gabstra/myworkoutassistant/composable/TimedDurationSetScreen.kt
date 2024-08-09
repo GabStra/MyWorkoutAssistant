@@ -142,7 +142,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             )
 
             state.currentSetData = currentSet
-            VibrateShortImpulseAndBeep(context)
+            VibrateTwiceAndBeep(context)
             onTimerEnd()
         }
 

@@ -186,7 +186,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
             composable(Screen.Loading.route) {
                 KeepOn()
-                LoadingScreen("Syncing with phone", Modifier.width(160.dp))
+                LoadingScreen("Syncing with phone")
             }
         }
     }

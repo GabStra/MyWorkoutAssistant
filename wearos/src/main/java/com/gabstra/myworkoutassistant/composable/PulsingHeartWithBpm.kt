@@ -36,6 +36,6 @@ fun PulsingHeartWithBpm(
     )
 
     HeartIcon(modifier = Modifier
-        .size(12.dp)
+        .size(15.dp)
         .scale(if (beatDuration != 0) scale else 1f))
 }

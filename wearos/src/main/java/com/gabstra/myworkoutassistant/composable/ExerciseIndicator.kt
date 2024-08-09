@@ -39,12 +39,12 @@ fun ExerciseIndicator(
     val baseGapAngle = 2f
     val size= 20f
 
-    val availableAngle = 140f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
+    val availableAngle = 130f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
     var angleForCurrentExercise = availableAngle / exerciseSelection.size.coerceAtLeast(1)
 
 
     Box(modifier = modifier.fillMaxSize()) {
-        var accumulatedAngle = -70f // Starting angle
+        var accumulatedAngle = -60f // Starting angle
 
         // Indicate skipped elements at the start
         if (elementsToSkip > 0) {

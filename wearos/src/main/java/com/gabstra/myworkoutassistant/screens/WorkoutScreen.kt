@@ -181,12 +181,12 @@ fun WorkoutScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(5.dp),
+            .padding(2.dp),
         contentAlignment = Alignment.TopCenter
     ) {
         CurrentTime()
         if(isResuming){
-            LoadingScreen("Resuming workout",Modifier.width(150.dp))
+            LoadingScreen("Resuming workout")
         }else{
             when(workoutState){
                 is WorkoutState.Preparing -> {

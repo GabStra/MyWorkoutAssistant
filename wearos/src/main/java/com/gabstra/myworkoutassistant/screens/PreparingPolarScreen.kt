@@ -99,7 +99,7 @@ fun PreparingPolarScreen(
     Column(modifier = Modifier .fillMaxSize().padding(20.dp,60.dp,20.dp,0.dp)){
         Text(modifier = Modifier.fillMaxWidth(),text = "Preparing\nPolar Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(15.dp))
-        Row(modifier = Modifier.width(180.dp).padding(horizontal = 20.dp)){
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)){
             LoadingText(baseText =  if(deviceConnectionInfo == null) "Connecting" else "Please Wait")
         }
         if(canSkip && deviceConnectionInfo == null){
