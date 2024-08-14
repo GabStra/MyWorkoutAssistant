@@ -40,7 +40,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.UiState
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import kotlinx.coroutines.delay
@@ -50,7 +50,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun PreparingStandardScreen(
     viewModel: AppViewModel,
-    hrViewModel: MeasureDataViewModel,
+    hrViewModel: SensorDataViewModel,
     state: WorkoutState.Preparing,
     onReady: () -> Unit
 ){

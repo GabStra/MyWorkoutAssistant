@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.repository.MeasureDataRepository
 import com.gabstra.myworkoutassistant.repository.MeasureMessage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +32,7 @@ class MeasureDataViewModel(
         // Cancel any existing collection job to ensure we don't have multiple collectors
         stopMeasuringHeartRate()
 
-        heartRateCollectJob = viewModelScope.launch {
+        heartRateCollectJob = viewModelScope.launch(Dispatchers.IO) {
             measureDataRepository.heartRateMeasureFlow()
                 .collect { measureMessage ->
                     when (measureMessage) {
@@ -47,6 +48,9 @@ class MeasureDataViewModel(
                                 _heartRateBpm.value = latestHeartRate
                             }
                         }
+
+                        is MeasureMessage.MeasureAvailability -> TODO()
+                        is MeasureMessage.MeasureData -> TODO()
                     }
                 }
         }

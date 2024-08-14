@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import kotlinx.coroutines.delay
@@ -39,7 +39,7 @@ fun WorkoutCompleteScreen(
     navController: NavController,
     viewModel: AppViewModel,
     state : WorkoutState.Finished,
-    hrViewModel: MeasureDataViewModel,
+    hrViewModel: SensorDataViewModel,
     polarViewModel: PolarViewModel
 ){
     val workout by viewModel.selectedWorkout

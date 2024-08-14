@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
-import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import android.Manifest
@@ -55,7 +55,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @Composable
-fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, hrViewModel : MeasureDataViewModel) {
+fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, hrViewModel : SensorDataViewModel) {
     val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 

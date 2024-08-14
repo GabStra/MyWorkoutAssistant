@@ -37,6 +37,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.UiState
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
@@ -175,7 +176,7 @@ private fun HeartRateView(
 fun HeartRateStandard(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
-    hrViewModel: MeasureDataViewModel,
+    hrViewModel: SensorDataViewModel,
     userAge : Int
 ) {
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()

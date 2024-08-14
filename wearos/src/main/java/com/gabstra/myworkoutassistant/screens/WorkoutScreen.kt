@@ -40,7 +40,7 @@ import com.gabstra.myworkoutassistant.composable.CurrentTime
 import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.composable.HeartRatePolar
 import com.gabstra.myworkoutassistant.composable.HeartRateStandard
-import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateOnce
@@ -92,7 +92,7 @@ fun LifecycleObserver(
 fun WorkoutScreen(
     navController: NavController,
     viewModel : AppViewModel,
-    hrViewModel: MeasureDataViewModel,
+    hrViewModel: SensorDataViewModel,
     polarViewModel: PolarViewModel
 ){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
