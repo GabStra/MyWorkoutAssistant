@@ -184,7 +184,6 @@ fun WorkoutSelectionScreen(
     }
 
     if (showLoadingScreen) {
-        KeepOn()
         LoadingScreen("Loading")
     } else {
         if (!viewModel.isPhoneConnectedAndHasApp && sortedWorkouts.isEmpty()) {

@@ -147,7 +147,7 @@ private fun HeartRateView(
                     }
                 )
         ) {
-            if (hr != 0) PulsingHeartWithBpm(hr) else HeartIcon(modifier = Modifier.size(15.dp))
+            HeartIcon(modifier = Modifier.size(15.dp))
             Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = textToDisplay,

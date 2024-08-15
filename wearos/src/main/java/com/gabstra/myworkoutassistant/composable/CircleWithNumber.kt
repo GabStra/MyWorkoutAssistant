@@ -50,19 +50,35 @@ fun CircleWithNumber(
             center = circleCenter
         )
 
-        // Draw the number inside the circle with applied alpha
-        val fontSize = circleRadius * 1.5f
+        // Calculate the maximum font size that fits within the circle
+        val paint = Paint().apply {
+            color = android.graphics.Color.BLACK
+            alpha = alphaInt // Apply alpha to the Paint object
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+        }
+
+        var fontSize = circleRadius * 1.6f
+        val textBounds = android.graphics.Rect()
+        paint.textSize = fontSize
+        paint.getTextBounds(number.toString(), 0, number.toString().length, textBounds)
+
+        // Decrease font size until the text fits within the circle
+        while (textBounds.width() > circleRadius * 1.2 || textBounds.height() > circleRadius * 1.2) {
+            fontSize -= 1
+            paint.textSize = fontSize
+            paint.getTextBounds(number.toString(), 0, number.toString().length, textBounds)
+        }
+
+        // Adjust the x and y coordinates to center the text within the circle
+        val textX = circleCenter.x
+        val textY = circleCenter.y + textBounds.height() / 2f
+
         drawContext.canvas.nativeCanvas.drawText(
             number.toString(),
-            circleCenter.x,
-            circleCenter.y + fontSize / 3, // Adjust to vertically center the text in the circle
-            Paint().apply {
-                color = android.graphics.Color.BLACK
-                alpha = alphaInt // Apply alpha to the Paint object
-                textAlign = Paint.Align.CENTER
-                textSize = fontSize
-                typeface = Typeface.DEFAULT_BOLD
-            }
+            textX,
+            textY,
+            paint
         )
     }
 }
