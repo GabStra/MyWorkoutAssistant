@@ -18,6 +18,11 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -176,7 +181,22 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             appViewModel.phoneNode = nodes.firstOrNull()
         }
 
-        NavHost(navController, startDestination = Screen.WorkoutSelection.route) {
+        NavHost(
+			navController, 
+			startDestination = Screen.WorkoutSelection.route,
+            enterTransition = {
+                fadeIn(animationSpec = tween(500))
+            },
+            exitTransition = {
+                fadeOut(animationSpec = tween(500))
+            },
+            popEnterTransition= {
+                fadeIn(animationSpec = tween(500))
+            },
+            popExitTransition = {
+                fadeOut(animationSpec = tween(500))
+            },
+		) {
             composable(Screen.WorkoutSelection.route) {
                 WorkoutSelectionScreen(dataClient,navController, appViewModel, appHelper)
             }
@@ -185,11 +205,9 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
             composable(Screen.Workout.route) {
                 WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
-                KeepOn()
             }
             composable(Screen.Loading.route) {
                 LoadingScreen("Syncing with phone")
-                KeepOn()
             }
         }
     }

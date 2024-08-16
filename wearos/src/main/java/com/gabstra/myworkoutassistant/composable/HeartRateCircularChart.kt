@@ -44,6 +44,7 @@ import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
+import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -123,10 +124,12 @@ private fun HeartRateView(
     mhrPercentage: Float,
     segments: List<ProgressIndicatorSegment>
 ) {
-    val mapPercentage = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
+    val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
+
+    val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
 
     var isDisplayingHr by remember { mutableStateOf(true) }
-    val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "${String.format("%.1f", mhrPercentage).replace(',','.')}%"
+    val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "Zone ${zone}"
     val context = LocalContext.current
 
     Box(
@@ -139,6 +142,7 @@ private fun HeartRateView(
             modifier = Modifier
                 .width(60.dp)
                 .height(20.dp)
+                .padding(top = 5.dp)
                 .combinedClickable(
                     onClick = { },
                     onLongClick = {
@@ -147,8 +151,10 @@ private fun HeartRateView(
                     }
                 )
         ) {
-            HeartIcon(modifier = Modifier.size(15.dp))
-            Spacer(modifier = Modifier.width(5.dp))
+            if(isDisplayingHr){
+                HeartIcon(modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(5.dp))
+            }
             Text(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
@@ -160,7 +166,7 @@ private fun HeartRateView(
         // Progress indicator logic
         SegmentedProgressIndicator(
             trackSegments = segments,
-            progress = mapPercentage,
+            progress = progress,
             modifier = Modifier.fillMaxSize(),
             strokeWidth = 4.dp,
             paddingAngle = 2f,

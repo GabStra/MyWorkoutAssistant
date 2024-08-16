@@ -1,9 +1,11 @@
 package com.gabstra.myworkoutassistant.composable
 
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.FlingBehavior
+import androidx.compose.foundation.gestures.ScrollScope
+import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -19,14 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.foundation.HierarchicalFocusCoordinator
 import androidx.wear.compose.material.HorizontalPageIndicator
-
-import com.google.android.horologist.compose.pager.HorizontalPagerDefaults
 import com.google.android.horologist.compose.pager.PageScreenIndicatorState
 
 
@@ -83,12 +82,6 @@ fun CustomHorizontalPager(
             modifier = Modifier.fillMaxSize(),
             state = pagerState,
             userScrollEnabled = userScrollEnabled,
-            flingBehavior = PagerDefaults.flingBehavior(
-                state = pagerState,
-                snapPositionalThreshold = .2f,
-                pagerSnapDistance = PagerSnapDistance.atMost(0),
-                snapAnimationSpec = tween(150, 0),
-            ),
         ) { page ->
             ClippedBox(pagerState) {
                 HierarchicalFocusCoordinator(requiresFocus = { page == pagerState.currentPage }) {
@@ -96,9 +89,13 @@ fun CustomHorizontalPager(
                 }
             }
         }
-  /*      HorizontalPageIndicator(
-            modifier = Modifier.padding(6.dp),
+
+        /*
+        HorizontalPageIndicator(
+            modifier = Modifier.padding(5.dp),
             pageIndicatorState = pageIndicatorState,
-        )*/
+        )
+        */
+
     }
 }

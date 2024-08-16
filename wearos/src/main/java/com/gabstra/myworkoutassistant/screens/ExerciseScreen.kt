@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -151,6 +152,124 @@ fun ExerciseDetail(
     }
 }
 
+@Composable
+fun SimplifiedHorizontalPager(
+    modifier: Modifier,
+    pagerState: PagerState,
+    allowHorizontalScrolling: Boolean,
+    updatedState:  WorkoutState.Set,
+    viewModel: AppViewModel,
+    completeOrSkipExerciseComposable: @Composable () -> Unit,
+    notAvailableTextComposable: @Composable () -> Unit,
+    onScrollEnabledChange: (Boolean) -> Unit
+) {
+    CustomHorizontalPager(
+        modifier = modifier,
+        pagerState = pagerState,
+        userScrollEnabled = allowHorizontalScrolling
+    ) { page ->
+        when (page) {
+            0 -> PageCompleteOrSkip(completeOrSkipExerciseComposable)
+            1 -> PageExerciseDetail(
+                updatedState = updatedState,
+                viewModel = viewModel,
+                onScrollEnabledChange = { onScrollEnabledChange(it) }
+            )
+            2 -> PageNotes(updatedState.parentExercise.notes)
+            3 -> PagePreviousSet(updatedState, notAvailableTextComposable)
+        }
+    }
+}
+
+@Composable
+fun PageCompleteOrSkip(completeOrSkipExerciseComposable: @Composable () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        completeOrSkipExerciseComposable()
+    }
+}
+
+@Composable
+fun PageExerciseDetail(
+    updatedState:  WorkoutState.Set,
+    viewModel: AppViewModel,
+    onScrollEnabledChange: (Boolean) -> Unit
+) {
+    ExerciseDetail(
+        updatedState = updatedState,
+        viewModel = viewModel,
+        onEditModeDisabled = { onScrollEnabledChange(true) },
+        onEditModeEnabled = { onScrollEnabledChange(false) },
+        onTimerDisabled = { onScrollEnabledChange(true) },
+        onTimerEnabled = { onScrollEnabledChange(false) }
+    )
+}
+
+@Composable
+fun PageNotes(notes: String) {
+    val scrollState = rememberScrollState()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(0.dp, 10.dp, 0.dp, 0.dp)
+    ) {
+        Text(
+            modifier = Modifier.fillMaxSize(),
+            text = "Notes",
+            style = MaterialTheme.typography.body1,
+            textAlign = TextAlign.Center
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp, 25.dp, 20.dp, 25.dp)
+                .verticalScroll(scrollState)
+        ) {
+            Text(
+                text = notes.ifEmpty { "NOT AVAILABLE" },
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.body1,
+                textAlign = TextAlign.Start
+            )
+        }
+    }
+}
+
+@Composable
+fun PagePreviousSet(
+    updatedState:  WorkoutState.Set,
+    notAvailableTextComposable: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(0.dp, 10.dp, 0.dp, 0.dp)
+    ) {
+        Text(
+            modifier = Modifier.fillMaxSize(),
+            text = "Previous Set",
+            style = MaterialTheme.typography.body1,
+            textAlign = TextAlign.Center
+        )
+        Column(
+            modifier = Modifier.padding(40.dp, 25.dp, 40.dp, 0.dp),
+            verticalArrangement = Arrangement.Top,
+            horizontalAlignment = Alignment.End
+        ) {
+            if (updatedState.hasNoHistory) {
+                notAvailableTextComposable()
+            } else {
+                when (val set = updatedState.set) {
+                    is WeightSet -> WeightSetDataViewer(set as WeightSetData)
+                    is BodyWeightSet -> BodyWeightSetDataViewer(set as BodyWeightSetData)
+                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(set as TimedDurationSetData)
+                    is EnduranceSet -> EnduranceSetDataViewerMinimal(set as EnduranceSetData)
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class,
     ExperimentalAnimationApi::class, ExperimentalWearFoundationApi::class
 )
@@ -274,104 +393,18 @@ fun ExerciseScreen(
                     )
                 }
 
-                CustomHorizontalPager(
+                SimplifiedHorizontalPager(
                     modifier = Modifier
                         .weight(1f)
                         .padding(0.dp, 20.dp, 0.dp, 0.dp),
                     pagerState = pagerState,
-                    userScrollEnabled = allowHorizontalScrolling
-                    ) { page ->
-                    when(page){
-                        0 -> {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center){
-                                completeOrSkipExerciseComposable()
-                            }
-                        }
-                        1 -> {
-                            ExerciseDetail(
-                                updatedState = updatedState,
-                                viewModel = viewModel,
-                                onEditModeDisabled = {
-                                    allowHorizontalScrolling = true
-                                },
-                                onEditModeEnabled = {
-                                    allowHorizontalScrolling = false
-                                },
-                                onTimerDisabled = {
-                                    allowHorizontalScrolling = true
-                                },
-                                onTimerEnabled = {
-                                    allowHorizontalScrolling = false
-                                }
-                            )
-                        }
-                        2 -> {
-                            Box(modifier = Modifier
-                                .fillMaxSize()
-                                .padding(0.dp, 10.dp, 0.dp, 0.dp)){
-                                Text(
-                                    modifier = Modifier.fillMaxSize(),
-                                    text = "Notes",
-                                    style = MaterialTheme.typography.body1,
-                                    textAlign = TextAlign.Center
-                                )
-                                val scrollState = rememberScrollState()
-                                val notes = updatedState.parentExercise.notes
-                                Box(
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    Row{
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(20.dp, 25.dp, 20.dp, 25.dp)
-                                                .verticalScroll(scrollState)
-                                        ) {
-                                            Text(
-                                                text = notes.ifEmpty { "NOT AVAILABLE" },
-                                                modifier = Modifier.fillMaxWidth(),
-                                                style = MaterialTheme.typography.body1,
-                                                textAlign = TextAlign.Start
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        3 -> {
-                            Box(modifier = Modifier
-                                .fillMaxSize()
-                                .padding(0.dp, 10.dp, 0.dp, 0.dp)){
-                                Text(
-                                    modifier = Modifier.fillMaxSize(),
-                                    text = "Previous Set",
-                                    style = MaterialTheme.typography.body1,
-                                    textAlign = TextAlign.Center
-                                )
-                                Column(modifier = Modifier.padding(40.dp,25.dp,40.dp,0.dp),verticalArrangement = Arrangement.Top, horizontalAlignment = Alignment.End){
-                                    if(updatedState.hasNoHistory){
-                                        notAvailableTextComposable()
-                                    }else {
-                                        when(updatedState.set){
-                                            is WeightSet -> WeightSetDataViewer(
-                                                updatedState.previousSetData as WeightSetData
-                                            )
-                                            is BodyWeightSet -> BodyWeightSetDataViewer(
-                                                updatedState.previousSetData as BodyWeightSetData
-                                            )
-                                            is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                                                updatedState.previousSetData as TimedDurationSetData
-                                            )
-                                            is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                                                updatedState.previousSetData as EnduranceSetData
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                    allowHorizontalScrolling = allowHorizontalScrolling,
+                    updatedState = updatedState,
+                    viewModel = viewModel,
+                    completeOrSkipExerciseComposable = completeOrSkipExerciseComposable,
+                    notAvailableTextComposable = notAvailableTextComposable,
+                    onScrollEnabledChange = { allowHorizontalScrolling = it }
+                )
             }
         }
     }

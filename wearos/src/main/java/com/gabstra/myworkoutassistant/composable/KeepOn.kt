@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
+import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -18,27 +21,34 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun KeepOn() {
+fun KeepOn(
+    enableDimming: Boolean = true, // Parameter to control dimming
+    dimDelay: Long = 15000L // Delay before dimming the screen
+) {
     val context = LocalContext.current
     val activity = context.findActivity()
     val window = activity?.window
-    val dimDelay = 10000L
 
     var isDimmed by remember { mutableStateOf(false) }
     var dimmingJob by remember { mutableStateOf<Job?>(null) }
 
     val scope = rememberCoroutineScope()
 
-    fun resetDimming() {
-        // Cancel any existing dimming job
-        dimmingJob?.cancel()
+    fun setScreenBrightness(brightness: Float) {
+        window?.attributes = window?.attributes?.apply {
+            screenBrightness = brightness
+        }
+    }
 
-        // Start a new dimming job
+    var backPressHandled by remember { mutableStateOf(true) }
+
+    fun resetDimming() {
+        dimmingJob?.cancel()
+        if (!enableDimming) return
         dimmingJob = scope.launch {
             delay(dimDelay)
-            window?.attributes = window?.attributes?.apply {
-                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF
-            }
+            backPressHandled = false
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF)
             isDimmed = true
         }
     }
@@ -48,40 +58,53 @@ fun KeepOn() {
 
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            window?.attributes = window?.attributes?.apply {
-                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            }
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
         }
     }
 
-    LaunchedEffect(Unit) {
-        resetDimming() // Start the initial dimming timer
+    LaunchedEffect(enableDimming) {
+        if (isDimmed && !enableDimming) {
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            isDimmed = false
+        } else {
+            resetDimming()
+        }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Transparent) // Ensure Box handles touch events
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        // Wait for any touch event
-                        val event = awaitPointerEvent()
+    BackHandler(enabled = !backPressHandled) {
+        if (isDimmed) {
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            isDimmed = false
+        }
 
-                        // Handle the press
-                        if (event.changes.any { it.pressed }) {
-                            if (isDimmed) {
-                                window?.attributes = window?.attributes?.apply {
-                                    screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        resetDimming()
+        backPressHandled = true
+    }
+
+    if(isDimmed){
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Transparent) // Ensure Box handles touch events
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            // Wait for any touch event
+                            val event = awaitPointerEvent()
+
+                            // Handle the press
+                            if (event.changes.any { it.pressed }) {
+                                if (isDimmed) {
+                                    setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+                                    isDimmed = false
                                 }
-                                isDimmed = false
+                                // Reset the dimming timer on any press if dimming is enabled
+                                resetDimming()
                             }
-                            // Reset the dimming timer on any press
-                            resetDimming()
                         }
                     }
                 }
-            }
-            .pointerInteropFilter { true } // Allow event propagation
-    )
+                .pointerInteropFilter { true } // Allow event propagation
+        )
+    }
 }
