@@ -4,6 +4,7 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
@@ -23,7 +24,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun KeepOn(
     enableDimming: Boolean = true, // Parameter to control dimming
-    dimDelay: Long = 15000L // Delay before dimming the screen
+    dimDelay: Long = 15000L, // Delay before dimming the screen
+    content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
     val activity = context.findActivity()
@@ -81,30 +83,26 @@ fun KeepOn(
         backPressHandled = true
     }
 
-    if(isDimmed){
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Transparent) // Ensure Box handles touch events
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            // Wait for any touch event
-                            val event = awaitPointerEvent()
-
-                            // Handle the press
-                            if (event.changes.any { it.pressed }) {
-                                if (isDimmed) {
-                                    setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-                                    isDimmed = false
-                                }
-                                // Reset the dimming timer on any press if dimming is enabled
-                                resetDimming()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Transparent) // Ensure Box handles touch events
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        // Check if any pointer is down
+                        if (event.changes.any { it.pressed }) {
+                            if (isDimmed) {
+                                setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+                                isDimmed = false
                             }
+                            resetDimming()
                         }
                     }
                 }
-                .pointerInteropFilter { true } // Allow event propagation
-        )
+            }
+    ){
+        content()
     }
 }

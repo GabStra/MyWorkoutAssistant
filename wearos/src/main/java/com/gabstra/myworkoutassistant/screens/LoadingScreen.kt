@@ -19,13 +19,17 @@ fun LoadingScreen(text: String = "Loading...") {
     BackHandler(true) {
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        LoadingText(baseText = text)
+    KeepOn{
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            LoadingText(baseText = text)
+        }
     }
 
-    KeepOn()
+
+
+
 }

@@ -230,6 +230,4 @@ fun WorkoutScreen(
             }
         }
     }
-
-    KeepOn()
 }

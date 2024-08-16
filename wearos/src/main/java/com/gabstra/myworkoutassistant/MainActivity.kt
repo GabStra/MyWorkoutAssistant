@@ -202,9 +202,12 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
             composable(Screen.WorkoutDetail.route) {
                 WorkoutDetailScreen(navController, appViewModel, hrViewModel)
+
             }
             composable(Screen.Workout.route) {
-                WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
+                KeepOn{
+                    WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
+                }
             }
             composable(Screen.Loading.route) {
                 LoadingScreen("Syncing with phone")

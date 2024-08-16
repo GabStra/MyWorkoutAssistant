@@ -96,6 +96,8 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
     val repsRow = @Composable {
         Row(
             modifier = Modifier
+                .width(100.dp)
+                .height(35.dp)
                 .combinedClickable(
                     onClick = {
                     },
@@ -165,11 +167,11 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        TrendIcon(currentSet.actualReps, previousSet.actualReps)
-                        Spacer(modifier = Modifier.width(10.dp))
                         Column(horizontalAlignment = Alignment.End){
                             repsRow()
                         }
+                        Spacer(modifier = Modifier.width(5.dp))
+                        TrendIcon(currentSet.actualReps, previousSet.actualReps)
                     }
                 }
             )
@@ -180,11 +182,11 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                TrendIcon(currentSet.actualReps, previousSet.actualReps)
-                Spacer(modifier = Modifier.width(10.dp))
                 Column(horizontalAlignment = Alignment.End){
                     repsRow()
                 }
+                Spacer(modifier = Modifier.width(5.dp))
+                TrendIcon(currentSet.actualReps, previousSet.actualReps)
             }
         }
     }

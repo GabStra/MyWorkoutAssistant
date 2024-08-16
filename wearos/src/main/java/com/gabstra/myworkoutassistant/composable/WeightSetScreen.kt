@@ -135,6 +135,8 @@ fun WeightSetScreen (
     val repsRow = @Composable {
         Row(
             modifier = Modifier
+                .width(100.dp)
+                .height(35.dp)
                 .combinedClickable(
                     onClick = {
                     },
@@ -183,6 +185,8 @@ fun WeightSetScreen (
     val weightRow = @Composable {
         Row(
             modifier = Modifier
+                .width(100.dp)
+                .height(35.dp)
                 .combinedClickable(
                     onClick = {
                     },
@@ -253,12 +257,14 @@ fun WeightSetScreen (
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        TrendIcon(currentVolume, previousVolume)
-                        Spacer(modifier = Modifier.width(10.dp))
+
+
                         Column(horizontalAlignment = Alignment.End){
                             if (isRepsInEditMode) repsRow()
                             if (isWeightInEditMode) weightRow()
                         }
+                        Spacer(modifier = Modifier.width(5.dp))
+                        TrendIcon(currentVolume, previousVolume)
                     }
                 }
             )
@@ -269,13 +275,14 @@ fun WeightSetScreen (
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                TrendIcon(currentVolume, previousVolume)
-                Spacer(modifier = Modifier.width(10.dp))
+
+
                 Column(horizontalAlignment = Alignment.End){
                     repsRow()
-                    Spacer(modifier = Modifier.height(5.dp))
                     weightRow()
                 }
+                Spacer(modifier = Modifier.width(5.dp))
+                TrendIcon(currentVolume, previousVolume)
             }
         }
     }
