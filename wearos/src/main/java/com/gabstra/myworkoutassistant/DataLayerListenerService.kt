@@ -27,6 +27,8 @@ class DataLayerListenerService : WearableListenerService() {
 
     private var backupChunks = mutableListOf<ByteArray>()
 
+    private var hasStartedSync = false
+
     override fun onCreate() {
         super.onCreate()
         val db = AppDatabase.getDatabase(this)
@@ -54,16 +56,19 @@ class DataLayerListenerService : WearableListenerService() {
                         val isStart = dataMap.getBoolean("isStart",false)
                         val backupChunk = dataMap.getByteArray("chunk")
 
-                        if(isStart){
+                        if(isStart && !hasStartedSync) {
                             backupChunks.clear()
 
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_START_JSON, APP_BACKUP_START_JSON)
                             }
                             sendBroadcast(intent)
+                            hasStartedSync = true
                         }
 
                         if (backupChunk != null) {
+                            if (!hasStartedSync) return // Ignore chunks if not started
+
                             backupChunks.add(backupChunk)
 
                             val isLastChunk = dataMap.getBoolean("isLastChunk", false)
@@ -87,12 +92,14 @@ class DataLayerListenerService : WearableListenerService() {
                                 sendBroadcast(intent)
 
                                 backupChunks.clear()
+                                hasStartedSync = false
                             }
                         }
                     }
                 }
             }
         }catch (exception: Exception) {
+            Log.e("DataLayerListenerService", "Error processing data", exception)
             exception.printStackTrace()
             backupChunks.clear()
         }finally {

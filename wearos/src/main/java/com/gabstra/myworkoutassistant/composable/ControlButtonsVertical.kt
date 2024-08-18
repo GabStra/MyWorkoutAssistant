@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -20,6 +21,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
+import androidx.wear.compose.material.MaterialTheme
+import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPressOrTap
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
@@ -35,29 +38,40 @@ fun ControlButtonsVertical(
 ){
     val coroutineScope = rememberCoroutineScope()
     
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally,verticalArrangement = Arrangement.Center) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally,verticalArrangement = Arrangement.SpaceEvenly) {
         Box(
             modifier = Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(MyColors.Green)
+                .size(35.dp)
                 .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onPlusLongPress, onTap = onPlusTap),
             contentAlignment = Alignment.Center
         ) {
-            Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
+            Box(
+                modifier = Modifier
+                    .size(35.dp)
+                    .clip(CircleShape)
+                    .background(MyColors.Green),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
+            }
         }
-        Spacer(modifier = Modifier.height(5.dp))
         content()
-        Spacer(modifier = Modifier.height(5.dp))
         Box(
             modifier = Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(Color.Red)
+                .size(35.dp)
                 .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onMinusLongPress, onTap = onMinusTap),
             contentAlignment = Alignment.Center
         ) {
-            Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
+            Box(
+                modifier = Modifier
+                    .size(35.dp)
+                    .clip(CircleShape)
+                    .background(Color.Red),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
+            }
         }
+
     }
 }

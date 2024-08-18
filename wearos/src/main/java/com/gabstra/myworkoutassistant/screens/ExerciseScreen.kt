@@ -7,8 +7,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.MarqueeAnimationMode
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -59,6 +64,7 @@ import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
+import com.gabstra.myworkoutassistant.composable.EnhancedButton
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
@@ -295,6 +301,8 @@ fun ExerciseScreen(
         4
     })
 
+    val scrollState = rememberScrollState()
+
     LaunchedEffect(state) {
         pagerState.animateScrollToPage(1)
         showConfirmDialog = false
@@ -316,9 +324,9 @@ fun ExerciseScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Button(
-                modifier = Modifier
-                    .size(30.dp)
+            EnhancedButton(
+                buttonSize = 35.dp,
+                buttonModifier = Modifier
                     .clip(CircleShape),
                 onClick ={
                     VibrateOnce(context)
@@ -328,10 +336,10 @@ fun ExerciseScreen(
             ) {
                 Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
             }
-            Spacer(modifier = Modifier.width(20.dp))
-            Button(
-                modifier = Modifier
-                    .size(30.dp)
+            Spacer(modifier = Modifier.width(10.dp))
+            EnhancedButton(
+                buttonSize = 35.dp,
+                buttonModifier = Modifier
                     .clip(CircleShape),
                 onClick ={
                     VibrateOnce(context)
@@ -378,8 +386,9 @@ fun ExerciseScreen(
                 ) {
                     Text(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE)
+                            .padding(10.dp,0.dp)
+                            .width(150.dp)
+                            .horizontalScroll(scrollState)
                             .combinedClickable(
                                 onClick = {},
                                 onLongClick = {

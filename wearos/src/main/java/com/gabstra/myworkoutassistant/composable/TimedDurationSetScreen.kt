@@ -111,6 +111,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             currentMillis = newTimerValue
             VibrateOnce(context)
         }
+        updateInteractionTime()
     }
 
     fun onPlusClick(){
@@ -118,6 +119,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         currentSet = currentSet.copy(startTimer = newTimerValue)
         currentMillis = newTimerValue
         VibrateOnce(context)
+        updateInteractionTime()
     }
 
     fun startTimerJob() {
@@ -236,13 +238,13 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             }
             Box(contentAlignment = Alignment.BottomCenter) {
                 if (showStartButton) {
-                    Button(
+                    EnhancedButton(
                         onClick = {
                             VibrateOnce(context)
                             startTimerJob()
                             showStartButton=false
                         },
-                        modifier = Modifier.size(35.dp),
+                        buttonSize = 35.dp,
                         colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
                     ) {
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
@@ -250,13 +252,13 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                 }
 
                 if (timerJob?.isActive == true) {
-                    Button(
+                    EnhancedButton(
                         onClick = {
                             VibrateOnce(context)
                             timerJob?.cancel()
                             showStopDialog = true
                         },
-                        modifier = Modifier.size(35.dp),
+                        buttonSize = 35.dp,
                         colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
                     ) {
                         Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")

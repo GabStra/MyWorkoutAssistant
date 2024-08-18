@@ -110,11 +110,13 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             currentSet = currentSet.copy(startTimer = currentSet.startTimer - 5000)
             VibrateOnce(context)
         }
+        updateInteractionTime()
     }
 
     fun onPlusClick(){
         currentSet = currentSet.copy(startTimer = currentSet.startTimer + 5000)
         VibrateOnce(context)
+        updateInteractionTime()
     }
 
     val textComposable = @Composable {
@@ -228,9 +230,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
-                    Column(modifier = Modifier.padding(0.dp,5.dp,0.dp,5.dp)) {
-                        textComposable()
-                    }
+                    textComposable()
                 }
             )
         }else{
@@ -239,13 +239,13 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
             }
             Box(contentAlignment = Alignment.BottomCenter) {
                 if (showStartButton) {
-                    Button(
+                    EnhancedButton(
                         onClick = {
                             VibrateOnce(context)
                             startTimerJob()
                             showStartButton = false
                         },
-                        modifier = Modifier.size(35.dp),
+                        buttonSize = 35.dp,
                         colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
                     ) {
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
@@ -253,13 +253,13 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                 }
 
                 if (timerJob?.isActive == true) {
-                    Button(
+                    EnhancedButton(
                         onClick = {
                             VibrateOnce(context)
                             timerJob?.cancel()
                             showStopDialog = true
                         },
-                        modifier = Modifier.size(35.dp),
+                        buttonSize = 35.dp,
                         colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
                     ) {
                         Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")

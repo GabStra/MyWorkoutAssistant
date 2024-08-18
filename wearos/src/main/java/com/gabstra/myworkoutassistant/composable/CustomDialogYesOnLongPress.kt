@@ -165,22 +165,21 @@ fun CustomDialogYesOnLongPress(
                         modifier = Modifier
                             .fillMaxWidth()
                     ) {
-                        Button(
+                        EnhancedButton(
+                            buttonSize = 35.dp,
+                            hitBoxScale = 1.5f,
                             onClick = {
                                 closeDialogJob?.cancel()
                                 handleNoClick()
                             },
-                            modifier = Modifier.size(35.dp),
                             colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
-                        Spacer(modifier = Modifier.width(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Box(
                             modifier = Modifier
-                                .size(35.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colors.primary)
+                                .size(52.5.dp)
                                 .repeatActionOnLongPress(
                                     longPressCoroutineScope,
                                     thresholdMillis = 200,
@@ -192,7 +191,15 @@ fun CustomDialogYesOnLongPress(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                            Box(
+                                modifier = Modifier
+                                    .size(35.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colors.primary),
+                                contentAlignment = Alignment.Center
+                            ){
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                            }
                         }
                     }
                 }
