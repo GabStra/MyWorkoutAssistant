@@ -56,7 +56,15 @@ class DataLayerListenerService : WearableListenerService() {
                         val isStart = dataMap.getBoolean("isStart",false)
                         val backupChunk = dataMap.getByteArray("chunk")
 
-                        if(isStart && !hasStartedSync) {
+                        if(isStart) {
+                            if(hasStartedSync){
+                                val intent = Intent(INTENT_ID).apply {
+                                    putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+                                }
+                                sendBroadcast(intent)
+                                return
+                            }
+
                             backupChunks.clear()
 
                             val intent = Intent(INTENT_ID).apply {
@@ -67,7 +75,13 @@ class DataLayerListenerService : WearableListenerService() {
                         }
 
                         if (backupChunk != null) {
-                            if (!hasStartedSync) return // Ignore chunks if not started
+                            if (!hasStartedSync){
+                                val intent = Intent(INTENT_ID).apply {
+                                    putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+                                }
+                                sendBroadcast(intent)
+                                return
+                            }
 
                             backupChunks.add(backupChunk)
 
@@ -101,7 +115,13 @@ class DataLayerListenerService : WearableListenerService() {
         }catch (exception: Exception) {
             Log.e("DataLayerListenerService", "Error processing data", exception)
             exception.printStackTrace()
+
+            val intent = Intent(INTENT_ID).apply {
+                putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+            }
+            sendBroadcast(intent)
             backupChunks.clear()
+            hasStartedSync = false
         }finally {
             super.onDataChanged(dataEvents)
         }
@@ -119,5 +139,6 @@ class DataLayerListenerService : WearableListenerService() {
         const val WORKOUT_STORE_JSON = "workoutStoreJson"
         const val APP_BACKUP_START_JSON = "appBackupStartJson"
         const val APP_BACKUP_END_JSON = "appBackupEndJson"
+        const val APP_BACKUP_FAILED = "appBackupFailed"
     }
 }

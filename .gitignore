@@ -22,3 +22,4 @@ wearos/release/wearos-release.apk
 .idea/deploymentTargetSelector.xml
 .kotlin/
 .idea/
+*.aab

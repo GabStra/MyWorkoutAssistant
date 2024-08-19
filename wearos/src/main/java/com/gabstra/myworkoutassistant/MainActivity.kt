@@ -76,6 +76,8 @@ class MyReceiver(
 
                 val appBackupStartJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_START_JSON)
 
+                val appBackupFailed = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_FAILED)
+
                 if(appBackupStartJson != null){
                     navController.navigate(Screen.Loading.route)
                 }
@@ -91,6 +93,16 @@ class MyReceiver(
                 if(appBackupEndJson != null){
                     navController.navigate(Screen.WorkoutSelection.route) {
                         popUpTo(0) { inclusive = true }
+                    }
+                }
+
+                if(appBackupFailed != null){
+                    Toast.makeText(context, "Failed to sync with phone", Toast.LENGTH_SHORT).show()
+                    val currentRoute = navController.currentBackStackEntry?.destination?.route
+                    if(currentRoute == Screen.Loading.route){
+                        navController.navigate(Screen.WorkoutSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
                     }
                 }
 
@@ -202,7 +214,6 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
             composable(Screen.WorkoutDetail.route) {
                 WorkoutDetailScreen(navController, appViewModel, hrViewModel)
-
             }
             composable(Screen.Workout.route) {
                 KeepOn{

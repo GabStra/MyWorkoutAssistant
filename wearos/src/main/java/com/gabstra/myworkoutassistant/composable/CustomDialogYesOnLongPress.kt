@@ -176,7 +176,7 @@ fun CustomDialogYesOnLongPress(
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Box(
                             modifier = Modifier
                                 .size(52.5.dp)

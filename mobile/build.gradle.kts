@@ -47,6 +47,15 @@ composeCompiler {
 }
 
 android {
+    signingConfigs {
+        create("release") {
+            storeFile =
+                file("C:\\Users\\gabri\\OneDrive\\MyWorkoutAssistant\\workout_assistant_keystore.jks")
+            storePassword = "VDk8D21M4qoPiGP7tRDOAbQF"
+            keyAlias = "release_key"
+            keyPassword = "GRn24V3dWsToEKVzgoQG2uyB"
+        }
+    }
     namespace = "com.gabstra.myworkoutassistant"
     compileSdk = 34
 
@@ -59,6 +68,7 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        signingConfig = signingConfigs.getByName("release")
     }
 
     buildTypes {
@@ -68,6 +78,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
+        }
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

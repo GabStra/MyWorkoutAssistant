@@ -17,32 +17,34 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFFff6700),
-    secondary = Color.Black,
-    tertiary = Color.Black,
-    onPrimary = Color.Black,
-
+    primary = Color(0xFFff6700), // Orange
+    secondary = Color(0xFF121212), // Dark Gray
+    tertiary = Color(0xFF1E1E1E), // Slightly lighter Dark Gray
+    onPrimary = Color.White,
+    background = Color(0xFF121212), // Dark background
+    surface = Color(0xFF1E1E1E), // Dark surface
+    onSecondary = Color.White,
+    onTertiary = Color.White,
+    onBackground = Color.White,
+    onSurface = Color.White
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFFff6700),
-    secondary = Color.Black,
-    tertiary = Color.Black
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primary = Color(0xFFff6700), // Orange
+    secondary = Color(0xFFB0BEC5), // Light Gray
+    tertiary = Color(0xFFCFD8DC), // Slightly darker Light Gray
+    onPrimary = Color.Black,
+    background = Color(0xFFFFFBFE), // Light background
+    surface = Color(0xFFFFFFFF), // Light surface
+    onSecondary = Color.Black,
+    onTertiary = Color.Black,
+    onBackground = Color.Black,
+    onSurface = Color.Black
 )
 
 @Composable
 fun MyWorkoutAssistantTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
@@ -50,13 +52,12 @@ fun MyWorkoutAssistantTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = Color.Black.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = darkTheme
+            WindowCompat.setDecorFitsSystemWindows(window, true)
         }
     }
 
     MaterialTheme(
-        colorScheme = DarkColorScheme,
+        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
         typography = Typography,
         content = content
     )

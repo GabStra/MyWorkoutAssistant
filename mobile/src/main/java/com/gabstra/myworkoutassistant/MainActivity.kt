@@ -183,8 +183,19 @@ fun MyWorkoutAssistantNavHost(
                                 Toast.LENGTH_SHORT
                             ).show()
 
-                            sendAppBackup(dataClient, appBackup)
+                            val latestWorkoutHistories = appViewModel.workouts.mapNotNull { workout ->
+                                workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
+                            }
+
+                            val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
+                                setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+                            }
+
+                            val filteredAppBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories)
+
+                            sendAppBackup(dataClient, filteredAppBackup)
                         }
+                        Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
                     Toast.makeText(context, "Failed to import data from backup", Toast.LENGTH_SHORT)

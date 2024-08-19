@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -79,6 +81,8 @@ fun NextExerciseInfo(
 
     val setIndex =  exerciseSets.indexOfFirst { it === state.set }
 
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .size(160.dp, 190.dp)
@@ -88,8 +92,9 @@ fun NextExerciseInfo(
     ){
         Text(
             modifier = Modifier
-                .fillMaxWidth()
-                .basicMarquee(iterations = Int.MAX_VALUE),
+                .padding(10.dp,0.dp)
+                .width(150.dp)
+                .horizontalScroll(scrollState),
             text = state.parentExercise.name,
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.title3,

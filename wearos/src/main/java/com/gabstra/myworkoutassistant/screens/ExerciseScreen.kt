@@ -304,7 +304,7 @@ fun ExerciseScreen(
     val scrollState = rememberScrollState()
 
     LaunchedEffect(state) {
-        pagerState.animateScrollToPage(1)
+        pagerState.scrollToPage(1)
         showConfirmDialog = false
         showGoBackDialog = false
         showSkipDialog = false
@@ -315,7 +315,7 @@ fun ExerciseScreen(
 
     LaunchedEffect(allowHorizontalScrolling) {
         if (!allowHorizontalScrolling) {
-            pagerState.animateScrollToPage(1)
+            pagerState.scrollToPage(1)
         }
     }
 
@@ -336,7 +336,7 @@ fun ExerciseScreen(
             ) {
                 Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
             }
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(5.dp))
             EnhancedButton(
                 buttonSize = 35.dp,
                 buttonModifier = Modifier
