@@ -166,8 +166,18 @@ fun MyWorkoutAssistantNavHost(
                             val deleteAndInsertJob = launch {
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
-                                workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
-                                setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
+
+                                val validWorkoutHistories = appBackup.WorkoutHistories.filter { workoutHistory ->
+                                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
+                                }
+
+                                workoutHistoryDao.insertAll(*validWorkoutHistories.toTypedArray())
+
+                                val validSetHistories = appBackup.SetHistories.filter { setHistory ->
+                                    validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
+                                }
+
+                                setHistoryDao.insertAll(*validSetHistories.toTypedArray())
                             }
 
                             // Wait for the delete and insert operations to complete
