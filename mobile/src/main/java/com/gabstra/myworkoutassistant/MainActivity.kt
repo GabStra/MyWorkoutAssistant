@@ -195,7 +195,6 @@ fun MyWorkoutAssistantNavHost(
 
                             sendAppBackup(dataClient, filteredAppBackup)
                         }
-                        Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
                     Toast.makeText(context, "Failed to import data from backup", Toast.LENGTH_SHORT)

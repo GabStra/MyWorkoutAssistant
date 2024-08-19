@@ -451,8 +451,9 @@ class AppViewModel : ViewModel(){
             _isHistoryEmpty.value = workoutStateHistory.isEmpty()
         }
 
-        _workoutState.value = workoutStateQueue.pollFirst()!!
+        val newState = workoutStateQueue.pollFirst()!!
         if (workoutStateQueue.isNotEmpty()) _nextWorkoutState.value = workoutStateQueue.peek()!!
+        _workoutState.value = newState
     }
 
     fun goToPreviousSet() {

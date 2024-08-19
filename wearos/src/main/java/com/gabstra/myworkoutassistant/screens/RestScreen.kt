@@ -92,7 +92,6 @@ fun NextExerciseInfo(
     ){
         Text(
             modifier = Modifier
-                .padding(10.dp,0.dp)
                 .width(150.dp)
                 .horizontalScroll(scrollState),
             text = state.parentExercise.name,
@@ -199,45 +198,55 @@ fun RestScreen(
         contentAlignment = Alignment.TopCenter
     ) {
         val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
-        val nextWorkoutStateSet = nextWorkoutState as WorkoutState.Set
-        CustomHorizontalPager(
-            modifier = Modifier
-                .fillMaxSize(),
-            pagerState = pagerState,
-            userScrollEnabled = true
-        ){ page ->
-            when(page){
-                0 -> {
-                    NextExerciseInfo(viewModel,nextWorkoutStateSet)
-                }
-                1 -> {
-                    Box(modifier = Modifier
-                        .fillMaxSize()
-                        .padding(5.dp, 60.dp, 5.dp, 0.dp)){
-                        Text(
-                            modifier = Modifier.fillMaxSize(),
-                            text = "Notes",
-                            style = MaterialTheme.typography.body1,
-                            textAlign = TextAlign.Center
-                        )
-                        val scrollState = rememberScrollState()
-                        val notes = nextWorkoutStateSet.parentExercise.notes
+        val nextWorkoutStateSet = if (nextWorkoutState is WorkoutState.Set) {
+            nextWorkoutState as WorkoutState.Set
+        } else {
+            null
+        }
+
+        if(nextWorkoutStateSet!=null) {
+            CustomHorizontalPager(
+                modifier = Modifier
+                    .fillMaxSize(),
+                pagerState = pagerState,
+                userScrollEnabled = true
+            ) { page ->
+                when (page) {
+                    0 -> {
+                        NextExerciseInfo(viewModel, nextWorkoutStateSet)
+                    }
+
+                    1 -> {
                         Box(
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(5.dp, 60.dp, 5.dp, 0.dp)
                         ) {
-                            Row{
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(20.dp, 25.dp, 20.dp, 25.dp)
-                                        .verticalScroll(scrollState)
-                                ) {
-                                    Text(
-                                        text = notes.ifEmpty { "NOT AVAILABLE" },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        style = MaterialTheme.typography.body1,
-                                        textAlign = TextAlign.Start
-                                    )
+                            Text(
+                                modifier = Modifier.fillMaxSize(),
+                                text = "Notes",
+                                style = MaterialTheme.typography.body1,
+                                textAlign = TextAlign.Center
+                            )
+                            val scrollState = rememberScrollState()
+                            val notes = nextWorkoutStateSet.parentExercise.notes
+                            Box(
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                Row {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(20.dp, 25.dp, 20.dp, 25.dp)
+                                            .verticalScroll(scrollState)
+                                    ) {
+                                        Text(
+                                            text = notes.ifEmpty { "NOT AVAILABLE" },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            style = MaterialTheme.typography.body1,
+                                            textAlign = TextAlign.Start
+                                        )
+                                    }
                                 }
                             }
                         }

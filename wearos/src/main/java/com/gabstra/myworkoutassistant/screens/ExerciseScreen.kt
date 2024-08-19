@@ -266,10 +266,10 @@ fun PagePreviousSet(
                 notAvailableTextComposable()
             } else {
                 when (val set = updatedState.set) {
-                    is WeightSet -> WeightSetDataViewer(set as WeightSetData)
-                    is BodyWeightSet -> BodyWeightSetDataViewer(set as BodyWeightSetData)
-                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(set as TimedDurationSetData)
-                    is EnduranceSet -> EnduranceSetDataViewerMinimal(set as EnduranceSetData)
+                    is WeightSet -> WeightSetDataViewer(updatedState.previousSetData as WeightSetData)
+                    is BodyWeightSet -> BodyWeightSetDataViewer(updatedState.previousSetData as BodyWeightSetData)
+                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(updatedState.previousSetData as TimedDurationSetData)
+                    is EnduranceSet -> EnduranceSetDataViewerMinimal(updatedState.previousSetData as EnduranceSetData)
                 }
             }
         }
