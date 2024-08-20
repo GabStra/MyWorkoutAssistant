@@ -39,6 +39,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
                         ){
                             Text(
                                 text = "x${set.reps}",
