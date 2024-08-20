@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -126,7 +128,8 @@ fun ExerciseDetailScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
                         text = exercise.name
                     )
                 },
@@ -149,7 +152,10 @@ fun ExerciseDetailScreen(
                     }) {
                         Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                )
             )
         },
         bottomBar = {
@@ -244,10 +250,11 @@ fun ExerciseDetailScreen(
             ) {
                 TabRow(
                     selectedTabIndex = 0,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
                             Modifier.tabIndicatorOffset(tabPositions[0]),
-                            color = Color.White, // Set the indicator color
+                            color = MaterialTheme.colorScheme.primary, // Set the indicator color
                             height = 2.dp // Set the indicator thickness
                         )
                     }
@@ -255,9 +262,9 @@ fun ExerciseDetailScreen(
                     Tab(
                         selected = true,
                         onClick = { },
-                        text = { Text("Overview") },
+                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "Overview") },
                         selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.LightGray // Color when tab is not selected
+                        unselectedContentColor = Color.White // Color when tab is not selected
                     )
                     Tab(
                         selected = false,
@@ -267,9 +274,9 @@ fun ExerciseDetailScreen(
                                 true
                             )
                         },
-                        text = { Text("History") },
+                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "History") },
                         selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.LightGray // Color when tab is not selected
+                        unselectedContentColor = Color.White // Color when tab is not selected
                     )
                 }
 

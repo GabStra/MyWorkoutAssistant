@@ -41,7 +41,7 @@ fun SettingsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background) // Set the background color to black
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh) // Set the background color to black
     ) {
         Column(
             modifier = Modifier

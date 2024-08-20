@@ -36,6 +36,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -369,7 +370,7 @@ fun WorkoutHistoryScreen(
     val setsTabContent = @Composable {
         if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
             HeartRateChart(
-                modifier = Modifier.padding(10.dp),
+                modifier = Modifier.fillMaxWidth().padding(15.dp),
                 cartesianChartModel = heartRateEntryModel!!,
                 title = "HR over workout duration",
                 entriesCount =  selectedWorkoutHistory!!.heartBeatRecords.size,
@@ -377,7 +378,7 @@ fun WorkoutHistoryScreen(
             )
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                modifier = Modifier.fillMaxWidth().padding(15.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val minHeartRate =  selectedWorkoutHistory!!.heartBeatRecords.min()
@@ -472,9 +473,7 @@ fun WorkoutHistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 10.dp)
-                                .clip(RoundedCornerShape(5.dp))
-                                .background(Color.Black),
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             SetHistoriesRenderer(setHistoriesByExerciseId[key]!!)
@@ -544,7 +543,8 @@ fun WorkoutHistoryScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
                         text = workout.name
                     )
                 },
@@ -555,7 +555,10 @@ fun WorkoutHistoryScreen(
                             contentDescription = "Back"
                         )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                )
             )
         },
         bottomBar = {
@@ -572,10 +575,11 @@ fun WorkoutHistoryScreen(
         ) {
             TabRow(
                 selectedTabIndex = 1,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
                         Modifier.tabIndicatorOffset(tabPositions[1]),
-                        color = Color.White, // Set the indicator color
+                        color = MaterialTheme.colorScheme.primary, // Set the indicator color
                         height = 5.dp // Set the indicator thickness
                     )
                 }
@@ -588,16 +592,16 @@ fun WorkoutHistoryScreen(
                             true
                         )
                     },
-                    text = { Text("Overview") },
+                    text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "Overview") },
                     selectedContentColor = Color.White, // Color when tab is selected
-                    unselectedContentColor = Color.LightGray // Color when tab is not selected
+                    unselectedContentColor = Color.White // Color when tab is not selected
                 )
                 Tab(
                     selected = true,
                     onClick = { },
-                    text = { Text("History") },
+                    text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "History") },
                     selectedContentColor = Color.White, // Color when tab is selected
-                    unselectedContentColor = Color.LightGray // Color when tab is not selected
+                    unselectedContentColor = Color.White // Color when tab is not selected
                 )
             }
 

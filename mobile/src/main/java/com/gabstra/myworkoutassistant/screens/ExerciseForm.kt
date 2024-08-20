@@ -91,7 +91,7 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expanded.value,
                         onDismissRequest = { expanded.value = false },
-                        modifier = Modifier.background(Color.Black)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     ) {
                         exerciseTypeDescriptions.forEach { ExerciseDescription ->
                             DropdownMenuItem(

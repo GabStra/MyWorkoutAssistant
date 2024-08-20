@@ -39,6 +39,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -92,7 +93,7 @@ fun Menu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(Color.Black)
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
         ) {
             DropdownMenuItem(
                 text = { Text("Edit Workout") },
@@ -124,6 +125,7 @@ fun WorkoutComponentTitle(modifier: Modifier, workoutComponent: WorkoutComponent
         Text(
             modifier = Modifier.weight(2.7f).basicMarquee(iterations = Int.MAX_VALUE),
             text = workoutComponent.name+suffix,
+            style = MaterialTheme.typography.titleSmall,
         )
     }
 }
@@ -281,7 +283,8 @@ fun WorkoutDetailScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(),
+                        modifier = Modifier.fillMaxWidth().basicMarquee(),
+                        textAlign = TextAlign.Center,
                         text = workout.name
                     )
                 },
@@ -307,7 +310,10 @@ fun WorkoutDetailScreen(
                             }
                         }
                     )
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                )
             )
         },
         bottomBar = {
@@ -363,10 +369,11 @@ fun WorkoutDetailScreen(
             ) {
                 TabRow(
                     selectedTabIndex = 0,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
                             Modifier.tabIndicatorOffset(tabPositions[0]),
-                            color = Color.White, // Set the indicator color
+                            color = MaterialTheme.colorScheme.primary,
                             height = 2.dp // Set the indicator thickness
                         )
                     }
@@ -374,9 +381,9 @@ fun WorkoutDetailScreen(
                     Tab(
                         selected = true,
                         onClick = { },
-                        text = { Text("Overview") },
+                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text ="Overview") },
                         selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.LightGray // Color when tab is not selected
+                        unselectedContentColor = Color.White // Color when tab is not selected
                     )
                     Tab(
                         selected = false,
@@ -386,9 +393,9 @@ fun WorkoutDetailScreen(
                                 true
                             )
                         },
-                        text = { Text("History") },
+                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text ="History") },
                         selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.LightGray // Color when tab is not selected
+                        unselectedContentColor = Color.White // Color when tab is not selected
                     )
                 }
 
@@ -442,9 +449,7 @@ fun WorkoutDetailScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                        .clip(RoundedCornerShape(5.dp))
-                                        .background(Color.Black),
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     when (it) {

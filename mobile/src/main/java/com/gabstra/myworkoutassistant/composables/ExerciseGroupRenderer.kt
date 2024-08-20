@@ -14,12 +14,11 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 
 @Composable
-fun ExerciseGroupRenderer(exerciseGroup: ExerciseGroup) {
+fun ExerciseGroupRenderer(exerciseGroup: ExerciseGroup, modifier: Modifier = Modifier) {
     for (workoutComponent in exerciseGroup.workoutComponents) {
         Row(
             horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier
-                .fillMaxWidth()
+            modifier = modifier
         ) {
             when (workoutComponent) {
                 is Exercise -> ExerciseRenderer(workoutComponent)
@@ -32,10 +31,5 @@ fun ExerciseGroupRenderer(exerciseGroup: ExerciseGroup) {
             }
         }
         if (workoutComponent is ExerciseGroup) ExerciseGroupRenderer(workoutComponent)
-        if (workoutComponent != exerciseGroup.workoutComponents.last()) Divider(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp), thickness = 1.dp, color = Color.White
-        )
     }
 }

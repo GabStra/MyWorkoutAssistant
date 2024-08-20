@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Divider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,7 +30,7 @@ fun SetHistoriesRenderer(setHistories: List<SetHistory>) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(8.dp),
+            .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         for (set in setHistories) {
@@ -41,38 +43,55 @@ fun SetHistoriesRenderer(setHistories: List<SetHistory>) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "x${setData.actualReps}"
+                            modifier = Modifier.width(50.dp),
+                            text = "x${setData.actualReps}",
+                            textAlign = TextAlign.End,
+                            color = Color.LightGray
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = "${setData.actualWeight} kg"
+                            text = "@",
+                            color = Color.LightGray
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            modifier = Modifier.width(70.dp),
+                            text = "${setData.actualWeight} kg",
+                            color = Color.LightGray
                         )
                     }
                 }
 
                 is BodyWeightSetData -> {
                     Text(
-                        text = "x${setData.actualReps}"
+                        modifier = Modifier.width(50.dp),
+                        text = "x${setData.actualReps}",
+                        textAlign = TextAlign.Center,
+                        color = Color.LightGray
                     )
                 }
 
                 is TimedDurationSetData -> {
-                    Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)")
+                    Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                        color = Color.LightGray)
                     Spacer(modifier = Modifier.height(5.dp))
-                    Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)")
+                    Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                        color = Color.LightGray)
                 }
 
                 is EnduranceSetData -> {
-                    Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)")
+                    Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                        color = Color.LightGray)
                     Spacer(modifier = Modifier.height(5.dp))
-                    Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)")
+                    Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                        color = Color.LightGray)
                 }
             }
 
             if (set !== setHistories.last()) Divider(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp), thickness = 1.dp, color = Color.White
+                    .padding(vertical = 5.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.background
             )
         }
     }

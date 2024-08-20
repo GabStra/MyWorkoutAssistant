@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -23,6 +25,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -169,7 +172,8 @@ fun ExerciseHistoryScreen(
             TopAppBar(
                 title = {
                     Text(
-                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
                         text = exercise.name
                     )
                 },
@@ -180,7 +184,10 @@ fun ExerciseHistoryScreen(
                             contentDescription = "Back"
                         )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                )
             )
         },
     ) {
@@ -192,11 +199,12 @@ fun ExerciseHistoryScreen(
         ) {
             TabRow(
                 selectedTabIndex = 1,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
                         Modifier.tabIndicatorOffset(tabPositions[1]),
-                        color = Color.White, // Set the indicator color
-                        height = 5.dp // Set the indicator thickness
+                        color = MaterialTheme.colorScheme.primary, // Set the indicator color
+                        height = 2.dp // Set the indicator thickness
                     )
                 }
             ) {
@@ -210,14 +218,14 @@ fun ExerciseHistoryScreen(
                             ), true
                         )
                     },
-                    text = { Text("Overview") },
+                    text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text ="Overview") },
                     selectedContentColor = Color.White, // Color when tab is selected
                     unselectedContentColor = Color.LightGray // Color when tab is not selected
                 )
                 Tab(
                     selected = true,
                     onClick = { },
-                    text = { Text("History") },
+                    text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text ="History") },
                     selectedContentColor = Color.White, // Color when tab is selected
                     unselectedContentColor = Color.LightGray // Color when tab is not selected
                 )

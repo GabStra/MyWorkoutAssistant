@@ -43,7 +43,7 @@ fun GenericFloatingActionButtonWithMenu(
         DropdownMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
-            modifier = Modifier.background(Color.Black)
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
         ) {
             menuItems.forEach { menuItem ->
                 DropdownMenuItem(

@@ -57,7 +57,7 @@ fun <T> DetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(title) },
+                title = { Text(modifier = Modifier.fillMaxWidth(),text= title, textAlign = TextAlign.Center) },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
                         Icon(

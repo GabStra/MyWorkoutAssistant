@@ -4,6 +4,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,10 +21,13 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
@@ -43,6 +47,8 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarColors
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -113,7 +119,7 @@ fun Menu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier
-                .background(Color.Black)
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
         ) {
             DropdownMenuItem(
                 text = { Text("Sync with Watch") },
@@ -162,16 +168,16 @@ fun Menu(
 }
 
 @Composable
-fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean) {
+fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean, content: @Composable () -> Unit = {}) {
     Row(
         horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = modifier.padding(15.dp)
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         if (!isDone) {
             Icon(
                 imageVector = Icons.Default.Close,
                 contentDescription = "Incomplete",
-                modifier = Modifier.align(Alignment.CenterVertically)
             )
             Spacer(modifier = Modifier.width(8.dp))
         }
@@ -179,8 +185,11 @@ fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean) {
             modifier = Modifier
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
-            text = workout.name
+            text = workout.name,
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
         )
+        content()
     }
 }
 
@@ -399,7 +408,17 @@ fun WorkoutsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("My Workout Assistant") },
+                title = { Text(modifier = Modifier
+                    .fillMaxWidth()
+                    .basicMarquee(iterations = Int.MAX_VALUE),text="My Workout Assistant", textAlign = TextAlign.Center,) },
+                navigationIcon = {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
                 actions = {
                     Menu(
                         onSyncClick = onSyncClick,
@@ -414,7 +433,7 @@ fun WorkoutsScreen(
         },
         bottomBar = {
             if (selectedWorkouts.isNotEmpty()) BottomAppBar(
-                containerColor = Color.DarkGray,
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 actions = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -516,28 +535,36 @@ fun WorkoutsScreen(
             } else {
                 TabRow(
                     selectedTabIndex = selectedTabIndex,
+                    containerColor = MaterialTheme.colorScheme.background,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
                             Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
-                            color = Color.White, // Set the indicator color
+                            color = MaterialTheme.colorScheme.primary, // Set the indicator color
                             height = 2.dp // Set the indicator thickness
                         )
                     }
                 ) {
                     tabTitles.forEachIndexed { index, title ->
+                        val isSelected = index == selectedTabIndex
+
                         Tab(
-                            selected = index == selectedTabIndex,
+
+                            selected = isSelected,
                             onClick = { appViewModel.setHomeTab(index) },
-                            text = { Text(title) },
-                            selectedContentColor = Color.White, // Color when tab is selected
-                            unselectedContentColor = Color.LightGray // Color when tab is not selected
+                            text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.background),text = title) },
+                            selectedContentColor = Color.White,
+                            unselectedContentColor =  Color.White
                         )
                     }
                 }
 
                 when (selectedTabIndex) {
                     0 -> {
-                        LazyColumn() {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp)
+                        ) {
                             item {
                                 if (hasObjectives) {
                                     val currentDate = selectedDate?.date ?: LocalDate.now()
@@ -551,13 +578,14 @@ fun WorkoutsScreen(
                                         isExpandable = recordsExist,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(15.dp),
+                                            .padding(5.dp),
                                         title = { modifier ->
                                             Row(
                                                 modifier = modifier
                                                     .fillMaxWidth()
-                                                    .padding(start = 15.dp, end = 15.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween
+                                                    .padding(start = 15.dp, end = 5.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ){
                                                 Text(
                                                     modifier = Modifier.weight(1f),
@@ -571,7 +599,7 @@ fun WorkoutsScreen(
                                                 )
                                                 Text(
                                                     text = "${(objectiveProgress * 100).toInt()}%",
-                                                    style = MaterialTheme.typography.titleSmall,
+                                                    style = MaterialTheme.typography.titleLarge,
                                                     textAlign = TextAlign.End,
                                                     color = Color.White,
                                                 )
@@ -580,23 +608,25 @@ fun WorkoutsScreen(
                                         },
                                         content = {
                                             Column(
-                                                modifier = Modifier.padding(10.dp),
                                                 verticalArrangement = Arrangement.spacedBy(5.dp)
                                             ) {
                                                 ObjectiveProgressBar(progress = objectiveProgress.toFloat())
-                                                weeklyWorkoutsByActualTarget?.forEach { (workout, pair) ->
+                                                weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
+                                                    val modifier =  if(index % 2 == 0) Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh) else Modifier
                                                     Row(
-                                                        modifier = Modifier.padding(5.dp),
+                                                        modifier = modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                                                         horizontalArrangement = Arrangement.SpaceBetween
                                                     ) {
                                                         Text(
                                                             text = workout.name,
                                                             modifier = Modifier.weight(1f),
-                                                            color = Color.White
+                                                            color = Color.White,
+                                                            style = MaterialTheme.typography.titleMedium,
                                                         )
                                                         Text(
                                                             text = "${pair.first}/${pair.second}",
-                                                            color = Color.White
+                                                            color = Color.White,
+                                                            style = MaterialTheme.typography.titleMedium,
                                                         )
                                                     }
                                                 }
@@ -608,59 +638,84 @@ fun WorkoutsScreen(
                                 }
                             }
                             item {
-                                WorkoutsCalendar(
-                                    selectedDate = selectedDate,
-                                    onDayClicked = { calendarState, day ->
-                                        onDayClicked(calendarState, day)
-                                    },
-                                    shouldHighlight = { day -> highlightDay(day) }
-                                )
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(5.dp),
+                                ){
+                                    WorkoutsCalendar(
+                                        selectedDate = selectedDate,
+                                        onDayClicked = { calendarState, day ->
+                                            onDayClicked(calendarState, day)
+                                        },
+                                        shouldHighlight = { day -> highlightDay(day) }
+                                    )
+                                }
+
                             }
                             item {
                                 if (selectedDate != null) {
-                                    Column(modifier = Modifier.padding(8.dp)) {
-                                        Text(
-                                            text = selectedDate!!.date.format(formatter),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 10.dp),
-                                            color = Color.Gray,
-                                            textAlign = TextAlign.Center
-                                        )
-                                        if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(5.dp),
+                                    ){
+                                        Column {
                                             Text(
-                                                text = "No workouts on this day",
+                                                text = selectedDate!!.date.format(formatter),
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .padding(vertical = 10.dp),
-                                                textAlign = TextAlign.Center,
-                                                style = MaterialTheme.typography.titleLarge,
-                                                color = Color.Gray
+                                                color = Color.White,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                textAlign = TextAlign.Center
                                             )
-                                        } else {
-                                            Column {
-                                                selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
-                                                    Card(
-                                                        modifier = Modifier.padding(5.dp),
-                                                        onClick = {
-                                                            appViewModel.setScreenData(
-                                                                ScreenData.WorkoutHistory(
-                                                                    workout.id,
-                                                                    workoutHistory.id
-                                                                )
+                                            if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                                                Text(
+                                                    text = "No workouts on this day",
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                                        .padding(10.dp),
+                                                    textAlign = TextAlign.Center,
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    color = Color.White
+                                                )
+                                            } else {
+                                                Column {
+                                                    selectedCalendarWorkouts!!.forEachIndexed { index, (workoutHistory, workout) ->
+                                                        Box(
+                                                            modifier = if(index % 2 == 0) Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh) else Modifier,
+                                                            contentAlignment = Alignment.Center
+                                                        ){
+                                                            WorkoutTitle(
+                                                                Modifier.padding(horizontal = 10.dp),
+                                                                workout,
+                                                                workoutHistory.isDone,
+                                                                content = {
+                                                                    IconButton(onClick = {
+                                                                        appViewModel.setScreenData(
+                                                                            ScreenData.WorkoutHistory(
+                                                                                workout.id,
+                                                                                workoutHistory.id
+                                                                            )
+                                                                        )
+                                                                    }) {
+                                                                        Icon(
+                                                                            imageVector = Icons.Default.Search,
+                                                                            contentDescription = "Search"
+                                                                        )
+                                                                    }
+
+                                                                }
                                                             )
                                                         }
-                                                    ) {
-                                                        WorkoutTitle(
-                                                            Modifier,
-                                                            workout,
-                                                            workoutHistory.isDone
-                                                        )
                                                     }
                                                 }
                                             }
                                         }
                                     }
+
                                 }
                             }
                         }
@@ -690,7 +745,7 @@ fun WorkoutsScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .alpha(if (it.enabled) 1f else 0.4f),
-                                    title = { modifier -> WorkoutTitle(modifier, it, true) },
+                                    title = { modifier -> WorkoutTitle(modifier.padding(10.dp), it, true) },
                                     content = { WorkoutRenderer(it) },
                                     onOpen = { isCardExpanded = true },
                                     onClose = { isCardExpanded = false }

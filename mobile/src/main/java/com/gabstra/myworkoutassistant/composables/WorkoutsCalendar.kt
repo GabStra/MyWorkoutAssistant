@@ -187,28 +187,27 @@ fun SimpleCalendarTitle(
     goToNext: () -> Unit,
 ) {
     Row(
-        modifier = modifier.height(40.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(
             onClick = goToPrevious,
         ) {
-            Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back")
+            Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back",tint = Color.White)
         }
 
         Text(
             modifier = Modifier
                 .weight(1f),
             text = currentMonth.displayText(),
-            fontSize = 22.sp,
+            color = Color.White,
             textAlign = TextAlign.Center,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.titleMedium,
         )
 
         IconButton(
             onClick = goToNext,
         ) {
-            Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Back")
+            Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Back",tint = Color.White)
         }
     }
 }
@@ -238,7 +237,7 @@ fun WorkoutsCalendar(
     val scope = rememberCoroutineScope()
 
     SimpleCalendarTitle(
-        modifier = Modifier,
+        modifier = Modifier.padding(5.dp),
         currentMonth = visibleMonth.yearMonth,
         goToPrevious = {
             scope.launch {
@@ -252,7 +251,7 @@ fun WorkoutsCalendar(
         },
     )
     HorizontalCalendar(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh),
         state = calendarState,
         calendarScrollPaged= false,
         userScrollEnabled = false,
@@ -268,7 +267,7 @@ fun WorkoutsCalendar(
         },
         monthHeader = {
             MonthHeader(
-                modifier = Modifier.padding(vertical = 8.dp),
+                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(vertical = 8.dp),
                 daysOfWeek = daysOfWeek(),
             )
         },

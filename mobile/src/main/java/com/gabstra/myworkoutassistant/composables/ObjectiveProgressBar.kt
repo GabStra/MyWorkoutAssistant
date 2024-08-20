@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,7 +75,7 @@ fun ObjectiveProgressBar(progress: Float){
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 15.dp, end = 15.dp,bottom = 15.dp) // Padding around the Box
+            .padding(15.dp) // Padding around the Box
     ) {
         // Progress bar filling 80% width of the Box
         LinearProgressBarWithRounderBorders(
