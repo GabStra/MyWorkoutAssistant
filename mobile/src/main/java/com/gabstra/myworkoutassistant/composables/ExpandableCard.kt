@@ -51,7 +51,6 @@ fun ExpandableCard(
     ){
         Column(
             modifier = Modifier.fillMaxWidth(),
-
         ){
             Row(
                 verticalAlignment = Alignment.CenterVertically,

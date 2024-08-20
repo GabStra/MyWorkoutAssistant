@@ -43,7 +43,7 @@ fun <T> SelectableList(
     listState: LazyListState = rememberLazyListState()
 ) {
     LazyColumn(
-        modifier = modifier
+        modifier = modifier,
     ) {
         items(items) { item ->
             Row(

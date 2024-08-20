@@ -723,7 +723,7 @@ fun WorkoutsScreen(
 
                     1 -> {
                         GenericSelectableList(
-                            PaddingValues(0.dp, 5.dp),
+                            PaddingValues(5.dp, 10.dp),
                             items = activeWorkouts,
                             selectedItems = selectedWorkouts,
                             isSelectionModeActive,
@@ -745,7 +745,7 @@ fun WorkoutsScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .alpha(if (it.enabled) 1f else 0.4f),
-                                    title = { modifier -> WorkoutTitle(modifier.padding(10.dp), it, true) },
+                                    title = { modifier -> WorkoutTitle(modifier.padding(15.dp), it, true) },
                                     content = { WorkoutRenderer(it) },
                                     onOpen = { isCardExpanded = true },
                                     onClose = { isCardExpanded = false }

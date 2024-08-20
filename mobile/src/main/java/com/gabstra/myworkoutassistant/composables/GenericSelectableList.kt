@@ -229,7 +229,7 @@ fun <T> GenericSelectableList(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(5.dp)
+                            .padding(vertical = 5.dp)
                             .combinedClickable(
                                 onClick = {
                                     if (isSelectionModeActive) {
