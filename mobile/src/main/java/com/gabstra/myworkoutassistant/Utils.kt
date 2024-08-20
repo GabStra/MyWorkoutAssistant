@@ -41,7 +41,9 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.delay
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import java.util.concurrent.CancellationException
 
@@ -193,4 +195,12 @@ fun getEnabledStatusOfWorkoutComponent(workoutComponent: WorkoutComponent): Bool
         is ExerciseGroup -> workoutComponent.enabled
         else -> false // Default case if the component type is unknown
     }
+}
+
+fun getStartOfWeek(date: LocalDate): LocalDate {
+    return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+}
+
+fun getEndOfWeek(date: LocalDate): LocalDate {
+    return date.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
 }

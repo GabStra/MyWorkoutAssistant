@@ -71,11 +71,9 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
 }
 
 @Composable
-fun ObjectiveProgressBar(progress: Float){
+fun ObjectiveProgressBar(modifier: Modifier=Modifier,progress: Float){
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(15.dp) // Padding around the Box
+        modifier = modifier // Padding around the Box
     ) {
         // Progress bar filling 80% width of the Box
         LinearProgressBarWithRounderBorders(
