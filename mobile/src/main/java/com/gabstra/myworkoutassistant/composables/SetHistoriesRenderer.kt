@@ -30,52 +30,53 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier,setHistories: List<SetHis
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
         for (set in setHistories) {
-            when (val setData = set.setData) {
-                is WeightSetData -> {
-                    Text(
-                        text = "x${setData.actualReps} @ ${setData.actualWeight} kg",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .6f),
-                    )
-                }
+            Column(Modifier.padding(5.dp)) {
+                when (val setData = set.setData) {
+                    is WeightSetData -> {
+                        Text(
+                            text = "x${setData.actualReps} @ ${setData.actualWeight} kg",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f),
+                        )
+                    }
 
-                is BodyWeightSetData -> {
-                    Text(
+                    is BodyWeightSetData -> {
+                        Text(
+                            text = "x${setData.actualReps}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f),
+                        )
+                    }
 
-                        text = "x${setData.actualReps}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .6f),
-                    )
-                }
+                    is TimedDurationSetData -> {
+                        Text(
+                            "Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f)
+                        )
+                        Text(
+                            "Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f)
+                        )
+                    }
 
-                is TimedDurationSetData -> {
-                    Text(
-                        "Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .6f)
-                    )
-                    Spacer(modifier = Modifier.height(5.dp))
-                    Text(
-                        "Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .6f)
-                    )
-                }
-
-                is EnduranceSetData -> {
-                    Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .6f)
-                    )
-                    Spacer(modifier = Modifier.height(5.dp))
-                    Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .6f)
-                    )
+                    is EnduranceSetData -> {
+                        Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f)
+                        )
+                        Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f)
+                        )
+                    }
                 }
             }
+
         }
     }
 }

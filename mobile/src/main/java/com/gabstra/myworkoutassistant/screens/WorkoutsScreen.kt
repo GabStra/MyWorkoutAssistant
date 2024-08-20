@@ -121,55 +121,53 @@ fun Menu(
                     contentDescription = "More"
                 )
             }
-            DarkModeContainer(whiteOverlayAlpha = .3f) {
-                DropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background)
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Sync with Watch") },
-                        onClick = {
-                            onSyncClick()
-                            expanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Save Backup") },
-                        onClick = {
-                            onBackupClick()
-                            expanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Restore Backup") },
-                        onClick = {
-                            onRestoreClick()
-                            expanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Settings") },
-                        onClick = {
-                            onOpenSettingsClick()
-                            expanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Clear unfinished workouts") },
-                        onClick = {
-                            onClearUnfinishedWorkouts()
-                            expanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Clear all histories") },
-                        onClick = {
-                            onClearAllHistories()
-                            expanded = false
-                        }
-                    )
-                }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(MaterialTheme.colorScheme.background)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Sync with Watch") },
+                    onClick = {
+                        onSyncClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Save Backup") },
+                    onClick = {
+                        onBackupClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Restore Backup") },
+                    onClick = {
+                        onRestoreClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Settings") },
+                    onClick = {
+                        onOpenSettingsClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Clear unfinished workouts") },
+                    onClick = {
+                        onClearUnfinishedWorkouts()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Clear all histories") },
+                    onClick = {
+                        onClearAllHistories()
+                        expanded = false
+                    }
+                )
             }
         }
 
@@ -519,14 +517,15 @@ fun WorkoutsScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (activeAndEnabledWorkouts.isEmpty()) {
-                Card(
+                DarkModeContainer(
                     modifier = Modifier
-                        .padding(15.dp)
+                        .padding(15.dp),
+                    whiteOverlayAlpha = .05f
                 ) {
                     Text(
                         text = "Add a new workout",
                         textAlign = TextAlign.Center,
-                        color = Color.White,
+                        color = Color.White.copy(alpha = .87f),
                         modifier = Modifier
                             .padding(15.dp)
                     )

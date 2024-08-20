@@ -660,16 +660,18 @@ fun WorkoutHistoryScreen(
             }
 
             if (isLoading || workoutHistories.isEmpty()) {
-                Card(
+                DarkModeContainer(
                     modifier = Modifier
-                        .padding(15.dp)
+                        .padding(15.dp),
+                    whiteOverlayAlpha = .05f
                 ) {
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(20.dp),
                         text = if (isLoading) "Loading..." else "No history found",
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        color = Color.White.copy(alpha = .87f),
                     )
                 }
             } else {

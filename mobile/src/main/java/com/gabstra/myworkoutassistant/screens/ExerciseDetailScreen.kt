@@ -239,16 +239,17 @@ fun ExerciseDetailScreen(
                     .padding(it),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Card(
+                DarkModeContainer(
                     modifier = Modifier
-                        .padding(15.dp)
+                        .padding(15.dp),
+                    whiteOverlayAlpha = .05f
                 ) {
                     Text(
                         text = "Add a new set",
                         textAlign = TextAlign.Center,
-                        color = Color.White,
                         modifier = Modifier
-                            .padding(15.dp)
+                            .padding(15.dp),
+                        color = Color.White.copy(alpha = .87f),
                     )
                 }
             }
