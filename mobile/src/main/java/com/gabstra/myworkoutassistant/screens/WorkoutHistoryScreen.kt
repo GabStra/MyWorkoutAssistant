@@ -46,12 +46,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.DarkModeContainer
+import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
+import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
@@ -72,6 +76,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 
@@ -137,7 +143,7 @@ fun WorkoutHistoryScreen(
     }
 
     val durationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
-        formatTime(value.toInt()/1000)
+        formatTime(value.toInt() / 1000)
     }
 
     val workoutDurationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
@@ -152,7 +158,7 @@ fun WorkoutHistoryScreen(
         withContext(Dispatchers.IO) {
             workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
 
-            if(workoutHistoryId == null) {
+            if (workoutHistoryId == null) {
                 workoutHistories = workoutHistories.filter { it.isDone }
             }
 
@@ -240,7 +246,7 @@ fun WorkoutHistoryScreen(
                 selectedMode = 1
             }
 
-            if(selectedWorkoutHistory == null){
+            if (selectedWorkoutHistory == null) {
                 isLoading = false
             }
 
@@ -248,7 +254,7 @@ fun WorkoutHistoryScreen(
     }
 
     LaunchedEffect(selectedWorkoutHistory) {
-        if (selectedWorkoutHistory == null)  return@LaunchedEffect
+        if (selectedWorkoutHistory == null) return@LaunchedEffect
 
         zoneCounter = null
         heartRateEntryModel = null
@@ -270,12 +276,16 @@ fun WorkoutHistoryScreen(
                 for (heartBeat in selectedWorkoutHistory!!.heartBeatRecords) {
                     val percentage = getMaxHearthRatePercentage(heartBeat, userAge)
                     val zone = mapPercentageToZone(percentage)
-                    if(zone == 0) continue
+                    if (zone == 0) continue
                     zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
                 }
 
                 heartRateEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build { series(selectedWorkoutHistory!!.heartBeatRecords) })
+                    CartesianChartModel(LineCartesianLayerModel.build {
+                        series(
+                            selectedWorkoutHistory!!.heartBeatRecords
+                        )
+                    })
             }
 
             val setHistories =
@@ -294,194 +304,217 @@ fun WorkoutHistoryScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (volumeEntryModel != null) {
-                StandardChart(
-                    isZoomEnabled = true,
-                    modifier = Modifier,
-                    cartesianChartModel = volumeEntryModel!!,
-                    title = "Cumulative Volume over time",
-                    markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter
-                )
+                DarkModeContainer(whiteOverlayAlpha = .05f) {
+                    StandardChart(
+                        isZoomEnabled = true,
+                        modifier = Modifier,
+                        cartesianChartModel = volumeEntryModel!!,
+                        title = "Cumulative Volume over time",
+                        markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                        bottomAxisValueFormatter = horizontalAxisValueFormatter
+                    )
+                }
             }
             if (durationEntryModel != null) {
-                StandardChart(
-                    modifier = Modifier,
-                    cartesianChartModel = durationEntryModel!!,
-                    markerPosition = durationMarkerTarget!!.first.toFloat(),
-                    title = "Cumulative Duration over time",
-                    markerTextFormatter = { formatTime(it.toInt()/1000) },
-                    startAxisValueFormatter = durationAxisValueFormatter,
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter
-                )
+                DarkModeContainer(whiteOverlayAlpha = .05f) {
+                    StandardChart(
+                        modifier = Modifier,
+                        cartesianChartModel = durationEntryModel!!,
+                        markerPosition = durationMarkerTarget!!.first.toFloat(),
+                        title = "Cumulative Duration over time",
+                        markerTextFormatter = { formatTime(it.toInt() / 1000) },
+                        startAxisValueFormatter = durationAxisValueFormatter,
+                        bottomAxisValueFormatter = horizontalAxisValueFormatter
+                    )
+                }
             }
             if (workoutDurationEntryModel != null) {
-                StandardChart(
-                    isZoomEnabled = true,
-                    modifier = Modifier,
-                    cartesianChartModel = workoutDurationEntryModel!!,
-                    title = "Workout duration over time",
-                    markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
-                    markerTextFormatter = { formatTime(it.toInt()) },
-                    startAxisValueFormatter = workoutDurationAxisValueFormatter,
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter
-                )
+                DarkModeContainer(whiteOverlayAlpha = .05f) {
+                    StandardChart(
+                        isZoomEnabled = true,
+                        modifier = Modifier,
+                        cartesianChartModel = workoutDurationEntryModel!!,
+                        title = "Workout duration over time",
+                        markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
+                        markerTextFormatter = { formatTime(it.toInt()) },
+                        startAxisValueFormatter = workoutDurationAxisValueFormatter,
+                        bottomAxisValueFormatter = horizontalAxisValueFormatter
+                    )
+                }
             }
         }
     }
 
     val workoutSelector = @Composable {
-        Row(
-            modifier = Modifier.padding(15.dp, 0.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = {
-                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                    if (index > 0) { // Check to avoid IndexOutOfBoundsException
-                        selectedWorkoutHistory = workoutHistories[index - 1]
-                    }
-                },
-                enabled = selectedWorkoutHistory != workoutHistories.first()
+        DarkModeContainer(Modifier.padding(10.dp), whiteOverlayAlpha = .05f) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous")
-            }
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                modifier = Modifier
-                    .weight(1f),
-                text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(timeFormatter),
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            IconButton(
-                onClick = {
-                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                    if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                        selectedWorkoutHistory = workoutHistories[index + 1]
-                    }
-                },
-                enabled = selectedWorkoutHistory != workoutHistories.last()
-            ) {
-                Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next")
+                IconButton(
+                    onClick = {
+                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                        if (index > 0) { // Check to avoid IndexOutOfBoundsException
+                            selectedWorkoutHistory = workoutHistories[index - 1]
+                        }
+                    },
+                    enabled = selectedWorkoutHistory != workoutHistories.first()
+                ) {
+                    Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous")
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    modifier = Modifier
+                        .weight(1f),
+                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(
+                        timeFormatter
+                    ),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                IconButton(
+                    onClick = {
+                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                        if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                            selectedWorkoutHistory = workoutHistories[index + 1]
+                        }
+                    },
+                    enabled = selectedWorkoutHistory != workoutHistories.last()
+                ) {
+                    Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next")
+                }
             }
         }
     }
 
     val setsTabContent = @Composable {
-        if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
-            HeartRateChart(
-                modifier = Modifier.fillMaxWidth().padding(15.dp),
-                cartesianChartModel = heartRateEntryModel!!,
-                title = "HR over workout duration",
-                entriesCount =  selectedWorkoutHistory!!.heartBeatRecords.size,
-                userAge = userAge,
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(15.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val minHeartRate =  selectedWorkoutHistory!!.heartBeatRecords.min()
-                val maxHeartRate =  selectedWorkoutHistory!!.heartBeatRecords.max()
-
-                Text(
-                    text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
-                    Modifier.weight(1f),
-                )
-                Spacer(Modifier.weight(1f))
-                Column {
-                    Text(
-                        text = "Min: $minHeartRate bpm",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Max: $maxHeartRate bpm",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-
-        if(zoneCounter!= null){
-            //in a column display a progress bar for each zone
-            Column(
-                modifier = Modifier.padding(15.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                //Invert the order of the zones
-                zoneCounter!!.forEach { (zone, count) ->
-                    Column(modifier = Modifier.fillMaxWidth()){
-                        val total = zoneCounter!!.values.sum()
-                        var progress = count.toFloat() / total
-                        if(progress.isNaN()){
-                            progress = 0f
-                        }
-                        Text(
-                            text = "Zone $zone",
+        Column {
+            if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
+                DarkModeContainer(Modifier.padding(10.dp), whiteOverlayAlpha = .05f) {
+                    Column(Modifier.padding(10.dp)) {
+                        HeartRateChart(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(15.dp),
+                            cartesianChartModel = heartRateEntryModel!!,
+                            title = "HR over workout duration",
+                            entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
+                            userAge = userAge,
                         )
-                        Spacer(Modifier.height(5.dp))
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            val (lowerBound, upperBound) = zoneRanges[zone]
-                            val lowHr = getHeartRateFromPercentage(lowerBound, userAge)
-                            val highHr = getHeartRateFromPercentage(upperBound, userAge)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 15.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val minHeartRate = selectedWorkoutHistory!!.heartBeatRecords.min()
+                            val maxHeartRate = selectedWorkoutHistory!!.heartBeatRecords.max()
+
                             Text(
-                                "$lowHr - $highHr bpm",
+                                text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
                                 Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = .6f),
+                                style = MaterialTheme.typography.bodyMedium,
                             )
                             Spacer(Modifier.weight(1f))
-                            Text(
-                                text ="${(progress*100).toInt()}% ${formatSecondsToMinutesSeconds(floor(count / 2.0).toInt())}",
-                                Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.End
-                            )
+                            Column {
+                                Text(
+                                    text = "Min: $minHeartRate bpm",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = .6f),
+                                )
+                                Text(
+                                    text = "Max: $maxHeartRate bpm",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = .6f),
+                                )
+                            }
                         }
-                        Spacer(Modifier.height(5.dp))
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(16.dp)
-                                .clip(RoundedCornerShape(16.dp)),
-                            color = colorsByZone[zone],
-                        )
                     }
-
                 }
             }
-        }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp)
-        ) {
-            setHistoriesByExerciseId.keys.toList().forEach() { key ->
-                ExpandableCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(5.dp),
-                    isOpen = true,
-                    title = { modifier ->
-                        WorkoutComponentTitle(
-                            modifier,
-                            exerciseById[key] as WorkoutComponent
-                        )
-                    },
-                    content = {
-                        Column(
+            if (zoneCounter != null) {
+                DarkModeContainer(Modifier.padding(10.dp), whiteOverlayAlpha = .05f) {
+                    Column(
+                        modifier = Modifier.padding(15.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        //Invert the order of the zones
+                        zoneCounter!!.forEach { (zone, count) ->
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                val total = zoneCounter!!.values.sum()
+                                var progress = count.toFloat() / total
+                                if (progress.isNaN()) {
+                                    progress = 0f
+                                }
+                                Text(
+                                    text = "Zone $zone",
+                                    color = Color.White.copy(alpha = .87f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Spacer(Modifier.height(5.dp))
+                                Row(modifier = Modifier.fillMaxWidth()) {
+                                    val (lowerBound, upperBound) = zoneRanges[zone]
+                                    val lowHr = getHeartRateFromPercentage(lowerBound, userAge)
+                                    val highHr = getHeartRateFromPercentage(upperBound, userAge)
+                                    Text(
+                                        "$lowHr - $highHr bpm",
+                                        Modifier.weight(1f),
+                                        color = Color.White.copy(alpha = .6f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Spacer(Modifier.weight(1f))
+                                    Text(
+                                        text = "${(progress * 100).toInt()}% ${
+                                            formatSecondsToMinutesSeconds(
+                                                floor(count / 2.0).toInt()
+                                            )
+                                        }",
+                                        Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = TextAlign.End,
+                                        color = Color.White.copy(alpha = .6f),
+                                    )
+                                }
+                                Spacer(Modifier.height(5.dp))
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(16.dp)
+                                        .clip(RoundedCornerShape(16.dp)),
+                                    color = colorsByZone[zone],
+                                )
+                            }
+
+                        }
+                    }
+                }
+            }
+
+            Column(Modifier.padding(horizontal = 5.dp)){
+                setHistoriesByExerciseId.keys.toList().forEach() { key ->
+                    DarkModeContainer(Modifier.padding(5.dp), whiteOverlayAlpha = .05f) {
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            SetHistoriesRenderer(setHistoriesByExerciseId[key]!!)
+                            WorkoutComponentTitle(
+                                modifier = Modifier.weight(1f),
+                                workoutComponent = exerciseById[key] as WorkoutComponent
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            SetHistoriesRenderer(
+                                modifier = Modifier,
+                                setHistoriesByExerciseId[key]!!
+                            )
                         }
-                    },
-                    onOpen = { },
-                    onClose = {}
-                )
+                    }
+                }
             }
         }
     }
@@ -540,26 +573,38 @@ fun WorkoutHistoryScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
-                        textAlign = TextAlign.Center,
-                        text = workout.name
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onGoBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            textAlign = TextAlign.Center,
+                            text = workout.name
                         )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onGoBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    )
                 )
-            )
+            }
         },
         bottomBar = {
             if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
@@ -573,43 +618,52 @@ fun WorkoutHistoryScreen(
                 .padding(it),
             verticalArrangement = Arrangement.Top,
         ) {
-            TabRow(
-                selectedTabIndex = 1,
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                indicator = { tabPositions ->
-                    TabRowDefaults.Indicator(
-                        Modifier.tabIndicatorOffset(tabPositions[1]),
-                        color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                        height = 5.dp // Set the indicator thickness
+            DarkModeContainer(whiteOverlayAlpha = .05f) {
+                TabRow(
+                    selectedTabIndex = 1,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[1]),
+                            color = MaterialTheme.colorScheme.primary, // Set the indicator color
+                            height = 2.dp // Set the indicator thickness
+                        )
+                    }
+                ) {
+                    Tab(
+                        selected = false,
+                        onClick = {
+                            appViewModel.setScreenData(
+                                ScreenData.WorkoutDetail(workout.id),
+                                true
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Overview"
+                            )
+                        },
+                        selectedContentColor = Color.White.copy(alpha = .87f),
+                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                    )
+                    Tab(
+                        selected = true,
+                        onClick = { },
+                        text = {
+                            Text(
+                                text = "History"
+                            )
+                        },
+                        selectedContentColor = Color.White.copy(alpha = .87f),
+                        unselectedContentColor = Color.White.copy(alpha = .3f),
                     )
                 }
-            ) {
-                Tab(
-                    selected = false,
-                    onClick = {
-                        appViewModel.setScreenData(
-                            ScreenData.WorkoutDetail(workout.id),
-                            true
-                        )
-                    },
-                    text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "Overview") },
-                    selectedContentColor = Color.White, // Color when tab is selected
-                    unselectedContentColor = Color.White // Color when tab is not selected
-                )
-                Tab(
-                    selected = true,
-                    onClick = { },
-                    text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "History") },
-                    selectedContentColor = Color.White, // Color when tab is selected
-                    unselectedContentColor = Color.White // Color when tab is not selected
-                )
             }
 
             if (isLoading || workoutHistories.isEmpty()) {
                 Card(
                     modifier = Modifier
                         .padding(15.dp)
-                ){
+                ) {
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -624,7 +678,9 @@ fun WorkoutHistoryScreen(
                         0 -> item { graphsTabContent() }
                         1 -> {
                             item { workoutSelector() }
-                            item { setsTabContent() }
+                            item {
+                                setsTabContent()
+                            }
                         }
                     }
                 }

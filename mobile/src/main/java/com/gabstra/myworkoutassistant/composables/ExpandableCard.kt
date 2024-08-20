@@ -39,15 +39,14 @@ fun ExpandableCard(
     content: @Composable () -> Unit,
     onOpen: () -> Unit,
     onClose: () -> Unit,
-    colors: CardColors = CardDefaults.cardColors()
 ){
     var openStatus by remember {
         mutableStateOf(isOpen)
     }
 
-    Card(
+    DarkModeContainer (
         modifier = modifier,
-        colors = colors
+        whiteOverlayAlpha = 0.05f
     ){
         Column(
             modifier = Modifier.fillMaxWidth(),

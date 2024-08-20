@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -75,11 +76,15 @@ fun SetRenderer(set: Set) {
                 ) {
                     Text(
                         modifier = Modifier.weight(1f),
-                        text = "Reps: ${set.reps}"
+                        text = "Reps: ${set.reps}",
+                        color = Color.White.copy(alpha = .87f),
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
                         modifier = Modifier.weight(1f),
-                        text = "Weight: ${set.weight}kg"
+                        text = "Weight: ${set.weight}kg",
+                        color = Color.White.copy(alpha = .87f),
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
@@ -87,6 +92,8 @@ fun SetRenderer(set: Set) {
             is BodyWeightSet -> {
                 Text(
                     text = "Reps: ${set.reps}",
+                    color = Color.White.copy(alpha = .87f),
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
 
@@ -95,6 +102,8 @@ fun SetRenderer(set: Set) {
                     modifier = Modifier.weight(1f),
                     text = "${formatSecondsToMinutesSeconds(set.timeInMillis / 1000)} (mm:ss)",
                     textAlign = TextAlign.Center,
+                    color = Color.White.copy(alpha = .87f),
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
 
@@ -103,6 +112,8 @@ fun SetRenderer(set: Set) {
                     modifier = Modifier.weight(1f),
                     text = "${formatSecondsToMinutesSeconds(set.timeInMillis / 1000)} (mm:ss)",
                     textAlign = TextAlign.Center,
+                    color = Color.White.copy(alpha = .87f),
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
         }
@@ -296,9 +307,7 @@ fun ExerciseDetailScreen(
                     },
                     isDragDisabled = true,
                     itemContent = { it ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
+                        DarkModeContainer(whiteOverlayAlpha = .05f) {
                             SetRenderer(it)
                         }
                     }

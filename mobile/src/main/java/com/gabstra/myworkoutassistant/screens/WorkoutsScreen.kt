@@ -111,66 +111,68 @@ fun Menu(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier.wrapContentSize(Alignment.TopEnd)
-    ) {
-        IconButton(onClick = { expanded = !expanded }) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = "More"
-            )
+
+        Box(
+            modifier = Modifier.wrapContentSize(Alignment.TopEnd)
+        ) {
+            IconButton(onClick = { expanded = !expanded }) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "More"
+                )
+            }
+            DarkModeContainer(whiteOverlayAlpha = .3f) {
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
+                    modifier = Modifier.background(MaterialTheme.colorScheme.background)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Sync with Watch") },
+                        onClick = {
+                            onSyncClick()
+                            expanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Save Backup") },
+                        onClick = {
+                            onBackupClick()
+                            expanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Restore Backup") },
+                        onClick = {
+                            onRestoreClick()
+                            expanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Settings") },
+                        onClick = {
+                            onOpenSettingsClick()
+                            expanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear unfinished workouts") },
+                        onClick = {
+                            onClearUnfinishedWorkouts()
+                            expanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear all histories") },
+                        onClick = {
+                            onClearAllHistories()
+                            expanded = false
+                        }
+                    )
+                }
+            }
         }
 
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-        ) {
-            DropdownMenuItem(
-                text = { Text("Sync with Watch") },
-                onClick = {
-                    onSyncClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Save Backup") },
-                onClick = {
-                    onBackupClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Restore Backup") },
-                onClick = {
-                    onRestoreClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    onOpenSettingsClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Clear unfinished workouts") },
-                onClick = {
-                    onClearUnfinishedWorkouts()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Clear all histories") },
-                onClick = {
-                    onClearAllHistories()
-                    expanded = false
-                }
-            )
-        }
-    }
 }
 
 @Composable
@@ -397,33 +399,39 @@ fun WorkoutsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(modifier = Modifier
-                    .fillMaxWidth()
-                    .basicMarquee(iterations = Int.MAX_VALUE),text="My Workout Assistant", textAlign = TextAlign.Center,) },
-                navigationIcon = {
-                    IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            text = "My Workout Assistant", textAlign = TextAlign.Center,
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        Menu(
+                            onSyncClick = onSyncClick,
+                            onOpenSettingsClick = onOpenSettingsClick,
+                            onBackupClick = onBackupClick,
+                            onRestoreClick = onRestoreClick,
+                            onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
+                            onClearAllHistories = onClearAllHistories
                         )
                     }
-                },
-                actions = {
-                    Menu(
-                        onSyncClick = onSyncClick,
-                        onOpenSettingsClick = onOpenSettingsClick,
-                        onBackupClick = onBackupClick,
-                        onRestoreClick = onRestoreClick,
-                        onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
-                        onClearAllHistories = onClearAllHistories
-                    )
-                }
-            )
+                )
+            }
         },
         bottomBar = {
             if (selectedWorkouts.isNotEmpty()) BottomAppBar(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 actions = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -492,6 +500,7 @@ fun WorkoutsScreen(
             if (selectedWorkouts.isEmpty() && selectedTabIndex == 1)
                 FloatingActionButton(
                     containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.Black,
                     onClick = {
                         appViewModel.setScreenData(ScreenData.NewWorkout());
                     }
@@ -523,31 +532,30 @@ fun WorkoutsScreen(
                     )
                 }
             } else {
-                TabRow(
-                    selectedTabIndex = selectedTabIndex,
-                    containerColor = MaterialTheme.colorScheme.background,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
-                            Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
-                            color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                            height = 2.dp // Set the indicator thickness
-                        )
-                    }
-                ) {
-                    tabTitles.forEachIndexed { index, title ->
-                        val isSelected = index == selectedTabIndex
+                DarkModeContainer(whiteOverlayAlpha = .05f){
+                    TabRow(
+                        selectedTabIndex = selectedTabIndex,
+                        indicator = { tabPositions ->
+                            TabRowDefaults.Indicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                                color = MaterialTheme.colorScheme.primary, // Set the indicator color
+                                height = 2.dp // Set the indicator thickness
+                            )
+                        }
+                    ) {
+                        tabTitles.forEachIndexed { index, title ->
+                            val isSelected = index == selectedTabIndex
 
-                        Tab(
-
-                            selected = isSelected,
-                            onClick = { appViewModel.setHomeTab(index) },
-                            text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.background),text = title) },
-                            selectedContentColor = Color.White,
-                            unselectedContentColor =  Color.White
-                        )
+                            Tab(
+                                selected = isSelected,
+                                onClick = { appViewModel.setHomeTab(index) },
+                                text = { Text(text = title) },
+                                selectedContentColor = Color.White.copy(alpha = .87f),
+                                unselectedContentColor =  Color.White.copy(alpha = .3f),
+                            )
+                        }
                     }
                 }
-
                 when (selectedTabIndex) {
                     0 -> {
                         LazyColumn(
@@ -596,7 +604,7 @@ fun WorkoutsScreen(
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                                horizontalArrangement = Arrangement.Center,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ){
                                                 Text(
@@ -606,7 +614,8 @@ fun WorkoutsScreen(
                                                     textAlign = TextAlign.Center,
                                                     color = Color.White.copy(alpha = .87f),
                                                 )
-                                                ObjectiveProgressBar(Modifier.fillMaxWidth(.8f),progress = objectiveProgress.toFloat())
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                ObjectiveProgressBar(Modifier.fillMaxWidth(.7f),progress = objectiveProgress.toFloat())
                                             }
 
                                             weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->

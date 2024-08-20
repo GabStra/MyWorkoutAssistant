@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,11 +59,13 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericFloatingActionButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -115,17 +119,21 @@ fun Menu(
 
 
 @Composable
-fun WorkoutComponentTitle(modifier: Modifier, workoutComponent: WorkoutComponent) {
+fun WorkoutComponentTitle(
+    modifier: Modifier = Modifier,
+    workoutComponent: WorkoutComponent
+) {
     val suffix = if(workoutComponent is ExerciseGroup) " (Group)" else ""
 
     Row(
         horizontalArrangement = Arrangement.End,
-        modifier = modifier.padding(15.dp),
+        modifier = modifier.padding(vertical = 10.dp),
     ) {
         Text(
             modifier = Modifier.weight(2.7f).basicMarquee(iterations = Int.MAX_VALUE),
             text = workoutComponent.name+suffix,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = .87f),
         )
     }
 }
@@ -280,41 +288,47 @@ fun WorkoutDetailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        modifier = Modifier.fillMaxWidth().basicMarquee(),
-                        textAlign = TextAlign.Center,
-                        text = workout.name
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onGoBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            modifier = Modifier.fillMaxWidth().basicMarquee(),
+                            textAlign = TextAlign.Center,
+                            text = workout.name
                         )
-                    }
-                },
-                actions = {
-                    Menu(
-                        onEditWorkout = {
-                            appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
-                        },
-                        onClearHistory = {
-                            scope.launch {
-                                withContext(Dispatchers.Main) {
-                                    workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                    Toast.makeText(context, "History deleted", Toast.LENGTH_SHORT).show()
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onGoBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        Menu(
+                            onEditWorkout = {
+                                appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
+                            },
+                            onClearHistory = {
+                                scope.launch {
+                                    withContext(Dispatchers.Main) {
+                                        workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                        Toast.makeText(
+                                            context,
+                                            "History deleted",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
                                 }
                             }
-                        }
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
-            )
+            }
         },
         bottomBar = {
             if (selectedWorkoutComponents.isNotEmpty()) editModeBottomBar()
@@ -367,38 +381,47 @@ fun WorkoutDetailScreen(
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
-                TabRow(
-                    selectedTabIndex = 0,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
-                            Modifier.tabIndicatorOffset(tabPositions[0]),
-                            color = MaterialTheme.colorScheme.primary,
-                            height = 2.dp // Set the indicator thickness
+                DarkModeContainer(whiteOverlayAlpha = .05f) {
+                    TabRow(
+                        selectedTabIndex = 0,
+                        indicator = { tabPositions ->
+                            TabRowDefaults.Indicator(
+                                Modifier.tabIndicatorOffset(tabPositions[0]),
+                                color = MaterialTheme.colorScheme.primary,
+                                height = 2.dp // Set the indicator thickness
+                            )
+                        }
+                    ) {
+                        Tab(
+                            selected = true,
+                            onClick = { },
+                            text = {
+                                Text(
+                                    text = "Overview"
+                                )
+                            },
+                            selectedContentColor = Color.White.copy(alpha = .87f),
+                            unselectedContentColor = Color.White.copy(alpha = .3f),
+                        )
+                        Tab(
+                            selected = false,
+                            onClick = {
+                                appViewModel.setScreenData(
+                                    ScreenData.WorkoutHistory(workout.id),
+                                    true
+                                )
+                            },
+                            text = {
+                                Text(
+
+                                    text = "History"
+                                )
+                            },
+                            selectedContentColor = Color.White.copy(alpha = .87f),
+                            unselectedContentColor = Color.White.copy(alpha = .3f),
                         )
                     }
-                ) {
-                    Tab(
-                        selected = true,
-                        onClick = { },
-                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text ="Overview") },
-                        selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.White // Color when tab is not selected
-                    )
-                    Tab(
-                        selected = false,
-                        onClick = {
-                            appViewModel.setScreenData(
-                                ScreenData.WorkoutHistory(workout.id),
-                                true
-                            )
-                        },
-                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text ="History") },
-                        selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.White // Color when tab is not selected
-                    )
                 }
-
                 GenericSelectableList(
                     it = PaddingValues(0.dp, 5.dp),
                     items = workout.workoutComponents,
@@ -435,32 +458,36 @@ fun WorkoutDetailScreen(
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                     },
                     itemContent = { it ->
-                        ExpandableCard(
-                            isExpandable = when (it) {
-                                is Exercise -> it.sets.isNotEmpty()
-                                is ExerciseGroup -> it.workoutComponents.isNotEmpty()
-                                else -> false
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .alpha(if (it.enabled) 1f else 0.4f),
-                            title = { modifier -> WorkoutComponentTitle(modifier, it) },
-                            content = {
-                                Column(
+                        DarkModeContainer(whiteOverlayAlpha = .05f) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    when (it) {
-                                        is Exercise -> ExerciseRenderer(it)
-                                        is ExerciseGroup -> ExerciseGroupRenderer(it)
-                                    }
+                                        .weight(1f)
+                                        .basicMarquee(iterations = Int.MAX_VALUE),
+                                    text = it.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = .87f),
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                when (it) {
+                                    is Exercise -> ExerciseRenderer(
+                                        modifier = Modifier.weight(1f),
+                                        exercise = it
+                                    )
+
+                                    is ExerciseGroup -> ExerciseGroupRenderer(
+                                        modifier = Modifier.weight(
+                                            1f
+                                        ), exerciseGroup = it
+                                    )
                                 }
-                            },
-                            onOpen = { isDragDisabled = true },
-                            onClose = { isDragDisabled = false }
-                        )
+                            }
+                        }
                     },
                     isDragDisabled = true
                 )

@@ -110,53 +110,54 @@ private fun Day(
     onClick: (WeekDay) -> Unit = {},
 ) {
     val isOutOfBounds = day.position in listOf(WeekDayPosition.InDate, WeekDayPosition.OutDate)
-
-    Box(
-        modifier = Modifier
-            .clickable(
-                onClick = { onClick(day) },
-            )
-            .alpha(if (isOutOfBounds) 0.25f else 1f)
-            .border(
-                width = if (isSelected || isToday) 1.dp else 0.dp,
-                color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color.Green else Color.Transparent),
-            )
-            .padding(3.dp)
-
-        ,
-    ) {
-        val textColor =  if(shouldHighlight) Color.Black else Color.White.copy(alpha = .6f)
-
-        val shape = if(shouldHighlight) CircleShape else null
-
+    Box(Modifier.padding(5.dp)){
         Box(
             modifier = Modifier
-                .align(Alignment.Center)
-                .optionalClip(shape)
-                .size(30.dp)
-                .background(if (shouldHighlight) MaterialTheme.colorScheme.primary else Color.Transparent),
-            contentAlignment = Alignment.Center
-        ){
-            Text(
-                text = day.date.dayOfMonth.toString(),
-                color = textColor,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+                .clickable(
+                    onClick = { onClick(day) },
+                )
+                .alpha(if (isOutOfBounds) 0.25f else 1f)
+                .border(
+                    width = if (isSelected || isToday) 1.dp else 0.dp,
+                    color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color.Green else Color.Transparent),
+                )
+                .padding(3.dp)
 
-        /*
-        //set the star yellow
-        Icon(
-            imageVector = Icons.Default.Star,
-            contentDescription = "Star",
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(0.dp, 5.dp)
-                .alpha(if (showStar) (if(isOutOfBounds) 0.5f else 1f) else 0f)
-                .size(15.dp),
-            tint = Color.Yellow
-        )
-        */
+            ,
+        ) {
+            val textColor =  if(shouldHighlight) Color.Black else Color.White.copy(alpha = .6f)
+
+            val shape = if(shouldHighlight) CircleShape else null
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .optionalClip(shape)
+                    .size(30.dp)
+                    .background(if (shouldHighlight) MaterialTheme.colorScheme.primary else Color.Transparent),
+                contentAlignment = Alignment.Center
+            ){
+                Text(
+                    text = day.date.dayOfMonth.toString(),
+                    color = textColor,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            /*
+            //set the star yellow
+            Icon(
+                imageVector = Icons.Default.Star,
+                contentDescription = "Star",
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(0.dp, 5.dp)
+                    .alpha(if (showStar) (if(isOutOfBounds) 0.5f else 1f) else 0f)
+                    .size(15.dp),
+                tint = Color.Yellow
+            )
+            */
+        }
     }
 }
 

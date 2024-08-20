@@ -34,18 +34,17 @@ fun WorkoutRenderer(workout: Workout){
             Row( modifier = if(index % 2 == 0) Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh) else Modifier) {
                 Row(
                     modifier = Modifier
-                        .padding(vertical = 5.dp),
+                        .padding(10.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ){
                     Text(
                         modifier = Modifier
-                            .padding(5.dp)
-                            .weight(1f)
+                            .weight(2f)
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         text = workoutComponent.name,
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .6f),
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     when (workoutComponent) {

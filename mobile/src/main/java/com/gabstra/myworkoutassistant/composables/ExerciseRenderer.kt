@@ -25,61 +25,45 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 @Composable
 fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
-    Column(modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
+    Column(
+        modifier = modifier
     ) {
         for (set in exercise.sets) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.End
             ) {
                 when (set) {
                     is WeightSet -> {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center
-                        ){
-                            Text(
-                                text = "x${set.reps}",
-                                textAlign = TextAlign.End,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "@",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "${set.weight} kg",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
+                        Text(
+                            text = "x${set.reps} @ ${set.weight} kg",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f),
+                        )
                     }
 
                     is BodyWeightSet -> {
                         Text(
                             text = "x${set.reps}",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f),
                         )
                     }
 
                     is TimedDurationSet -> {
                         Text(
                             text=formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f),
                         )
                     }
 
                     is EnduranceSet -> {
                         Text(
                             formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f),
                         )
                     }
                 }

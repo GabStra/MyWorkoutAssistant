@@ -219,14 +219,15 @@ fun <T> GenericSelectableList(
                         centerPointByIndex[index] = centerX to centerY
                     }
                 ,
-                contentAlignment = Alignment.Center){
+                contentAlignment = Alignment.Center
+            ){
 
                 if(itemToRenderByIndex.value.containsKey(index)){
                     itemToRenderByIndex.value[index]!!.invoke()
                 }
 
                 if(draggedItem.value === item || !itemToRenderByIndex.value.containsKey(index)) {
-                    Card(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 5.dp)

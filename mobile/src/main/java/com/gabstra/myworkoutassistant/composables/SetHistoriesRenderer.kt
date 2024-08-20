@@ -26,73 +26,56 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
-fun SetHistoriesRenderer(setHistories: List<SetHistory>) {
+fun SetHistoriesRenderer(modifier: Modifier = Modifier,setHistories: List<SetHistory>) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
     ) {
         for (set in setHistories) {
             when (val setData = set.setData) {
                 is WeightSetData -> {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            modifier = Modifier.width(50.dp),
-                            text = "x${setData.actualReps}",
-                            textAlign = TextAlign.End,
-                            color = Color.LightGray
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "@",
-                            color = Color.LightGray
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            modifier = Modifier.width(70.dp),
-                            text = "${setData.actualWeight} kg",
-                            color = Color.LightGray
-                        )
-                    }
+                    Text(
+                        text = "x${setData.actualReps} @ ${setData.actualWeight} kg",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .6f),
+                    )
                 }
 
                 is BodyWeightSetData -> {
                     Text(
-                        modifier = Modifier.width(50.dp),
+
                         text = "x${setData.actualReps}",
-                        textAlign = TextAlign.Center,
-                        color = Color.LightGray
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .6f),
                     )
                 }
 
                 is TimedDurationSetData -> {
-                    Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
-                        color = Color.LightGray)
+                    Text(
+                        "Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .6f)
+                    )
                     Spacer(modifier = Modifier.height(5.dp))
-                    Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
-                        color = Color.LightGray)
+                    Text(
+                        "Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .6f)
+                    )
                 }
 
                 is EnduranceSetData -> {
                     Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
-                        color = Color.LightGray)
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .6f)
+                    )
                     Spacer(modifier = Modifier.height(5.dp))
                     Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
-                        color = Color.LightGray)
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .6f)
+                    )
                 }
             }
-
-            if (set !== setHistories.last()) Divider(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 5.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.background
-            )
         }
     }
 }

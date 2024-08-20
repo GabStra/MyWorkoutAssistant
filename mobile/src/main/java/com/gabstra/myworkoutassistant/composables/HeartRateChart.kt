@@ -5,6 +5,7 @@ import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,7 +83,7 @@ fun HeartRateChart(
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
-            color = Color.White,
+            color = Color.White.copy(alpha = .87f),
             padding = Dimensions.of(8.dp),
             textAlignment = Layout.Alignment.ALIGN_CENTER
         ),
@@ -95,104 +96,92 @@ fun HeartRateChart(
         formatTime((value / 2).toInt())
     }
 
-    Card(
-        modifier = modifier
-    ){
+    Column{
         Text(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(5.dp),
+                .fillMaxWidth(),
             text = title,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            color = Color.White.copy(alpha = .87f),
+            style = MaterialTheme.typography.titleMedium,
         )
-        Column( modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-        ) {
-
-            CartesianChartHost(
-                modifier = Modifier
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .padding(10.dp),
-                zoomState = rememberVicoZoomState(
-                    initialZoom = Zoom.Content,
-                    zoomEnabled = isZoomEnabled
-                ),
-                horizontalLayout =  HorizontalLayout.FullWidth(unscalableStartPaddingDp = 20f, unscalableEndPaddingDp = 20f),
-                scrollState = rememberVicoScrollState(scrollEnabled = false),
-                chart = rememberCartesianChart(
-                    rememberLineCartesianLayer(
-                        axisValueOverrider = AxisValueOverrider.fixed(
-                            null,
-                            null,
-                            50f,
-                            200f
-                        )
-                    ),
-                    decorations = listOf(
-                        rememberHorizontalLine(
-                            y = { getHeartRateFromPercentage(50f, userAge).toFloat() },
-                            line = rememberLineComponent(
-                                color = Color.hsl(208f, 0.61f, 0.76f, .5f),
-                                thickness = 2.dp
-                            ),
-                        ),
-                        rememberHorizontalLine(
-                            y = { getHeartRateFromPercentage(60f, userAge).toFloat() },
-                            line = rememberLineComponent(
-                                color = Color.hsl(200f, 0.66f, 0.49f, .5f),
-                                thickness = 2.dp
-                            ),
-                        ),
-                        rememberHorizontalLine(
-                            y = { getHeartRateFromPercentage(70f, userAge).toFloat() },
-                            line = rememberLineComponent(
-                                color = Color.hsl(113f, 0.79f, 0.34f, .5f),
-                                thickness = 2.dp
-                            ),
-                        ),
-                        rememberHorizontalLine(
-                            y = { getHeartRateFromPercentage(80f, userAge).toFloat() },
-                            line = rememberLineComponent(
-                                color = Color.hsl(27f, 0.97f, 0.54f, .5f),
-                                thickness = 2.dp
-                            ),
-                        ),
-                        rememberHorizontalLine(
-                            y = { getHeartRateFromPercentage(90f, userAge).toFloat() },
-                            line = rememberLineComponent(
-                                color = Color.hsl(9f, 0.88f, 0.45f, .5f),
-                                thickness = 2.dp
-                            ),
-                        ),
-                        rememberHorizontalLine(
-                            y = { getHeartRateFromPercentage(100f, userAge).toFloat() },
-                            line = rememberLineComponent(color = Color.Black, thickness = 2.dp),
-                        ),
-                    ),
-                    bottomAxis = rememberBottomAxis(
-                        guideline = null,
-                        label = rememberTextComponent(
-                            color = vicoTheme.textColor,
-                            textSize = 12.sp,
-                            padding =  Dimensions.of(4.dp,4.dp),
-                            textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
-                        ),
-                        labelRotationDegrees = -90f,
-                        valueFormatter = bottomAxisValueFormatter,
-                        itemPlacer = remember {
-                            AxisItemPlacer.Horizontal.default(
-                                spacing = 600,
-                                offset = 600
-                            )
-                        }
+        CartesianChartHost(
+            zoomState = rememberVicoZoomState(
+                initialZoom = Zoom.Content,
+                zoomEnabled = isZoomEnabled
+            ),
+            horizontalLayout =  HorizontalLayout.FullWidth(unscalableStartPaddingDp = 20f, unscalableEndPaddingDp = 20f),
+            scrollState = rememberVicoScrollState(scrollEnabled = false),
+            chart = rememberCartesianChart(
+                rememberLineCartesianLayer(
+                    axisValueOverrider = AxisValueOverrider.fixed(
+                        null,
+                        null,
+                        50f,
+                        200f
                     )
                 ),
-                model = cartesianChartModel,
-                marker = marker,
-            )
-        }
+                decorations = listOf(
+                    rememberHorizontalLine(
+                        y = { getHeartRateFromPercentage(50f, userAge).toFloat() },
+                        line = rememberLineComponent(
+                            color = Color.hsl(208f, 0.61f, 0.76f, .5f),
+                            thickness = 2.dp
+                        ),
+                    ),
+                    rememberHorizontalLine(
+                        y = { getHeartRateFromPercentage(60f, userAge).toFloat() },
+                        line = rememberLineComponent(
+                            color = Color.hsl(200f, 0.66f, 0.49f, .5f),
+                            thickness = 2.dp
+                        ),
+                    ),
+                    rememberHorizontalLine(
+                        y = { getHeartRateFromPercentage(70f, userAge).toFloat() },
+                        line = rememberLineComponent(
+                            color = Color.hsl(113f, 0.79f, 0.34f, .5f),
+                            thickness = 2.dp
+                        ),
+                    ),
+                    rememberHorizontalLine(
+                        y = { getHeartRateFromPercentage(80f, userAge).toFloat() },
+                        line = rememberLineComponent(
+                            color = Color.hsl(27f, 0.97f, 0.54f, .5f),
+                            thickness = 2.dp
+                        ),
+                    ),
+                    rememberHorizontalLine(
+                        y = { getHeartRateFromPercentage(90f, userAge).toFloat() },
+                        line = rememberLineComponent(
+                            color = Color.hsl(9f, 0.88f, 0.45f, .5f),
+                            thickness = 2.dp
+                        ),
+                    ),
+                    rememberHorizontalLine(
+                        y = { getHeartRateFromPercentage(100f, userAge).toFloat() },
+                        line = rememberLineComponent(color = Color.Black, thickness = 2.dp),
+                    ),
+                ),
+                bottomAxis = rememberBottomAxis(
+                    guideline = null,
+                    label = rememberTextComponent(
+                        color = Color.White.copy(alpha = .6f),
+                        textSize = 12.sp,
+                        padding =  Dimensions.of(4.dp,4.dp),
+                        textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                    ),
+                    labelRotationDegrees = -90f,
+                    valueFormatter = bottomAxisValueFormatter,
+                    itemPlacer = remember {
+                        AxisItemPlacer.Horizontal.default(
+                            spacing = 600,
+                            offset = 600
+                        )
+                    }
+                )
+            ),
+            model = cartesianChartModel,
+            marker = marker,
+        )
     }
-
-
 }

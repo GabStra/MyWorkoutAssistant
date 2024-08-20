@@ -5,6 +5,7 @@ import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -66,7 +67,11 @@ fun StandardChart(
         )
 
     val marker = rememberDefaultCartesianMarker(
-        label = rememberTextComponent(color = Color.White, padding = Dimensions.of(8.dp), textAlignment = Layout.Alignment.ALIGN_CENTER),
+        label = rememberTextComponent(
+            color = Color.White.copy(alpha = .87f),
+            padding = Dimensions.of(8.dp),
+            textAlignment = Layout.Alignment.ALIGN_CENTER
+        ),
         guideline = rememberAxisGuidelineComponent(),
         indicatorSize = 10.dp,
         valueFormatter = { context, targets ->
@@ -82,38 +87,34 @@ fun StandardChart(
         },
         indicator = indicator
     )
-    Card(
-        modifier = modifier.padding(5.dp)
-    ){
+    Column(modifier.padding(10.dp)) {
         Text(
-            modifier = Modifier.fillMaxWidth().padding(5.dp),
+            modifier = Modifier.fillMaxWidth(),
             text = title,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            color = Color.White.copy(alpha = .87f),
+            style = MaterialTheme.typography.titleMedium,
         )
-
-        Column(Modifier.padding(10.dp).clip(RoundedCornerShape(5.dp))) {
-            CartesianChartHost(
-                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(5.dp),
-                zoomState = rememberVicoZoomState(zoomEnabled = isZoomEnabled),
-                horizontalLayout =  HorizontalLayout.FullWidth(unscalableStartPaddingDp = 20f, unscalableEndPaddingDp = 20f),
-                chart = rememberCartesianChart(
-                    rememberLineCartesianLayer(spacing = 75.dp),
-                    startAxis = rememberStartAxis(valueFormatter = startAxisValueFormatter),
-                    bottomAxis = rememberBottomAxis(
-                        label = rememberTextComponent(
-                            color = vicoTheme.textColor,
-                            textSize = 12.sp,
-                            padding =  Dimensions.of(4.dp,4.dp),
-                            textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
-                        ),
-                        labelRotationDegrees = -90f,
-                        valueFormatter = bottomAxisValueFormatter
+        CartesianChartHost(
+            zoomState = rememberVicoZoomState(zoomEnabled = isZoomEnabled),
+            horizontalLayout =  HorizontalLayout.FullWidth(unscalableStartPaddingDp = 20f, unscalableEndPaddingDp = 20f),
+            chart = rememberCartesianChart(
+                rememberLineCartesianLayer(spacing = 75.dp),
+                startAxis = rememberStartAxis(valueFormatter = startAxisValueFormatter),
+                bottomAxis = rememberBottomAxis(
+                    label = rememberTextComponent(
+                        color = Color.White.copy(alpha = .6f),
+                        textSize = 12.sp,
+                        padding =  Dimensions.of(4.dp,4.dp),
+                        textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
                     ),
-                    persistentMarkers = if(markerPosition != null) mapOf(markerPosition.toFloat() to marker) else null,
+                    labelRotationDegrees = -90f,
+                    valueFormatter = bottomAxisValueFormatter
                 ),
-                model = cartesianChartModel,
-                marker = marker,
-            )
-        }
+                persistentMarkers = if(markerPosition != null) mapOf(markerPosition.toFloat() to marker) else null,
+            ),
+            model = cartesianChartModel,
+            marker = marker,
+        )
     }
 }
