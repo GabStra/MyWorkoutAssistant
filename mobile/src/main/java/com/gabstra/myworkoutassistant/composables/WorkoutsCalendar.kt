@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -170,11 +171,8 @@ fun SimpleCalendarTitle(
     Row(
         verticalAlignment = Alignment.CenterVertically,
     ) {
-
         Text(
-            modifier = Modifier
-                .weight(1f)
-                .padding(10.dp),
+            modifier = Modifier.fillMaxWidth(),
             text = "${currentDay.date.dayOfMonth} ${currentDay.date.yearMonth.displayText()}",
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
@@ -185,6 +183,7 @@ fun SimpleCalendarTitle(
 
 @Composable
 fun WorkoutsCalendar(
+    modifier: Modifier = Modifier,
     selectedDate: WeekDay,
     onDayClicked: (WeekCalendarState,WeekDay) -> Unit,
     shouldHighlight: (WeekDay) -> Boolean,
@@ -198,31 +197,33 @@ fun WorkoutsCalendar(
 
     val scope = rememberCoroutineScope()
 
-    Column(modifier = Modifier.padding(5.dp)){
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ){
         SimpleCalendarTitle(
             currentDay = selectedDate,
         )
-        Spacer(modifier = Modifier.height(5.dp))
-        WeekCalendar(
-            state = weekCalendarState,
-            calendarScrollPaged = false,
-            userScrollEnabled = true,
-            dayContent = { day ->
-                Day(
-                    isToday = day.date == currentDay,
-                    day = day,
-                    isSelected = selectedDate.date == day.date,
-                    shouldHighlight = shouldHighlight(day),
-                ) { selectedWeekDay ->
-                    onDayClicked(weekCalendarState,selectedWeekDay)
-                    scope.launch {
-                        weekCalendarState.animateScrollToWeek(selectedWeekDay.date)
+        DarkModeContainer(whiteOverlayAlpha = .1f) {
+            WeekCalendar(
+                modifier = Modifier.padding(5.dp),
+                state = weekCalendarState,
+                calendarScrollPaged = false,
+                userScrollEnabled = true,
+                dayContent = { day ->
+                    Day(
+                        isToday = day.date == currentDay,
+                        day = day,
+                        isSelected = selectedDate.date == day.date,
+                        shouldHighlight = shouldHighlight(day),
+                    ) { selectedWeekDay ->
+                        onDayClicked(weekCalendarState,selectedWeekDay)
                     }
-                }
-            },
-            weekHeader = {
-                MonthHeader(daysOfWeek = daysOfWeek())
-            },
-        )
+                },
+                weekHeader = {
+                    MonthHeader(daysOfWeek = daysOfWeek())
+                },
+            )
+        }
     }
 }

@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericFloatingActionButtonWithMenu
@@ -74,38 +75,41 @@ fun ExerciseGroupDetailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
-                        textAlign = TextAlign.Center,
-                        text = exerciseGroup.name
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onGoBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+            DarkModeContainer(whiteOverlayAlpha =.3f) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            modifier = Modifier.fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            textAlign = TextAlign.Center,
+                            text = exerciseGroup.name
                         )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        appViewModel.setScreenData(
-                            ScreenData.EditExerciseGroup(
-                                workout.id,
-                                exerciseGroup.id
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onGoBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
                             )
-                        );
-                    }) {
-                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            appViewModel.setScreenData(
+                                ScreenData.EditExerciseGroup(
+                                    workout.id,
+                                    exerciseGroup.id
+                                )
+                            );
+                        }) {
+                            Icon(imageVector = Icons.Default.Settings, contentDescription = "Back")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    )
                 )
-            )
+            }
         },
         bottomBar = {
             if (selectedWorkoutComponents.isNotEmpty()) BottomAppBar(

@@ -136,38 +136,41 @@ fun ExerciseDetailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
-                        textAlign = TextAlign.Center,
-                        text = exercise.name
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onGoBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+            DarkModeContainer(whiteOverlayAlpha =.3f) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            modifier = Modifier.fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            textAlign = TextAlign.Center,
+                            text = exercise.name
                         )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        appViewModel.setScreenData(
-                            ScreenData.EditExercise(
-                                workout.id,
-                                exercise.id
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onGoBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
                             )
-                        );
-                    }) {
-                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            appViewModel.setScreenData(
+                                ScreenData.EditExercise(
+                                    workout.id,
+                                    exercise.id
+                                )
+                            );
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings"
+                            )
+                        }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
-            )
+            }
         },
         bottomBar = {
             if (selectedSets.isNotEmpty()) BottomAppBar(
@@ -242,7 +245,7 @@ fun ExerciseDetailScreen(
                 DarkModeContainer(
                     modifier = Modifier
                         .padding(15.dp),
-                    whiteOverlayAlpha = .05f
+                    whiteOverlayAlpha = .1f
                 ) {
                     Text(
                         text = "Add a new set",
@@ -262,7 +265,6 @@ fun ExerciseDetailScreen(
             ) {
                 TabRow(
                     selectedTabIndex = 0,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
                             Modifier.tabIndicatorOffset(tabPositions[0]),
@@ -271,25 +273,29 @@ fun ExerciseDetailScreen(
                         )
                     }
                 ) {
-                    Tab(
-                        selected = true,
-                        onClick = { },
-                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "Overview") },
-                        selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.White // Color when tab is not selected
-                    )
-                    Tab(
-                        selected = false,
-                        onClick = {
-                            appViewModel.setScreenData(
-                                ScreenData.ExerciseHistory(workout.id, exercise.id),
-                                true
-                            )
-                        },
-                        text = { Text(modifier= Modifier.background(MaterialTheme.colorScheme.surfaceContainer),text = "History") },
-                        selectedContentColor = Color.White, // Color when tab is selected
-                        unselectedContentColor = Color.White // Color when tab is not selected
-                    )
+                    DarkModeContainer(whiteOverlayAlpha =.3f) {
+                        Tab(
+                            selected = true,
+                            onClick = { },
+                            text = { Text(text = "Overview") },
+                            selectedContentColor = Color.White.copy(alpha = .87f),
+                            unselectedContentColor = Color.White.copy(alpha = .3f),
+                        )
+                    }
+                    DarkModeContainer(whiteOverlayAlpha =.2f) {
+                        Tab(
+                            selected = false,
+                            onClick = {
+                                appViewModel.setScreenData(
+                                    ScreenData.ExerciseHistory(workout.id, exercise.id),
+                                    true
+                                )
+                            },
+                            text = { Text(text = "History") },
+                            selectedContentColor = Color.White.copy(alpha = .87f),
+                            unselectedContentColor = Color.White.copy(alpha = .3f),
+                        )
+                    }
                 }
 
                 GenericSelectableList(

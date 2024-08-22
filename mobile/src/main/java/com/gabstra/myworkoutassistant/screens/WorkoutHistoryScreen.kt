@@ -586,7 +586,7 @@ fun WorkoutHistoryScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .2f) {
+            DarkModeContainer(whiteOverlayAlpha = .3f) {
                 TopAppBar(
                     title = {
                         Text(
@@ -612,10 +612,7 @@ fun WorkoutHistoryScreen(
                                 contentDescription = "Back"
                             )
                         }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                    )
+                    }
                 )
             }
         },
@@ -641,7 +638,7 @@ fun WorkoutHistoryScreen(
                     )
                 }
             ) {
-                DarkModeContainer(whiteOverlayAlpha = .1f) {
+                DarkModeContainer(whiteOverlayAlpha = .2f) {
                     Tab(
                         selected = false,
                         onClick = {
@@ -650,16 +647,12 @@ fun WorkoutHistoryScreen(
                                 true
                             )
                         },
-                        text = {
-                            Text(
-                                text = "Overview"
-                            )
-                        },
+                        text = { Text(text = "Overview") },
                         selectedContentColor = Color.White.copy(alpha = .87f),
                         unselectedContentColor = Color.White.copy(alpha = .3f),
                     )
                 }
-                DarkModeContainer(whiteOverlayAlpha = .2f) {
+                DarkModeContainer(whiteOverlayAlpha = .3f) {
                     Tab(
                         selected = true,
                         onClick = { },
@@ -675,7 +668,7 @@ fun WorkoutHistoryScreen(
                 DarkModeContainer(
                     modifier = Modifier
                         .padding(15.dp),
-                    whiteOverlayAlpha = .05f
+                    whiteOverlayAlpha = .1f
                 ) {
                     Text(
                         modifier = Modifier

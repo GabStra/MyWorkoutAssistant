@@ -47,46 +47,13 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.KeepOn
+import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-@Composable
-fun LifecycleObserver(
-    onStarted: () -> Unit = {},
-    onPaused: () -> Unit = {},
-    onStopped: () -> Unit = {},
-    onResumed: () -> Unit = {}
-) {
-    val context = LocalContext.current
-    val activity = context.findActivity()
-    val lifecycleOwner = activity as LifecycleOwner
-    val onStartedState = rememberUpdatedState(onStarted)
-    val onPausedState = rememberUpdatedState(onPaused)
-    val onStoppedState = rememberUpdatedState(onStopped)
-    val onResumedState = rememberUpdatedState(onResumed)
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> onStartedState.value()
-                Lifecycle.Event.ON_PAUSE -> onPausedState.value()
-                Lifecycle.Event.ON_STOP -> onStoppedState.value()
-                Lifecycle.Event.ON_RESUME -> onResumedState.value()
-                else -> Unit
-            }
-        }
-
-        lifecycleOwner.lifecycle.addObserver(observer)
-
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
@@ -162,9 +129,6 @@ fun WorkoutScreen(
     )
 
     LifecycleObserver(
-        onStarted = {
-
-        },
         onPaused = {
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()

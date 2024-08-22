@@ -2,9 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
@@ -12,15 +10,12 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
-import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun KeepOn(
     enableDimming: Boolean = true, // Parameter to control dimming
@@ -55,8 +50,21 @@ fun KeepOn(
         }
     }
 
-    DisposableEffect(Unit) {
+    fun applyKeepScreenOnFlag() {
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    LifecycleObserver(
+        onStarted = {
+            applyKeepScreenOnFlag()
+        },
+        onResumed = {
+            applyKeepScreenOnFlag()
+        }
+    )
+
+    DisposableEffect(Unit) {
+        applyKeepScreenOnFlag()
 
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

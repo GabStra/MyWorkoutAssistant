@@ -283,7 +283,7 @@ fun WorkoutDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .2f) {
+            DarkModeContainer(whiteOverlayAlpha = .3f) {
                 TopAppBar(
                     title = {
                         Text(
@@ -318,10 +318,7 @@ fun WorkoutDetailScreen(
                                 }
                             }
                         )
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                    )
+                    }
                 )
             }
         },
@@ -387,7 +384,7 @@ fun WorkoutDetailScreen(
                             )
                         }
                     ) {
-                        DarkModeContainer(whiteOverlayAlpha = .2f){
+                        DarkModeContainer(whiteOverlayAlpha = .3f){
                         Tab(
                             selected = true,
                             onClick = { },
@@ -400,7 +397,7 @@ fun WorkoutDetailScreen(
                             unselectedContentColor = Color.White.copy(alpha = .3f),
                         )
                     }
-                        DarkModeContainer(whiteOverlayAlpha = .1f) {
+                        DarkModeContainer(whiteOverlayAlpha = .2f) {
                             Tab(
                                 selected = false,
                                 onClick = {

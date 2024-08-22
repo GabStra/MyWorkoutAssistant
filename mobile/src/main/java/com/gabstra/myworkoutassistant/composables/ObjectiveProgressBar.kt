@@ -79,7 +79,7 @@ fun ObjectiveProgressBar(modifier: Modifier=Modifier,progress: Float){
         LinearProgressBarWithRounderBorders(
             progress = progress,
             modifier = Modifier
-                .fillMaxWidth(1f)
+                .fillMaxWidth()
                 .align(Alignment.CenterStart)
         )
 
