@@ -26,14 +26,11 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 @Composable
 fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
     Column(
-        modifier = modifier
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
     ) {
         for (set in exercise.sets) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
+            Row{
                 when (set) {
                     is WeightSet -> {
                         Text(

@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
@@ -40,9 +39,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.ExpandableCard
+import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
@@ -341,7 +339,7 @@ fun ExerciseGroupDetailScreen(
                     workoutComponents = newWorkoutComponents
                 },
                 itemContent = { it ->
-                    ExpandableCard(
+                    ExpandableContainer(
                         isExpandable = when (it) {
                             is Exercise -> it.sets.isNotEmpty()
                             is ExerciseGroup -> it.workoutComponents.isNotEmpty()

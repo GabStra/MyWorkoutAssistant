@@ -1,10 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -31,7 +27,6 @@ import androidx.compose.material.icons.filled.Search
 
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -47,13 +42,10 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarColors
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,11 +54,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.ExpandableCard
+import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
@@ -80,22 +72,15 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.weekcalendar.WeekCalendarState
-import com.kizitonwose.calendar.core.CalendarDay
-import com.kizitonwose.calendar.core.DayPosition
 import com.kizitonwose.calendar.core.WeekDay
 import com.kizitonwose.calendar.core.WeekDayPosition
-import com.kizitonwose.calendar.core.nextMonth
-import com.kizitonwose.calendar.core.previousMonth
 import kotlinx.coroutines.Dispatchers
 
 import kotlinx.coroutines.launch
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
-import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 import java.util.UUID
 
@@ -112,69 +97,76 @@ fun Menu(
     var expanded by remember { mutableStateOf(false) }
 
 
-        Box(
-            modifier = Modifier.wrapContentSize(Alignment.TopEnd)
-        ) {
-            IconButton(onClick = { expanded = !expanded }) {
-                Icon(
-                    imageVector = Icons.Default.MoreVert,
-                    contentDescription = "More"
-                )
-            }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MaterialTheme.colorScheme.background)
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Sync with Watch") },
-                    onClick = {
-                        onSyncClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Save Backup") },
-                    onClick = {
-                        onBackupClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Restore Backup") },
-                    onClick = {
-                        onRestoreClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Settings") },
-                    onClick = {
-                        onOpenSettingsClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Clear unfinished workouts") },
-                    onClick = {
-                        onClearUnfinishedWorkouts()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Clear all histories") },
-                    onClick = {
-                        onClearAllHistories()
-                        expanded = false
-                    }
-                )
-            }
+    Box(
+        modifier = Modifier.wrapContentSize(Alignment.TopEnd)
+    ) {
+        IconButton(onClick = { expanded = !expanded }) {
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = "More"
+            )
         }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.background)
+        ) {
+            DropdownMenuItem(
+                text = { Text("Sync with Watch") },
+                onClick = {
+                    onSyncClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Save Backup") },
+                onClick = {
+                    onBackupClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Restore Backup") },
+                onClick = {
+                    onRestoreClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Settings") },
+                onClick = {
+                    onOpenSettingsClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Clear unfinished workouts") },
+                onClick = {
+                    onClearUnfinishedWorkouts()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Clear all histories") },
+                onClick = {
+                    onClearAllHistories()
+                    expanded = false
+                }
+            )
+        }
+    }
 
 }
 
 @Composable
-fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean, content: @Composable () -> Unit = {}) {
+fun WorkoutTitle(
+    modifier: Modifier,
+    workout: Workout,
+    isDone: Boolean,
+    content: @Composable () -> Unit = {},
+    enabled: Boolean = true,
+    style: TextStyle = MaterialTheme.typography.bodyMedium
+) {
     Row(
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = modifier,
@@ -192,8 +184,8 @@ fun WorkoutTitle(modifier: Modifier, workout: Workout, isDone: Boolean, content:
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name,
-            color = Color.White.copy(alpha = .87f),
-            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = if (enabled) .87f else .3f),
+            style = style,
         )
         content()
     }
@@ -224,9 +216,10 @@ fun WorkoutsScreen(
     val activeWorkouts = workouts.filter { it.isActive }.sortedBy { it.order }
 
     val timesCompletedInAWeekObjective =
-        enabledWorkouts.filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek !=0  }.associate { workout ->
-            workout.id to (workout.timesCompletedInAWeek ?: 0)
-        }
+        enabledWorkouts.filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
+            .associate { workout ->
+                workout.id to (workout.timesCompletedInAWeek ?: 0)
+            }
 
     val hasObjectives = timesCompletedInAWeekObjective.values.any { it > 0 }
 
@@ -304,14 +297,14 @@ fun WorkoutsScreen(
         if (workoutHistoriesInAWeek.isEmpty()) return
 
         val weeklyWorkouts = workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
-            enabledWorkouts.find { it.id == workoutHistory.workoutId && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0  }
+            enabledWorkouts.find { it.id == workoutHistory.workoutId && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
         }
 
         val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.distinct()
 
         val totalWeeklyWorkouts = weeklyWorkouts +
                 activeAndEnabledWorkouts.filter {
-                    !uniqueGlobalIds.contains(it.globalId) && it.timesCompletedInAWeek != null  && it.timesCompletedInAWeek != 0
+                    !uniqueGlobalIds.contains(it.globalId) && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
                 }
 
         val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
@@ -397,7 +390,7 @@ fun WorkoutsScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .1f) {
+            DarkModeContainer(whiteOverlayAlpha = .2f) {
                 TopAppBar(
                     title = {
                         Text(
@@ -516,45 +509,31 @@ fun WorkoutsScreen(
                 .padding(it),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (activeAndEnabledWorkouts.isEmpty()) {
-                DarkModeContainer(
-                    modifier = Modifier
-                        .padding(15.dp),
-                    whiteOverlayAlpha = .05f
-                ) {
-                    Text(
-                        text = "Add a new workout",
-                        textAlign = TextAlign.Center,
-                        color = Color.White.copy(alpha = .87f),
-                        modifier = Modifier
-                            .padding(15.dp)
-                    )
-                }
-            } else {
-                DarkModeContainer(whiteOverlayAlpha = .05f){
-                    TabRow(
-                        selectedTabIndex = selectedTabIndex,
-                        indicator = { tabPositions ->
-                            TabRowDefaults.Indicator(
-                                Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
-                                color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                                height = 2.dp // Set the indicator thickness
-                            )
-                        }
-                    ) {
-                        tabTitles.forEachIndexed { index, title ->
-                            val isSelected = index == selectedTabIndex
 
+                TabRow(
+                    selectedTabIndex = selectedTabIndex,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                            color = MaterialTheme.colorScheme.primary, // Set the indicator color
+                            height = 2.dp // Set the indicator thickness
+                        )
+                    }
+                ) {
+                    tabTitles.forEachIndexed { index, title ->
+                        val isSelected = index == selectedTabIndex
+                        DarkModeContainer(whiteOverlayAlpha = if (isSelected) .2f else .1f) {
                             Tab(
                                 selected = isSelected,
                                 onClick = { appViewModel.setHomeTab(index) },
                                 text = { Text(text = title) },
                                 selectedContentColor = Color.White.copy(alpha = .87f),
-                                unselectedContentColor =  Color.White.copy(alpha = .3f),
+                                unselectedContentColor = Color.White.copy(alpha = .3f),
                             )
                         }
                     }
                 }
+
                 when (selectedTabIndex) {
                     0 -> {
                         LazyColumn(
@@ -563,7 +542,7 @@ fun WorkoutsScreen(
                                 .padding(10.dp)
                         ) {
                             item {
-                                DarkModeContainer(Modifier.padding(5.dp),whiteOverlayAlpha = .05f) {
+                                DarkModeContainer(Modifier.padding(5.dp), whiteOverlayAlpha = .1f) {
                                     WorkoutsCalendar(
                                         selectedDate = selectedDate,
                                         onDayClicked = { calendarState, day ->
@@ -575,14 +554,15 @@ fun WorkoutsScreen(
                             }
                             item {
                                 if (hasObjectives) {
-                                    val currentDate = selectedDate?.date ?: LocalDate.now()
+                                    val currentDate = selectedDate.date ?: LocalDate.now()
 
                                     val currentMonth =
                                         currentDate.format(DateTimeFormatter.ofPattern("MMM"))
 
-                                    val recordsExist = weeklyWorkoutsByActualTarget != null && weeklyWorkoutsByActualTarget!!.isNotEmpty()
+                                    val recordsExist =
+                                        weeklyWorkoutsByActualTarget != null && weeklyWorkoutsByActualTarget!!.isNotEmpty()
 
-                                    DarkModeContainer(Modifier.padding(5.dp),whiteOverlayAlpha = .05f){
+                                    DarkModeContainer(Modifier.padding(5.dp), whiteOverlayAlpha = .1f) {
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -605,7 +585,7 @@ fun WorkoutsScreen(
                                                     .fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.Center,
                                                 verticalAlignment = Alignment.CenterVertically
-                                            ){
+                                            ) {
                                                 Text(
                                                     modifier = Modifier.weight(1f),
                                                     text = "${(objectiveProgress * 100).toInt()}%",
@@ -614,12 +594,18 @@ fun WorkoutsScreen(
                                                     color = Color.White.copy(alpha = .87f),
                                                 )
                                                 Spacer(modifier = Modifier.width(10.dp))
-                                                ObjectiveProgressBar(Modifier.fillMaxWidth(.7f),progress = objectiveProgress.toFloat())
+                                                ObjectiveProgressBar(
+                                                    Modifier.fillMaxWidth(.7f),
+                                                    progress = objectiveProgress.toFloat()
+                                                )
                                             }
 
                                             weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
                                                 Row(
-                                                    modifier = Modifier.padding(vertical = 5.dp, horizontal = 10.dp),
+                                                    modifier = Modifier.padding(
+                                                        vertical = 5.dp,
+                                                        horizontal = 10.dp
+                                                    ),
                                                     horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
                                                     Text(
@@ -642,9 +628,8 @@ fun WorkoutsScreen(
 
                                 }
                             }
-
                             item {
-                                DarkModeContainer(Modifier.padding(5.dp),whiteOverlayAlpha = .05f){
+                                DarkModeContainer(Modifier.padding(5.dp), whiteOverlayAlpha = .1f) {
                                     Column {
                                         if (selectedCalendarWorkouts.isNullOrEmpty()) {
                                             Text(
@@ -654,7 +639,7 @@ fun WorkoutsScreen(
                                                     .padding(10.dp),
                                                 textAlign = TextAlign.Center,
                                                 color = Color.White.copy(alpha = .87f),
-                                                style = MaterialTheme.typography.bodyMedium,
+                                                style = MaterialTheme.typography.titleMedium,
                                             )
                                         } else {
                                             Column {
@@ -677,7 +662,8 @@ fun WorkoutsScreen(
                                                                     contentDescription = "Search"
                                                                 )
                                                             }
-                                                        }
+                                                        },
+                                                        style = MaterialTheme.typography.bodyLarge
                                                     )
                                                 }
                                             }
@@ -689,40 +675,69 @@ fun WorkoutsScreen(
                     }
 
                     1 -> {
-                        GenericSelectableList(
-                            PaddingValues(5.dp, 10.dp),
-                            items = activeWorkouts,
-                            selectedItems = selectedWorkouts,
-                            isSelectionModeActive,
-                            onItemClick = {
-                                if (isCardExpanded) return@GenericSelectableList
-                                appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
-                            },
-                            onEnableSelection = { isSelectionModeActive = true },
-                            onDisableSelection = { isSelectionModeActive = false },
-                            onSelectionChange = { newSelection -> selectedWorkouts = newSelection },
-                            onOrderChange = { newWorkouts ->
-                                val workoutsWithOrderUpdated =
-                                    newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
-                                appViewModel.updateWorkouts(workoutsWithOrderUpdated)
-                            },
-                            itemContent = { it ->
-                                ExpandableCard(
-                                    isExpandable = it.workoutComponents.isNotEmpty(),
+                        if (activeAndEnabledWorkouts.isEmpty()) {
+                            DarkModeContainer(
+                                modifier = Modifier
+                                    .padding(15.dp),
+                                whiteOverlayAlpha = .1f
+                            ) {
+                                Text(
+                                    text = "Add a new workout",
+                                    textAlign = TextAlign.Center,
+                                    color = Color.White.copy(alpha = .87f),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .alpha(if (it.enabled) 1f else 0.4f),
-                                    title = { modifier -> WorkoutTitle(modifier.padding(15.dp), it, true) },
-                                    content = { WorkoutRenderer(it) },
-                                    onOpen = { isCardExpanded = true },
-                                    onClose = { isCardExpanded = false }
+                                        .padding(15.dp),
+                                    style = MaterialTheme.typography.titleMedium
                                 )
-                            },
-                            isDragDisabled = true
-                        )
+                            }
+                        } else {
+                            GenericSelectableList(
+                                PaddingValues(5.dp, 10.dp),
+                                items = activeWorkouts,
+                                selectedItems = selectedWorkouts,
+                                isSelectionModeActive,
+                                onItemClick = {
+                                    if (isCardExpanded) return@GenericSelectableList
+                                    appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
+                                },
+                                onEnableSelection = { isSelectionModeActive = true },
+                                onDisableSelection = { isSelectionModeActive = false },
+                                onSelectionChange = { newSelection ->
+                                    selectedWorkouts = newSelection
+                                },
+                                onOrderChange = { newWorkouts ->
+                                    val workoutsWithOrderUpdated =
+                                        newWorkouts.mapIndexed { index, workout ->
+                                            workout.copy(
+                                                order = index
+                                            )
+                                        }
+                                    appViewModel.updateWorkouts(workoutsWithOrderUpdated)
+                                },
+                                itemContent = { it ->
+                                    ExpandableContainer(
+                                        isExpandable = it.workoutComponents.isNotEmpty(),
+                                        modifier = Modifier
+                                            .fillMaxWidth(),
+                                        title = { modifier ->
+                                            WorkoutTitle(
+                                                modifier.padding(15.dp),
+                                                it,
+                                                true,
+                                                enabled = it.enabled
+                                            )
+                                        },
+                                        content = { WorkoutRenderer(it) },
+                                        onOpen = { isCardExpanded = true },
+                                        onClose = { isCardExpanded = false }
+                                    )
+                                },
+                                isDragDisabled = true
+                            )
+                        }
                     }
                 }
-            }
         }
     }
 }

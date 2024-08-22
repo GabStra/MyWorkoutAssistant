@@ -30,27 +30,25 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 @Composable
 fun WorkoutRenderer(workout: Workout){
     Column{
-        for ((index, workoutComponent) in workout.workoutComponents.withIndex()) {
-            Row( modifier = if(index % 2 == 0) Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh) else Modifier) {
-                Row(
+        for (workoutComponent in workout.workoutComponents) {
+            Row(
+                modifier = Modifier
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ){
+                Text(
                     modifier = Modifier
-                        .padding(10.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ){
-                    Text(
-                        modifier = Modifier
-                            .weight(2f)
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = workoutComponent.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .6f),
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    when (workoutComponent) {
-                        is Exercise -> ExerciseRenderer(modifier = Modifier.weight(1f), exercise = workoutComponent)
-                        is ExerciseGroup -> ExerciseGroupRenderer(modifier = Modifier.weight(1f), exerciseGroup = workoutComponent)
-                    }
+                        .weight(1f)
+                        .basicMarquee(iterations = Int.MAX_VALUE),
+                    text = workoutComponent.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = .6f),
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                when (workoutComponent) {
+                    is Exercise -> ExerciseRenderer(exercise = workoutComponent)
+                    is ExerciseGroup -> ExerciseGroupRenderer(exerciseGroup = workoutComponent)
                 }
             }
         }

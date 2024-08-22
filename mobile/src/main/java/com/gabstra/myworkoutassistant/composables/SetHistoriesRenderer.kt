@@ -26,14 +26,13 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
-fun SetHistoriesRenderer(modifier: Modifier = Modifier,setHistories: List<SetHistory>) {
+fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHistory>) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.SpaceBetween
     ) {
         for (set in setHistories) {
-            Column(Modifier.padding(5.dp)) {
+            Row {
                 when (val setData = set.setData) {
                     is WeightSetData -> {
                         Text(
@@ -52,27 +51,31 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier,setHistories: List<SetHis
                     }
 
                     is TimedDurationSetData -> {
-                        Text(
-                            "Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f)
-                        )
-                        Text(
-                            "Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f)
-                        )
+                        Column{
+                            Text(
+                                "Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = .6f)
+                            )
+                            Text(
+                                "Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = .6f)
+                            )
+                        }
                     }
 
                     is EnduranceSetData -> {
-                        Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f)
-                        )
-                        Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f)
-                        )
+                        Column{
+                            Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = .6f)
+                            )
+                            Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = .6f)
+                            )
+                        }
                     }
                 }
             }

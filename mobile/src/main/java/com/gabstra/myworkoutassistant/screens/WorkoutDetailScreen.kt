@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -50,14 +49,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.ExpandableCard
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
@@ -65,7 +61,6 @@ import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericFloatingActionButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
-import com.gabstra.myworkoutassistant.composables.WorkoutRenderer
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -288,7 +283,7 @@ fun WorkoutDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .1f) {
+            DarkModeContainer(whiteOverlayAlpha = .2f) {
                 TopAppBar(
                     title = {
                         Text(
@@ -381,7 +376,7 @@ fun WorkoutDetailScreen(
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
-                DarkModeContainer(whiteOverlayAlpha = .05f) {
+
                     TabRow(
                         selectedTabIndex = 0,
                         indicator = { tabPositions ->
@@ -392,6 +387,7 @@ fun WorkoutDetailScreen(
                             )
                         }
                     ) {
+                        DarkModeContainer(whiteOverlayAlpha = .2f){
                         Tab(
                             selected = true,
                             onClick = { },
@@ -403,25 +399,28 @@ fun WorkoutDetailScreen(
                             selectedContentColor = Color.White.copy(alpha = .87f),
                             unselectedContentColor = Color.White.copy(alpha = .3f),
                         )
-                        Tab(
-                            selected = false,
-                            onClick = {
-                                appViewModel.setScreenData(
-                                    ScreenData.WorkoutHistory(workout.id),
-                                    true
-                                )
-                            },
-                            text = {
-                                Text(
-
-                                    text = "History"
-                                )
-                            },
-                            selectedContentColor = Color.White.copy(alpha = .87f),
-                            unselectedContentColor = Color.White.copy(alpha = .3f),
-                        )
                     }
-                }
+                        DarkModeContainer(whiteOverlayAlpha = .1f) {
+                            Tab(
+                                selected = false,
+                                onClick = {
+                                    appViewModel.setScreenData(
+                                        ScreenData.WorkoutHistory(workout.id),
+                                        true
+                                    )
+                                },
+                                text = {
+                                    Text(
+
+                                        text = "History"
+                                    )
+                                },
+                                selectedContentColor = Color.White.copy(alpha = .87f),
+                                unselectedContentColor = Color.White.copy(alpha = .3f),
+                            )
+                        }
+                    }
+
                 GenericSelectableList(
                     it = PaddingValues(0.dp, 5.dp),
                     items = workout.workoutComponents,
@@ -458,7 +457,7 @@ fun WorkoutDetailScreen(
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                     },
                     itemContent = { it ->
-                        DarkModeContainer(whiteOverlayAlpha = .05f) {
+                        DarkModeContainer(whiteOverlayAlpha = .1f) {
                             Row(
                                 modifier = Modifier
                                     .padding(10.dp),
@@ -476,14 +475,11 @@ fun WorkoutDetailScreen(
                                 Spacer(modifier = Modifier.width(10.dp))
                                 when (it) {
                                     is Exercise -> ExerciseRenderer(
-                                        modifier = Modifier.weight(1f),
                                         exercise = it
                                     )
 
                                     is ExerciseGroup -> ExerciseGroupRenderer(
-                                        modifier = Modifier.weight(
-                                            1f
-                                        ), exerciseGroup = it
+                                         exerciseGroup = it
                                     )
                                 }
                             }

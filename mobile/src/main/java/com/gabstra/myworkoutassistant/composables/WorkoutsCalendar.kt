@@ -110,20 +110,22 @@ private fun Day(
     onClick: (WeekDay) -> Unit = {},
 ) {
     val isOutOfBounds = day.position in listOf(WeekDayPosition.InDate, WeekDayPosition.OutDate)
-    Box(Modifier.padding(5.dp)){
+    Box(
+        Modifier
+            .padding(5.dp)
+            .border(
+                width = if (isSelected || isToday) 1.dp else 0.dp,
+                color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color.Green else Color.Transparent),
+            )
+    ){
         Box(
             modifier = Modifier
                 .clickable(
                     onClick = { onClick(day) },
                 )
                 .alpha(if (isOutOfBounds) 0.25f else 1f)
-                .border(
-                    width = if (isSelected || isToday) 1.dp else 0.dp,
-                    color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color.Green else Color.Transparent),
-                )
-                .padding(3.dp)
 
-            ,
+                .padding(3.dp)
         ) {
             val textColor =  if(shouldHighlight) Color.Black else Color.White.copy(alpha = .6f)
 

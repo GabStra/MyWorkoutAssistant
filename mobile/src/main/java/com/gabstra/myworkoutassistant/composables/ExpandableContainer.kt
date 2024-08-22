@@ -1,22 +1,13 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardColors
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,20 +16,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.unit.dp
 
 @Composable
-fun ExpandableCard(
+fun ExpandableContainer(
     modifier : Modifier = Modifier,
     isExpandable:Boolean = true,
     isOpen: Boolean = false,
     title: @Composable (modifier: Modifier) -> Unit,
     subContent : @Composable () -> Unit = {},
     content: @Composable () -> Unit,
-    onOpen: () -> Unit,
-    onClose: () -> Unit,
+    onOpen: () -> Unit = {},
+    onClose: () -> Unit = {},
 ){
     var openStatus by remember {
         mutableStateOf(isOpen)
@@ -46,7 +34,7 @@ fun ExpandableCard(
 
     DarkModeContainer (
         modifier = modifier,
-        whiteOverlayAlpha = 0.05f
+        whiteOverlayAlpha = 0.1f
     ){
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -71,7 +59,11 @@ fun ExpandableCard(
             }
             subContent()
             if(openStatus){
-                content()
+                DarkModeContainer (
+                    whiteOverlayAlpha = 0.05f
+                ) {
+                    content()
+                }
             }
         }
     }

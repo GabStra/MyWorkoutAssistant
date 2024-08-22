@@ -96,7 +96,7 @@ fun HeartRateChart(
         formatTime((value / 2).toInt())
     }
 
-    Column{
+    Column(modifier){
         Text(
             modifier = Modifier
                 .fillMaxWidth(),

@@ -37,13 +37,14 @@ composeCompiler {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.9.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.9.0")
-    implementation("com.google.accompanist:accompanist-permissions:+")
-    implementation("com.google.code.gson:gson:2.9.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.2")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
-    ksp("androidx.room:room-compiler:+")
-    implementation("androidx.room:room-ktx:+")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("com.google.accompanist:accompanist-permissions:0.35.2-beta")
+    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    implementation("androidx.compose.ui:ui")
 }
