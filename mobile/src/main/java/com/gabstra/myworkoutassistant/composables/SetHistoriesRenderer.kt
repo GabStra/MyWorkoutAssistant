@@ -51,7 +51,9 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     }
 
                     is TimedDurationSetData -> {
-                        Column{
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                        ) {
                             Text(
                                 "Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -66,7 +68,9 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     }
 
                     is EnduranceSetData -> {
-                        Column{
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                        ) {
                             Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .6f)

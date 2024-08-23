@@ -391,17 +391,16 @@ fun WorkoutHistoryScreen(
             Modifier.padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = "Workout History",
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+                color = Color.White.copy(alpha = .87f)
+            )
             workoutSelector()
 
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
-                HeartRateChart(
-                    modifier = Modifier.fillMaxWidth(),
-                    cartesianChartModel = heartRateEntryModel!!,
-                    title = "Heart Rate during Workout",
-                    entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
-                    userAge = userAge,
-                )
-
                 ExpandableContainer(
                     modifier = Modifier.fillMaxWidth(),
                     isExpandable = zoneCounter != null,
@@ -511,8 +510,23 @@ fun WorkoutHistoryScreen(
                             }
                         }
                     })
+
+                HeartRateChart(
+                    modifier = Modifier.fillMaxWidth(),
+                    cartesianChartModel = heartRateEntryModel!!,
+                    title = "Heart Rate during Workout",
+                    entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
+                    userAge = userAge,
+                )
             }
 
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = "Exercise Histories",
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+                color = Color.White.copy(alpha = .87f)
+            )
             setHistoriesByExerciseId.keys.toList().forEach() { key ->
                 DarkModeContainer(whiteOverlayAlpha = .1f) {
                     Row(
