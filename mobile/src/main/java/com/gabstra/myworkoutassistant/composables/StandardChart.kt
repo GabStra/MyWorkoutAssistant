@@ -50,7 +50,7 @@ fun StandardChart(
     modifier: Modifier = Modifier,
     cartesianChartModel: CartesianChartModel,
     title: String,
-    isZoomEnabled: Boolean = false,
+    isZoomEnabled: Boolean = true,
     markerPosition: Float? = null,
     markerTextFormatter: ((Float) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
@@ -87,34 +87,45 @@ fun StandardChart(
         },
         indicator = indicator
     )
-    Column(modifier.padding(10.dp)) {
-        Text(
-            modifier = Modifier.fillMaxWidth(),
-            text = title,
-            textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = .87f),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        CartesianChartHost(
-            zoomState = rememberVicoZoomState(zoomEnabled = isZoomEnabled),
-            horizontalLayout =  HorizontalLayout.FullWidth(unscalableStartPaddingDp = 20f, unscalableEndPaddingDp = 20f),
-            chart = rememberCartesianChart(
-                rememberLineCartesianLayer(spacing = 75.dp),
-                startAxis = rememberStartAxis(valueFormatter = startAxisValueFormatter),
-                bottomAxis = rememberBottomAxis(
-                    label = rememberTextComponent(
-                        color = Color.White.copy(alpha = .6f),
-                        textSize = 12.sp,
-                        padding =  Dimensions.of(4.dp,4.dp),
-                        textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+
+    DarkModeContainer(modifier,whiteOverlayAlpha = .1f) {
+        Column{
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                text = title,
+                textAlign = TextAlign.Center,
+                color = Color.White.copy(alpha = .87f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            DarkModeContainer(whiteOverlayAlpha = .05f,isRounded = false) {
+                CartesianChartHost(
+                    modifier = Modifier.padding(10.dp),
+                    zoomState = rememberVicoZoomState(zoomEnabled = isZoomEnabled),
+                    horizontalLayout = HorizontalLayout.FullWidth(
+                        unscalableStartPaddingDp = 20f,
+                        unscalableEndPaddingDp = 20f
                     ),
-                    labelRotationDegrees = -90f,
-                    valueFormatter = bottomAxisValueFormatter
-                ),
-                persistentMarkers = if(markerPosition != null) mapOf(markerPosition.toFloat() to marker) else null,
-            ),
-            model = cartesianChartModel,
-            marker = marker,
-        )
+                    chart = rememberCartesianChart(
+                        rememberLineCartesianLayer(spacing = 75.dp),
+                        startAxis = rememberStartAxis(valueFormatter = startAxisValueFormatter),
+                        bottomAxis = rememberBottomAxis(
+                            label = rememberTextComponent(
+                                color = Color.White.copy(alpha = .6f),
+                                textSize = 12.sp,
+                                padding = Dimensions.of(4.dp, 4.dp),
+                                textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                            ),
+                            labelRotationDegrees = -90f,
+                            valueFormatter = bottomAxisValueFormatter
+                        ),
+                        persistentMarkers = if (markerPosition != null) mapOf(markerPosition.toFloat() to marker) else null,
+                    ),
+                    model = cartesianChartModel,
+                    marker = marker,
+                )
+            }
+        }
     }
 }

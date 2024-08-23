@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -40,7 +41,6 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,7 +58,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
-import com.gabstra.myworkoutassistant.composables.GenericFloatingActionButtonWithMenu
+import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -118,15 +118,17 @@ fun WorkoutComponentTitle(
     modifier: Modifier = Modifier,
     workoutComponent: WorkoutComponent
 ) {
-    val suffix = if(workoutComponent is ExerciseGroup) " (Group)" else ""
+    val suffix = if (workoutComponent is ExerciseGroup) " (Group)" else ""
 
     Row(
         horizontalArrangement = Arrangement.End,
         modifier = modifier.padding(vertical = 10.dp),
     ) {
         Text(
-            modifier = Modifier.weight(2.7f).basicMarquee(iterations = Int.MAX_VALUE),
-            text = workoutComponent.name+suffix,
+            modifier = Modifier
+                .weight(2.7f)
+                .basicMarquee(iterations = Int.MAX_VALUE),
+            text = workoutComponent.name + suffix,
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White.copy(alpha = .87f),
         )
@@ -155,31 +157,39 @@ fun WorkoutDetailScreen(
 
     val editModeBottomBar = @Composable {
         BottomAppBar(
-            containerColor = Color.DarkGray,
+            contentPadding = PaddingValues(0.dp),
             actions = {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.background(MaterialTheme.colorScheme.background)
+                        .fillMaxSize(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
-                ){
+                ) {
                     IconButton(
                         enabled = selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0,
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
 
-                            val selectedIndex = currentWorkoutComponents.indexOfFirst { it === selectedComponent }
+                            val selectedIndex =
+                                currentWorkoutComponents.indexOfFirst { it === selectedComponent }
 
-                            val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
-                                removeAt(selectedIndex)
-                                add(selectedIndex - 1, selectedComponent)
-                            }
+                            val newWorkoutComponents =
+                                currentWorkoutComponents.toMutableList().apply {
+                                    removeAt(selectedIndex)
+                                    add(selectedIndex - 1, selectedComponent)
+                                }
 
                             // Update the workout with the new list of components
-                            val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
+                            val updatedWorkout =
+                                workout.copy(workoutComponents = newWorkoutComponents)
                             appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         }) {
-                        Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Go Higher")
+                        Icon(
+                            imageVector = Icons.Filled.ArrowUpward,
+                            contentDescription = "Go Higher",
+                            tint = Color.White.copy(alpha = .87f)
+                        )
                     }
                     IconButton(
                         enabled = selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1,
@@ -187,22 +197,30 @@ fun WorkoutDetailScreen(
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
 
-                            val selectedIndex = currentWorkoutComponents.indexOfFirst { it === selectedComponent }
+                            val selectedIndex =
+                                currentWorkoutComponents.indexOfFirst { it === selectedComponent }
 
-                            val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
-                                removeAt(selectedIndex)
-                                add(selectedIndex + 1, selectedComponent)
-                            }
+                            val newWorkoutComponents =
+                                currentWorkoutComponents.toMutableList().apply {
+                                    removeAt(selectedIndex)
+                                    add(selectedIndex + 1, selectedComponent)
+                                }
 
                             // Update the workout with the new list of components
-                            val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
+                            val updatedWorkout =
+                                workout.copy(workoutComponents = newWorkoutComponents)
                             appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         }) {
-                        Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Go Lower")
+                        Icon(
+                            imageVector = Icons.Filled.ArrowDownward,
+                            contentDescription = "Go Lower"
+                            ,tint = Color.White.copy(alpha = .87f)
+                        )
                     }
-                    if(selectedWorkoutComponents.any{ !getEnabledStatusOfWorkoutComponent(it)}){
+                    if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
                         Button(
                             modifier = Modifier.padding(5.dp),
+                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                             onClick = {
                                 val updatedWorkoutComponents =
                                     workout.workoutComponents.map { workoutComponent ->
@@ -226,9 +244,10 @@ fun WorkoutDetailScreen(
                             }) {
                             Text("Enable")
                         }
-                    }else{
+                    } else {
                         Button(
                             modifier = Modifier.padding(5.dp),
+                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                             onClick = {
                                 val updatedWorkoutComponents =
                                     workout.workoutComponents.map { workoutComponent ->
@@ -256,13 +275,19 @@ fun WorkoutDetailScreen(
                     IconButton(
                         enabled = selectedWorkoutComponents.size == 1,
                         onClick = {
-                            val newWorkoutComponent = cloneWorkoutComponent(selectedWorkoutComponents.first())
+                            val newWorkoutComponent =
+                                cloneWorkoutComponent(selectedWorkoutComponents.first())
 
                             appViewModel.addWorkoutComponent(workout, newWorkoutComponent)
                             selectedWorkoutComponents = emptyList()
                             isSelectionModeActive = false
                         }) {
-                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
+                        val isEnabled = selectedWorkoutComponents.size == 1
+                        val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
+                            alpha = .3f
+                        )
+
+                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
                     }
                     IconButton(onClick = {
                         val newWorkoutComponents = workout.workoutComponents.filter { item ->
@@ -274,7 +299,7 @@ fun WorkoutDetailScreen(
                         selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
                     }) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = Color.White.copy(alpha = .87f))
                     }
                 }
             }
@@ -283,11 +308,13 @@ fun WorkoutDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .3f) {
+            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
                 TopAppBar(
                     title = {
                         Text(
-                            modifier = Modifier.fillMaxWidth().basicMarquee(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(),
                             textAlign = TextAlign.Center,
                             text = workout.name
                         )
@@ -323,27 +350,48 @@ fun WorkoutDetailScreen(
             }
         },
         bottomBar = {
-            if (selectedWorkoutComponents.isNotEmpty()) editModeBottomBar()
-        },
-        floatingActionButton = {
-            if (selectedWorkoutComponents.isEmpty())
-                GenericFloatingActionButtonWithMenu(
-                    menuItems = listOf(
-                        MenuItem("Add Exercise") {
-                            appViewModel.setScreenData(ScreenData.NewExercise(workout.id, null));
-                        },
-                        MenuItem("Add Exercise Group") {
-                            appViewModel.setScreenData(
-                                ScreenData.NewExerciseGroup(
-                                    workout.id,
-                                    null
-                                )
-                            );
-                        }
+            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+                if (selectedWorkoutComponents.isNotEmpty()) {
+                    editModeBottomBar()
+                } else {
+                    BottomAppBar(
+                        contentPadding = PaddingValues(0.dp),
+                        actions = {
+                            Row(
+                                modifier = Modifier
+                                    .background(MaterialTheme.colorScheme.background)
+                                    .fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                            ) {
+                                GenericButtonWithMenu(
+                                    menuItems = listOf(
+                                        MenuItem("Add Exercise") {
+                                            appViewModel.setScreenData(
+                                                ScreenData.NewExercise(
+                                                    workout.id,
+                                                    null
+                                                )
+                                            );
+                                        },
+                                        MenuItem("Add Exercise Group") {
+                                            appViewModel.setScreenData(
+                                                ScreenData.NewExerciseGroup(
+                                                    workout.id,
+                                                    null
+                                                )
+                                            );
+                                        }
 
-                    ),
-                    fabIcon = { Icon(Icons.Filled.Add, contentDescription = "Add") }
-                )
+                                    ),
+                                    content = {  Text("New Exercise") }
+                                )
+                            }
+                        }
+                    )
+
+                }
+            }
         },
     ) { it ->
         if (workout.workoutComponents.isEmpty()) {
@@ -352,11 +400,12 @@ fun WorkoutDetailScreen(
                     .fillMaxSize()
                     .padding(it),
                 horizontalAlignment = Alignment.CenterHorizontally
-            ){
-                Card(
+            ) {
+                DarkModeContainer(
                     modifier = Modifier
-                        .padding(15.dp)
-                ){
+                        .padding(15.dp),
+                    whiteOverlayAlpha = .1f
+                ) {
                     Text(
                         text = "Add a new workout component",
                         textAlign = TextAlign.Center,
@@ -374,17 +423,17 @@ fun WorkoutDetailScreen(
                 verticalArrangement = Arrangement.Center,
             ) {
 
-                    TabRow(
-                        selectedTabIndex = 0,
-                        indicator = { tabPositions ->
-                            TabRowDefaults.Indicator(
-                                Modifier.tabIndicatorOffset(tabPositions[0]),
-                                color = MaterialTheme.colorScheme.primary,
-                                height = 2.dp // Set the indicator thickness
-                            )
-                        }
-                    ) {
-                        DarkModeContainer(whiteOverlayAlpha = .3f){
+                TabRow(
+                    selectedTabIndex = 0,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[0]),
+                            color = MaterialTheme.colorScheme.primary,
+                            height = 2.dp // Set the indicator thickness
+                        )
+                    }
+                ) {
+                    DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
                         Tab(
                             selected = true,
                             onClick = { },
@@ -397,26 +446,26 @@ fun WorkoutDetailScreen(
                             unselectedContentColor = Color.White.copy(alpha = .3f),
                         )
                     }
-                        DarkModeContainer(whiteOverlayAlpha = .2f) {
-                            Tab(
-                                selected = false,
-                                onClick = {
-                                    appViewModel.setScreenData(
-                                        ScreenData.WorkoutHistory(workout.id),
-                                        true
-                                    )
-                                },
-                                text = {
-                                    Text(
+                    DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                        Tab(
+                            selected = false,
+                            onClick = {
+                                appViewModel.setScreenData(
+                                    ScreenData.WorkoutHistory(workout.id),
+                                    true
+                                )
+                            },
+                            text = {
+                                Text(
 
-                                        text = "History"
-                                    )
-                                },
-                                selectedContentColor = Color.White.copy(alpha = .87f),
-                                unselectedContentColor = Color.White.copy(alpha = .3f),
-                            )
-                        }
+                                    text = "History"
+                                )
+                            },
+                            selectedContentColor = Color.White.copy(alpha = .87f),
+                            unselectedContentColor = Color.White.copy(alpha = .3f),
+                        )
                     }
+                }
 
                 GenericSelectableList(
                     it = PaddingValues(0.dp, 5.dp),
@@ -476,7 +525,7 @@ fun WorkoutDetailScreen(
                                     )
 
                                     is ExerciseGroup -> ExerciseGroupRenderer(
-                                         exerciseGroup = it
+                                        exerciseGroup = it
                                     )
                                 }
                             }

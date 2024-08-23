@@ -171,7 +171,7 @@ fun ExerciseHistoryScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.3f) {
+            DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
                 TopAppBar(
                     title = {
                         Text(
@@ -217,7 +217,7 @@ fun ExerciseHistoryScreen(
                     )
                 }
             ) {
-                DarkModeContainer(whiteOverlayAlpha =.2f) {
+                DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
                     Tab(
                         selected = false,
                         onClick = {
@@ -230,7 +230,6 @@ fun ExerciseHistoryScreen(
                         },
                         text = {
                             Text(
-                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
                                 text = "Overview"
                             )
                         },
@@ -238,13 +237,12 @@ fun ExerciseHistoryScreen(
                         unselectedContentColor = Color.White.copy(alpha = .3f),
                     )
                 }
-                DarkModeContainer(whiteOverlayAlpha =.3f) {
+                DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
                     Tab(
                         selected = true,
                         onClick = { },
                         text = {
                             Text(
-                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
                                 text = "History"
                             )
                         },
@@ -275,28 +273,23 @@ fun ExerciseHistoryScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (volumeEntryModel != null) {
-                        DarkModeContainer(Modifier.padding(10.dp),whiteOverlayAlpha = .1f) {
-                            StandardChart(
-                                cartesianChartModel = volumeEntryModel!!,
-                                title = "Cumulative Volume over time",
-                                markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                                bottomAxisValueFormatter = horizontalAxisValueFormatter
-                            )
-                        }
+                        StandardChart(
+                            cartesianChartModel = volumeEntryModel!!,
+                            title = "Cumulative Volume over time",
+                            markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter
+                        )
                     }
 
                     if (durationEntryModel != null) {
-                        DarkModeContainer(Modifier.padding(10.dp),whiteOverlayAlpha = .1f) {
-                            StandardChart(
-
-                                cartesianChartModel = durationEntryModel!!,
-                                markerPosition = durationMarkerTarget!!.first.toFloat(),
-                                title = "Cumulative Duration over time",
-                                markerTextFormatter = { formatTime(it.toInt()/1000) },
-                                startAxisValueFormatter = durationAxisValueFormatter,
-                                bottomAxisValueFormatter = horizontalAxisValueFormatter
-                            )
-                        }
+                        StandardChart(
+                            cartesianChartModel = durationEntryModel!!,
+                            markerPosition = durationMarkerTarget!!.first.toFloat(),
+                            title = "Cumulative Duration over time",
+                            markerTextFormatter = { formatTime(it.toInt()/1000) },
+                            startAxisValueFormatter = durationAxisValueFormatter,
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter
+                        )
                     }
                 }
             }

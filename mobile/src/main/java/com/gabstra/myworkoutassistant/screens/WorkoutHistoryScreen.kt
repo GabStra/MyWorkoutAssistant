@@ -1,6 +1,11 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -299,49 +304,43 @@ fun WorkoutHistoryScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (volumeEntryModel != null) {
-                DarkModeContainer(whiteOverlayAlpha = .1f) {
-                    StandardChart(
-                        isZoomEnabled = true,
-                        modifier = Modifier,
-                        cartesianChartModel = volumeEntryModel!!,
-                        title = "Cumulative Volume over time",
-                        markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                        bottomAxisValueFormatter = horizontalAxisValueFormatter
-                    )
-                }
+                StandardChart(
+                    isZoomEnabled = true,
+                    modifier = Modifier,
+                    cartesianChartModel = volumeEntryModel!!,
+                    title = "Cumulative Volume over time",
+                    markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                )
             }
             if (durationEntryModel != null) {
-                DarkModeContainer(whiteOverlayAlpha = .1f) {
-                    StandardChart(
-                        modifier = Modifier,
-                        cartesianChartModel = durationEntryModel!!,
-                        markerPosition = durationMarkerTarget!!.first.toFloat(),
-                        title = "Cumulative Duration over time",
-                        markerTextFormatter = { formatTime(it.toInt() / 1000) },
-                        startAxisValueFormatter = durationAxisValueFormatter,
-                        bottomAxisValueFormatter = horizontalAxisValueFormatter
-                    )
-                }
+                StandardChart(
+                    modifier = Modifier,
+                    cartesianChartModel = durationEntryModel!!,
+                    markerPosition = durationMarkerTarget!!.first.toFloat(),
+                    title = "Cumulative Duration over time",
+                    markerTextFormatter = { formatTime(it.toInt() / 1000) },
+                    startAxisValueFormatter = durationAxisValueFormatter,
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                )
             }
             if (workoutDurationEntryModel != null) {
-                DarkModeContainer(whiteOverlayAlpha = .1f) {
-                    StandardChart(
-                        isZoomEnabled = true,
-                        modifier = Modifier,
-                        cartesianChartModel = workoutDurationEntryModel!!,
-                        title = "Workout duration over time",
-                        markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
-                        markerTextFormatter = { formatTime(it.toInt()) },
-                        startAxisValueFormatter = workoutDurationAxisValueFormatter,
-                        bottomAxisValueFormatter = horizontalAxisValueFormatter
-                    )
-                }
+                StandardChart(
+                    isZoomEnabled = true,
+                    modifier = Modifier,
+                    cartesianChartModel = workoutDurationEntryModel!!,
+                    title = "Workout duration over time",
+                    markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
+                    markerTextFormatter = { formatTime(it.toInt()) },
+                    startAxisValueFormatter = workoutDurationAxisValueFormatter,
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                )
             }
         }
     }
 
     val workoutSelector = @Composable {
-        DarkModeContainer(Modifier.padding(10.dp), whiteOverlayAlpha = .1f) {
+        DarkModeContainer(whiteOverlayAlpha = .1f) {
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -354,7 +353,10 @@ fun WorkoutHistoryScreen(
                     },
                     enabled = selectedWorkoutHistory != workoutHistories.first()
                 ) {
-                    Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous")
+                    val isEnabled = selectedWorkoutHistory != workoutHistories.first()
+                    val color = Color.White.copy(alpha = if (isEnabled) .87f else .3f)
+
+                    Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous",tint = color)
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
@@ -375,26 +377,30 @@ fun WorkoutHistoryScreen(
                     },
                     enabled = selectedWorkoutHistory != workoutHistories.last()
                 ) {
-                    Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next")
+                    val isEnabled = selectedWorkoutHistory != workoutHistories.last()
+                    val color = Color.White.copy(alpha = if (isEnabled) .87f else .3f)
+
+                    Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next",tint = color)
                 }
             }
         }
     }
 
     val setsTabContent = @Composable {
-        Column(Modifier.padding(10.dp)) {
+        Column(
+            Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            workoutSelector()
+
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
-                DarkModeContainer(whiteOverlayAlpha = .1f){
-                    HeartRateChart(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(10.dp),
-                        cartesianChartModel = heartRateEntryModel!!,
-                        title = "Hear Rate during Workout",
-                        entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
-                        userAge = userAge,
-                    )
-                }
+                HeartRateChart(
+                    modifier = Modifier.fillMaxWidth(),
+                    cartesianChartModel = heartRateEntryModel!!,
+                    title = "Heart Rate during Workout",
+                    entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
+                    userAge = userAge,
+                )
 
                 ExpandableContainer(
                     modifier = Modifier.fillMaxWidth(),
@@ -506,11 +512,9 @@ fun WorkoutHistoryScreen(
                         }
                     })
             }
-        }
 
-        Column(Modifier.padding(horizontal = 5.dp)) {
             setHistoriesByExerciseId.keys.toList().forEach() { key ->
-                DarkModeContainer(Modifier.padding(5.dp), whiteOverlayAlpha = .1f) {
+                DarkModeContainer(whiteOverlayAlpha = .1f) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -533,52 +537,54 @@ fun WorkoutHistoryScreen(
     }
 
     val customBottomBar = @Composable {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp), // Fill the width of the container
-            horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
-            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-        ) {
-            Box(
+        DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
+            Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
-                    .then(
-                        if (selectedMode == 0) Modifier.background(Color.White) else Modifier
-                    ) // Apply background color only if enabled
-                    .clickable { selectedMode = 0 }
-                    .padding(8.dp),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(20.dp), // Fill the width of the container
+                horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
+                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ShowChart,
-                        contentDescription = "Graphs",
-                        tint = if (selectedMode != 0) Color.White else Color.Black
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text("Graphs", color = if (selectedMode != 0) Color.White else Color.Black)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                        .then(
+                            if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                        ) // Apply background color only if enabled
+                        .clickable { selectedMode = 0 }
+                        .padding(8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ShowChart,
+                            contentDescription = "Graphs",
+                            tint = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Graphs", color = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
+                    }
                 }
-            }
 
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
-                    .then(
-                        if (selectedMode == 1) Modifier.background(Color.White) else Modifier
-                    ) // Apply background color only if enabled
-                    .clickable { selectedMode = 1 }
-                    .padding(8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.List,
-                        contentDescription = "Sets",
-                        tint = if (selectedMode != 1) Color.White else Color.Black
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text("Sets", color = if (selectedMode != 1) Color.White else Color.Black)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                        .then(
+                            if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                        ) // Apply background color only if enabled
+                        .clickable { selectedMode = 1 }
+                        .padding(8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.List,
+                            contentDescription = "Sets",
+                            tint = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Sets", color = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
+                    }
                 }
             }
         }
@@ -586,7 +592,7 @@ fun WorkoutHistoryScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .3f) {
+            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
                 TopAppBar(
                     title = {
                         Text(
@@ -638,7 +644,7 @@ fun WorkoutHistoryScreen(
                     )
                 }
             ) {
-                DarkModeContainer(whiteOverlayAlpha = .2f) {
+                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                     Tab(
                         selected = false,
                         onClick = {
@@ -652,7 +658,7 @@ fun WorkoutHistoryScreen(
                         unselectedContentColor = Color.White.copy(alpha = .3f),
                     )
                 }
-                DarkModeContainer(whiteOverlayAlpha = .3f) {
+                DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
                     Tab(
                         selected = true,
                         onClick = { },
@@ -662,7 +668,6 @@ fun WorkoutHistoryScreen(
                     )
                 }
             }
-
 
             if (isLoading || workoutHistories.isEmpty()) {
                 DarkModeContainer(
@@ -680,14 +685,16 @@ fun WorkoutHistoryScreen(
                     )
                 }
             } else {
-                LazyColumn() {
-                    when (selectedMode) {
-                        0 -> item { graphsTabContent() }
-                        1 -> {
-                            item { workoutSelector() }
-                            item {
-                                setsTabContent()
-                            }
+                AnimatedContent(
+                    targetState = selectedMode,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                    }, label = ""
+                ) { updatedSelectedMode ->
+                    LazyColumn(Modifier.padding(end=10.dp)) {
+                        when (updatedSelectedMode) {
+                            0 -> item { graphsTabContent() }
+                            1 -> item { setsTabContent() }
                         }
                     }
                 }

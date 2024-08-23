@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonColors
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -148,6 +150,7 @@ fun WorkoutForm(
 
             // Submit button
             Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
                     if (workoutNameState.value.isBlank()) {
                         return@Button
@@ -179,6 +182,7 @@ fun WorkoutForm(
 
             // Cancel button
             Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
                     onCancel()
                 },

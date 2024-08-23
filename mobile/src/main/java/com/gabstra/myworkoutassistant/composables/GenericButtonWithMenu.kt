@@ -1,16 +1,15 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,8 +19,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.ScreenData
 
 data class MenuItem(
     val label: String,
@@ -29,21 +28,17 @@ data class MenuItem(
 )
 
 @Composable
-fun GenericFloatingActionButtonWithMenu(
+fun GenericButtonWithMenu(
     menuItems: List<MenuItem>,
-    fabIcon: @Composable () -> Unit
+    content: @Composable () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.End
-    ) {
-        // Dropdown Menu
+    Column{
         DropdownMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            modifier = Modifier.background(MaterialTheme.colorScheme.background)
         ) {
             menuItems.forEach { menuItem ->
                 DropdownMenuItem(
@@ -55,19 +50,11 @@ fun GenericFloatingActionButtonWithMenu(
                 )
             }
         }
-        Spacer(modifier = Modifier.height(10.dp))
-        // Floating Action Button
-        FloatingActionButton(
-            containerColor = MaterialTheme.colorScheme.primary,
+        Button(
+            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = { showMenu = !showMenu }
         ) {
-            fabIcon()
+            content()
         }
     }
-
-
-
-
-
-
 }

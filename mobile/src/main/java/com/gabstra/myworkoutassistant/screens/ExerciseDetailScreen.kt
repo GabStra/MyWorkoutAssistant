@@ -136,11 +136,12 @@ fun ExerciseDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.3f) {
+            DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
                 TopAppBar(
                     title = {
                         Text(
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             textAlign = TextAlign.Center,
                             text = exercise.name
@@ -173,64 +174,71 @@ fun ExerciseDetailScreen(
             }
         },
         bottomBar = {
-            if (selectedSets.isNotEmpty()) BottomAppBar(
-                containerColor = Color.DarkGray,
-                actions = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = {
-                            val newSets = sets.filter { set ->
-                                selectedSets.none { it === set }
-                            }
-                            sets = newSets
-                            val updatedExercise = exercise.copy(sets = newSets)
-
-                            appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
-                            selectedSets = emptyList()
-                            isSelectionModeActive = false
-                        }) {
-                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
-                        }
-                        IconButton(
-                            enabled = selectedSets.size == 1,
-                            onClick = {
-                                val selectedSet = selectedSets.first()
-                                val newSet = when (selectedSet) {
-                                    is WeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                    is BodyWeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                    is EnduranceSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                    is TimedDurationSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+            if (selectedSets.isNotEmpty()) {
+                BottomAppBar(
+                    actions = {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = {
+                                val newSets = sets.filter { set ->
+                                    selectedSets.none { it === set }
                                 }
-                                appViewModel.addSetToExercise(workout, exercise, newSet)
+                                sets = newSets
+                                val updatedExercise = exercise.copy(sets = newSets)
 
-                                sets = sets + newSet
+                                appViewModel.updateWorkoutComponent(
+                                    workout,
+                                    exercise,
+                                    updatedExercise
+                                )
                                 selectedSets = emptyList()
                                 isSelectionModeActive = false
                             }) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy"
-                            )
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete"
+                                )
+                            }
+                            IconButton(
+                                enabled = selectedSets.size == 1,
+                                onClick = {
+                                    val selectedSet = selectedSets.first()
+                                    val newSet = when (selectedSet) {
+                                        is WeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                        is BodyWeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                        is EnduranceSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                        is TimedDurationSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                    }
+                                    appViewModel.addSetToExercise(workout, exercise, newSet)
+
+                                    sets = sets + newSet
+                                    selectedSets = emptyList()
+                                    isSelectionModeActive = false
+                                }) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy"
+                                )
+                            }
                         }
                     }
-                }
-            )
-        },
-        floatingActionButton = {
-            if (selectedSets.isEmpty()) {
-                FloatingActionButton(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    onClick = {
-                        appViewModel.setScreenData(ScreenData.NewSet(workout.id, exercise.id));
+                )
+            }else{
+                BottomAppBar {
+                    IconButton(
+                        onClick = {
+                        appViewModel.setScreenData(
+                            ScreenData.NewSet(workout.id, exercise.id)
+                        )
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add"
+                        )
                     }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = null
-                    )
                 }
             }
         },
@@ -273,7 +281,7 @@ fun ExerciseDetailScreen(
                         )
                     }
                 ) {
-                    DarkModeContainer(whiteOverlayAlpha =.3f) {
+                    DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
                         Tab(
                             selected = true,
                             onClick = { },
@@ -282,7 +290,7 @@ fun ExerciseDetailScreen(
                             unselectedContentColor = Color.White.copy(alpha = .3f),
                         )
                     }
-                    DarkModeContainer(whiteOverlayAlpha =.2f) {
+                    DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
                         Tab(
                             selected = false,
                             onClick = {
@@ -314,7 +322,7 @@ fun ExerciseDetailScreen(
                     },
                     isDragDisabled = true,
                     itemContent = { it ->
-                        DarkModeContainer(whiteOverlayAlpha = .05f) {
+                        DarkModeContainer(whiteOverlayAlpha = .1f) {
                             SetRenderer(it)
                         }
                     }

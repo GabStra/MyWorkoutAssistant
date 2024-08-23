@@ -60,7 +60,8 @@ fun ExpandableContainer(
             subContent()
             if(openStatus){
                 DarkModeContainer (
-                    whiteOverlayAlpha = 0.05f
+                    whiteOverlayAlpha = 0.05f,
+                    isRounded = false
                 ) {
                     content()
                 }

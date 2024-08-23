@@ -75,7 +75,6 @@ fun <T> DetailScreen(
         },
         bottomBar = {
             if (selectedItems.isNotEmpty()) BottomAppBar(
-                containerColor = Color.DarkGray,
                 actions = {
                     if (onUpdateItems != null) {
                         IconButton(onClick = {

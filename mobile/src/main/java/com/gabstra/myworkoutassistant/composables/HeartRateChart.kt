@@ -68,7 +68,7 @@ fun HeartRateChart(
     title: String,
     userAge: Int,
     entriesCount: Int,
-    isZoomEnabled: Boolean = false,
+    isZoomEnabled: Boolean = true,
 ) {
 
     val indicatorFrontComponent =
@@ -96,92 +96,101 @@ fun HeartRateChart(
         formatTime((value / 2).toInt())
     }
 
-    Column(modifier){
-        Text(
-            modifier = Modifier
-                .fillMaxWidth(),
-            text = title,
-            textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = .87f),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        CartesianChartHost(
-            zoomState = rememberVicoZoomState(
-                initialZoom = Zoom.Content,
-                zoomEnabled = isZoomEnabled
-            ),
-            horizontalLayout =  HorizontalLayout.FullWidth(unscalableStartPaddingDp = 20f, unscalableEndPaddingDp = 20f),
-            scrollState = rememberVicoScrollState(scrollEnabled = false),
-            chart = rememberCartesianChart(
-                rememberLineCartesianLayer(
-                    axisValueOverrider = AxisValueOverrider.fixed(
-                        null,
-                        null,
-                        50f,
-                        200f
-                    )
-                ),
-                decorations = listOf(
-                    rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(50f, userAge).toFloat() },
-                        line = rememberLineComponent(
-                            color = Color.hsl(208f, 0.61f, 0.76f, .5f),
-                            thickness = 2.dp
+    DarkModeContainer(modifier,whiteOverlayAlpha = .1f) {
+        Column {
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                text = title,
+                textAlign = TextAlign.Center,
+                color = Color.White.copy(alpha = .87f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            DarkModeContainer(whiteOverlayAlpha = .05f,isRounded = false) {
+                CartesianChartHost(
+                    modifier = Modifier.padding(10.dp),
+                    zoomState = rememberVicoZoomState(
+                        initialZoom = Zoom.Content,
+                        zoomEnabled = isZoomEnabled
+                    ),
+                    horizontalLayout = HorizontalLayout.FullWidth(
+                        unscalableStartPaddingDp = 20f,
+                        unscalableEndPaddingDp = 20f
+                    ),
+                    scrollState = rememberVicoScrollState(scrollEnabled = false),
+                    chart = rememberCartesianChart(
+                        rememberLineCartesianLayer(
+                            axisValueOverrider = AxisValueOverrider.fixed(
+                                null,
+                                null,
+                                50f,
+                                200f
+                            )
                         ),
-                    ),
-                    rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(60f, userAge).toFloat() },
-                        line = rememberLineComponent(
-                            color = Color.hsl(200f, 0.66f, 0.49f, .5f),
-                            thickness = 2.dp
+                        decorations = listOf(
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(50f, userAge).toFloat() },
+                                line = rememberLineComponent(
+                                    color = Color.hsl(208f, 0.61f, 0.76f, .5f),
+                                    thickness = 2.dp
+                                ),
+                            ),
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(60f, userAge).toFloat() },
+                                line = rememberLineComponent(
+                                    color = Color.hsl(200f, 0.66f, 0.49f, .5f),
+                                    thickness = 2.dp
+                                ),
+                            ),
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(70f, userAge).toFloat() },
+                                line = rememberLineComponent(
+                                    color = Color.hsl(113f, 0.79f, 0.34f, .5f),
+                                    thickness = 2.dp
+                                ),
+                            ),
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(80f, userAge).toFloat() },
+                                line = rememberLineComponent(
+                                    color = Color.hsl(27f, 0.97f, 0.54f, .5f),
+                                    thickness = 2.dp
+                                ),
+                            ),
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(90f, userAge).toFloat() },
+                                line = rememberLineComponent(
+                                    color = Color.hsl(9f, 0.88f, 0.45f, .5f),
+                                    thickness = 2.dp
+                                ),
+                            ),
+                            rememberHorizontalLine(
+                                y = { getHeartRateFromPercentage(100f, userAge).toFloat() },
+                                line = rememberLineComponent(color = MaterialTheme.colorScheme.background, thickness = 2.dp),
+                            ),
                         ),
-                    ),
-                    rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(70f, userAge).toFloat() },
-                        line = rememberLineComponent(
-                            color = Color.hsl(113f, 0.79f, 0.34f, .5f),
-                            thickness = 2.dp
-                        ),
-                    ),
-                    rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(80f, userAge).toFloat() },
-                        line = rememberLineComponent(
-                            color = Color.hsl(27f, 0.97f, 0.54f, .5f),
-                            thickness = 2.dp
-                        ),
-                    ),
-                    rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(90f, userAge).toFloat() },
-                        line = rememberLineComponent(
-                            color = Color.hsl(9f, 0.88f, 0.45f, .5f),
-                            thickness = 2.dp
-                        ),
-                    ),
-                    rememberHorizontalLine(
-                        y = { getHeartRateFromPercentage(100f, userAge).toFloat() },
-                        line = rememberLineComponent(color = Color.Black, thickness = 2.dp),
-                    ),
-                ),
-                bottomAxis = rememberBottomAxis(
-                    guideline = null,
-                    label = rememberTextComponent(
-                        color = Color.White.copy(alpha = .6f),
-                        textSize = 12.sp,
-                        padding =  Dimensions.of(4.dp,4.dp),
-                        textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
-                    ),
-                    labelRotationDegrees = -90f,
-                    valueFormatter = bottomAxisValueFormatter,
-                    itemPlacer = remember {
-                        AxisItemPlacer.Horizontal.default(
-                            spacing = 600,
-                            offset = 600
+                        bottomAxis = rememberBottomAxis(
+                            guideline = null,
+                            label = rememberTextComponent(
+                                color = Color.White.copy(alpha = .6f),
+                                textSize = 12.sp,
+                                padding = Dimensions.of(4.dp, 4.dp),
+                                textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                            ),
+                            labelRotationDegrees = -90f,
+                            valueFormatter = bottomAxisValueFormatter,
+                            itemPlacer = remember {
+                                AxisItemPlacer.Horizontal.default(
+                                    spacing = 600,
+                                    offset = 600
+                                )
+                            }
                         )
-                    }
+                    ),
+                    model = cartesianChartModel,
+                    marker = marker,
                 )
-            ),
-            model = cartesianChartModel,
-            marker = marker,
-        )
+            }
+        }
     }
 }

@@ -1,5 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -28,6 +33,7 @@ import androidx.compose.material.icons.filled.Search
 
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -35,6 +41,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -391,7 +398,7 @@ fun WorkoutsScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .3f) {
+            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
                 TopAppBar(
                     title = {
                         Text(
@@ -423,86 +430,119 @@ fun WorkoutsScreen(
             }
         },
         bottomBar = {
-            if (selectedWorkouts.isNotEmpty()) BottomAppBar(
-                actions = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = {
-                            val newWorkouts = activeAndEnabledWorkouts.filter { workout ->
-                                selectedWorkouts.none { it === workout }
-                            }
+            if(selectedTabIndex != 1) return@Scaffold
 
-                            val newWorkoutsWithUpdatedOrder =
-                                newWorkouts.mapIndexed { index, workout -> workout.copy(order = index) }
+            if (selectedWorkouts.isNotEmpty()) {
+                DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+                    BottomAppBar(
+                        contentPadding = PaddingValues(0.dp),
+                        contentColor = MaterialTheme.colorScheme.background,
+                        actions = {
+                            Row(
+                                modifier = Modifier.background(MaterialTheme.colorScheme.background)
+                                    .fillMaxSize(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val newWorkouts =
+                                            activeAndEnabledWorkouts.filter { workout ->
+                                                selectedWorkouts.none { it === workout }
+                                            }
 
-                            appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
-                            scope.launch(Dispatchers.IO) {
-                                for (workout in selectedWorkouts) {
-                                    val workoutHistories =
-                                        workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
-                                    for (workoutHistory in workoutHistories) {
-                                        setHistoryDao.deleteByWorkoutHistoryId(workoutHistory.id)
+                                        val newWorkoutsWithUpdatedOrder =
+                                            newWorkouts.mapIndexed { index, workout ->
+                                                workout.copy(
+                                                    order = index
+                                                )
+                                            }
+
+                                        appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
+                                        scope.launch(Dispatchers.IO) {
+                                            for (workout in selectedWorkouts) {
+                                                val workoutHistories =
+                                                    workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
+                                                for (workoutHistory in workoutHistories) {
+                                                    setHistoryDao.deleteByWorkoutHistoryId(
+                                                        workoutHistory.id
+                                                    )
+                                                }
+                                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                            }
+                                            groupedWorkoutsHistories =
+                                                workoutHistoryDao.getAllWorkoutHistories()
+                                                    .groupBy { it.date }
+                                        }
+                                        selectedWorkouts = emptyList()
+                                        isSelectionModeActive = false
                                     }
-                                    workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        tint = Color.White.copy(alpha = .87f)
+                                    )
                                 }
-                                groupedWorkoutsHistories =
-                                    workoutHistoryDao.getAllWorkoutHistories().groupBy { it.date }
+                                Button(
+                                    modifier = Modifier.padding(5.dp),
+                                    colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                    onClick = {
+                                        for (workout in selectedWorkouts) {
+                                            appViewModel.updateWorkout(
+                                                workout,
+                                                workout.copy(enabled = true)
+                                            )
+                                        }
+                                        selectedWorkouts = emptyList()
+                                        isSelectionModeActive = false
+                                    }) {
+                                    Text("Enable")
+                                }
+                                Button(
+                                    colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                    modifier = Modifier.padding(5.dp),
+                                    onClick = {
+                                        for (workout in selectedWorkouts) {
+                                            appViewModel.updateWorkout(
+                                                workout,
+                                                workout.copy(enabled = false)
+                                            )
+                                        }
+                                        selectedWorkouts = emptyList()
+                                        isSelectionModeActive = false
+                                    }) {
+                                    Text("Disable")
+                                }
                             }
-                            selectedWorkouts = emptyList()
-                            isSelectionModeActive = false
-                        }) {
-                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
                         }
-                        Button(
-                            modifier = Modifier.padding(5.dp),
-                            onClick = {
-                                for (workout in selectedWorkouts) {
-                                    appViewModel.updateWorkout(
-                                        workout,
-                                        workout.copy(enabled = true)
-                                    )
-                                }
-                                selectedWorkouts = emptyList()
-                                isSelectionModeActive = false
-                            }) {
-                            Text("Enable")
-                        }
-                        Button(
-                            modifier = Modifier.padding(5.dp),
-                            onClick = {
-                                for (workout in selectedWorkouts) {
-                                    appViewModel.updateWorkout(
-                                        workout,
-                                        workout.copy(enabled = false)
-                                    )
-                                }
-                                selectedWorkouts = emptyList()
-                                isSelectionModeActive = false
-                            }) {
-                            Text("Disable")
-                        }
-                    }
-                }
-            )
-        },
-        floatingActionButton = {
-            if (selectedWorkouts.isEmpty() && selectedTabIndex == 1)
-                FloatingActionButton(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = Color.Black,
-                    onClick = {
-                        appViewModel.setScreenData(ScreenData.NewWorkout());
-                    }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = null,
                     )
                 }
-        }
+            }else{
+                DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+                    BottomAppBar(
+                        contentPadding = PaddingValues(0.dp),
+                        actions = {
+                            Row(
+                                modifier = Modifier.background(MaterialTheme.colorScheme.background)
+                                    .fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                            ) {
+                                Button(
+                                    colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                    onClick = {
+                                        appViewModel.setScreenData(ScreenData.NewWorkout());
+                                    },
+                                ) {
+                                    Text("New Workout")
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+        },
     ) {
         Column(
             modifier = Modifier
@@ -523,7 +563,7 @@ fun WorkoutsScreen(
             ) {
                 tabTitles.forEachIndexed { index, title ->
                     val isSelected = index == selectedTabIndex
-                    DarkModeContainer(whiteOverlayAlpha = if (isSelected) .3f else .2f) {
+                    DarkModeContainer(whiteOverlayAlpha = if (isSelected) .2f else .1f, isRounded = false) {
                         Tab(
                             selected = isSelected,
                             onClick = { appViewModel.setHomeTab(index) },
@@ -535,189 +575,202 @@ fun WorkoutsScreen(
                 }
             }
 
-            when (selectedTabIndex) {
-                0 -> {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(15.dp),
-                    ) {
-                        item {
-                            WorkoutsCalendar(
-                                selectedDate = selectedDate,
-                                onDayClicked = { calendarState, day ->
-                                    onDayClicked(calendarState, day)
-                                },
-                                shouldHighlight = { day -> highlightDay(day) }
-                            )
-                        }
-                        item {
-                            if (hasObjectives) {
-                                val currentDate = selectedDate.date ?: LocalDate.now()
-
-                                val currentMonth =
-                                    currentDate.format(DateTimeFormatter.ofPattern("MMM"))
-
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = "Weekly progress (${
-                                            getStartOfWeek(
-                                                currentDate
-                                            ).dayOfMonth
-                                        } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        textAlign = TextAlign.Center,
-                                        color = Color.White.copy(alpha = .87f)
-                                    )
-                                    ExpandableContainer(
-                                        isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
-                                        title = { modifier ->
-                                            Row(
-                                                modifier = modifier
-                                                    .fillMaxWidth()
-                                                    .padding(10.dp)
-                                                ,
-                                                horizontalArrangement = Arrangement.Center,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = "${(objectiveProgress * 100).toInt()}%",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    textAlign = TextAlign.Center,
-                                                    color = Color.White.copy(alpha = .87f),
-                                                )
-                                                Spacer(modifier = Modifier.width(10.dp))
-                                                ObjectiveProgressBar(
-                                                    Modifier.weight(1f),
-                                                    progress = objectiveProgress.toFloat()
-                                                )
-                                            }
-                                        }, content = {
-                                            Column{
-                                                weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
-                                                    Row(
-                                                        modifier = Modifier.padding(
-                                                            vertical = 5.dp,
-                                                            horizontal = 10.dp
-                                                        ),
-                                                        horizontalArrangement = Arrangement.SpaceBetween
-                                                    ) {
-                                                        Text(
-                                                            text = workout.name,
-                                                            modifier = Modifier.weight(1f),
-                                                            color = Color.White.copy(alpha = .6f),
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                        )
-                                                        Text(
-                                                            text = "${pair.first}/${pair.second}",
-                                                            color = Color.White.copy(alpha = .6f),
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        })
-                                }
-
+            AnimatedContent(
+                targetState = selectedTabIndex,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                }, label = ""
+            ){ updatedSelectedTab ->
+                when (updatedSelectedTab) {
+                    0 -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(15.dp),
+                        ) {
+                            item {
+                                WorkoutsCalendar(
+                                    selectedDate = selectedDate,
+                                    onDayClicked = { calendarState, day ->
+                                        onDayClicked(calendarState, day)
+                                    },
+                                    shouldHighlight = { day -> highlightDay(day) }
+                                )
                             }
-                        }
-                        item {
-                            Column(Modifier.padding(vertical = 10.dp)){
-                                if (selectedCalendarWorkouts.isNullOrEmpty()) {
-                                    Text(
-                                        text = "No workouts on this day",
+                            item {
+                                if (hasObjectives) {
+                                    val currentDate = selectedDate.date
+                                    val currentMonth =
+                                        currentDate.format(DateTimeFormatter.ofPattern("MMM"))
+
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(5.dp),
-                                        textAlign = TextAlign.Center,
-                                        color = Color.White.copy(alpha = .87f),
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                } else {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            .padding(vertical = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
-                                        selectedCalendarWorkouts!!.forEachIndexed { index, (workoutHistory, workout) ->
-                                            DarkModeContainer(whiteOverlayAlpha = .1f) {
-                                                WorkoutTitle(
-                                                    Modifier
-                                                        .padding(15.dp)
-                                                        .clickable {
-                                                            appViewModel.setScreenData(
-                                                                ScreenData.WorkoutHistory(
-                                                                    workout.id,
-                                                                    workoutHistory.id
-                                                                )
+                                        Text(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            text = "Weekly progress (${
+                                                getStartOfWeek(
+                                                    currentDate
+                                                ).dayOfMonth
+                                            } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            textAlign = TextAlign.Center,
+                                            color = Color.White.copy(alpha = .87f)
+                                        )
+                                        ExpandableContainer(
+                                            isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
+                                            title = { modifier ->
+                                                Row(
+                                                    modifier = modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp)
+                                                    ,
+                                                    horizontalArrangement = Arrangement.Center,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "${(objectiveProgress * 100).toInt()}%",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        textAlign = TextAlign.Center,
+                                                        color = Color.White.copy(alpha = .87f),
+                                                    )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    ObjectiveProgressBar(
+                                                        Modifier.weight(1f),
+                                                        progress = objectiveProgress.toFloat()
+                                                    )
+                                                }
+                                            }, content = {
+                                                Column{
+                                                    weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
+                                                        Row(
+                                                            modifier = Modifier.padding(
+                                                                vertical = 5.dp,
+                                                                horizontal = 10.dp
+                                                            ),
+                                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                        ) {
+                                                            Text(
+                                                                text = workout.name,
+                                                                modifier = Modifier.weight(1f),
+                                                                color = Color.White.copy(alpha = .6f),
+                                                                style = MaterialTheme.typography.bodyMedium,
                                                             )
-                                                        },
-                                                    workout,
-                                                    workoutHistory.isDone,
-                                                    style = MaterialTheme.typography.bodyLarge
-                                                )
+                                                            Text(
+                                                                text = "${pair.first}/${pair.second}",
+                                                                color = Color.White.copy(alpha = .6f),
+                                                                style = MaterialTheme.typography.bodyMedium,
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            })
+                                    }
+
+                                }
+                            }
+                            item {
+                                Column(Modifier.padding(vertical = 10.dp)){
+                                    if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                                        Text(
+                                            text = "No workouts on this day",
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(5.dp),
+                                            textAlign = TextAlign.Center,
+                                            color = Color.White.copy(alpha = .87f),
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                    } else {
+                                        Column(
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Text(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                text = "Workout Histories",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                textAlign = TextAlign.Center,
+                                                color = Color.White.copy(alpha = .87f)
+                                            )
+                                            selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
+                                                DarkModeContainer(whiteOverlayAlpha = .1f) {
+                                                    WorkoutTitle(
+                                                        Modifier
+                                                            .padding(15.dp)
+                                                            .clickable {
+                                                                appViewModel.setScreenData(
+                                                                    ScreenData.WorkoutHistory(
+                                                                        workout.id,
+                                                                        workoutHistory.id
+                                                                    )
+                                                                )
+                                                            },
+                                                        workout,
+                                                        workoutHistory.isDone,
+                                                        style = MaterialTheme.typography.bodyLarge
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                 }
+
+
                             }
-
-
                         }
                     }
-                }
 
-                1 -> {
-                    if (activeAndEnabledWorkouts.isEmpty()) {
-                        Text(
-                            text = "Add a new workout",
-                            textAlign = TextAlign.Center,
-                            color = Color.White.copy(alpha = .87f),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(15.dp),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    } else {
-                        GenericSelectableList(
-                            PaddingValues(5.dp, 10.dp),
-                            items = activeWorkouts,
-                            selectedItems = selectedWorkouts,
-                            isSelectionModeActive,
-                            onItemClick = {
-                                if (isCardExpanded) return@GenericSelectableList
-                                appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
-                            },
-                            onEnableSelection = { isSelectionModeActive = true },
-                            onDisableSelection = { isSelectionModeActive = false },
-                            onSelectionChange = { newSelection ->
-                                selectedWorkouts = newSelection
-                            },
-                            onOrderChange = { newWorkouts ->
-                                val workoutsWithOrderUpdated =
-                                    newWorkouts.mapIndexed { index, workout ->
-                                        workout.copy(
-                                            order = index
+                    1 -> {
+                        if (activeAndEnabledWorkouts.isEmpty()) {
+                            Text(
+                                text = "Add a new workout",
+                                textAlign = TextAlign.Center,
+                                color = Color.White.copy(alpha = .87f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(15.dp),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        } else {
+                            GenericSelectableList(
+                                PaddingValues(5.dp, 10.dp),
+                                items = activeWorkouts,
+                                selectedItems = selectedWorkouts,
+                                isSelectionModeActive,
+                                onItemClick = {
+                                    if (isCardExpanded) return@GenericSelectableList
+                                    appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
+                                },
+                                onEnableSelection = { isSelectionModeActive = true },
+                                onDisableSelection = { isSelectionModeActive = false },
+                                onSelectionChange = { newSelection ->
+                                    selectedWorkouts = newSelection
+                                },
+                                onOrderChange = { newWorkouts ->
+                                    val workoutsWithOrderUpdated =
+                                        newWorkouts.mapIndexed { index, workout ->
+                                            workout.copy(
+                                                order = index
+                                            )
+                                        }
+                                    appViewModel.updateWorkouts(workoutsWithOrderUpdated)
+                                },
+                                itemContent = { it ->
+                                    DarkModeContainer(whiteOverlayAlpha = .1f) {
+                                        WorkoutTitle(
+                                            Modifier.padding(15.dp),
+                                            it,
+                                            true,
+                                            enabled = it.enabled
                                         )
                                     }
-                                appViewModel.updateWorkouts(workoutsWithOrderUpdated)
-                            },
-                            itemContent = { it ->
-                                DarkModeContainer(whiteOverlayAlpha = .1f) {
-                                    WorkoutTitle(
-                                        Modifier.padding(15.dp),
-                                        it,
-                                        true,
-                                        enabled = it.enabled
-                                    )
-                                }
-                            },
-                            isDragDisabled = true
-                        )
+                                },
+                                isDragDisabled = true
+                            )
+                        }
                     }
                 }
             }

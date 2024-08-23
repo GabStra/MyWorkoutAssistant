@@ -170,6 +170,7 @@ fun ExerciseForm(
 
         // Submit button
         Button(
+            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
                 if (nameState.value.isBlank()) {
                     return@Button
@@ -200,6 +201,7 @@ fun ExerciseForm(
 
         // Cancel button
         Button(
+            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
                 // Call the callback to cancel the insertion/update
                 onCancel()
