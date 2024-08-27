@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -74,8 +75,9 @@ fun ExerciseGroupDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
+            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
                         Text(
                             modifier = Modifier.fillMaxWidth()
@@ -104,19 +106,17 @@ fun ExerciseGroupDetailScreen(
                             Icon(imageVector = Icons.Default.Settings, contentDescription = "Back")
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                    )
                 )
             }
         },
         bottomBar = {
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false){
             if (selectedWorkoutComponents.isNotEmpty()) {
                 BottomAppBar(
-                    containerColor = Color.DarkGray,
+                    containerColor = Color.Transparent,
                     actions = {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxSize(),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -273,34 +273,43 @@ fun ExerciseGroupDetailScreen(
                         }
                     }
                 )
-            }else{
+            }else {
                 BottomAppBar(
-                    containerColor = Color.DarkGray,
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
                     actions = {
-                        GenericButtonWithMenu(
-                            menuItems = listOf(
-                                MenuItem("Add Exercise") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewExercise(
-                                            workout.id,
-                                            exerciseGroup.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                        ) {
+                            GenericButtonWithMenu(
+                                menuItems = listOf(
+                                    MenuItem("Add Exercise") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewExercise(
+                                                workout.id,
+                                                exerciseGroup.id
+                                            )
                                         )
-                                    )
-                                },
-                                MenuItem("Add Exercise Group") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewExerciseGroup(
-                                            workout.id,
-                                            exerciseGroup.id
+                                    },
+                                    MenuItem("Add Exercise Group") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewExerciseGroup(
+                                                workout.id,
+                                                exerciseGroup.id
+                                            )
                                         )
-                                    )
-                                }
+                                    }
 
-                            ),
-                            content = { Icon(Icons.Filled.Add, contentDescription = "Add") }
-                        )
+                                ),
+                                content = { Icon(Icons.Filled.Add, contentDescription = "Add") }
+                            )
+                        }
                     }
                 )
+            }
             }
         },
     ) { it ->

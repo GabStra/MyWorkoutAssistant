@@ -53,7 +53,6 @@ fun <T> SelectableList(
             ) {
                 if (selectionMode) {
                     Checkbox(
-                        colors= CheckboxDefaults.colors(),
                         checked = selection.any { it === item },
                         onCheckedChange = { checked ->
                             val newSelection =

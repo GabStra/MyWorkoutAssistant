@@ -41,6 +41,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -158,10 +159,10 @@ fun WorkoutDetailScreen(
     val editModeBottomBar = @Composable {
         BottomAppBar(
             contentPadding = PaddingValues(0.dp),
+            containerColor = Color.Transparent,
             actions = {
                 Row(
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background)
-                        .fillMaxSize(),
+                    modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -308,8 +309,9 @@ fun WorkoutDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
                         Text(
                             modifier = Modifier
@@ -350,16 +352,16 @@ fun WorkoutDetailScreen(
             }
         },
         bottomBar = {
-            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                 if (selectedWorkoutComponents.isNotEmpty()) {
                     editModeBottomBar()
                 } else {
                     BottomAppBar(
                         contentPadding = PaddingValues(0.dp),
+                        containerColor = Color.Transparent,
                         actions = {
                             Row(
                                 modifier = Modifier
-                                    .background(MaterialTheme.colorScheme.background)
                                     .fillMaxSize(),
                                 horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
                                 verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
@@ -409,7 +411,7 @@ fun WorkoutDetailScreen(
                     Text(
                         text = "Add a new workout component",
                         textAlign = TextAlign.Center,
-                        color = Color.White,
+                        color = Color.White.copy(alpha = .87f),
                         modifier = Modifier
                             .padding(15.dp)
                     )
@@ -433,7 +435,7 @@ fun WorkoutDetailScreen(
                         )
                     }
                 ) {
-                    DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+                    DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                         Tab(
                             selected = true,
                             onClick = { },
@@ -446,7 +448,7 @@ fun WorkoutDetailScreen(
                             unselectedContentColor = Color.White.copy(alpha = .3f),
                         )
                     }
-                    DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                    DarkModeContainer(whiteOverlayAlpha = .05f, isRounded = false) {
                         Tab(
                             selected = false,
                             onClick = {

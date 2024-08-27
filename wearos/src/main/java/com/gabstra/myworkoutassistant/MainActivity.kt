@@ -177,6 +177,8 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         appViewModel.initWorkoutHistoryDao(localContext)
         appViewModel.initWorkoutRecordDao(localContext)
 
+
+
         onNavControllerAvailable(navController)
 
         val hrViewModel: SensorDataViewModel =  viewModel(

@@ -93,7 +93,6 @@ fun <T> GenericSelectableList(
         }
     }
 
-
     // Conditional modifier for dragging
     fun Modifier.conditionalPointerInput(item: T,index:Int,offsetY: MutableFloatState): Modifier =
         if (isSelectionModeActive || isDragDisabled) {

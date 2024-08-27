@@ -416,7 +416,7 @@ fun WorkoutHistoryScreen(
                             Text(
                                 text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
                                 Modifier.weight(1f),
-                                color = Color.White.copy(alpha = .6f),
+                                color = Color.White.copy(alpha = .87f),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             Column {
@@ -427,12 +427,12 @@ fun WorkoutHistoryScreen(
                                     Text(
                                         text = "Min:",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .6f),
+                                        color = Color.White.copy(alpha = .87f),
                                     )
                                     Text(
                                         text = "$minHeartRate bpm",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .6f),
+                                        color = Color.White.copy(alpha = .87f),
                                         textAlign = TextAlign.End
                                     )
                                 }
@@ -443,12 +443,12 @@ fun WorkoutHistoryScreen(
                                     Text(
                                         text = "Max:",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .6f),
+                                        color = Color.White.copy(alpha = .87f),
                                     )
                                     Text(
                                         text = "$maxHeartRate bpm",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .6f),
+                                        color = Color.White.copy(alpha = .87f),
                                         textAlign = TextAlign.End
                                     )
                                 }
@@ -606,8 +606,9 @@ fun WorkoutHistoryScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
                         Text(
                             modifier = Modifier
@@ -658,7 +659,7 @@ fun WorkoutHistoryScreen(
                     )
                 }
             ) {
-                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                DarkModeContainer(whiteOverlayAlpha = .05f, isRounded = false) {
                     Tab(
                         selected = false,
                         onClick = {
@@ -672,7 +673,7 @@ fun WorkoutHistoryScreen(
                         unselectedContentColor = Color.White.copy(alpha = .3f),
                     )
                 }
-                DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                     Tab(
                         selected = true,
                         onClick = { },

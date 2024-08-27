@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -91,6 +93,7 @@ fun SetRenderer(set: Set) {
 
             is BodyWeightSet -> {
                 Text(
+                    modifier = Modifier.weight(1f),
                     text = "Reps: ${set.reps}",
                     color = Color.White.copy(alpha = .87f),
                     style = MaterialTheme.typography.bodyMedium,
@@ -136,8 +139,9 @@ fun ExerciseDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
+            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
                         Text(
                             modifier = Modifier
@@ -174,11 +178,16 @@ fun ExerciseDetailScreen(
             }
         },
         bottomBar = {
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false){
             if (selectedSets.isNotEmpty()) {
                 BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
                     actions = {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.background)
+                                .fillMaxSize(),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -227,19 +236,28 @@ fun ExerciseDetailScreen(
                     }
                 )
             }else{
-                BottomAppBar {
-                    IconButton(
-                        onClick = {
-                        appViewModel.setScreenData(
-                            ScreenData.NewSet(workout.id, exercise.id)
-                        )
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add"
-                        )
+                BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                    ){
+                        Button(
+                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                            onClick = {
+                                appViewModel.setScreenData(
+                                    ScreenData.NewSet(workout.id, exercise.id)
+                                )
+                            },
+                        ) {
+                            Text("Add")
+                        }
                     }
                 }
+            }
             }
         },
     ) { it ->
@@ -281,7 +299,7 @@ fun ExerciseDetailScreen(
                         )
                     }
                 ) {
-                    DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
+                    DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
                         Tab(
                             selected = true,
                             onClick = { },
@@ -290,7 +308,7 @@ fun ExerciseDetailScreen(
                             unselectedContentColor = Color.White.copy(alpha = .3f),
                         )
                     }
-                    DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
+                    DarkModeContainer(whiteOverlayAlpha =.05f, isRounded = false) {
                         Tab(
                             selected = false,
                             onClick = {

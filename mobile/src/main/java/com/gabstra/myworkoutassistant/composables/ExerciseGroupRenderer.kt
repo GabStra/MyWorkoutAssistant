@@ -25,7 +25,8 @@ fun ExerciseGroupRenderer(exerciseGroup: ExerciseGroup, modifier: Modifier = Mod
                 is ExerciseGroup -> {
                     Text(
                         modifier = Modifier.weight(1f),
-                        text = workoutComponent.name
+                        text = workoutComponent.name,
+                        color = Color.White.copy(alpha = .87f),
                     )
                 }
             }

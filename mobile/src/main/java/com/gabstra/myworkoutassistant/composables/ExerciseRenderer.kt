@@ -36,7 +36,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             text = "x${set.reps} @ ${set.weight} kg",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f),
+                            color = Color.White.copy(alpha = .87f),
                         )
                     }
 
@@ -44,7 +44,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             text = "x${set.reps}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f),
+                            color = Color.White.copy(alpha = .87f),
                         )
                     }
 
@@ -52,7 +52,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             text=formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f),
+                            color = Color.White.copy(alpha = .87f),
                         )
                     }
 
@@ -60,7 +60,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f),
+                            color = Color.White.copy(alpha = .87f),
                         )
                     }
                 }

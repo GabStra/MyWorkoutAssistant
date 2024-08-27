@@ -172,7 +172,7 @@ fun HeartRateChart(
                         bottomAxis = rememberBottomAxis(
                             guideline = null,
                             label = rememberTextComponent(
-                                color = Color.White.copy(alpha = .6f),
+                                color = Color.White.copy(alpha = .87f),
                                 textSize = 12.sp,
                                 padding = Dimensions.of(4.dp, 4.dp),
                                 textAlignment = Layout.Alignment.ALIGN_OPPOSITE,

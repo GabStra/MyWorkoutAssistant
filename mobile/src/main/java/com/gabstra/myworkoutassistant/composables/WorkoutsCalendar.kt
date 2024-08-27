@@ -94,7 +94,7 @@ fun MonthHeader(
             Text(
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = .6f),
+                color = Color.White.copy(alpha = .87f),
                 text = dayOfWeek.displayText(),
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -128,7 +128,7 @@ private fun Day(
 
                 .padding(3.dp)
         ) {
-            val textColor =  if(shouldHighlight) Color.Black else Color.White.copy(alpha = .6f)
+            val textColor =  if(shouldHighlight) Color.Black else Color.White.copy(alpha = .87f)
 
             val shape = if(shouldHighlight) CircleShape else null
 

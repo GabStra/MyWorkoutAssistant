@@ -50,6 +50,8 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarColors
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -398,8 +400,9 @@ fun WorkoutsScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
                         Text(
                             modifier = Modifier
@@ -433,14 +436,13 @@ fun WorkoutsScreen(
             if(selectedTabIndex != 1) return@Scaffold
 
             if (selectedWorkouts.isNotEmpty()) {
-                DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
+                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                     BottomAppBar(
                         contentPadding = PaddingValues(0.dp),
-                        contentColor = MaterialTheme.colorScheme.background,
+                        containerColor = Color.Transparent,
                         actions = {
                             Row(
-                                modifier = Modifier.background(MaterialTheme.colorScheme.background)
-                                    .fillMaxSize(),
+                                modifier = Modifier.fillMaxSize(),
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -462,7 +464,9 @@ fun WorkoutsScreen(
                                         scope.launch(Dispatchers.IO) {
                                             for (workout in selectedWorkouts) {
                                                 val workoutHistories =
-                                                    workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
+                                                    workoutHistoryDao.getWorkoutsByWorkoutId(
+                                                        workout.id
+                                                    )
                                                 for (workoutHistory in workoutHistories) {
                                                     setHistoryDao.deleteByWorkoutHistoryId(
                                                         workoutHistory.id
@@ -514,21 +518,24 @@ fun WorkoutsScreen(
                                     }) {
                                     Text("Disable")
                                 }
+
                             }
                         }
                     )
                 }
+
             }else{
-                DarkModeContainer(whiteOverlayAlpha = .2f, isRounded = false) {
-                    BottomAppBar(
-                        contentPadding = PaddingValues(0.dp),
-                        actions = {
-                            Row(
-                                modifier = Modifier.background(MaterialTheme.colorScheme.background)
-                                    .fillMaxSize(),
-                                horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                            ) {
+                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
+                    actions = {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                        ) {
+
                                 Button(
                                     colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                                     onClick = {
@@ -538,8 +545,8 @@ fun WorkoutsScreen(
                                     Text("New Workout")
                                 }
                             }
-                        }
-                    )
+                    }
+                )
                 }
             }
         },
@@ -563,7 +570,7 @@ fun WorkoutsScreen(
             ) {
                 tabTitles.forEachIndexed { index, title ->
                     val isSelected = index == selectedTabIndex
-                    DarkModeContainer(whiteOverlayAlpha = if (isSelected) .2f else .1f, isRounded = false) {
+                    DarkModeContainer(whiteOverlayAlpha = if (isSelected) .1f else .05f, isRounded = false) {
                         Tab(
                             selected = isSelected,
                             onClick = { appViewModel.setHomeTab(index) },
