@@ -30,6 +30,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         for (set in setHistories) {
             Row {

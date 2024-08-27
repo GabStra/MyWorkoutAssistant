@@ -28,6 +28,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         for (set in exercise.sets) {
             Row{
