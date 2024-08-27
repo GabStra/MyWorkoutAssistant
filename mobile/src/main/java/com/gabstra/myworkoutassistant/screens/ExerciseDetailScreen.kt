@@ -87,6 +87,7 @@ fun SetRenderer(set: Set) {
                         text = "Weight: ${set.weight}kg",
                         color = Color.White.copy(alpha = .87f),
                         style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.End
                     )
                 }
             }
@@ -186,7 +187,6 @@ fun ExerciseDetailScreen(
                     actions = {
                         Row(
                             modifier = Modifier
-                                .background(MaterialTheme.colorScheme.background)
                                 .fillMaxSize(),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
@@ -238,6 +238,7 @@ fun ExerciseDetailScreen(
             }else{
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
                 ) {
                     Row(
                         modifier = Modifier
