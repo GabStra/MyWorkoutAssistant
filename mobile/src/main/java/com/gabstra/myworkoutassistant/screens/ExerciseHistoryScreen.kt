@@ -171,8 +171,9 @@ fun ExerciseHistoryScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
+            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
                         Text(
                             modifier = Modifier.fillMaxWidth()
@@ -217,7 +218,7 @@ fun ExerciseHistoryScreen(
                     )
                 }
             ) {
-                DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
+                DarkModeContainer(whiteOverlayAlpha =.05f, isRounded = false) {
                     Tab(
                         selected = false,
                         onClick = {
@@ -237,7 +238,7 @@ fun ExerciseHistoryScreen(
                         unselectedContentColor = Color.White.copy(alpha = .3f),
                     )
                 }
-                DarkModeContainer(whiteOverlayAlpha =.2f, isRounded = false) {
+                DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
                     Tab(
                         selected = true,
                         onClick = { },
