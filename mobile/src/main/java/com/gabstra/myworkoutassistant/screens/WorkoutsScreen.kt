@@ -663,12 +663,12 @@ fun WorkoutsScreen(
                                                             Text(
                                                                 text = workout.name,
                                                                 modifier = Modifier.weight(1f),
-                                                                color = Color.White.copy(alpha = .6f),
+                                                                color = Color.White.copy(alpha = .87f),
                                                                 style = MaterialTheme.typography.bodyMedium,
                                                             )
                                                             Text(
                                                                 text = "${pair.first}/${pair.second}",
-                                                                color = Color.White.copy(alpha = .6f),
+                                                                color = Color.White.copy(alpha = .87f),
                                                                 style = MaterialTheme.typography.bodyMedium,
                                                             )
                                                         }
