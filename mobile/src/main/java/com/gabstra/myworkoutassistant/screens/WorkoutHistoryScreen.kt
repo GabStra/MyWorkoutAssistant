@@ -43,6 +43,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -154,9 +155,17 @@ fun WorkoutHistoryScreen(
 
     var selectedMode by remember { mutableIntStateOf(0) } // 0 for Graphs, 1 for Sets
 
+    val workouts by appViewModel.workoutsFlow.collectAsState()
+    val selectedWorkout = workouts.find { it.id == workout.id }!!
+
+    val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
+
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
-            workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
+
+            workoutHistories = workoutVersions.flatMap { workoutVersion ->
+                workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
+            }.sortedBy { it.date }
 
             if (workoutHistoryId == null) {
                 workoutHistories = workoutHistories.filter { it.isDone }
@@ -362,9 +371,7 @@ fun WorkoutHistoryScreen(
                 Text(
                     modifier = Modifier
                         .weight(1f),
-                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(
-                        timeFormatter
-                    ),
+                    text = selectedWorkoutHistory!!.date.format(dateFormatter),
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.width(10.dp))

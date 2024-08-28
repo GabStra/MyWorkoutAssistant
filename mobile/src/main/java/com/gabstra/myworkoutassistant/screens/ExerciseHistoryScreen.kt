@@ -28,6 +28,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -99,9 +100,16 @@ fun ExerciseHistoryScreen(
         currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
     }
 
+    val workouts by appViewModel.workoutsFlow.collectAsState()
+    val selectedWorkout = workouts.find { it.id == workout.id }!!
+
+    val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
+
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            workoutHistories = workoutHistoryDao.getWorkoutsByWorkoutIdByDateAsc(workout.id)
+            workoutHistories = workoutVersions.flatMap { workoutVersion ->
+                workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
+            }.filter { it.isDone }.sortedBy { it.date }
 
             if (workoutHistories.isEmpty()) {
                 delay(1000)
