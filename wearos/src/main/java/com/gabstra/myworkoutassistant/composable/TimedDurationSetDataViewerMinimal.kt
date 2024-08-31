@@ -21,6 +21,5 @@ fun TimedDurationSetDataViewerMinimal(timedDurationSetData: TimedDurationSetData
     Text(
         text =  FormatTime(timedDurationSetData.startTimer / 1000),
         style = MaterialTheme.typography.caption2,
-        color = Color.LightGray
     )
 }

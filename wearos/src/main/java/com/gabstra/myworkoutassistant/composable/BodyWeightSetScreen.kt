@@ -39,7 +39,15 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, forceStopEditMode: Boolean, onEditModeEnabled : () -> Unit, onEditModeDisabled: () -> Unit) {
+fun BodyWeightSetScreen(
+    viewModel: AppViewModel,
+    modifier: Modifier,
+    state: WorkoutState.Set,
+    forceStopEditMode: Boolean,
+    onEditModeEnabled : () -> Unit,
+    onEditModeDisabled: () -> Unit,
+    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null
+) {
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as BodyWeightSetData
@@ -144,6 +152,19 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
         }
     }
 
+    @Composable
+    fun SetScreen(customModifier: Modifier) {
+        Row(
+            modifier = customModifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            repsRow()
+            Spacer(modifier = Modifier.width(5.dp))
+            TrendIcon(currentSet.actualReps, previousSet.actualReps)
+        }
+    }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -176,14 +197,17 @@ fun BodyWeightSetScreen(viewModel: AppViewModel, modifier: Modifier, state: Work
             )
 
         }else{
-            Row(
-                modifier = Modifier.wrapContentSize(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                repsRow()
-                Spacer(modifier = Modifier.width(5.dp))
-                TrendIcon(currentSet.actualReps, previousSet.actualReps)
+            if(extraInfo != null){
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ){
+                    SetScreen(customModifier = Modifier.weight(1f))
+                    extraInfo(state)
+                }
+            }else{
+                SetScreen(customModifier = Modifier.fillMaxSize())
             }
         }
     }

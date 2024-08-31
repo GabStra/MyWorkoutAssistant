@@ -90,6 +90,7 @@ class DataLayerListenerService : WearableListenerService() {
                             if (isLastChunk) {
                                 val backupData = combineChunks(backupChunks)
                                 val jsonBackup = decompressToString(backupData)
+
                                 val appBackup = fromJSONtoAppBackup(jsonBackup)
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 

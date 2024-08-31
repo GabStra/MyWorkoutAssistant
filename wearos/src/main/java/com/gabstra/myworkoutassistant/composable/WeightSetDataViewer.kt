@@ -25,8 +25,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 @Composable
 fun WeightSetDataViewer(weightSetData: WeightSetData){
     Text(
+
         text = "x${weightSetData.actualReps} ${weightSetData.actualWeight}kg",
         style = MaterialTheme.typography.caption2,
-        color = Color.LightGray
     )
 }

@@ -51,6 +51,7 @@ fun ExerciseForm(
     val notesState = remember { mutableStateOf(exercise?.notes ?: "") }
     val restTimeState = remember { mutableStateOf(exercise?.restTimeInSec?.toString() ?: "0") }
     val skipWorkoutRest = remember { mutableStateOf(exercise?.skipWorkoutRest ?: false) }
+    val doNotStoreHistory = remember { mutableStateOf(exercise?.doNotStoreHistory ?: false) }
 
     val exerciseTypeDescriptions = getExerciseTypeDescriptions()
     val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
@@ -152,6 +153,19 @@ fun ExerciseForm(
             Text(text = "Skip workout rest")
         }
 
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Checkbox(
+                checked = doNotStoreHistory.value,
+                onCheckedChange = { doNotStoreHistory.value = it },
+            )
+            Text(text = "Do not store history")
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -182,6 +196,7 @@ fun ExerciseForm(
                     name = nameState.value.trim(),
                     restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
                     skipWorkoutRest = skipWorkoutRest.value,
+                    doNotStoreHistory = doNotStoreHistory.value,
                     enabled = exercise?.enabled ?: true,
                     sets = exercise?.sets ?: listOf(),
                     exerciseType = selectedExerciseType.value,

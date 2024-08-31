@@ -364,6 +364,7 @@ class AppViewModel : ViewModel(){
     fun storeSetData() {
         val currentState = _workoutState.value
         if (currentState !is WorkoutState.Set) return
+        if(currentState.parentExercise.doNotStoreHistory) return
 
         val newSetHistory = SetHistory(
             id = UUID.randomUUID(),
@@ -402,7 +403,8 @@ class AppViewModel : ViewModel(){
 
     private fun addStatesFromExercise(exercise: Exercise){
         for ((index, set) in exercise.sets.withIndex()) {
-            val historySet = latestSetHistoryMap[set.id];
+            val historySet = if(exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
+            Log.d("AppViewModel", "History set: $historySet doNotStoreHistory: ${exercise.doNotStoreHistory}")
 
             var currentSet = initializeSetData(set)
 

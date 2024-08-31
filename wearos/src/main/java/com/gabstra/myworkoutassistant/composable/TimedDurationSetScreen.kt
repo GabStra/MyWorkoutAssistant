@@ -2,14 +2,18 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -25,6 +29,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
@@ -53,7 +59,15 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: WorkoutState.Set, onTimerEnd: () -> Unit, onTimerEnabled : () -> Unit, onTimerDisabled: () -> Unit) {
+fun TimedDurationSetScreen(
+    viewModel: AppViewModel,
+    modifier: Modifier,
+    state: WorkoutState.Set,
+    onTimerEnd: () -> Unit,
+    onTimerEnabled : () -> Unit,
+    onTimerDisabled: () -> Unit,
+    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -211,6 +225,43 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         )
     }
 
+    @Composable
+    fun SetScreen(customModifier: Modifier) {
+        Column(
+            modifier = customModifier,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            textComposable()
+            if (showStartButton) {
+                EnhancedButton(
+                    onClick = {
+                        VibrateOnce(context)
+                        startTimerJob()
+                        showStartButton=false
+                    },
+                    buttonSize = 35.dp,
+                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                ) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                }
+            }else{
+                EnhancedButton(
+                    boxModifier = Modifier.alpha(if(timerJob?.isActive == true) 1f else 0f),
+                    onClick = {
+                        VibrateOnce(context)
+                        timerJob?.cancel()
+                        showStopDialog = true
+                    },
+                    buttonSize = 35.dp,
+                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
+                ) {
+                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+                }
+            }
+        }
+    }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
@@ -236,39 +287,17 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         }
         else
         {
-            Column(
-                modifier = Modifier.wrapContentSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceEvenly
-            ) {
-                textComposable()
-                if (showStartButton) {
-                    EnhancedButton(
-                        onClick = {
-                            VibrateOnce(context)
-                            startTimerJob()
-                            showStartButton=false
-                        },
-                        buttonSize = 35.dp,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-                    ) {
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
-                    }
+            if(extraInfo != null){
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
+                ){
+                    SetScreen(customModifier = Modifier.weight(1f))
+                    extraInfo(state)
                 }
-
-                if (timerJob?.isActive == true) {
-                    EnhancedButton(
-                        onClick = {
-                            VibrateOnce(context)
-                            timerJob?.cancel()
-                            showStopDialog = true
-                        },
-                        buttonSize = 35.dp,
-                        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
-                    ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
-                    }
-                }
+            }else{
+                SetScreen(customModifier = Modifier.fillMaxSize())
             }
         }
     }

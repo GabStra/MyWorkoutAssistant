@@ -7,11 +7,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,11 +16,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -52,10 +47,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
-import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
 
@@ -71,7 +64,6 @@ import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewer
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -102,36 +94,38 @@ fun Modifier.circleMask() = this.drawWithContent {
 
 @Composable
 fun ExerciseDetail(
-    modifier: Modifier,
     updatedState: WorkoutState.Set, // Assuming SetState is the type holding set
     viewModel: AppViewModel,
     onEditModeDisabled: () -> Unit,
     onEditModeEnabled: () -> Unit,
     onTimerDisabled: () -> Unit,
-    onTimerEnabled: () -> Unit
+    onTimerEnabled: () -> Unit,
+    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null
 ) {
     val context = LocalContext.current
 
     when (updatedState.set) {
         is WeightSet -> WeightSetScreen(
             viewModel = viewModel,
-            modifier = modifier,
+            modifier = Modifier.fillMaxSize(),
             state = updatedState,
             forceStopEditMode = false,
             onEditModeDisabled = onEditModeDisabled,
-            onEditModeEnabled = onEditModeEnabled
+            onEditModeEnabled = onEditModeEnabled,
+            extraInfo = extraInfo
         )
         is BodyWeightSet -> BodyWeightSetScreen(
             viewModel = viewModel,
-            modifier = modifier,
+            modifier = Modifier.fillMaxSize(),
             state = updatedState,
             forceStopEditMode = false,
             onEditModeDisabled = onEditModeDisabled,
-            onEditModeEnabled = onEditModeEnabled
+            onEditModeEnabled = onEditModeEnabled,
+            extraInfo = extraInfo
         )
         is TimedDurationSet -> TimedDurationSetScreen(
             viewModel = viewModel,
-            modifier = modifier,
+            modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
                 viewModel.storeSetData()
@@ -141,11 +135,12 @@ fun ExerciseDetail(
                 }
             },
             onTimerDisabled = onTimerDisabled,
-            onTimerEnabled = onTimerEnabled
+            onTimerEnabled = onTimerEnabled,
+            extraInfo = extraInfo
         )
         is EnduranceSet -> EnduranceSetScreen(
             viewModel = viewModel,
-            modifier = modifier,
+            modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
                 viewModel.storeSetData()
@@ -155,7 +150,8 @@ fun ExerciseDetail(
                 }
             },
             onTimerDisabled = onTimerDisabled,
-            onTimerEnabled = onTimerEnabled
+            onTimerEnabled = onTimerEnabled,
+            extraInfo = extraInfo
         )
     }
 }
@@ -200,36 +196,31 @@ fun PageExerciseDetail(
     viewModel: AppViewModel,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
-    ){
-        ExerciseDetail(
-            modifier = Modifier.weight(1f),
-            updatedState = updatedState,
-            viewModel = viewModel,
-            onEditModeDisabled = { onScrollEnabledChange(true) },
-            onEditModeEnabled = { onScrollEnabledChange(false) },
-            onTimerDisabled = { onScrollEnabledChange(true) },
-            onTimerEnabled = { onScrollEnabledChange(false) }
-        )
-        if (!updatedState.hasNoHistory) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                when (val set = updatedState.set) {
-                    is WeightSet -> WeightSetDataViewer(updatedState.previousSetData as WeightSetData)
-                    is BodyWeightSet -> BodyWeightSetDataViewer(updatedState.previousSetData as BodyWeightSetData)
-                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(updatedState.previousSetData as TimedDurationSetData)
-                    is EnduranceSet -> EnduranceSetDataViewerMinimal(updatedState.previousSetData as EnduranceSetData)
-                }
+    val extraInfoComposable: @Composable (WorkoutState.Set) -> Unit = {state ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ){
+            when (val set = state.set) {
+                is WeightSet -> WeightSetDataViewer(state.previousSetData as WeightSetData)
+                is BodyWeightSet -> BodyWeightSetDataViewer(state.previousSetData as BodyWeightSetData)
+                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData)
+                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData)
             }
         }
+
     }
 
+    ExerciseDetail(
+        updatedState = updatedState,
+        viewModel = viewModel,
+        onEditModeDisabled = { onScrollEnabledChange(true) },
+        onEditModeEnabled = { onScrollEnabledChange(false) },
+        onTimerDisabled = { onScrollEnabledChange(true) },
+        onTimerEnabled = { onScrollEnabledChange(false) },
+        extraInfo = if(updatedState.hasNoHistory) null else extraInfoComposable
+    )
 }
 
 @Composable
@@ -345,45 +336,38 @@ fun ExerciseScreen(
             .circleMask(),
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            verticalArrangement = Arrangement.Top,
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(0.dp, 20.dp, 0.dp, 10.dp)
-        ) {
-            AnimatedContent(
-                targetState = state,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                }, label = ""
-            ) { updatedState ->
-                Column(
-                    modifier = Modifier.padding(25.dp,0.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        modifier = Modifier
-                            .padding(10.dp,0.dp)
-                            .width(150.dp)
-                            .horizontalScroll(scrollState)
-                            .combinedClickable(
-                                onClick = {},
-                                onLongClick = {
-                                    showSkipDialog = true
-                                    VibrateOnce(context)
-                                }
-                            ),
-                        text = updatedState.parentExercise.name,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3,
-                    )
-                }
+        AnimatedContent(
+            targetState = state,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+            }, label = ""
+        ) { updatedState ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(0.dp, 15.dp, 0.dp, 15.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    modifier = Modifier
+                        .width(90.dp)
+                        .padding(bottom = 5.dp)
+                        .horizontalScroll(scrollState)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                showSkipDialog = true
+                                VibrateOnce(context)
+                            }
+                        ),
+                    text = updatedState.parentExercise.name,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.title3,
+                )
 
                 SimplifiedHorizontalPager(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(0.dp, 25.dp, 0.dp, 5.dp),
+                    modifier = Modifier.fillMaxSize(),
                     pagerState = pagerState,
                     allowHorizontalScrolling = allowHorizontalScrolling,
                     updatedState = updatedState,

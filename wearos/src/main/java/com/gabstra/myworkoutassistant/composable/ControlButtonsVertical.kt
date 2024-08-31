@@ -41,17 +41,21 @@ fun ControlButtonsVertical(
     val coroutineScope = rememberCoroutineScope()
     val roundedCornerShape: Shape = RoundedCornerShape(10.dp)
 
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally,verticalArrangement = Arrangement.SpaceEvenly) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
         Box(
             modifier = Modifier
-                .size(70.dp,20.dp)
+                .size(70.dp,35.dp)
                 .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onPlusLongPress, onTap = onPlusTap),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(70.dp,20.dp)
-                    .clip(roundedCornerShape)
+                    .size(35.dp)
+                    .clip(CircleShape)
                     .background(MyColors.Green),
                 contentAlignment = Alignment.Center
             ) {
@@ -61,14 +65,14 @@ fun ControlButtonsVertical(
         content()
         Box(
             modifier = Modifier
-                .size(70.dp,20.dp)
+                .size(70.dp,35.dp)
                 .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onMinusLongPress, onTap = onMinusTap),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(70.dp,20.dp)
-                    .clip(roundedCornerShape)
+                    .size(35.dp)
+                    .clip(CircleShape)
                     .background(Color.Red),
                 contentAlignment = Alignment.Center
             ) {

@@ -23,7 +23,7 @@ import kotlin.math.abs
 
 @Composable
 fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
-    val percentageChange = abs((currentValue.toDouble() - previousValue.toDouble()) / previousValue.toDouble())
+    val percentageChange = (currentValue.toDouble() - previousValue.toDouble()) / previousValue.toDouble()
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -34,7 +34,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.TrendingUp,
                     contentDescription = "Up",
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(25.dp),
                     tint = MyColors.Green
                 )
             }
@@ -43,7 +43,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.TrendingDown,
                     contentDescription = "Down",
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(25.dp),
                     tint = MyColors.ComplementaryGreen
                 )
             }
@@ -51,9 +51,12 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
             }
         }
         if(percentageChange != 0.0) {
+            val absPercentage = abs(percentageChange)
+
             Text(
                 text = "x${String.format("%.1f", percentageChange).replace(",", ".")}",
                 style = MaterialTheme.typography.caption2,
+                color = if(percentageChange > 0) MyColors.Green else MyColors.ComplementaryGreen
             )
         }
     }

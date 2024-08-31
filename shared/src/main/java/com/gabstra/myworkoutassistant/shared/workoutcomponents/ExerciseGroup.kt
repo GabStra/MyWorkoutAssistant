@@ -8,5 +8,6 @@ data class ExerciseGroup(
     override val restTimeInSec: Int,
     override val enabled: Boolean,
     override val skipWorkoutRest: Boolean,
+    override val doNotStoreHistory: Boolean,
     val workoutComponents: List<WorkoutComponent>,
-) : WorkoutComponent(id, name, restTimeInSec, enabled, skipWorkoutRest)
+) : WorkoutComponent(id, name, restTimeInSec, enabled, skipWorkoutRest, doNotStoreHistory)

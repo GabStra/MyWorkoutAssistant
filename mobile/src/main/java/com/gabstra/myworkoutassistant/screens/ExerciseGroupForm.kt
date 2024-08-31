@@ -49,6 +49,7 @@ fun ExerciseGroupForm(
     val groupNameState = remember { mutableStateOf(exerciseGroup?.name ?: "") }
     val restTimeState = remember { mutableStateOf(exerciseGroup?.restTimeInSec?.toString() ?: "0") }
     val skipWorkoutRest = remember { mutableStateOf(exerciseGroup?.skipWorkoutRest ?: false) }
+    val doNotStoreHistory = remember { mutableStateOf(exerciseGroup?.doNotStoreHistory ?: false) }
 
     Column(
         modifier = Modifier
@@ -104,6 +105,18 @@ fun ExerciseGroupForm(
             Text(text = "Skip workout rest")
         }
 
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Checkbox(
+                checked = doNotStoreHistory.value,
+                onCheckedChange = { doNotStoreHistory.value = it },
+            )
+            Text(text = "Do not store history")
+        }
 
         // Submit button
         Button(
@@ -115,6 +128,7 @@ fun ExerciseGroupForm(
                     name = groupNameState.value,
                     restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
                     skipWorkoutRest = skipWorkoutRest.value,
+                    doNotStoreHistory = doNotStoreHistory.value,
                     enabled = exerciseGroup?.enabled ?: true,
                     workoutComponents = exerciseGroup?.workoutComponents ?: listOf()
                 )

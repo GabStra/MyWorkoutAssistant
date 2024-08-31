@@ -8,4 +8,5 @@ sealed class WorkoutComponent(
     open val restTimeInSec: Int,
     open val enabled: Boolean,
     open val skipWorkoutRest: Boolean,
+    open val doNotStoreHistory: Boolean,
 )

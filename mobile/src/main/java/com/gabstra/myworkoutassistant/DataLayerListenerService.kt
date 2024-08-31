@@ -68,7 +68,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                                 val workout =
                                     workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
-                                if (workout != null) {
+
+                                if (workout != null && workoutHistoryStore.WorkoutHistory.isDone) {
                                     val setHistoriesByExerciseId =
                                         workoutHistoryStore.ExerciseHistories.groupBy { it.exerciseId }
 
@@ -77,6 +78,8 @@ class DataLayerListenerService : WearableListenerService() {
                                     var workoutComponents = workout.workoutComponents
 
                                     for (exercise in exercises) {
+                                        if(exercise.doNotStoreHistory) continue
+
                                         val setById = exercise.sets.associateBy { it.id }
                                         val setHistories =
                                             setHistoriesByExerciseId[exercise.id] ?: continue

@@ -18,6 +18,5 @@ fun EnduranceSetDataViewerMinimal(enduranceSetData: EnduranceSetData){
     Text(
         text =  FormatTime(enduranceSetData.startTimer / 1000),
         style = MaterialTheme.typography.caption2,
-        color = Color.LightGray
     )
 }

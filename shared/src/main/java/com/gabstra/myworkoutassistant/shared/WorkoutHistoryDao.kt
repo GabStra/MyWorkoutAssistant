@@ -19,8 +19,8 @@ interface WorkoutHistoryDao {
     @Query("SELECT EXISTS(SELECT * FROM workout_history WHERE workoutId = :workoutId)")
     suspend fun workoutHistoryExistsByWorkoutId(workoutId: UUID): Boolean
 
-    @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId ORDER BY date DESC LIMIT 1")
-    suspend fun getLatestWorkoutHistoryByWorkoutId(workoutId: UUID): WorkoutHistory?
+    @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId AND isDone = :isDone ORDER BY date DESC LIMIT 1")
+    suspend fun getLatestWorkoutHistoryByWorkoutId(workoutId: UUID,isDone: Boolean = true): WorkoutHistory?
 
     @Query("SELECT * FROM workout_history")
     suspend fun getAllWorkoutHistories(): List<WorkoutHistory>
@@ -46,8 +46,8 @@ interface WorkoutHistoryDao {
     @Query("DELETE FROM workout_history")
     suspend fun deleteAll()
 
-    @Query("DELETE FROM workout_history WHERE isDone = 0")
-    suspend fun deleteAllUnfinished()
+    @Query("DELETE FROM workout_history WHERE isDone = :isDone")
+    suspend fun deleteAllUnfinished(isDone: Boolean = false)
 
     //delete all workout history for a specific workout
     @Query("DELETE FROM workout_history WHERE workoutId = :workoutId")

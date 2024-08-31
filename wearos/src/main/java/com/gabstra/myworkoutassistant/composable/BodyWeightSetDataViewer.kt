@@ -21,6 +21,5 @@ fun BodyWeightSetDataViewer(bodyWeightSetData: BodyWeightSetData){
     Text(
         text = "x${bodyWeightSetData.actualReps}",
         style = MaterialTheme.typography.caption2,
-        color = Color.LightGray
     )
 }
