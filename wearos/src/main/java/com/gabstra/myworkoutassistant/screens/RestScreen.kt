@@ -92,7 +92,7 @@ fun NextExerciseInfo(
     ){
         Text(
             modifier = Modifier
-                .width(150.dp)
+                .width(140.dp)
                 .horizontalScroll(scrollState),
             text = state.parentExercise.name,
             textAlign = TextAlign.Center,

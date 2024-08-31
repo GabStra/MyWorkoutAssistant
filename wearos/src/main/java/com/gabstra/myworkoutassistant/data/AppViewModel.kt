@@ -231,6 +231,8 @@ class AppViewModel : ViewModel(){
                 generateWorkoutStates()
                 workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+
+                _workoutRecord = null
                 onEnd()
             }
         }

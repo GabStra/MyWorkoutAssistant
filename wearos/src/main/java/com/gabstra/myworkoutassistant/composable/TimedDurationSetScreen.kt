@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -217,7 +218,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
         if (isTimerInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .wrapContentSize()
                     .clickable(
                         interactionSource = null,
                         indication = null
@@ -232,11 +233,15 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
                     textComposable()
                 }
             )
-        }else{
-            Column(modifier = Modifier.padding(vertical= 15.dp), verticalArrangement = Arrangement.Top) {
+        }
+        else
+        {
+            Column(
+                modifier = Modifier.wrapContentSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceEvenly
+            ) {
                 textComposable()
-            }
-            Box(contentAlignment = Alignment.BottomCenter) {
                 if (showStartButton) {
                     EnhancedButton(
                         onClick = {
@@ -286,6 +291,7 @@ fun TimedDurationSetScreen(viewModel: AppViewModel, modifier: Modifier, state: W
             showStopDialog = false
             startTimerJob()
         },
+        closeTimerInMillis = 5000,
         handleOnAutomaticClose = {},
         holdTimeInMillis = 1000
     )

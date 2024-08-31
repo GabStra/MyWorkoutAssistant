@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -19,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
@@ -37,18 +39,19 @@ fun ControlButtonsVertical(
     content: @Composable () -> Unit
 ){
     val coroutineScope = rememberCoroutineScope()
-    
+    val roundedCornerShape: Shape = RoundedCornerShape(10.dp)
+
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally,verticalArrangement = Arrangement.SpaceEvenly) {
         Box(
             modifier = Modifier
-                .size(35.dp)
+                .size(70.dp,20.dp)
                 .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onPlusLongPress, onTap = onPlusTap),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(35.dp)
-                    .clip(CircleShape)
+                    .size(70.dp,20.dp)
+                    .clip(roundedCornerShape)
                     .background(MyColors.Green),
                 contentAlignment = Alignment.Center
             ) {
@@ -58,14 +61,14 @@ fun ControlButtonsVertical(
         content()
         Box(
             modifier = Modifier
-                .size(35.dp)
+                .size(70.dp,20.dp)
                 .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onMinusLongPress, onTap = onMinusTap),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(35.dp)
-                    .clip(CircleShape)
+                    .size(70.dp,20.dp)
+                    .clip(roundedCornerShape)
                     .background(Color.Red),
                 contentAlignment = Alignment.Center
             ) {

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -17,14 +18,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 
 @Composable
 fun TimedDurationSetDataViewerMinimal(timedDurationSetData: TimedDurationSetData){
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text =  FormatTime(timedDurationSetData.startTimer / 1000),
-            style = MaterialTheme.typography.body1
-        )
-    }
+    Text(
+        text =  FormatTime(timedDurationSetData.startTimer / 1000),
+        style = MaterialTheme.typography.caption2,
+        color = Color.LightGray
+    )
 }

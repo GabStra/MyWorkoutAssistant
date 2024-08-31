@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewer
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -101,6 +102,7 @@ fun Modifier.circleMask() = this.drawWithContent {
 
 @Composable
 fun ExerciseDetail(
+    modifier: Modifier,
     updatedState: WorkoutState.Set, // Assuming SetState is the type holding set
     viewModel: AppViewModel,
     onEditModeDisabled: () -> Unit,
@@ -113,7 +115,7 @@ fun ExerciseDetail(
     when (updatedState.set) {
         is WeightSet -> WeightSetScreen(
             viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
+            modifier = modifier,
             state = updatedState,
             forceStopEditMode = false,
             onEditModeDisabled = onEditModeDisabled,
@@ -121,7 +123,7 @@ fun ExerciseDetail(
         )
         is BodyWeightSet -> BodyWeightSetScreen(
             viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
+            modifier = modifier,
             state = updatedState,
             forceStopEditMode = false,
             onEditModeDisabled = onEditModeDisabled,
@@ -129,7 +131,7 @@ fun ExerciseDetail(
         )
         is TimedDurationSet -> TimedDurationSetScreen(
             viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
+            modifier = modifier,
             state = updatedState,
             onTimerEnd = {
                 viewModel.storeSetData()
@@ -143,7 +145,7 @@ fun ExerciseDetail(
         )
         is EnduranceSet -> EnduranceSetScreen(
             viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
+            modifier = modifier,
             state = updatedState,
             onTimerEnd = {
                 viewModel.storeSetData()
@@ -166,7 +168,6 @@ fun SimplifiedHorizontalPager(
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel,
     completeOrSkipExerciseComposable: @Composable () -> Unit,
-    notAvailableTextComposable: @Composable () -> Unit,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
     CustomHorizontalPager(
@@ -182,7 +183,6 @@ fun SimplifiedHorizontalPager(
                 onScrollEnabledChange = { onScrollEnabledChange(it) }
             )
             2 -> PageNotes(updatedState.parentExercise.notes)
-            3 -> PagePreviousSet(updatedState, notAvailableTextComposable)
         }
     }
 }
@@ -200,14 +200,36 @@ fun PageExerciseDetail(
     viewModel: AppViewModel,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
-    ExerciseDetail(
-        updatedState = updatedState,
-        viewModel = viewModel,
-        onEditModeDisabled = { onScrollEnabledChange(true) },
-        onEditModeEnabled = { onScrollEnabledChange(false) },
-        onTimerDisabled = { onScrollEnabledChange(true) },
-        onTimerEnabled = { onScrollEnabledChange(false) }
-    )
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ){
+        ExerciseDetail(
+            modifier = Modifier.weight(1f),
+            updatedState = updatedState,
+            viewModel = viewModel,
+            onEditModeDisabled = { onScrollEnabledChange(true) },
+            onEditModeEnabled = { onScrollEnabledChange(false) },
+            onTimerDisabled = { onScrollEnabledChange(true) },
+            onTimerEnabled = { onScrollEnabledChange(false) }
+        )
+        if (!updatedState.hasNoHistory) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                when (val set = updatedState.set) {
+                    is WeightSet -> WeightSetDataViewer(updatedState.previousSetData as WeightSetData)
+                    is BodyWeightSet -> BodyWeightSetDataViewer(updatedState.previousSetData as BodyWeightSetData)
+                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(updatedState.previousSetData as TimedDurationSetData)
+                    is EnduranceSet -> EnduranceSetDataViewerMinimal(updatedState.previousSetData as EnduranceSetData)
+                }
+            }
+        }
+    }
+
 }
 
 @Composable
@@ -241,41 +263,6 @@ fun PageNotes(notes: String) {
     }
 }
 
-@Composable
-fun PagePreviousSet(
-    updatedState:  WorkoutState.Set,
-    notAvailableTextComposable: @Composable () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(0.dp, 10.dp, 0.dp, 0.dp)
-    ) {
-        Text(
-            modifier = Modifier.fillMaxSize(),
-            text = "Previous Set",
-            style = MaterialTheme.typography.body1,
-            textAlign = TextAlign.Center
-        )
-        Column(
-            modifier = Modifier.padding(40.dp, 25.dp, 40.dp, 0.dp),
-            verticalArrangement = Arrangement.Top,
-            horizontalAlignment = Alignment.End
-        ) {
-            if (updatedState.hasNoHistory) {
-                notAvailableTextComposable()
-            } else {
-                when (val set = updatedState.set) {
-                    is WeightSet -> WeightSetDataViewer(updatedState.previousSetData as WeightSetData)
-                    is BodyWeightSet -> BodyWeightSetDataViewer(updatedState.previousSetData as BodyWeightSetData)
-                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(updatedState.previousSetData as TimedDurationSetData)
-                    is EnduranceSet -> EnduranceSetDataViewerMinimal(updatedState.previousSetData as EnduranceSetData)
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class,
     ExperimentalAnimationApi::class, ExperimentalWearFoundationApi::class
 )
@@ -298,7 +285,7 @@ fun ExerciseScreen(
     val pagerState = rememberPagerState(
         initialPage = 1,
         pageCount = {
-        4
+        3
     })
 
     val scrollState = rememberScrollState()
@@ -351,15 +338,6 @@ fun ExerciseScreen(
         }
     }
 
-    val notAvailableTextComposable = @Composable {
-        Text(
-            modifier = Modifier.fillMaxSize(),
-            text = "NOT AVAILABLE",
-            style = MaterialTheme.typography.body1,
-            textAlign = TextAlign.Center
-        )
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -405,13 +383,12 @@ fun ExerciseScreen(
                 SimplifiedHorizontalPager(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(0.dp, 20.dp, 0.dp, 0.dp),
+                        .padding(0.dp, 25.dp, 0.dp, 5.dp),
                     pagerState = pagerState,
                     allowHorizontalScrolling = allowHorizontalScrolling,
                     updatedState = updatedState,
                     viewModel = viewModel,
                     completeOrSkipExerciseComposable = completeOrSkipExerciseComposable,
-                    notAvailableTextComposable = notAvailableTextComposable,
                     onScrollEnabledChange = { allowHorizontalScrolling = it }
                 )
             }

@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.Column
 
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -93,7 +95,6 @@ fun WeightSetScreen (
             isWeightInEditMode = false
         }
     }
-
 
     fun onMinusClick(){
         updateInteractionTime()
@@ -234,13 +235,12 @@ fun WeightSetScreen (
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
     ){
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .wrapContentSize()
                     .clickable(
                         interactionSource = null,
                         indication = null
@@ -253,31 +253,28 @@ fun WeightSetScreen (
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-
-
-                        Column(horizontalAlignment = Alignment.End){
-                            if (isRepsInEditMode) repsRow()
-                            if (isWeightInEditMode) weightRow()
-                        }
+                        if (isRepsInEditMode) repsRow()
+                        if (isWeightInEditMode) weightRow()
                         Spacer(modifier = Modifier.width(5.dp))
                         TrendIcon(currentVolume, previousVolume)
                     }
                 }
             )
 
-        }else{
+        }
+        else
+        {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.wrapContentSize(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-
-
-                Column(horizontalAlignment = Alignment.End){
+                Column(
+                    horizontalAlignment = Alignment.End
+                ){
                     repsRow()
                     weightRow()
                 }

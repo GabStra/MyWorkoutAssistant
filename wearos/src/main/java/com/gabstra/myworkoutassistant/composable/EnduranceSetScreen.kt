@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -218,7 +219,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
         if (isTimerInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .wrapContentSize()
                     .clickable(
                         interactionSource = null,
                         indication = null
@@ -233,11 +234,15 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                     textComposable()
                 }
             )
-        }else{
-            Column(modifier = Modifier.padding(vertical= 15.dp), verticalArrangement = Arrangement.Top) {
+        }
+        else
+        {
+            Column(
+                modifier = Modifier.wrapContentSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceEvenly
+            ) {
                 textComposable()
-            }
-            Box(contentAlignment = Alignment.BottomCenter) {
                 if (showStartButton) {
                     EnhancedButton(
                         onClick = {
@@ -266,6 +271,7 @@ fun EnduranceSetScreen (viewModel: AppViewModel, modifier: Modifier, state: Work
                     }
                 }
             }
+
         }
     }
 
