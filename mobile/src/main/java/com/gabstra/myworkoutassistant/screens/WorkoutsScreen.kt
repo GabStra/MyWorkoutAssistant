@@ -289,7 +289,6 @@ fun WorkoutsScreen(
         objectiveProgress = 0.0
 
         if (enabledWorkouts.isEmpty()) return
-        if (groupedWorkoutsHistories == null || workoutById == null) return
 
         val startOfWeek = getStartOfWeek(currentDate)
         val endOfWeek = getEndOfWeek(currentDate)
@@ -304,9 +303,7 @@ fun WorkoutsScreen(
 
         workoutHistoriesInAWeek = workoutHistoriesInAWeek.filter { it.isDone }
 
-        if (workoutHistoriesInAWeek.isEmpty()) return
-
-        val weeklyWorkouts = workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
+        val weeklyWorkouts = if (workoutHistoriesInAWeek.isEmpty()) emptyList() else workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
             enabledWorkouts.find { it.id == workoutHistory.workoutId && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
         }
 
