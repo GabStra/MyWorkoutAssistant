@@ -101,7 +101,7 @@ fun NextExerciseInfo(
         Spacer(modifier = Modifier.height(5.dp))
         if(exerciseSets.count()!=1){
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ){

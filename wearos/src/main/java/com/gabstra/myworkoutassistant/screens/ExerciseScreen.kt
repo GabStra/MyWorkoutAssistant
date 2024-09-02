@@ -351,7 +351,7 @@ fun ExerciseScreen(
             ) {
                 Text(
                     modifier = Modifier
-                        .width(90.dp)
+                        .width(80.dp)
                         .padding(bottom = 5.dp)
                         .horizontalScroll(scrollState)
                         .combinedClickable(
