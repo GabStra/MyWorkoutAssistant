@@ -203,10 +203,10 @@ fun PageExerciseDetail(
             horizontalArrangement = Arrangement.Center
         ){
             when (val set = state.set) {
-                is WeightSet -> WeightSetDataViewer(state.previousSetData as WeightSetData)
-                is BodyWeightSet -> BodyWeightSetDataViewer(state.previousSetData as BodyWeightSetData)
-                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData)
-                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData)
+                is WeightSet -> WeightSetDataViewer(state.previousSetData as WeightSetData,MaterialTheme.typography.caption2)
+                is BodyWeightSet -> BodyWeightSetDataViewer(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption2)
+                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption2)
+                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2)
             }
         }
 

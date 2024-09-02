@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
@@ -23,10 +24,9 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
-fun WeightSetDataViewer(weightSetData: WeightSetData){
+fun WeightSetDataViewer(weightSetData: WeightSetData, style: TextStyle = MaterialTheme.typography.body1){
     Text(
-
         text = "x${weightSetData.actualReps} ${weightSetData.actualWeight}kg",
-        style = MaterialTheme.typography.caption2,
+        style = style,
     )
 }

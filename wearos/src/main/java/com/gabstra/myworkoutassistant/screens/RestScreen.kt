@@ -100,7 +100,15 @@ fun NextExerciseInfo(
         )
         Spacer(modifier = Modifier.height(5.dp))
         if(exerciseSets.count()!=1){
-            Text( text="${exerciseIndex+1}/${exerciseCount} - ${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.body1)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ){
+                Text( text="Exercise: ${exerciseIndex+1}/${exerciseCount}",style = MaterialTheme.typography.caption2)
+                Spacer(modifier = Modifier.width(5.dp))
+                Text( text="Set: ${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.caption2)
+            }
         }
         Spacer(modifier = Modifier.height(5.dp))
         when(state.set){

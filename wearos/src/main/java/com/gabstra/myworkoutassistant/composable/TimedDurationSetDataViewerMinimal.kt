@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -17,9 +18,9 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 
 @Composable
-fun TimedDurationSetDataViewerMinimal(timedDurationSetData: TimedDurationSetData){
+fun TimedDurationSetDataViewerMinimal(timedDurationSetData: TimedDurationSetData, style: TextStyle = MaterialTheme.typography.body1){
     Text(
         text =  FormatTime(timedDurationSetData.startTimer / 1000),
-        style = MaterialTheme.typography.caption2,
+        style = style,
     )
 }
