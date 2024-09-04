@@ -2,8 +2,9 @@ package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxHeight
+
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingFlat
@@ -13,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
@@ -48,17 +50,27 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 )
             }
             else -> {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
+                    contentDescription = "Flat",
+                    modifier = Modifier.size(25.dp).alpha(0f),
+                )
             }
         }
-        if(percentageChange != 0.0) {
-            val absPercentage = abs(percentageChange)
-
-            Text(
-                text = "x${String.format("%.1f", percentageChange).replace(",", ".")}",
-                style = MaterialTheme.typography.caption2,
-                color = if(percentageChange > 0) MyColors.Green else MyColors.ComplementaryGreen
-            )
+        
+        val displayText = if (percentageChange <= 1) {
+            val percentage = (percentageChange * 100).toInt()
+            if (percentage > 0) "+${percentage}%" else "${percentage}%"
+        } else {
+            "x${String.format("%.2f", percentageChange).replace(",", ".")}"
         }
-    }
 
+        Text(
+            modifier = Modifier.width(40.dp).alpha(if(percentageChange == 0.0) 0f else 1f),
+            text = displayText,
+            style = MaterialTheme.typography.caption3,
+            textAlign = TextAlign.Center,
+            color = if (percentageChange > 0) MyColors.Green else MyColors.ComplementaryGreen
+        )
+    }
 }

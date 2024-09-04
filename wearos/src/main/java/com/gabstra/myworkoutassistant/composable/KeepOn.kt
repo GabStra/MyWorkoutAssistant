@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -37,14 +38,11 @@ fun KeepOn(
         }
     }
 
-    var backPressHandled by remember { mutableStateOf(true) }
-
     fun resetDimming() {
         dimmingJob?.cancel()
         if (!enableDimming) return
         dimmingJob = scope.launch {
             delay(dimDelay)
-            backPressHandled = false
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF)
             isDimmed = true
         }
@@ -79,16 +77,6 @@ fun KeepOn(
         } else {
             resetDimming()
         }
-    }
-
-    BackHandler(enabled = !backPressHandled) {
-        if (isDimmed) {
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
-        }
-
-        resetDimming()
-        backPressHandled = true
     }
 
     Box(

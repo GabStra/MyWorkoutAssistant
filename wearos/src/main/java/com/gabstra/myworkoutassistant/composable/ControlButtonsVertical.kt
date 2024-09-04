@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Alignment
 
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,8 +50,14 @@ fun ControlButtonsVertical(
     ) {
         Box(
             modifier = Modifier
-                .size(70.dp,35.dp)
-                .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onPlusLongPress, onTap = onPlusTap),
+                .size(70.dp, 35.dp)
+                .repeatActionOnLongPressOrTap(
+                    coroutineScope,
+                    thresholdMillis = 1000,
+                    intervalMillis = 150,
+                    onAction = onPlusLongPress,
+                    onTap = onPlusTap
+                ),
             contentAlignment = Alignment.Center
         ) {
             Box(
@@ -62,11 +70,22 @@ fun ControlButtonsVertical(
                 Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
             }
         }
-        content()
+        Box(
+            modifier = Modifier.height(40.dp).fillMaxWidth().padding(vertical = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            content()
+        }
         Box(
             modifier = Modifier
-                .size(70.dp,35.dp)
-                .repeatActionOnLongPressOrTap(coroutineScope,thresholdMillis= 1000,intervalMillis = 150, onAction = onMinusLongPress, onTap = onMinusTap),
+                .size(70.dp, 35.dp)
+                .repeatActionOnLongPressOrTap(
+                    coroutineScope,
+                    thresholdMillis = 1000,
+                    intervalMillis = 150,
+                    onAction = onMinusLongPress,
+                    onTap = onMinusTap
+                ),
             contentAlignment = Alignment.Center
         ) {
             Box(

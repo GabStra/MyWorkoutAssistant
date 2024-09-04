@@ -2,14 +2,13 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -84,6 +84,7 @@ fun BodyWeightSetScreen(
     }
 
     fun onMinusClick(){
+        updateInteractionTime()
         if (isRepsInEditMode && currentSet.actualReps>1){
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps-1
@@ -94,6 +95,7 @@ fun BodyWeightSetScreen(
     }
 
     fun onPlusClick(){
+        updateInteractionTime()
         if (isRepsInEditMode){
             currentSet = currentSet.copy(
                 actualReps = currentSet.actualReps+1
@@ -103,10 +105,10 @@ fun BodyWeightSetScreen(
         }
     }
 
-    val repsRow = @Composable {
+    @Composable
+    fun RepsRow(modifier: Modifier) {
         Row(
-            modifier = Modifier
-                .width(100.dp)
+            modifier = modifier
                 .height(35.dp)
                 .combinedClickable(
                     onClick = {
@@ -129,28 +131,23 @@ fun BodyWeightSetScreen(
                         }
                     }
                 ),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.End
         ) {
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.End
-            ) {
-                Text(
-                    text = "${currentSet.actualReps}",
-                    style = MaterialTheme.typography.title1
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = "reps",
-                    style = MaterialTheme.typography.body1,
-                    modifier = Modifier
-                        .width(35.dp)
-                        .padding(0.dp, 0.dp, 0.dp, 3.dp)
-                )
-            }
+            Text(
+                text = "${currentSet.actualReps}",
+                style = MaterialTheme.typography.display3
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            val label = if (currentSet.actualReps == 1) "rep" else "reps"
+            Text(
+                modifier = Modifier.padding(bottom = 2.dp),
+                text = label,
+                style = MaterialTheme.typography.title3,
+            )
         }
     }
+
 
     @Composable
     fun SetScreen(customModifier: Modifier) {
@@ -159,7 +156,7 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            repsRow()
+            RepsRow(Modifier.weight(1f))
             Spacer(modifier = Modifier.width(5.dp))
             TrendIcon(currentSet.actualReps, previousSet.actualReps)
         }
@@ -168,7 +165,7 @@ fun BodyWeightSetScreen(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = modifier
+        modifier = modifier.padding(horizontal = 15.dp)
     ){
         if (isRepsInEditMode) {
             ControlButtonsVertical(
@@ -185,14 +182,7 @@ fun BodyWeightSetScreen(
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 content = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        repsRow()
-                        Spacer(modifier = Modifier.width(5.dp))
-                        TrendIcon(currentSet.actualReps, previousSet.actualReps)
-                    }
+                    SetScreen(customModifier = Modifier.fillMaxWidth())
                 }
             )
 

@@ -179,6 +179,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
 
 
 
+
         onNavControllerAvailable(navController)
 
         val hrViewModel: SensorDataViewModel =  viewModel(
@@ -218,7 +219,9 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                 WorkoutDetailScreen(navController, appViewModel, hrViewModel)
             }
             composable(Screen.Workout.route) {
-                KeepOn{
+                val isPaused by appViewModel.isPaused
+
+                KeepOn(enableDimming = !isPaused){
                     WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
                 }
             }

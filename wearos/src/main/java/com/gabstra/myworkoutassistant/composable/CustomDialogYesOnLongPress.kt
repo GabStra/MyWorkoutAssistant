@@ -183,7 +183,7 @@ fun CustomDialogYesOnLongPress(
                                 .repeatActionOnLongPress(
                                     longPressCoroutineScope,
                                     thresholdMillis = 200,
-                                    intervalMillis = 100,
+                                    intervalMillis = 10,
                                     onPressStart = { },
                                     onBeforeLongPressRepeat = { onBeforeLongPressRepeat() },
                                     onLongPressRepeat = { onLongPressRepeat() },
