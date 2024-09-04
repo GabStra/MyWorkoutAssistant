@@ -57,6 +57,13 @@ class AppViewModel() : ViewModel() {
         _updateNotificationFlow.value = System.currentTimeMillis().toString()
     }
 
+    private val _updateMobileFlow = MutableStateFlow<String?>(null)
+    val updateMobileFlow = _updateMobileFlow.asStateFlow()
+
+    fun triggerMobile() {
+        _updateMobileFlow.value = System.currentTimeMillis().toString()
+    }
+
     fun setHomeTab(tabIndex: Int) {
         selectedHomeTab = tabIndex
     }
@@ -101,15 +108,15 @@ class AppViewModel() : ViewModel() {
         private set(value) {
             _workoutsFlow.value = value
             workoutStore = workoutStore.copy(workouts = value)
+            triggerMobile()
         }
-
-
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
         workoutStore = newWorkoutStore
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue =  currentYear - workoutStore.birthDateYear
         _workoutsFlow.value = newWorkoutStore.workouts
+        triggerMobile()
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {

@@ -138,7 +138,6 @@ fun MyWorkoutAssistantNavHost(
     val systemUiController = rememberSystemUiController()
     val backgroundColor = MaterialTheme.colorScheme.background
 
-
     DisposableEffect(systemUiController,backgroundColor) {
         // Update all of the system bar colors to be transparent, and use
         // dark icons if we're in light theme
@@ -159,6 +158,24 @@ fun MyWorkoutAssistantNavHost(
 
     val setHistoryDao = db.setHistoryDao()
     val workoutHistoryDao = db.workoutHistoryDao()
+
+    val updateMobile by appViewModel.updateMobileFlow.collectAsState(initial = null)
+
+    LaunchedEffect(updateMobile) {
+        if(updateMobile == null) return@LaunchedEffect
+
+        val latestWorkoutHistories = appViewModel.workouts.filter { it -> it.isActive }.mapNotNull { workout ->
+            workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
+        }
+
+        val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
+            setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+        }
+
+        val filteredAppBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories)
+
+        sendAppBackup(dataClient, filteredAppBackup)
+    }
 
     LaunchedEffect(appViewModel.workouts) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
@@ -218,18 +235,6 @@ fun MyWorkoutAssistantNavHost(
                                 "Data restored from backup",
                                 Toast.LENGTH_SHORT
                             ).show()
-
-                            val latestWorkoutHistories = appViewModel.workouts.mapNotNull { workout ->
-                                workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
-                            }
-
-                            val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
-                                setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-                            }
-
-                            val filteredAppBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories)
-
-                            sendAppBackup(dataClient, filteredAppBackup)
                         }
                     }
                 } catch (e: Exception) {

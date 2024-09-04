@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -129,10 +130,11 @@ fun WeightSetScreen (
         }
     }
 
-    val repsRow = @Composable {
+    @Composable
+    fun RepsRow(modifier: Modifier) {
         Row(
-            modifier = Modifier
-                .width(100.dp)
+            modifier = modifier
+                .height(35.dp)
                 .height(35.dp)
                 .combinedClickable(
                     onClick = {
@@ -165,24 +167,24 @@ fun WeightSetScreen (
             ) {
                 Text(
                     text = "${currentSet.actualReps}",
-                    style = MaterialTheme.typography.title1
+                    style = MaterialTheme.typography.display3
                 )
                 Spacer(modifier = Modifier.width(5.dp))
+                val label = if (currentSet.actualReps == 1) "rep" else "reps"
                 Text(
-                    text = "reps",
-                    style = MaterialTheme.typography.body1,
-                    modifier = Modifier
-                        .width(35.dp)
-                        .padding(0.dp, 0.dp, 0.dp, 1.dp)
+                    modifier = Modifier.padding(bottom = 2.dp),
+                    text = label,
+                    style = MaterialTheme.typography.title3,
                 )
             }
         }
     }
 
-    val weightRow = @Composable {
-        Row(
-            modifier = Modifier
-                .width(100.dp)
+    @Composable
+    fun WeightRow(modifier: Modifier) {
+            Row(
+                modifier = modifier
+                    .height(35.dp)
                 .height(35.dp)
                 .combinedClickable(
                     onClick = {
@@ -213,16 +215,18 @@ fun WeightSetScreen (
                 horizontalArrangement = Arrangement.End
             ) {
                 Text(
-                    text = "${currentSet.actualWeight}",
-                    style = MaterialTheme.typography.title1
+                    text = if (currentSet.actualWeight % 1 == 0f) {
+                        "${currentSet.actualWeight.toInt()}"
+                    } else {
+                        "${currentSet.actualWeight}"
+                    },
+                    style = MaterialTheme.typography.display3
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "kg",
-                    style = MaterialTheme.typography.body1,
-                    modifier = Modifier
-                        .width(35.dp)
-                        .padding(0.dp, 0.dp, 0.dp, 1.dp)
+                    style = MaterialTheme.typography.title3,
+                    modifier = Modifier.padding(bottom = 2.dp),
                 )
             }
         }
@@ -236,10 +240,11 @@ fun WeightSetScreen (
             horizontalArrangement = Arrangement.Center
         ) {
             Column(
+                modifier = Modifier.weight(1f),
                 horizontalAlignment = Alignment.End
             ) {
-                repsRow()
-                weightRow()
+                RepsRow(Modifier.fillMaxWidth())
+                WeightRow(Modifier.fillMaxWidth())
             }
             Spacer(modifier = Modifier.width(5.dp))
             TrendIcon(currentVolume, previousVolume)
@@ -249,7 +254,7 @@ fun WeightSetScreen (
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = modifier
+        modifier = modifier.padding(horizontal = 15.dp)
     ){
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
@@ -270,8 +275,8 @@ fun WeightSetScreen (
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        if (isRepsInEditMode) repsRow()
-                        if (isWeightInEditMode) weightRow()
+                        if (isRepsInEditMode) RepsRow(Modifier.weight(1f))
+                        if (isWeightInEditMode) WeightRow(Modifier.weight(1f))
                         Spacer(modifier = Modifier.width(5.dp))
                         TrendIcon(currentVolume, previousVolume)
                     }

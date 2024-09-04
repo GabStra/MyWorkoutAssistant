@@ -62,7 +62,6 @@ class DataLayerListenerService : WearableListenerService() {
                                 )
 
                                 workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
-
                                 setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
 
                                 val workoutStore = workoutStoreRepository.getWorkoutStore()
@@ -133,12 +132,12 @@ class DataLayerListenerService : WearableListenerService() {
                                         )
                                     )
                                     workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-
-                                    val intent = Intent(INTENT_ID).apply {
-                                        putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
-                                    }
-                                    sendBroadcast(intent)
                                 }
+
+                                val intent = Intent(INTENT_ID).apply {
+                                    putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
+                                }
+                                sendBroadcast(intent)
 
                             } catch (exception: Exception) {
                                 exception.printStackTrace()

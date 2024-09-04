@@ -210,7 +210,8 @@ fun CustomDialogYesOnLongPress(
                     progress = progress,
                     modifier = Modifier.fillMaxSize(),
                     strokeWidth = 4.dp,
-                    indicatorColor = MaterialTheme.colors.primary
+                    indicatorColor = MaterialTheme.colors.primary,
+                    trackColor = Color.DarkGray
                 )
             }
         }

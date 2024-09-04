@@ -206,7 +206,7 @@ fun WorkoutsCalendar(
         )
         DarkModeContainer(whiteOverlayAlpha = .1f) {
             WeekCalendar(
-                modifier = Modifier.padding(5.dp),
+                modifier = Modifier.padding(10.dp),
                 state = weekCalendarState,
                 calendarScrollPaged = false,
                 userScrollEnabled = true,

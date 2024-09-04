@@ -24,7 +24,10 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 @Composable
-fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
+fun ExerciseRenderer(
+    exercise: Exercise,
+    modifier: Modifier = Modifier,
+){
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
@@ -37,7 +40,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             text = "x${set.reps} @ ${set.weight} kg",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f),
+                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )
                     }
 
@@ -45,7 +48,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             text = "x${set.reps}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f),
+                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )
                     }
 
@@ -53,7 +56,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             text=formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f),
+                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )
                     }
 
@@ -61,7 +64,7 @@ fun ExerciseRenderer(exercise: Exercise, modifier: Modifier = Modifier){
                         Text(
                             formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f),
+                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )
                     }
                 }

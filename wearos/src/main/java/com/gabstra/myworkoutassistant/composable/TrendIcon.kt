@@ -36,7 +36,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.TrendingUp,
                     contentDescription = "Up",
-                    modifier = Modifier.size(25.dp),
+                    modifier = Modifier.size(35.dp),
                     tint = MyColors.Green
                 )
             }
@@ -45,7 +45,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.TrendingDown,
                     contentDescription = "Down",
-                    modifier = Modifier.size(25.dp),
+                    modifier = Modifier.size(35.dp),
                     tint = MyColors.ComplementaryGreen
                 )
             }
@@ -53,24 +53,26 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
                     contentDescription = "Flat",
-                    modifier = Modifier.size(25.dp).alpha(0f),
+                    modifier = Modifier.size(35.dp),
                 )
             }
         }
-        
-        val displayText = if (percentageChange <= 1) {
-            val percentage = (percentageChange * 100).toInt()
-            if (percentage > 0) "+${percentage}%" else "${percentage}%"
-        } else {
-            "x${String.format("%.2f", percentageChange).replace(",", ".")}"
-        }
 
-        Text(
-            modifier = Modifier.width(40.dp).alpha(if(percentageChange == 0.0) 0f else 1f),
-            text = displayText,
-            style = MaterialTheme.typography.caption3,
-            textAlign = TextAlign.Center,
-            color = if (percentageChange > 0) MyColors.Green else MyColors.ComplementaryGreen
-        )
+        if(percentageChange != 0.0){
+            val displayText = if (percentageChange <= 1) {
+                val percentage = (percentageChange * 100).toInt()
+                if (percentage > 0) "+${percentage}%" else "${percentage}%"
+            } else {
+                "x${String.format("%.2f", percentageChange).replace(",", ".")}"
+            }
+
+            Text(
+                modifier = Modifier.width(40.dp),
+                text = displayText,
+                style = MaterialTheme.typography.caption2,
+                textAlign = TextAlign.Center,
+                color = if (percentageChange > 0) MyColors.Green else MyColors.ComplementaryGreen
+            )
+        }
     }
 }

@@ -114,6 +114,39 @@ fun Menu(
 }
 
 
+
+
+@Composable
+fun WorkoutComponentRenderer(
+    workoutComponent: WorkoutComponent
+) {
+    Row(
+        modifier = Modifier
+            .padding(10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            modifier = Modifier
+                .weight(1f)
+                .basicMarquee(iterations = Int.MAX_VALUE),
+            text = workoutComponent.name,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        when (workoutComponent) {
+            is Exercise -> ExerciseRenderer(
+                exercise = workoutComponent
+            )
+
+            is ExerciseGroup -> ExerciseGroupRenderer(
+                exerciseGroup = workoutComponent,
+            )
+        }
+    }
+}
+
 @Composable
 fun WorkoutComponentTitle(
     modifier: Modifier = Modifier,
@@ -135,6 +168,7 @@ fun WorkoutComponentTitle(
         )
     }
 }
+
 
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -424,7 +458,6 @@ fun WorkoutDetailScreen(
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
-
                 TabRow(
                     selectedTabIndex = 0,
                     indicator = { tabPositions ->
@@ -506,31 +539,9 @@ fun WorkoutDetailScreen(
                     },
                     itemContent = { it ->
                         DarkModeContainer(whiteOverlayAlpha = .1f) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(10.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .basicMarquee(iterations = Int.MAX_VALUE),
-                                    text = it.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = .87f),
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                when (it) {
-                                    is Exercise -> ExerciseRenderer(
-                                        exercise = it
-                                    )
-
-                                    is ExerciseGroup -> ExerciseGroupRenderer(
-                                        exerciseGroup = it
-                                    )
-                                }
-                            }
+                            WorkoutComponentRenderer(
+                                workoutComponent = it
+                            )
                         }
                     },
                     isDragDisabled = true

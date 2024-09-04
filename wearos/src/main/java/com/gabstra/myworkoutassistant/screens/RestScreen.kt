@@ -295,7 +295,8 @@ fun RestScreen(
             startAngle = -60f,
             endAngle = 70f,
             strokeWidth = 4.dp,
-            indicatorColor = MaterialTheme.colors.primary
+            indicatorColor = MaterialTheme.colors.primary,
+            trackColor = Color.DarkGray
         )
 
         hearthRateChart()
