@@ -15,21 +15,19 @@ import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.composable.LoadingText
 
 @Composable
-fun LoadingScreen(text: String = "Loading...") {
+fun LoadingScreen(text: String = "Loading...", extraContent: @Composable () -> Unit = {}) {
     BackHandler(true) {
+        // Do nothing
     }
 
-    KeepOn{
+    KeepOn {
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             LoadingText(baseText = text)
+            extraContent()
         }
     }
-
-
-
-
 }

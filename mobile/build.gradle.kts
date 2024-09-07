@@ -48,6 +48,13 @@ composeCompiler {
 
 android {
     signingConfigs {
+        getByName("debug") {
+            storeFile =
+                file("C:\\Users\\gabri\\OneDrive\\MyWorkoutAssistant\\workout_assistant_keystore.jks")
+            storePassword = "VDk8D21M4qoPiGP7tRDOAbQF"
+            keyAlias = "release_key"
+            keyPassword = "GRn24V3dWsToEKVzgoQG2uyB"
+        }
         create("release") {
             storeFile =
                 file("C:\\Users\\gabri\\OneDrive\\MyWorkoutAssistant\\workout_assistant_keystore.jks")

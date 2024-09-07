@@ -73,6 +73,7 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
 
         val startRequest = PutDataMapRequest.create("/backupChunkPath").apply {
             dataMap.putBoolean("isStart", true)
+            dataMap.putInt("chunksCount", chunks.size)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
 

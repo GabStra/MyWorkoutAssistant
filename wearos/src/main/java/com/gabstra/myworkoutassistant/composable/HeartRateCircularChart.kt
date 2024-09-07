@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -125,11 +126,11 @@ private fun HeartRateView(
     segments: List<ProgressIndicatorSegment>
 ) {
     val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
-
+    val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
     val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
 
     var isDisplayingHr by remember { mutableStateOf(true) }
-    val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "Zone ${zone}"
+    val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "Zone $zone"
     val context = LocalContext.current
 
     Box(
@@ -166,7 +167,7 @@ private fun HeartRateView(
         // Progress indicator logic
         SegmentedProgressIndicator(
             trackSegments = segments,
-            progress = progress,
+            progress = animatedProgress,
             modifier = Modifier.fillMaxSize(),
             strokeWidth = 4.dp,
             paddingAngle = 2f,

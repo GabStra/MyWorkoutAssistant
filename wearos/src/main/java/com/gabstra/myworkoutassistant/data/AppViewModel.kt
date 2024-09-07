@@ -89,6 +89,14 @@ class AppViewModel : ViewModel(){
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
 
+    private var _backupProgress = mutableStateOf(0f)
+    val backupProgress: State<Float> = _backupProgress
+
+    // Create a function to update the backup progress
+    fun setBackupProgress(progress: Float) {
+        _backupProgress.value = progress
+    }
+
     var polarDeviceId: String = ""
         get() = workoutStore.polarDeviceId?: ""
 
@@ -224,7 +232,7 @@ class AppViewModel : ViewModel(){
                 _isHistoryEmpty.value = workoutStateHistory.isEmpty()
                 setStates.clear()
                 executedSetsHistory.clear()
-                currentWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
+                currentWorkoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(_workoutRecord!!.workoutHistoryId,false)
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
                 startWorkoutTime = currentWorkoutHistory!!.startTime
                 loadWorkoutHistory()

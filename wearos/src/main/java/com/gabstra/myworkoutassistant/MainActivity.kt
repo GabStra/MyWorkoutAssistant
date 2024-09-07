@@ -20,9 +20,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -30,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -38,6 +43,8 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.wear.compose.material.CircularProgressIndicator
+import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
@@ -78,8 +85,17 @@ class MyReceiver(
 
                 val appBackupFailed = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_FAILED)
 
+                val appBackupProgress = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_PROGRESS_UPDATE)
+
                 if(appBackupStartJson != null){
-                    navController.navigate(Screen.Loading.route)
+                    appViewModel.setBackupProgress(0f)
+
+                    val currentRoute = navController.currentBackStackEntry?.destination?.route
+                    if(currentRoute == Screen.Workout.route){
+                        Toast.makeText(context, "Sync started", Toast.LENGTH_SHORT).show()
+                    }else{
+                        navController.navigate(Screen.Loading.route)
+                    }
                 }
 
                 if(workoutStoreJson != null || appBackupEndJson != null){
@@ -91,15 +107,25 @@ class MyReceiver(
                 }
 
                 if(appBackupEndJson != null){
-                    navController.navigate(Screen.WorkoutSelection.route) {
-                        popUpTo(0) { inclusive = true }
+                    val currentRoute = navController.currentBackStackEntry?.destination?.route
+                    if(currentRoute == Screen.Workout.route){
+                        Toast.makeText(context, "Sync completed", Toast.LENGTH_SHORT).show()
+                    }else{
+                        navController.navigate(Screen.WorkoutSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
                     }
                 }
 
+                if (appBackupProgress != null) {
+                    val progress = appBackupProgress.toFloat()
+                    appViewModel.setBackupProgress(progress)
+                }
+
                 if(appBackupFailed != null){
-                    Toast.makeText(context, "Failed to sync with phone", Toast.LENGTH_SHORT).show()
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if(currentRoute == Screen.Loading.route){
+                        Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
@@ -107,6 +133,7 @@ class MyReceiver(
                 }
 
             }catch (exception: Exception) {
+                Log.e("MyReceiver", "Error processing data", exception)
                 throw exception
             }
         }
@@ -177,9 +204,6 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         appViewModel.initWorkoutHistoryDao(localContext)
         appViewModel.initWorkoutRecordDao(localContext)
 
-
-
-
         onNavControllerAvailable(navController)
 
         val hrViewModel: SensorDataViewModel =  viewModel(
@@ -226,6 +250,17 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                 }
             }
             composable(Screen.Loading.route) {
+                val progress by appViewModel.backupProgress
+                val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
+                Log.d("MainActivity", "Progress: $progress animatedProgress: $animatedProgress")
+                CircularProgressIndicator(
+                    progress = animatedProgress,
+                    modifier = Modifier.fillMaxSize(),
+                    strokeWidth = 4.dp,
+                    indicatorColor = MaterialTheme.colors.primary,
+                    trackColor = Color.DarkGray
+                )
+
                 LoadingScreen("Syncing with phone")
             }
         }
