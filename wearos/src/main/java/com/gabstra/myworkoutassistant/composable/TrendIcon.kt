@@ -53,7 +53,7 @@ fun <T : Number> TrendIcon(currentValue: T, previousValue: T) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
                     contentDescription = "Flat",
-                    modifier = Modifier.size(35.dp),
+                    modifier = Modifier.size(35.dp).alpha(0f),
                 )
             }
         }

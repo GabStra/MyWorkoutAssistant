@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -104,7 +105,7 @@ fun SetRenderer(set: Set) {
             is EnduranceSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis / 1000)} (mm:ss)",
+                    text = "${formatTime(set.timeInMillis / 1000)} (hh:mm:ss)",
                     textAlign = TextAlign.Center,
                     color = Color.White.copy(alpha = .87f),
                     style = MaterialTheme.typography.bodyMedium,
@@ -114,7 +115,7 @@ fun SetRenderer(set: Set) {
             is TimedDurationSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "${formatSecondsToMinutesSeconds(set.timeInMillis / 1000)} (mm:ss)",
+                    text = "${formatTime(set.timeInMillis / 1000)} (hh:mm:ss)",
                     textAlign = TextAlign.Center,
                     color = Color.White.copy(alpha = .87f),
                     style = MaterialTheme.typography.bodyMedium,
@@ -160,6 +161,7 @@ fun ExerciseDetailScreen(
                             )
                         }
                     },
+
                     actions = {
                         IconButton(onClick = {
                             appViewModel.setScreenData(

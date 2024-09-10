@@ -32,10 +32,11 @@ fun TimedDurationSetForm(
     onSetUpsert: (Set) -> Unit,
     timedDurationSet: TimedDurationSet? = null // Add exercise parameter with default value null
 ) {
-    // Mutable state for form fields
-    val timeInSecondsState = remember { mutableStateOf(timedDurationSet?.timeInMillis?.div(1000)?.toString() ?: "") }
     val autoStartState = remember { mutableStateOf(timedDurationSet?.autoStart ?: false) }
     val autoStopState = remember { mutableStateOf(timedDurationSet?.autoStop ?: false) }
+
+    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(timedDurationSet?.timeInMillis?.div(1000) ?: 0)) }
+    val (hours, minutes, seconds) = hms.value
 
     Column(
         modifier = Modifier
@@ -46,27 +47,15 @@ fun TimedDurationSetForm(
                 .fillMaxWidth()
                 .padding(8.dp),
         ) {
-            if(timeInSecondsState.value.isNotEmpty()){
-                Text(formatSecondsToMinutesSeconds(timeInSecondsState.value.toInt()))
-                Spacer(modifier = Modifier.height(15.dp))
-            }
-            // Rest time field
-            OutlinedTextField(
-                value = timeInSecondsState.value,
-                onValueChange = { input ->
-                    if (input.isEmpty() || (input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
-                        val inputValue = input.toIntOrNull()
-                        if (inputValue != null && inputValue >= 3600) {
-                            timeInSecondsState.value = "3599"
-                        } else {
-                            timeInSecondsState.value = input
-                        }
-                    }
-                },
-                label = { Text("Duration (in seconds)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
+            Text("Duration")
+            Spacer(modifier = Modifier.height(15.dp))
+            CustomTimePicker(
+                initialHour = hours,
+                initialMinute = minutes,
+                initialSecond = seconds,
+                onTimeChange = { hour, minute, second ->
+                    hms.value = Triple(hour, minute, second)
+                }
             )
         }
 
@@ -100,10 +89,9 @@ fun TimedDurationSetForm(
         Button(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
-                val timeInSeconds = timeInSecondsState.value.toIntOrNull() ?: 0
                 val newTimedDurationSet = TimedDurationSet(
                     id = UUID.randomUUID(),
-                    timeInMillis = if (timeInSeconds >= 0) timeInSeconds * 1000 else 0,
+                    timeInMillis = TimeConverter.hmsTotalSeconds(hours, minutes, seconds)* 1000,
                     autoStart = autoStartState.value,
                     autoStop = autoStopState.value,
                 )

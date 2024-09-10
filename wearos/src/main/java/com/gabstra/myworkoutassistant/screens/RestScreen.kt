@@ -87,21 +87,27 @@ fun NextExerciseInfo(
         modifier = Modifier
             .size(160.dp, 190.dp)
             .padding(top = 70.dp),
-        verticalArrangement = Arrangement.Top,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ){
-        Text(
-            modifier = Modifier
-                .width(140.dp)
-                .horizontalScroll(scrollState),
-            text = state.parentExercise.name,
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.title3,
-        )
-        Spacer(modifier = Modifier.height(5.dp))
+        Box(modifier = Modifier
+            .width(140.dp)
+            .height(40.dp)
+            .horizontalScroll(scrollState),
+            contentAlignment = Alignment.Center
+        ){
+            Text(
+                text = state.parentExercise.name,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.title3,
+            )
+        }
+
         if(exerciseSets.count()!=1){
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ){
@@ -110,7 +116,7 @@ fun NextExerciseInfo(
                 Text( text="Set: ${setIndex+1}/${exerciseSets.count()}",style = MaterialTheme.typography.caption2)
             }
         }
-        Spacer(modifier = Modifier.height(5.dp))
+
         when(state.set){
             is WeightSet -> WeightSetDataViewerMinimal(
                 state.currentSetData as WeightSetData

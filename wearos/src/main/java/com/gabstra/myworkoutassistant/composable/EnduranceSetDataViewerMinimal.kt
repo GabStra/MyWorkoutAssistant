@@ -15,9 +15,10 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 
 
 @Composable
-fun EnduranceSetDataViewerMinimal(enduranceSetData: EnduranceSetData,style: TextStyle = MaterialTheme.typography.body1){
+fun EnduranceSetDataViewerMinimal(enduranceSetData: EnduranceSetData,style: TextStyle = MaterialTheme.typography.body1,color: Color = Color.Unspecified){
     Text(
         text =  FormatTime(enduranceSetData.startTimer / 1000),
         style = style,
+        color = color
     )
 }

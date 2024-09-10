@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -37,7 +38,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                 when (val setData = set.setData) {
                     is WeightSetData -> {
                         Text(
-                            text = "x${setData.actualReps} @ ${setData.actualWeight} kg",
+                            text = "${setData.actualReps} @ ${setData.actualWeight} kg",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = .87f),
                         )
@@ -56,12 +57,12 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                             horizontalAlignment = Alignment.End,
                         ) {
                             Text(
-                                "Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                                "Timer set to: " + formatTime(setData.startTimer / 1000) + " (hh:mm:ss)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .87f)
                             )
                             Text(
-                                "Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                                "Stopped at: " + formatTime(setData.endTimer / 1000) + " (hh:mm:ss)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .87f)
                             )
@@ -72,11 +73,11 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         Column(
                             horizontalAlignment = Alignment.End,
                         ) {
-                            Text("Timer set to: " + formatSecondsToMinutesSeconds(setData.startTimer / 1000) + " (mm:ss)",
+                            Text("Timer set to: " + formatTime(setData.startTimer / 1000) + " (hh:mm:ss)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .6f)
                             )
-                            Text("Stopped at: " + formatSecondsToMinutesSeconds(setData.endTimer / 1000) + " (mm:ss)",
+                            Text("Stopped at: " + formatTime(setData.endTimer / 1000) + " (hh:mm:ss)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .6f)
                             )

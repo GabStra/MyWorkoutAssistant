@@ -18,9 +18,10 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 
 @Composable
-fun TimedDurationSetDataViewerMinimal(timedDurationSetData: TimedDurationSetData, style: TextStyle = MaterialTheme.typography.body1){
+fun TimedDurationSetDataViewerMinimal(timedDurationSetData: TimedDurationSetData, style: TextStyle = MaterialTheme.typography.body1,color: Color = Color.Unspecified){
     Text(
         text =  FormatTime(timedDurationSetData.startTimer / 1000),
         style = style,
+        color = color
     )
 }

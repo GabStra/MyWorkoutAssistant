@@ -46,6 +46,18 @@ fun ControlButtonsVertical(
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier.height(40.dp).fillMaxWidth().padding(vertical = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            content()
+        }
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Box(
@@ -71,12 +83,6 @@ fun ControlButtonsVertical(
             }
         }
         Box(
-            modifier = Modifier.height(40.dp).fillMaxWidth().padding(vertical = 2.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            content()
-        }
-        Box(
             modifier = Modifier
                 .size(70.dp, 35.dp)
                 .repeatActionOnLongPressOrTap(
@@ -98,6 +104,5 @@ fun ControlButtonsVertical(
                 Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
             }
         }
-
     }
 }

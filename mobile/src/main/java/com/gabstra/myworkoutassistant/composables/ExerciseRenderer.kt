@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
@@ -54,7 +55,7 @@ fun ExerciseRenderer(
 
                     is TimedDurationSet -> {
                         Text(
-                            text=formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
+                            text= formatTime(set.timeInMillis / 1000) + " (hh:mm:ss)",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )
@@ -62,7 +63,7 @@ fun ExerciseRenderer(
 
                     is EnduranceSet -> {
                         Text(
-                            formatSecondsToMinutesSeconds(set.timeInMillis / 1000) + " (mm:ss)",
+                            formatTime(set.timeInMillis / 1000) + " (hh:mm:ss)",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )

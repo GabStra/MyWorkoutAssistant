@@ -120,6 +120,34 @@ fun formatMillisecondsToMinutesSeconds(milliseconds: Int): String {
     return String.format("%02d:%02d:%03d", minutes, remainingSeconds, remainingMilliseconds)
 }
 
+fun findParentWorkoutComponent(workout: Workout, component: WorkoutComponent): ExerciseGroup? {
+    for (workoutComponent in workout.workoutComponents) {
+        if (workoutComponent is ExerciseGroup) {
+            val parent = findParentWorkoutComponent(workoutComponent, component)
+            if (parent != null) {
+                return parent
+            }
+        }
+    }
+    return null
+}
+
+fun findParentWorkoutComponent(exerciseGroup: ExerciseGroup, component: WorkoutComponent): ExerciseGroup? {
+    for (workoutComponent in exerciseGroup.workoutComponents) {
+        if (workoutComponent == component) {
+            return exerciseGroup
+        }
+
+        if (workoutComponent is ExerciseGroup) {
+            val parent = findParentWorkoutComponent(workoutComponent, component)
+            if (parent != null) {
+                return parent
+            }
+        }
+    }
+    return null
+}
+
 fun findWorkoutComponentByIdInWorkout(workout: Workout, id: UUID): WorkoutComponent? {
     for (workoutComponent in workout.workoutComponents) {
         if (workoutComponent.id == id) {

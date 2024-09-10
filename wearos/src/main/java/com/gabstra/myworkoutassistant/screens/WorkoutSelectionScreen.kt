@@ -93,6 +93,24 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
     )
 }
 
+@Composable
+fun MissingAppMessage(titleComposable: @Composable () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        titleComposable()
+        Spacer(modifier = Modifier.height(15.dp))
+        Text(
+            modifier = Modifier.padding(vertical = 10.dp),
+            text = "Please install the app on your phone",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.caption1,
+        )
+    }
+}
+
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
 fun MissingAgeSettingMessage(
@@ -148,8 +166,6 @@ fun WorkoutSelectionScreen(
     val sortedWorkouts = workouts.sortedBy { it.order }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
-    var showLoadingScreen by remember { mutableStateOf(true) }
-
     val userAge by viewModel.userAge
     val phoneNode = viewModel.phoneNode
 
@@ -178,67 +194,45 @@ fun WorkoutSelectionScreen(
         )
     }
 
-    LaunchedEffect(Unit) {
-        delay(2000)
-        showLoadingScreen = false
+    if (!viewModel.isPhoneConnectedAndHasApp) {
+        MissingAppMessage(titleComposable)
+        return
     }
 
-    if (showLoadingScreen) {
-        LoadingScreen("Loading")
-    } else {
-        if (!viewModel.isPhoneConnectedAndHasApp && sortedWorkouts.isEmpty()) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                titleComposable()
-                Spacer(modifier = Modifier.height(15.dp))
-                Text(
-                    modifier = Modifier.padding(vertical = 10.dp),
-                    text = "Please install the app on your phone",
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.caption1,
-                )
-            }
-            return
-        }
+    if (userAge == currentYear && phoneNode != null) {
+        MissingAgeSettingMessage(dataClient, viewModel, appHelper, titleComposable)
+        return
+    }
 
-        if (userAge == currentYear && phoneNode != null) {
-            MissingAgeSettingMessage(dataClient, viewModel, appHelper, titleComposable)
-            return
+    Scaffold(
+        positionIndicator = {
+            PositionIndicator(
+                scalingLazyListState = scalingLazyListState
+            )
         }
-
-        Scaffold(
-            positionIndicator = {
-                PositionIndicator(
-                    scalingLazyListState = scalingLazyListState
-                )
-            }
+    ) {
+        ScalingLazyColumn(
+            modifier = Modifier.padding(10.dp, vertical = 0.dp),
+            state = scalingLazyListState,
         ) {
-            ScalingLazyColumn(
-                modifier = Modifier.padding(10.dp, vertical = 0.dp),
-                state = scalingLazyListState,
-            ) {
-                item {
-                    titleComposable()
-                }
+            item {
+                titleComposable()
+            }
 
-                if (sortedWorkouts.isEmpty()) {
-                    item {
-                        Text(
-                            modifier = Modifier.padding(vertical = 10.dp),
-                            text = "No workouts available",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.caption1,
-                        )
-                    }
-                } else {
-                    items(sortedWorkouts) { workout ->
-                        WorkoutListItem(workout) {
-                            navController.navigate(Screen.WorkoutDetail.route)
-                            viewModel.setWorkout(workout)
-                        }
+            if (sortedWorkouts.isEmpty()) {
+                item {
+                    Text(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        text = "No workouts available",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption1,
+                    )
+                }
+            } else {
+                items(sortedWorkouts) { workout ->
+                    WorkoutListItem(workout) {
+                        navController.navigate(Screen.WorkoutDetail.route)
+                        viewModel.setWorkout(workout)
                     }
                 }
             }

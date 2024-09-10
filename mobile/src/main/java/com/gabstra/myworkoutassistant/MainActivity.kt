@@ -570,6 +570,7 @@ fun MyWorkoutAssistantNavHost(
                     appViewModel.goBack()
                 },
                 onCancel = { appViewModel.goBack() },
+                allowSettingDoNotStoreHistory = if(parentExerciseGroup!=null) !parentExerciseGroup.doNotStoreHistory else true
             )
         }
 
@@ -592,6 +593,9 @@ fun MyWorkoutAssistantNavHost(
                 selectedWorkout,
                 screenData.selectedExerciseId
             ) as Exercise
+
+            val parentExerciseGroup = findParentWorkoutComponent(selectedWorkout, selectedExercise)
+
             ExerciseForm(
                 onExerciseUpsert = { updatedExercise ->
                     appViewModel.updateWorkoutComponentOld(
@@ -604,7 +608,8 @@ fun MyWorkoutAssistantNavHost(
                 onCancel = {
                     appViewModel.goBack()
                 },
-                exercise = selectedExercise
+                exercise = selectedExercise,
+                allowSettingDoNotStoreHistory = if(parentExerciseGroup!=null) !parentExerciseGroup.doNotStoreHistory else true
             )
         }
 

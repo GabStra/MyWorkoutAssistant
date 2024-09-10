@@ -51,7 +51,7 @@ import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewer
+import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
@@ -62,7 +62,7 @@ import com.gabstra.myworkoutassistant.composable.EnhancedButton
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
-import com.gabstra.myworkoutassistant.composable.WeightSetDataViewer
+import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
@@ -204,10 +204,10 @@ fun PageExerciseDetail(
             horizontalArrangement = Arrangement.Center
         ){
             when (val set = state.set) {
-                is WeightSet -> WeightSetDataViewer(state.previousSetData as WeightSetData,MaterialTheme.typography.caption2)
-                is BodyWeightSet -> BodyWeightSetDataViewer(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption2)
-                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption2)
-                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2)
+                is WeightSet -> WeightSetDataViewerMinimal(state.previousSetData as WeightSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
+                is BodyWeightSet -> BodyWeightSetDataViewerMinimal(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
+                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
+                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
             }
         }
 

@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composable
 
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,7 +24,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -34,6 +32,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.calculateAdjustedVolume
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import kotlinx.coroutines.delay
 
@@ -62,8 +61,16 @@ fun WeightSetScreen (
         lastInteractionTime = System.currentTimeMillis()
     }
 
-    val currentVolume = (currentSet.actualReps*currentSet.actualWeight).toInt()
-    val previousVolume = (previousSet.actualReps*previousSet.actualWeight).toInt()
+    val currentVolume = calculateAdjustedVolume(
+        currentSet.actualWeight,
+        currentSet.actualReps
+    )
+
+    val previousVolume = calculateAdjustedVolume(
+        previousSet.actualWeight,
+        previousSet.actualReps
+    )
+
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
@@ -102,7 +109,7 @@ fun WeightSetScreen (
 
             VibrateOnce(context)
         }
-        if (isWeightInEditMode && (currentSet.actualWeight > 0.5)){
+        if (isWeightInEditMode && (currentSet.actualWeight > 0)){
             currentSet = currentSet.copy(
                 actualWeight = currentSet.actualWeight.minus(0.5F)
             )
@@ -185,28 +192,28 @@ fun WeightSetScreen (
             Row(
                 modifier = modifier
                     .height(35.dp)
-                .height(35.dp)
-                .combinedClickable(
-                    onClick = {
-                    },
-                    onLongClick = {
-                        if (!forceStopEditMode) {
-                            isWeightInEditMode = !isWeightInEditMode
-                            updateInteractionTime()
-                            isRepsInEditMode = false
-                        }
-                        VibrateOnce(context)
-                    },
-                    onDoubleClick = {
-                        if (isWeightInEditMode) {
-                            currentSet = currentSet.copy(
-                                actualWeight = previousSet.actualWeight
-                            )
+                    .height(35.dp)
+                    .combinedClickable(
+                        onClick = {
+                        },
+                        onLongClick = {
+                            if (!forceStopEditMode) {
+                                isWeightInEditMode = !isWeightInEditMode
+                                updateInteractionTime()
+                                isRepsInEditMode = false
+                            }
+                            VibrateOnce(context)
+                        },
+                        onDoubleClick = {
+                            if (isWeightInEditMode) {
+                                currentSet = currentSet.copy(
+                                    actualWeight = previousSet.actualWeight
+                                )
 
-                            VibrateTwice(context)
+                                VibrateTwice(context)
+                            }
                         }
-                    }
-                ),
+                    ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.End
         ) {

@@ -1,43 +1,29 @@
 package com.gabstra.myworkoutassistant.data
 
-import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.util.Log
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
-import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
-import com.gabstra.myworkoutassistant.shared.logLargeString
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -47,8 +33,6 @@ import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -378,4 +362,20 @@ fun combineChunks(chunks: List<ByteArray>): ByteArray {
     }
 
     return combinedArray
+}
+
+fun getOneRepMax(weight: Float, reps: Int): Float {
+    return weight / (1.0278f - (0.0278f * reps))
+}
+
+fun calculateIntensity(weight: Float, oneRepMax: Float): Float {
+    return weight / oneRepMax
+}
+
+fun calculateVolume(weight: Float, reps: Int): Float {
+    return weight * reps
+}
+
+fun calculateAdjustedVolume(weight: Float, reps: Int): Float {
+    return calculateVolume(weight, reps) * calculateIntensity(weight, getOneRepMax(weight,reps))
 }

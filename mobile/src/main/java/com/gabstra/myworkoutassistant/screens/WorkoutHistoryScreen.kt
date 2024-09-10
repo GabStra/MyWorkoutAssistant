@@ -494,7 +494,7 @@ fun WorkoutHistoryScreen(
                                         Spacer(Modifier.weight(1f))
                                         Text(
                                             text = "${(progress * 100).toInt()}% ${
-                                                formatSecondsToMinutesSeconds(
+                                                formatTime(
                                                     floor(count / 2.0).toInt()
                                                 )
                                             }",

@@ -23,6 +23,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TimeInput
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -47,10 +51,11 @@ fun ExerciseGroupForm(
 ) {
     // Mutable state for form fields
     val groupNameState = remember { mutableStateOf(exerciseGroup?.name ?: "") }
-    val restTimeState = remember { mutableStateOf(exerciseGroup?.restTimeInSec?.toString() ?: "0") }
     val skipWorkoutRest = remember { mutableStateOf(exerciseGroup?.skipWorkoutRest ?: false) }
     val doNotStoreHistory = remember { mutableStateOf(exerciseGroup?.doNotStoreHistory ?: false) }
 
+    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(exerciseGroup?.restTimeInSec ?: 0)) }
+    val (hours, minutes, seconds) = hms.value
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -72,23 +77,15 @@ fun ExerciseGroupForm(
                 .fillMaxWidth()
                 .padding(8.dp),
         ) {
-            if(restTimeState.value.isNotEmpty()){
-                Text(formatSecondsToMinutesSeconds(restTimeState.value.toInt()))
-                Spacer(modifier = Modifier.height(15.dp))
-            }
-            // Rest time field
-            OutlinedTextField(
-                value = restTimeState.value,
-                onValueChange = { input ->
-                    if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                        // Update the state only if the input is empty or all characters are digits
-                        restTimeState.value = input
-                    }
-                },
-                label = { Text("Rest Time Between Exercises (in seconds)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
+            Text("Rest Time Between Exercises")
+            Spacer(modifier = Modifier.height(15.dp))
+            CustomTimePicker(
+                initialHour = hours,
+                initialMinute = minutes,
+                initialSecond = seconds,
+                onTimeChange = { hour, minute, second ->
+                    hms.value = Triple(hour, minute, second)
+                }
             )
         }
 
@@ -122,11 +119,10 @@ fun ExerciseGroupForm(
         Button(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
-                val restTimeInSec = restTimeState.value.toIntOrNull() ?: 0
                 val newExerciseGroup = ExerciseGroup(
                     id  = exerciseGroup?.id ?: java.util.UUID.randomUUID(),
                     name = groupNameState.value,
-                    restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
+                    restTimeInSec = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
                     skipWorkoutRest = skipWorkoutRest.value,
                     doNotStoreHistory = doNotStoreHistory.value,
                     enabled = exerciseGroup?.enabled ?: true,

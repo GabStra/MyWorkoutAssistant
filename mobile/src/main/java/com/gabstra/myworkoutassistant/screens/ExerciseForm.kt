@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetType
@@ -44,18 +46,22 @@ fun stringToExerciseType(value: String): ExerciseType? {
 fun ExerciseForm(
     onExerciseUpsert: (Exercise) -> Unit,
     onCancel: () -> Unit,
-    exercise: Exercise? = null // Add exercise parameter with default value null
+    exercise: Exercise? = null, // Add exercise parameter with default value null
+    allowSettingDoNotStoreHistory: Boolean = true
 ) {
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(exercise?.name ?: "") }
     val notesState = remember { mutableStateOf(exercise?.notes ?: "") }
     val restTimeState = remember { mutableStateOf(exercise?.restTimeInSec?.toString() ?: "0") }
     val skipWorkoutRest = remember { mutableStateOf(exercise?.skipWorkoutRest ?: false) }
-    val doNotStoreHistory = remember { mutableStateOf(exercise?.doNotStoreHistory ?: false) }
+    val doNotStoreHistory = remember { mutableStateOf(exercise?.doNotStoreHistory ?: !allowSettingDoNotStoreHistory) }
 
     val exerciseTypeDescriptions = getExerciseTypeDescriptions()
     val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
     val expanded = remember { mutableStateOf(false) }
+
+    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(exercise?.restTimeInSec ?: 0)) }
+    val (hours, minutes, seconds) = hms.value
 
     Column(
         modifier = Modifier
@@ -116,27 +122,15 @@ fun ExerciseForm(
                 .fillMaxWidth()
                 .padding(8.dp),
         ) {
-            if(restTimeState.value.isNotEmpty()){
-                Text(formatSecondsToMinutesSeconds(restTimeState.value.toInt()))
-                Spacer(modifier = Modifier.height(15.dp))
-            }
-            // Rest time field
-            OutlinedTextField(
-                value = restTimeState.value,
-                onValueChange = { input ->
-                    if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                        val inputValue = input.toIntOrNull()
-                        if (inputValue != null && inputValue >= 3600) {
-                            restTimeState.value = "3599"
-                        } else {
-                            restTimeState.value = input
-                        }
-                    }
-                },
-                label = { Text("Rest Time Between Sets (in seconds)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
+            Text("Rest Time Between Sets")
+            Spacer(modifier = Modifier.height(15.dp))
+            CustomTimePicker(
+                initialHour = hours,
+                initialMinute = minutes,
+                initialSecond = seconds,
+                onTimeChange = { hour, minute, second ->
+                    hms.value = Triple(hour, minute, second)
+                }
             )
         }
 
@@ -162,6 +156,7 @@ fun ExerciseForm(
             Checkbox(
                 checked = doNotStoreHistory.value,
                 onCheckedChange = { doNotStoreHistory.value = it },
+                enabled = allowSettingDoNotStoreHistory
             )
             Text(text = "Do not store history")
         }
@@ -194,7 +189,7 @@ fun ExerciseForm(
                 val newExercise = Exercise(
                     id = exercise?.id ?: java.util.UUID.randomUUID(),
                     name = nameState.value.trim(),
-                    restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
+                    restTimeInSec = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
                     skipWorkoutRest = skipWorkoutRest.value,
                     doNotStoreHistory = doNotStoreHistory.value,
                     enabled = exercise?.enabled ?: true,

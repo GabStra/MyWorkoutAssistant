@@ -126,7 +126,6 @@ private fun HeartRateView(
     segments: List<ProgressIndicatorSegment>
 ) {
     val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
-    val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
     val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
 
     var isDisplayingHr by remember { mutableStateOf(true) }
@@ -167,7 +166,7 @@ private fun HeartRateView(
         // Progress indicator logic
         SegmentedProgressIndicator(
             trackSegments = segments,
-            progress = animatedProgress,
+            progress = progress,
             modifier = Modifier.fillMaxSize(),
             strokeWidth = 4.dp,
             paddingAngle = 2f,

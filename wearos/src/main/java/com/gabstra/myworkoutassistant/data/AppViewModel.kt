@@ -322,6 +322,11 @@ class AppViewModel : ViewModel(){
     }
 
     fun pushAndStoreWorkoutData(isDone: Boolean, context: Context? = null, onEnd: () -> Unit = {}) {
+        if(setsByExercise.keys.count() == 1 && !isDone){
+            onEnd()
+            return
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 

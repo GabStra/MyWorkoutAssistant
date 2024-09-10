@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import com.gabstra.myworkoutassistant.shared.Workout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TimeInput
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import java.time.LocalDate
 
@@ -43,10 +48,11 @@ fun WorkoutForm(
     // Mutable state for form fields
     val workoutNameState = remember { mutableStateOf(workout?.name ?: "") }
     val workoutDescriptionState = remember { mutableStateOf(workout?.description ?: "") }
-    val restTimeState = remember { mutableStateOf(workout?.restTimeInSec?.toString() ?: "0") }
     val timesCompletedInAWeekState = remember { mutableStateOf(workout?.timesCompletedInAWeek?.toString() ?: "0") }
     val usePolarDeviceState = remember { mutableStateOf(workout?.usePolarDevice ?: false) }
 
+    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(workout?.restTimeInSec ?: 0)) }
+    val (hours, minutes, seconds) = hms.value
 
     Box(
         modifier = Modifier
@@ -84,54 +90,15 @@ fun WorkoutForm(
                     .fillMaxWidth()
                     .padding(8.dp),
             ) {
-                if(restTimeState.value.isNotEmpty()){
-                    Text(formatSecondsToMinutesSeconds(restTimeState.value.toInt()))
-                    Spacer(modifier = Modifier.height(15.dp))
-                }
-                // Rest time field
-                OutlinedTextField(
-                    value = restTimeState.value,
-                    onValueChange = { input ->
-                        if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                            // Update the state only if the input is empty or all characters are digits
-                            val inputValue = input.toIntOrNull()
-
-                            if (inputValue != null && inputValue >= 3600) {
-                                restTimeState.value = "3599"
-                            } else {
-                                restTimeState.value = input
-                            }
-                        }
-                    },
-                    label = { Text("Rest Time Between Exercises (in seconds)") },
-                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                )
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = timesCompletedInAWeekState.value,
-                    onValueChange = { input ->
-                        if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                            val inputValue = input.toIntOrNull()
-
-                            if (inputValue != null && inputValue == 0) {
-                                timesCompletedInAWeekState.value = "1"
-                            } else {
-                                timesCompletedInAWeekState.value = input
-                            }
-                        }
-                    },
-                    label = { Text("Objective per week") },
-                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .fillMaxWidth()
+                Text("Rest Time Between Exercises")
+                Spacer(modifier = Modifier.height(15.dp))
+                CustomTimePicker(
+                    initialHour = hours,
+                    initialMinute = minutes,
+                    initialSecond = seconds,
+                    onTimeChange = { hour, minute, second ->
+                        hms.value = Triple(hour, minute, second)
+                    }
                 )
             }
 
@@ -156,12 +123,11 @@ fun WorkoutForm(
                         return@Button
                     }
 
-                    val restTimeInSec = restTimeState.value.toIntOrNull() ?: 0
                     val newWorkout = Workout(
                         id  = workout?.id ?: java.util.UUID.randomUUID(),
                         name = workoutNameState.value.trim(),
                         description = workoutDescriptionState.value.trim(),
-                        restTimeInSec = if (restTimeInSec >= 0) restTimeInSec else 0,
+                        restTimeInSec = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
                         workoutComponents = workout?.workoutComponents ?: listOf(),
                         usePolarDevice = usePolarDeviceState.value,
                         creationDate = LocalDate.now(),
