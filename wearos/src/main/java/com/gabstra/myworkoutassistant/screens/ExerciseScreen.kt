@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
+import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -204,10 +205,10 @@ fun PageExerciseDetail(
             horizontalArrangement = Arrangement.Center
         ){
             when (val set = state.set) {
-                is WeightSet -> WeightSetDataViewerMinimal(state.previousSetData as WeightSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
-                is BodyWeightSet -> BodyWeightSetDataViewerMinimal(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
-                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
-                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2,MaterialTheme.colors.primary)
+                is WeightSet -> WeightSetDataViewerMinimal(state.previousSetData as WeightSetData,MaterialTheme.typography.caption2)
+                is BodyWeightSet -> BodyWeightSetDataViewerMinimal(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption2)
+                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption2,historyMode = true)
+                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2,historyMode = true)
             }
         }
 
@@ -311,7 +312,8 @@ fun ExerciseScreen(
                     VibrateOnce(context)
                     showGoBackDialog = true
                 },
-                enabled = !isHistoryEmpty
+                enabled = !isHistoryEmpty,
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color.LightGray)
             ) {
                 Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
             }
@@ -329,6 +331,8 @@ fun ExerciseScreen(
             }
         }
     }
+
+    var marqueeEnabled by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -356,12 +360,13 @@ fun ExerciseScreen(
                         .padding(bottom = 5.dp)
                         .horizontalScroll(scrollState)
                         .combinedClickable(
-                            onClick = {},
+                            onClick = { marqueeEnabled = !marqueeEnabled },
                             onLongClick = {
                                 showSkipDialog = true
                                 VibrateOnce(context)
                             }
-                        ),
+                        )
+                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     text = updatedState.parentExercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,

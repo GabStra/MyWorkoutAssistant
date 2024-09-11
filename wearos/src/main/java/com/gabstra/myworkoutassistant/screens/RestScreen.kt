@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.screens
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -81,7 +82,8 @@ fun NextExerciseInfo(
 
     val setIndex =  exerciseSets.indexOfFirst { it === state.set }
 
-    val scrollState = rememberScrollState()
+    var marqueeEnabled by remember { mutableStateOf(false) }
+
 
     Column(
         modifier = Modifier
@@ -92,8 +94,8 @@ fun NextExerciseInfo(
     ){
         Box(modifier = Modifier
             .width(140.dp)
-            .height(40.dp)
-            .horizontalScroll(scrollState),
+            .clickable { marqueeEnabled = !marqueeEnabled }
+            .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
             contentAlignment = Alignment.Center
         ){
             Text(

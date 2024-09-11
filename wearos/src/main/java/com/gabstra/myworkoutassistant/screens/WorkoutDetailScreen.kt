@@ -62,6 +62,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+    val hasExercises by viewModel.hasExercises.collectAsState()
 
     val basePermissions = listOf(
         Manifest.permission.BODY_SENSORS,
@@ -117,7 +118,8 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                     .height(50.dp)
                     .width(150.dp)
                     .padding(5.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary),
+                enabled = hasExercises
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(text = "Start")

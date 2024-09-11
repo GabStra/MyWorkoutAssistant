@@ -91,9 +91,7 @@ class MyReceiver(
                     appViewModel.setBackupProgress(0f)
 
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
-                    if(currentRoute == Screen.Workout.route){
-                        Toast.makeText(context, "Sync started", Toast.LENGTH_SHORT).show()
-                    }else{
+                    if(currentRoute != Screen.Workout.route) {
                         navController.navigate(Screen.Loading.route)
                     }
                 }
@@ -108,9 +106,7 @@ class MyReceiver(
 
                 if(appBackupEndJson != null){
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
-                    if(currentRoute == Screen.Workout.route){
-                        Toast.makeText(context, "Sync completed", Toast.LENGTH_SHORT).show()
-                    }else{
+                    if(currentRoute != Screen.Workout.route){
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
@@ -257,6 +253,8 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                     progress = animatedProgress,
                     modifier = Modifier.fillMaxSize(),
                     strokeWidth = 4.dp,
+                    startAngle = 300f,
+                    endAngle =  240f,
                     indicatorColor = MaterialTheme.colors.primary,
                     trackColor = Color.DarkGray
                 )

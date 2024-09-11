@@ -194,13 +194,12 @@ fun WorkoutSelectionScreen(
         )
     }
 
-    if (!viewModel.isPhoneConnectedAndHasApp) {
-        MissingAppMessage(titleComposable)
-        return
-    }
-
-    if (userAge == currentYear && phoneNode != null) {
-        MissingAgeSettingMessage(dataClient, viewModel, appHelper, titleComposable)
+    if (userAge == currentYear) {
+        if(viewModel.isPhoneConnectedAndHasApp){
+            MissingAgeSettingMessage(dataClient, viewModel, appHelper, titleComposable)
+        }else{
+            MissingAppMessage(titleComposable)
+        }
         return
     }
 

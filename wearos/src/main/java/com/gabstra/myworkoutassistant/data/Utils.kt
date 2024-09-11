@@ -373,6 +373,7 @@ fun calculateIntensity(weight: Float, oneRepMax: Float): Float {
 }
 
 fun calculateVolume(weight: Float, reps: Int): Float {
+    if(weight == 0f) return reps.toFloat()
     return weight * reps
 }
 

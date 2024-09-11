@@ -209,6 +209,8 @@ fun CustomDialogYesOnLongPress(
                 CircularProgressIndicator(
                     progress = progress,
                     modifier = Modifier.fillMaxSize(),
+                    startAngle = 300f,
+                    endAngle =  240f,
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colors.primary,
                     trackColor = Color.DarkGray

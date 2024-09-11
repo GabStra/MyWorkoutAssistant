@@ -120,7 +120,7 @@ class AppViewModel : ViewModel(){
 
     fun initExerciseHistoryDao(context: Context){
         val db = AppDatabase.getDatabase(context)
-        setHistoryDao= db.setHistoryDao()
+        setHistoryDao = db.setHistoryDao()
     }
 
     fun initWorkoutHistoryDao(context: Context){
@@ -178,8 +178,15 @@ class AppViewModel : ViewModel(){
     private val _hasWorkoutRecord = MutableStateFlow<Boolean>(false)
     val hasWorkoutRecord = _hasWorkoutRecord.asStateFlow()
 
+    private val _hasExercises = MutableStateFlow<Boolean>(false)
+    val hasExercises = _hasExercises.asStateFlow()
+
     fun setWorkout(workout: Workout){
         _selectedWorkout.value = workout;
+
+        _hasExercises.value =
+            selectedWorkout.value.workoutComponents.filter { it.enabled }.isNotEmpty()
+
         getWorkoutRecord(workout)
     }
 
@@ -322,11 +329,6 @@ class AppViewModel : ViewModel(){
     }
 
     fun pushAndStoreWorkoutData(isDone: Boolean, context: Context? = null, onEnd: () -> Unit = {}) {
-        if(setsByExercise.keys.count() == 1 && !isDone){
-            onEnd()
-            return
-        }
-
         viewModelScope.launch(Dispatchers.IO) {
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 
@@ -358,19 +360,26 @@ class AppViewModel : ViewModel(){
             executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
             setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
 
-            withContext(Dispatchers.Main){
-                val result = sendWorkoutHistoryStore(
-                    dataClient!!,WorkoutHistoryStore(
-                        WorkoutHistory = currentWorkoutHistory!!,
-                        ExerciseHistories =  executedSetsHistory
-                    ))
+            val currentState = _workoutState.value
+            val shouldSendData = !(currentState == setStates.last && !isDone)
 
-                if(context != null && !result){
-                    Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+            if(shouldSendData){
+                withContext(Dispatchers.Main){
+                    val result = sendWorkoutHistoryStore(
+                        dataClient!!,
+                        WorkoutHistoryStore(
+                            WorkoutHistory = currentWorkoutHistory!!,
+                            ExerciseHistories =  executedSetsHistory
+                        )
+                    )
+
+                    if(context != null && !result){
+                        Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                    }
                 }
-
-                onEnd()
             }
+
+            onEnd()
         }
     }
 
