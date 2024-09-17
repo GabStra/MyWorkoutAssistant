@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.material.ButtonDefaults
@@ -281,8 +282,6 @@ fun ExerciseScreen(
         3
     })
 
-    val scrollState = rememberScrollState()
-
     LaunchedEffect(state) {
         pagerState.scrollToPage(1)
         showConfirmDialog = false
@@ -313,7 +312,7 @@ fun ExerciseScreen(
                     showGoBackDialog = true
                 },
                 enabled = !isHistoryEmpty,
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color.LightGray)
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
             ) {
                 Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
             }
@@ -358,7 +357,6 @@ fun ExerciseScreen(
                     modifier = Modifier
                         .width(80.dp)
                         .padding(bottom = 5.dp)
-                        .horizontalScroll(scrollState)
                         .combinedClickable(
                             onClick = { marqueeEnabled = !marqueeEnabled },
                             onLongClick = {
@@ -370,6 +368,8 @@ fun ExerciseScreen(
                     text = updatedState.parentExercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 SimplifiedHorizontalPager(
@@ -430,9 +430,7 @@ fun ExerciseScreen(
         message = "Do you want to skip this exercise?",
         handleYesClick = {
             VibrateOnce(context)
-            viewModel.pushAndStoreWorkoutData(false,context){
-                viewModel.goToNextState()
-            }
+            viewModel.skipExercise()
             showSkipDialog = false
         },
         handleNoClick = {

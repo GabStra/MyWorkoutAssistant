@@ -36,7 +36,6 @@ internal fun ClippedBox(pagerState: PagerState, content: @Composable () -> Unit)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .optionalClip(shape),
     ) {
         content()
     }

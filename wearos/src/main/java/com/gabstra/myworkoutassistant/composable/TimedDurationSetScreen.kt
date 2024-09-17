@@ -2,18 +2,12 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -30,10 +24,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.Button
+
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
@@ -200,8 +193,8 @@ fun TimedDurationSetScreen(
     }
 
     val textComposable = @Composable {
-        Text(
-            modifier = Modifier.combinedClickable(
+        ScalableText(
+            modifier = Modifier.padding(horizontal=10.dp).combinedClickable(
                 onClick = {
                 },
                 onLongClick = {
@@ -221,7 +214,7 @@ fun TimedDurationSetScreen(
                 }
             ),
             text = FormatTime(currentMillis / 1000),
-            style = MaterialTheme.typography.display3,
+            style = MaterialTheme.typography.display2,
         )
     }
 
@@ -235,6 +228,7 @@ fun TimedDurationSetScreen(
             textComposable()
             if (showStartButton) {
                 EnhancedButton(
+                    boxModifier = Modifier.weight(1f),
                     onClick = {
                         VibrateOnce(context)
                         startTimerJob()
@@ -247,7 +241,7 @@ fun TimedDurationSetScreen(
                 }
             }else{
                 EnhancedButton(
-                    boxModifier = Modifier.alpha(if(timerJob?.isActive == true) 1f else 0f),
+                    boxModifier = Modifier.weight(1f).alpha(if(timerJob?.isActive == true) 1f else 0f),
                     onClick = {
                         VibrateOnce(context)
                         timerJob?.cancel()

@@ -172,7 +172,7 @@ fun CustomDialogYesOnLongPress(
                                 closeDialogJob?.cancel()
                                 handleNoClick()
                             },
-                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }

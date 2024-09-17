@@ -233,3 +233,7 @@ fun getStartOfWeek(date: LocalDate): LocalDate {
 fun getEndOfWeek(date: LocalDate): LocalDate {
     return date.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
 }
+
+fun getOneRepMax(weight: Float, reps: Int): Float {
+    return weight / (1.0278f - (0.0278f * reps))
+}

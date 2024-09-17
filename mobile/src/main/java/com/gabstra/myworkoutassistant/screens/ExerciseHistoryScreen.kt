@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.getOneRepMax
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -78,7 +79,8 @@ fun ExerciseHistoryScreen(
     var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
-
+    var oneRepMaxMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var oneRepMaxEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
 
     val currentLocale = Locale.getDefault()
@@ -119,6 +121,7 @@ fun ExerciseHistoryScreen(
 
             val volumes = mutableListOf<Pair<Int, Float>>()
             val durations = mutableListOf<Pair<Int, Float>>()
+            val oneRepMaxs = mutableListOf<Pair<Int, Float>>()
             for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
                     workoutHistory.id,
@@ -126,10 +129,13 @@ fun ExerciseHistoryScreen(
                 )
                 var volume = 0f
                 var duration = 0f
+
+                var oneRepMax = 0f
                 for (setHistory in setHistories) {
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
                         volume += setData.actualReps * setData.actualWeight
+                        oneRepMax += getOneRepMax(setData.actualWeight, setData.actualReps)
                     }
 
                     if (setHistory.setData is BodyWeightSetData) {
@@ -149,6 +155,12 @@ fun ExerciseHistoryScreen(
                 }
                 volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
                 durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
+
+                if(oneRepMax > 0){
+                    val avgOneRepMax = oneRepMax / setHistories.size
+                    oneRepMaxs.add(Pair(workoutHistories.indexOf(workoutHistory), avgOneRepMax))
+                }
+
             }
 
             if (volumes.any { it.second != 0f }) {
@@ -165,12 +177,23 @@ fun ExerciseHistoryScreen(
             if (durations.any { it.second != 0f }) {
                 if (durations.count() == 1) {
                     durationMarkerTarget = durations.last()
-                } else if (volumes.count() > 1) {
+                } else if (durations.count() > 1) {
                     durationMarkerTarget = durations.maxBy { it.second }
                 }
 
                 durationEntryModel =
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
+            }
+
+            if (oneRepMaxs.any { it.second != 0f }) {
+                if (oneRepMaxs.count() == 1) {
+                    oneRepMaxMarkerTarget = oneRepMaxs.last()
+                } else if (oneRepMaxs.count() > 1) {
+                    oneRepMaxMarkerTarget = oneRepMaxs.maxBy { it.second }
+                }
+
+                oneRepMaxEntryModel =
+                    CartesianChartModel(LineCartesianLayerModel.build { series(*(oneRepMaxs.map { it.second }).toTypedArray()) })
             }
 
             isLoading = false
@@ -286,6 +309,15 @@ fun ExerciseHistoryScreen(
                             cartesianChartModel = volumeEntryModel!!,
                             title = "Cumulative Volume over time",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter
+                        )
+                    }
+
+                    if (oneRepMaxEntryModel != null) {
+                        StandardChart(
+                            cartesianChartModel = oneRepMaxEntryModel!!,
+                            markerPosition = oneRepMaxMarkerTarget!!.first.toFloat(),
+                            title = "Average 1 Rep Max over time",
                             bottomAxisValueFormatter = horizontalAxisValueFormatter
                         )
                     }

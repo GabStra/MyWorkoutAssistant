@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.calculateAdjustedVolume
 import com.gabstra.myworkoutassistant.data.calculateVolume
+import com.gabstra.myworkoutassistant.data.getOneRepMax
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import kotlinx.coroutines.delay
 
@@ -62,14 +63,17 @@ fun WeightSetScreen (
         lastInteractionTime = System.currentTimeMillis()
     }
 
-    val currentVolume = calculateVolume(
+    val oneRepMax = getOneRepMax(previousSet.actualWeight, previousSet.actualReps)
+    val currentVolume = calculateAdjustedVolume(
         currentSet.actualWeight,
-        currentSet.actualReps
+        currentSet.actualReps,
+        oneRepMax
     )
 
-    val previousVolume = calculateVolume(
+    val previousVolume = calculateAdjustedVolume(
         previousSet.actualWeight,
-        previousSet.actualReps
+        previousSet.actualReps,
+        oneRepMax
     )
 
 

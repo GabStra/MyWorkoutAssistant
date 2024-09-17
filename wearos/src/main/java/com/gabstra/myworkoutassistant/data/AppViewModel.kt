@@ -328,7 +328,7 @@ class AppViewModel : ViewModel(){
         if(heartBeat > 0) heartBeatHistory.add(heartBeat)
     }
 
-    fun pushAndStoreWorkoutData(isDone: Boolean, context: Context? = null, onEnd: () -> Unit = {}) {
+    fun pushAndStoreWorkoutData(isDone: Boolean, context: Context? = null,forceNotSend: Boolean = false, onEnd: () -> Unit = {}) {
         viewModelScope.launch(Dispatchers.IO) {
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 
@@ -363,7 +363,7 @@ class AppViewModel : ViewModel(){
             val currentState = _workoutState.value
             val shouldSendData = !(currentState == setStates.last && !isDone)
 
-            if(shouldSendData){
+            if(shouldSendData && !forceNotSend){
                 withContext(Dispatchers.Main){
                     val result = sendWorkoutHistoryStore(
                         dataClient!!,
@@ -507,5 +507,27 @@ class AppViewModel : ViewModel(){
         // Update the next workout state based on the new queue
         _nextWorkoutState.value = workoutStateQueue.peek()!!
         _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+    }
+
+    fun skipExercise(){
+        val currentState =  _workoutState.value as WorkoutState.Set
+        val currentExerciseId = currentState.parentExercise.id
+
+        while(workoutStateQueue.isNotEmpty()){
+            val state = workoutStateQueue.pollFirst()
+
+            if(state is WorkoutState.Set){
+                val stateExerciseId = state.parentExercise.id
+                if(stateExerciseId != currentExerciseId){
+                    _workoutState.value = state
+                    break
+                }
+            }
+
+            if(state is WorkoutState.Finished){
+                _workoutState.value = state
+                break
+            }
+        }
     }
 }

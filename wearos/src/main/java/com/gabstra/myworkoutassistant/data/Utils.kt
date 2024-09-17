@@ -377,6 +377,8 @@ fun calculateVolume(weight: Float, reps: Int): Float {
     return weight * reps
 }
 
-fun calculateAdjustedVolume(weight: Float, reps: Int): Float {
-    return calculateVolume(weight, reps) * calculateIntensity(weight, getOneRepMax(weight,reps))
+fun calculateAdjustedVolume(weight: Float, reps: Int, oneRepMax: Float): Float {
+    val volume = calculateVolume(weight, reps)
+    val intensity = calculateIntensity(weight, oneRepMax)
+    return volume * intensity
 }

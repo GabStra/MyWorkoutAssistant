@@ -133,8 +133,8 @@ fun EnduranceSetScreen (
     }
 
     val textComposable = @Composable {
-        Text(
-            modifier = Modifier.combinedClickable(
+        ScalableText(
+            modifier = Modifier.padding(horizontal=10.dp).combinedClickable(
                 onClick = {
                 },
                 onLongClick = {
@@ -156,7 +156,7 @@ fun EnduranceSetScreen (
             ),
             color = if(isOverLimit) MyColors.Green else Color.Unspecified,
             text = FormatTime((if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000),
-            style = MaterialTheme.typography.display3,
+            style = MaterialTheme.typography.display2,
         )
     }
 
@@ -234,6 +234,7 @@ fun EnduranceSetScreen (
             textComposable()
             if (showStartButton) {
                 EnhancedButton(
+                    boxModifier = Modifier.weight(1f),
                     onClick = {
                         VibrateOnce(context)
                         startTimerJob()
@@ -246,7 +247,7 @@ fun EnduranceSetScreen (
                 }
             }else{
                 EnhancedButton(
-                    boxModifier = Modifier.alpha(if(timerJob?.isActive == true) 1f else 0f),
+                    boxModifier = Modifier.weight(1f).alpha(if(timerJob?.isActive == true) 1f else 0f),
                     onClick = {
                         VibrateOnce(context)
                         timerJob?.cancel()

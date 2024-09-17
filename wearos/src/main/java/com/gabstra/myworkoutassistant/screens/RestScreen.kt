@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
@@ -44,6 +45,7 @@ import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composable.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
@@ -87,8 +89,7 @@ fun NextExerciseInfo(
 
     Column(
         modifier = Modifier
-            .size(160.dp, 190.dp)
-            .padding(top = 70.dp),
+            .size(160.dp, 190.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ){
@@ -102,6 +103,8 @@ fun NextExerciseInfo(
                 text = state.parentExercise.name,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.title3,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
@@ -223,7 +226,8 @@ fun RestScreen(
         if(nextWorkoutStateSet!=null) {
             CustomHorizontalPager(
                 modifier = Modifier
-                    .fillMaxSize(),
+                    .fillMaxSize()
+                    .padding(5.dp, 70.dp, 5.dp, 0.dp),
                 pagerState = pagerState,
                 userScrollEnabled = true
             ) { page ->
@@ -233,11 +237,7 @@ fun RestScreen(
                     }
 
                     1 -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(5.dp, 60.dp, 5.dp, 0.dp)
-                        ) {
+                        Box{
                             Text(
                                 modifier = Modifier.fillMaxSize(),
                                 text = "Notes",
@@ -277,7 +277,7 @@ fun RestScreen(
                 .padding(0.dp, 20.dp),
             contentAlignment = Alignment.TopCenter
         ){
-            Text(
+            ScalableText(
                 modifier = Modifier.combinedClickable(
                     onClick = {},
                     onLongClick = {
