@@ -6,8 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -25,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 import androidx.wear.compose.material.ButtonDefaults
@@ -193,29 +197,37 @@ fun TimedDurationSetScreen(
     }
 
     val textComposable = @Composable {
-        ScalableText(
-            modifier = Modifier.padding(horizontal=10.dp).combinedClickable(
-                onClick = {
-                },
-                onLongClick = {
-                    if (showStartButton) {
-                        isTimerInEditMode = !isTimerInEditMode
-                        updateInteractionTime()
-                        VibrateOnce(context)
-                    }
-                },
-                onDoubleClick = {
-                    if (isTimerInEditMode) {
-                        val newTimerValue = previousSet.startTimer
-                        currentSet = currentSet.copy(startTimer = newTimerValue)
-                        currentMillis = newTimerValue
-                        VibrateTwice(context)
-                    }
-                }
-            ),
-            text = FormatTime(currentMillis / 1000),
-            style = MaterialTheme.typography.display2,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            ScalableText(
+                modifier = Modifier
+                    .width(120.dp)
+                    .combinedClickable(
+                        onClick = {
+                        },
+                        onLongClick = {
+                            if (showStartButton) {
+                                isTimerInEditMode = !isTimerInEditMode
+                                updateInteractionTime()
+                                VibrateOnce(context)
+                            }
+                        },
+                        onDoubleClick = {
+                            if (isTimerInEditMode) {
+                                val newTimerValue = previousSet.startTimer
+                                currentSet = currentSet.copy(startTimer = newTimerValue)
+                                currentMillis = newTimerValue
+                                VibrateTwice(context)
+                            }
+                        }
+                    ),
+                text = FormatTime(currentMillis / 1000),
+                style = MaterialTheme.typography.display2,
+            )
+        }
     }
 
     @Composable

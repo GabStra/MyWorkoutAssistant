@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -21,6 +22,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,7 +33,8 @@ fun ScalableText(
     modifier: Modifier = Modifier,
     text: String,
     color: Color = Color.Unspecified,
-    style: TextStyle = LocalTextStyle.current // Provide a default TextStyle
+    style: TextStyle = LocalTextStyle.current,
+    textAlign: TextAlign? = null,
 ) {
     var textSize by remember { mutableStateOf(100.sp) } // Start with a large font size
     var readyToScale by remember { mutableStateOf(false) } // Trigger recalculation
@@ -40,9 +43,11 @@ fun ScalableText(
     val textMeasurer = rememberTextMeasurer() // Initialize the text measurer
 
     val shouldBeInvisible = initialRender || readyToScale
+    val minTextSize = 12.sp
 
     BoxWithConstraints(
-        modifier = modifier
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
     ) {
         val boxWidth = maxWidth
         val boxHeight = maxHeight
@@ -58,6 +63,7 @@ fun ScalableText(
             style = style.copy(fontSize = textSize),
             maxLines = 1,
             color = color,
+            textAlign = textAlign,
             modifier = Modifier
                 .alpha(if (shouldBeInvisible) 0f else 1f)
                 .onGloballyPositioned { coordinates ->
@@ -83,7 +89,7 @@ fun ScalableText(
                 val newTextWidth = with(density) { newTextLayoutResult.size.width.toDp() }
                 val newTextHeight = with(density) { newTextLayoutResult.size.height.toDp() }
 
-                if (newTextWidth <= boxWidth && newTextHeight <= boxHeight) {
+                if ((newTextWidth <= boxWidth && newTextHeight <= boxHeight) || textSize <= minTextSize) {
                     readyToScale = false // Stop scaling once it fits
                 }
             }

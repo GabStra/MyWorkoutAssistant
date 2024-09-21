@@ -134,7 +134,7 @@ fun EnduranceSetScreen (
 
     val textComposable = @Composable {
         ScalableText(
-            modifier = Modifier.padding(horizontal=10.dp).combinedClickable(
+            modifier = Modifier.padding(10.dp).combinedClickable(
                 onClick = {
                 },
                 onLongClick = {

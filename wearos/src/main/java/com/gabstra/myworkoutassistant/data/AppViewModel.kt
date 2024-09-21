@@ -343,9 +343,6 @@ class AppViewModel : ViewModel(){
                     startTime = startWorkoutTime!!,
                     isDone = isDone
                 )
-
-                workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
-                workoutHistoryDao.insert(currentWorkoutHistory!!)
             }else{
                 currentWorkoutHistory = currentWorkoutHistory!!.copy(
                     duration = duration.seconds.toInt(),
@@ -353,12 +350,14 @@ class AppViewModel : ViewModel(){
                     time = LocalTime.now(),
                     isDone = isDone
                 )
-
-                workoutHistoryDao.insert(currentWorkoutHistory!!)
             }
 
-            executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
-            setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
+            if(isDone){
+                workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
+                workoutHistoryDao.insert(currentWorkoutHistory!!)
+                executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
+                setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
+            }
 
             val currentState = _workoutState.value
             val shouldSendData = !(currentState == setStates.last && !isDone)

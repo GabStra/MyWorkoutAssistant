@@ -7,14 +7,18 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 
+
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -32,7 +37,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.data.calculateAdjustedVolume
 import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.data.getOneRepMax
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -63,17 +67,17 @@ fun WeightSetScreen (
         lastInteractionTime = System.currentTimeMillis()
     }
 
-    val oneRepMax = getOneRepMax(previousSet.actualWeight, previousSet.actualReps)
-    val currentVolume = calculateAdjustedVolume(
+    val previous1RM = getOneRepMax(previousSet.actualWeight, previousSet.actualReps)
+    val current1RM = getOneRepMax(currentSet.actualWeight, currentSet.actualReps)
+
+    val currentVolume = calculateVolume(
         currentSet.actualWeight,
         currentSet.actualReps,
-        oneRepMax
     )
 
-    val previousVolume = calculateAdjustedVolume(
+    val previousVolume = calculateVolume(
         previousSet.actualWeight,
         previousSet.actualReps,
-        oneRepMax
     )
 
 
@@ -146,8 +150,6 @@ fun WeightSetScreen (
     fun RepsRow(modifier: Modifier) {
         Row(
             modifier = modifier
-                .height(35.dp)
-                .height(35.dp)
                 .combinedClickable(
                     onClick = {
                     },
@@ -175,18 +177,18 @@ fun WeightSetScreen (
         ) {
             Row(
                 verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Text(
                     text = "${currentSet.actualReps}",
-                    style = MaterialTheme.typography.display3
+                    style = MaterialTheme.typography.display3,
+                    textAlign = TextAlign.End
                 )
-                Spacer(modifier = Modifier.width(5.dp))
                 val label = if (currentSet.actualReps == 1) "rep" else "reps"
                 Text(
-                    modifier = Modifier.padding(bottom = 2.dp),
                     text = label,
-                    style = MaterialTheme.typography.title3,
+                    style = MaterialTheme.typography.caption2,
+                    modifier = Modifier.padding(bottom = 5.dp),
                 )
             }
         }
@@ -196,8 +198,6 @@ fun WeightSetScreen (
     fun WeightRow(modifier: Modifier) {
             Row(
                 modifier = modifier
-                    .height(35.dp)
-                    .height(35.dp)
                     .combinedClickable(
                         onClick = {
                         },
@@ -232,13 +232,14 @@ fun WeightSetScreen (
                     } else {
                         "${currentSet.actualWeight}"
                     },
-                    style = MaterialTheme.typography.display3
+                    style = MaterialTheme.typography.display3,
+                    textAlign = TextAlign.End
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "kg",
-                    style = MaterialTheme.typography.title3,
-                    modifier = Modifier.padding(bottom = 2.dp),
+                    style = MaterialTheme.typography.caption2,
+                    modifier = Modifier.padding(bottom = 5.dp),
                 )
             }
         }
@@ -246,27 +247,37 @@ fun WeightSetScreen (
 
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        Row(
-            modifier = customModifier,
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+        Column(
+            modifier = customModifier.padding(vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(
+            Row(
                 modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.End
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                RepsRow(Modifier.fillMaxWidth())
-                WeightRow(Modifier.fillMaxWidth())
+                RepsRow(Modifier)
+                WeightRow(Modifier)
             }
-            Spacer(modifier = Modifier.width(5.dp))
-            TrendIcon(currentVolume, previousVolume)
+            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+            Row(
+                modifier = Modifier
+                    .height(20.dp)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center )
+            {
+                TrendComponent(Modifier,"Vol:",currentVolume, previousVolume)
+                Spacer(modifier = Modifier.width(5.dp))
+                TrendComponent(Modifier,"1RM:",current1RM, previous1RM)
+            }
         }
     }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = modifier.padding(horizontal = 15.dp)
+        modifier = modifier.padding(horizontal = 10.dp)
     ){
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
@@ -287,10 +298,8 @@ fun WeightSetScreen (
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        if (isRepsInEditMode) RepsRow(Modifier.weight(1f))
-                        if (isWeightInEditMode) WeightRow(Modifier.weight(1f))
-                        Spacer(modifier = Modifier.width(5.dp))
-                        TrendIcon(currentVolume, previousVolume)
+                        if (isRepsInEditMode) RepsRow(Modifier)
+                        if (isWeightInEditMode) WeightRow(Modifier)
                     }
                 }
             )
