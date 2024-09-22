@@ -187,7 +187,7 @@ fun WeightSetScreen (
                 val label = if (currentSet.actualReps == 1) "rep" else "reps"
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.caption2,
+                    style = MaterialTheme.typography.caption3,
                     modifier = Modifier.padding(bottom = 5.dp),
                 )
             }
@@ -238,7 +238,7 @@ fun WeightSetScreen (
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "kg",
-                    style = MaterialTheme.typography.caption2,
+                    style = MaterialTheme.typography.caption3,
                     modifier = Modifier.padding(bottom = 5.dp),
                 )
             }
@@ -248,24 +248,25 @@ fun WeightSetScreen (
     @Composable
     fun SetScreen(customModifier: Modifier) {
         Column(
-            modifier = customModifier.padding(vertical = 10.dp),
+            modifier = customModifier.padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(2f).fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                horizontalArrangement = Arrangement.Center
             ) {
                 RepsRow(Modifier)
+                Spacer(modifier = Modifier.width(5.dp))
                 WeightRow(Modifier)
             }
             HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
             Row(
                 modifier = Modifier
-                    .height(20.dp)
+                    .weight(1f)
                     .fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center )
+                horizontalArrangement = Arrangement.Center)
             {
                 TrendComponent(Modifier,"Vol:",currentVolume, previousVolume)
                 Spacer(modifier = Modifier.width(5.dp))
@@ -277,7 +278,7 @@ fun WeightSetScreen (
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = modifier.padding(horizontal = 10.dp)
+        modifier = modifier
     ){
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(

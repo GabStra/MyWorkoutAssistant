@@ -133,7 +133,7 @@ fun VibrateTwiceAndBeep(context: Context) {
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
     runBlocking {
-        repeat(3) { // Run this block twice
+        repeat(2) { // Run this block twice
             // Launch vibration and beep in parallel
             val vibrationJob = launch {
                 vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))

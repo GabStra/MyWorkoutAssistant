@@ -2,9 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,26 +29,22 @@ fun <T : Number> TrendComponent(
     ){
         Text(
             text = label,
-            style = MaterialTheme.typography.caption2,
+            style = MaterialTheme.typography.caption3,
             textAlign = TextAlign.End
         )
 
         if(percentageChange != 0.0){
-            val displayText = if (percentageChange <= 1) {
-                val percentage = (percentageChange * 100).toInt()
-                if (percentage > 0) "+${percentage}%" else "${percentage}%"
-            } else {
-                "x${String.format("%.2f", percentageChange).replace(",", ".")}"
-            }
+            val percentage = (percentageChange * 100).toInt()
+            val displayText = if (percentage > 0) "+${percentage}%" else "${percentage}%"
             Text(
                 text = displayText,
-                style = MaterialTheme.typography.caption2,
+                style = MaterialTheme.typography.caption3,
                 color = if (percentageChange > 0) MyColors.Green else MyColors.ComplementaryGreen
             )
         }else{
             Text(
                 text = "-",
-                style = MaterialTheme.typography.caption2,
+                style = MaterialTheme.typography.caption3,
             )
         }
     }

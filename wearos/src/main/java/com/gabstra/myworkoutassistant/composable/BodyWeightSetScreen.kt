@@ -140,7 +140,7 @@ fun BodyWeightSetScreen(
             val label = if (currentSet.actualReps == 1) "rep" else "reps"
             Text(
                 text = label,
-                style = MaterialTheme.typography.caption2,
+                style = MaterialTheme.typography.caption3,
                 modifier = Modifier.padding(bottom = 5.dp),
             )
         }
@@ -155,7 +155,7 @@ fun BodyWeightSetScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(2f),
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.Center
             ) {
@@ -164,7 +164,7 @@ fun BodyWeightSetScreen(
             HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
             Row(
                 modifier = Modifier
-                    .height(20.dp)
+                    .weight(1f)
                     .fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center )
             {

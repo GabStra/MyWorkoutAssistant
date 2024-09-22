@@ -164,7 +164,7 @@ fun MyWorkoutAssistantNavHost(
     LaunchedEffect(updateMobile) {
         if(updateMobile == null) return@LaunchedEffect
 
-        val latestWorkoutHistories = appViewModel.workouts.filter { it -> it.isActive }.mapNotNull { workout ->
+        val latestWorkoutHistories = appViewModel.workouts.filter { it -> it.isActive && it.enabled }.mapNotNull { workout ->
             workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
         }
 
@@ -172,7 +172,11 @@ fun MyWorkoutAssistantNavHost(
             setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
         }
 
-        val filteredAppBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories)
+        val workoutStore = appViewModel.workoutStore.copy(
+            workouts = appViewModel.workouts.filter { it -> it.isActive && it.enabled }
+        )
+
+        val filteredAppBackup = AppBackup(workoutStore, latestWorkoutHistories, setHistories)
 
         sendAppBackup(dataClient, filteredAppBackup)
     }
