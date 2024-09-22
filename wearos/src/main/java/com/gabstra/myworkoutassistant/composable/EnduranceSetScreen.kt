@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -133,31 +134,39 @@ fun EnduranceSetScreen (
     }
 
     val textComposable = @Composable {
-        ScalableText(
-            modifier = Modifier.padding(10.dp).combinedClickable(
-                onClick = {
-                },
-                onLongClick = {
-                    if (showStartButton) {
-                        isTimerInEditMode = !isTimerInEditMode
-                        updateInteractionTime()
-                        VibrateOnce(context)
-                    }
-                },
-                onDoubleClick = {
-                    if (isTimerInEditMode) {
-                        currentSet = currentSet.copy(
-                            startTimer = previousSet.startTimer
-                        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ){
+            ScalableText(
+                modifier = Modifier
+                    .width(120.dp)
+                    .combinedClickable(
+                    onClick = {
+                    },
+                    onLongClick = {
+                        if (showStartButton) {
+                            isTimerInEditMode = !isTimerInEditMode
+                            updateInteractionTime()
+                            VibrateOnce(context)
+                        }
+                    },
+                    onDoubleClick = {
+                        if (isTimerInEditMode) {
+                            currentSet = currentSet.copy(
+                                startTimer = previousSet.startTimer
+                            )
 
-                        VibrateTwice(context)
+                            VibrateTwice(context)
+                        }
                     }
-                }
-            ),
-            color = if(isOverLimit) MyColors.Green else Color.Unspecified,
-            text = FormatTime((if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000),
-            style = MaterialTheme.typography.display2,
-        )
+                ),
+                color = if(isOverLimit) MyColors.Green else Color.Unspecified,
+                text = FormatTime((if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000),
+                style = MaterialTheme.typography.display2,
+            )
+        }
     }
 
     fun startTimerJob() {
@@ -178,13 +187,13 @@ fun EnduranceSetScreen (
                 }
 
                 if(currentMillis >= currentSet.startTimer){
+                    VibrateTwiceAndBeep(context)
                     if(set.autoStop) break
                     else isOverLimit = true
                 }
             }
 
             state.currentSetData = currentSet
-            VibrateTwiceAndBeep(context)
             onTimerEnd()
         }
 

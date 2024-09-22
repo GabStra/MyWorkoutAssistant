@@ -425,7 +425,6 @@ class AppViewModel : ViewModel(){
     private fun addStatesFromExercise(exercise: Exercise){
         for ((index, set) in exercise.sets.withIndex()) {
             val historySet = if(exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
-            Log.d("AppViewModel", "History set: $historySet doNotStoreHistory: ${exercise.doNotStoreHistory}")
 
             var currentSet = initializeSetData(set)
 

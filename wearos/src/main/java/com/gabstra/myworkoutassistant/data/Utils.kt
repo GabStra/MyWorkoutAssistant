@@ -35,12 +35,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.concurrent.CancellationException
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 fun FormatTime(seconds: Int): String {
     val hours = seconds / 3600
@@ -111,51 +115,39 @@ fun VibrateAndBeep(context: Context, vibrationDuration: Long = 50, beepDuration:
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
     runBlocking {
-        launch(Dispatchers.Default) {
-            vibrator?.let {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    it.vibrate(VibrationEffect.createOneShot(vibrationDuration, VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    it.vibrate(vibrationDuration)
-                }
-            }
+        val vibrationJob = launch {
+            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
         }
-        launch(Dispatchers.Default) {
-            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, beepDuration)
+
+        val beepJob = launch {
+            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100) // Beep for 100ms
         }
+
+        // Wait for both jobs to complete
+        joinAll(vibrationJob, beepJob)
     }
 }
 
 fun VibrateTwiceAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-    val timings = longArrayOf(
-        0,
-        100,
-        100,
-        100,
-    )
-
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
     runBlocking {
-        launch(Dispatchers.IO) {
-                vibrator?.let {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        it.vibrate(VibrationEffect.createWaveform(timings, -1)) // -1 means don't repeat.
-                    } else {
-                        @Suppress("DEPRECATION")
-                        it.vibrate(timings, -1)
-                    }
-                }
-        }
-        launch(Dispatchers.IO) {
-            repeat(2) {
-                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                delay(100)  // 200 ms delay between beeps
+        repeat(3) { // Run this block twice
+            // Launch vibration and beep in parallel
+            val vibrationJob = launch {
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
+
+            val beepJob = launch {
+                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100) // Beep for 100ms
+            }
+
+            // Wait for both jobs to complete
+            joinAll(vibrationJob, beepJob)
+
+            delay(100)
         }
-        delay(500)
     }
 }
 
