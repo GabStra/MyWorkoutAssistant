@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -135,13 +136,13 @@ fun EnduranceSetScreen (
 
     val textComposable = @Composable {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ){
             ScalableText(
                 modifier = Modifier
-                    .width(120.dp)
+                    .fillMaxWidth()
                     .combinedClickable(
                     onClick = {
                     },
@@ -303,6 +304,7 @@ fun EnduranceSetScreen (
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ){
                     SetScreen(customModifier = Modifier.weight(1f))
+                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                     extraInfo(state)
                 }
             }else{

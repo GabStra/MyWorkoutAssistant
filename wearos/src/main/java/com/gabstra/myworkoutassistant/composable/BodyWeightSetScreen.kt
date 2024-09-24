@@ -210,6 +210,7 @@ fun BodyWeightSetScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ){
                     SetScreen(customModifier = Modifier.weight(1f))
+                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                     extraInfo(state)
                 }
             }else{
