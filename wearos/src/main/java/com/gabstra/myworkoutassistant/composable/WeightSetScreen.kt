@@ -266,6 +266,7 @@ fun WeightSetScreen (
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center)
             {
                 TrendComponent(Modifier,"Vol:",currentVolume, previousVolume)

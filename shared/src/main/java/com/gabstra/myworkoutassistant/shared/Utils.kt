@@ -29,6 +29,7 @@ import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -125,6 +126,13 @@ fun initializeSetData(set: Set): SetData = when (set) {
     is BodyWeightSet -> BodyWeightSetData(set.reps)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0)
+}
+
+fun getNewSet(set: Set): Set = when (set) {
+    is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight)
+    is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps)
+    is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
+    is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
 }
 
 fun copySetData(setData: SetData): SetData = when (setData) {

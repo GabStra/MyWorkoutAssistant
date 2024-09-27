@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,14 +39,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -92,79 +96,68 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         }
     }
 
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+    var marqueeEnabled by remember { mutableStateOf(false) }
+
     ScalingLazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 5.dp),
+        modifier = Modifier.fillMaxSize().padding(vertical = 5.dp, horizontal = 10.dp),
+        state = listState,
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         item{
             Text(
                 text = workout.name,
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE).padding(20.dp),
+                modifier = Modifier
+                    .clickable(onClick = {
+                        marqueeEnabled = !marqueeEnabled
+                    })
+                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
+                    .padding(20.dp),
                 textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.title2
+                style = MaterialTheme.typography.title2,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
         item{
-            Button(
+            ButtonWithText(
+                text = "Start",
                 onClick = {
                     VibrateOnce(context)
                     permissionLauncherStart.launch(basePermissions.toTypedArray())
                 },
-                modifier = Modifier
-                    .height(50.dp)
-                    .width(150.dp)
-                    .padding(5.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary),
+                backgroundColor = MaterialTheme.colors.primary,
                 enabled = hasExercises
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(text = "Start")
-                }
-            }
+            )
         }
 
         if(hasWorkoutRecord) {
             item {
-                Button(
+                ButtonWithText(
+                    text = "Resume",
                     onClick = {
                         VibrateOnce(context)
                         permissionLauncherResume.launch(basePermissions.toTypedArray())
                     },
-                    modifier = Modifier
-                        .height(50.dp)
-                        .width(150.dp)
-                        .padding(5.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(text = "Resume")
-                    }
-                }
+                    backgroundColor = Color.DarkGray,
+                )
             }
 
             item {
-                Button(
+                ButtonWithText(
+                    text = "Delete record",
                     onClick = {
                         showDeleteDialog = true
                     },
-                    modifier = Modifier
-                        .height(50.dp)
-                        .width(150.dp)
-                        .padding(5.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(text = "Delete record")
-                    }
-                }
+                    backgroundColor = Color.DarkGray,
+                )
             }
         }
         item{
-            Button(
+            ButtonWithText(
+                text = "Send history",
                 onClick = {
                     VibrateOnce(context)
                     viewModel.sendWorkoutHistoryToPhone() { success ->
@@ -174,16 +167,9 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                             Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT).show()
                     }
                 },
-                modifier = Modifier
-                    .height(50.dp)
-                    .width(150.dp)
-                    .padding(5.dp),
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(text = "Send history")
-                }
-            }
+                backgroundColor = Color.DarkGray,
+                enabled = hasExercises
+            )
         }
     }
 

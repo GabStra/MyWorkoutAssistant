@@ -12,6 +12,8 @@ import android.widget.Toast
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -45,6 +47,8 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import kotlin.math.max
+import kotlin.math.min
 
 fun FormatTime(seconds: Int): String {
     val hours = seconds / 3600
@@ -373,4 +377,11 @@ fun calculateAdjustedVolume(weight: Float, reps: Int, oneRepMax: Float): Float {
     val volume = calculateVolume(weight, reps)
     val intensity = calculateIntensity(weight, oneRepMax)
     return volume * intensity
+}
+
+fun getContrastRatio(color1: Color, color2: Color): Double {
+    val luminance1 = color1.luminance()
+    val luminance2 = color2.luminance()
+
+    return (max(luminance1, luminance2) + 0.05) / (min(luminance1, luminance2) + 0.05)
 }

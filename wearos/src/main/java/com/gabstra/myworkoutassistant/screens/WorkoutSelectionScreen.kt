@@ -160,7 +160,7 @@ fun WorkoutSelectionScreen(
     viewModel: AppViewModel,
     appHelper: WearDataLayerAppHelper
 ) {
-    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
+    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val workouts by viewModel.workouts.collectAsState()
 
     val sortedWorkouts = workouts.sortedBy { it.order }

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.tween
@@ -19,8 +20,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -49,6 +52,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
@@ -56,6 +62,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
+import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
@@ -166,7 +173,6 @@ fun SimplifiedHorizontalPager(
     allowHorizontalScrolling: Boolean,
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel,
-    completeOrSkipExerciseComposable: @Composable () -> Unit,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
     CustomHorizontalPager(
@@ -175,22 +181,116 @@ fun SimplifiedHorizontalPager(
         userScrollEnabled = allowHorizontalScrolling
     ) { page ->
         when (page) {
-            0 -> PageCompleteOrSkip(completeOrSkipExerciseComposable)
-            1 -> PageExerciseDetail(
+            0 -> PageExerciseDetail(
                 updatedState = updatedState,
                 viewModel = viewModel,
                 onScrollEnabledChange = { onScrollEnabledChange(it) }
             )
-            2 -> PageNotes(updatedState.parentExercise.notes)
+            1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
+            2 -> PageNewSets(pagerState,updatedState,viewModel)
+            3 -> PageNotes(updatedState.parentExercise.notes)
         }
     }
 }
 
 @Composable
-fun PageCompleteOrSkip(completeOrSkipExerciseComposable: @Composable () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        completeOrSkipExerciseComposable()
+fun PageCompleteOrSkip(
+    pagerState: PagerState,
+    updatedState:  WorkoutState.Set,
+    viewModel: AppViewModel
+) {
+    val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
+
+    val context = LocalContext.current
+
+    var showConfirmDialog by remember { mutableStateOf(false) }
+    var showGoBackDialog by remember { mutableStateOf(false) }
+
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+
+    LaunchedEffect(updatedState) {
+        showConfirmDialog = false
+        showGoBackDialog = false
     }
+
+    LaunchedEffect(pagerState.currentPage) {
+        listState.scrollToItem(0)
+    }
+
+    ScalingLazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 10.dp),
+        state = listState,
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        item{
+            ButtonWithText(
+                text = "Next",
+                onClick = {
+                    VibrateOnce(context)
+                    showConfirmDialog = true
+                },
+            )
+        }
+        item{
+            ButtonWithText(
+                text = "Back",
+                onClick = {
+                    VibrateOnce(context)
+                    showGoBackDialog = true
+                },
+                enabled = !isHistoryEmpty,
+                backgroundColor = Color.DarkGray
+            )
+        }
+    }
+
+    CustomDialogYesOnLongPress(
+        show = showConfirmDialog,
+        title = "Complete exercise",
+        message = "Do you want to save this data?",
+        handleYesClick = {
+            VibrateOnce(context)
+            viewModel.storeSetData()
+            viewModel.pushAndStoreWorkoutData(false,context){
+                viewModel.upsertWorkoutRecord(updatedState.set.id)
+                viewModel.goToNextState()
+            }
+
+            showConfirmDialog=false
+        },
+        handleNoClick = {
+            showConfirmDialog = false
+            VibrateOnce(context)
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showConfirmDialog = false
+        },
+        holdTimeInMillis = 1000
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showGoBackDialog,
+        title = "Go to previous set",
+        message = "Do you want to go back?",
+        handleYesClick = {
+            VibrateOnce(context)
+            viewModel.goToPreviousSet()
+            showGoBackDialog = false
+        },
+        handleNoClick = {
+            showGoBackDialog = false
+            VibrateOnce(context)
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showGoBackDialog = false
+        },
+        holdTimeInMillis = 1000
+    )
 }
 
 @Composable
@@ -212,7 +312,6 @@ fun PageExerciseDetail(
                 is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2,historyMode = true)
             }
         }
-
     }
 
     ExerciseDetail(
@@ -230,9 +329,7 @@ fun PageExerciseDetail(
 fun PageNotes(notes: String) {
     val scrollState = rememberScrollState()
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(0.dp, 10.dp, 0.dp, 0.dp)
+        modifier = Modifier.fillMaxSize()
     ) {
         Text(
             modifier = Modifier.fillMaxSize(),
@@ -257,9 +354,63 @@ fun PageNotes(notes: String) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class,
-    ExperimentalAnimationApi::class, ExperimentalWearFoundationApi::class
-)
+@Composable
+fun PageNewSets(
+    pagerState: PagerState,
+    updatedState:  WorkoutState.Set,
+    viewModel: AppViewModel
+){
+    val context = LocalContext.current
+
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+
+    LaunchedEffect(pagerState.currentPage) {
+        listState.scrollToItem(0);
+    }
+
+    val exerciseSets = updatedState.parentExercise.sets
+
+    val setIndex =  exerciseSets.indexOfFirst { it === updatedState.set }
+    val isLastSet = setIndex == exerciseSets.size - 1
+
+    val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
+
+    ScalingLazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 10.dp),
+        state = listState,
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        item{
+            ButtonWithText(
+                text = "Add Set",
+                onClick = {
+                    VibrateOnce(context)
+                    viewModel.addNewSetStandard()
+                    viewModel.goToNextState()
+                },
+                backgroundColor = Color.DarkGray
+            )
+        }
+        if(isMovementSet && isLastSet){
+            item{
+                ButtonWithText(
+                    text = "Add Rest-Pause Set",
+                    onClick = {
+                        VibrateOnce(context)
+                        viewModel.addNewRestPauseSet()
+                        viewModel.goToNextState()
+                    },
+                    backgroundColor = Color.DarkGray
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExerciseScreen(
     viewModel: AppViewModel,
@@ -267,25 +418,17 @@ fun ExerciseScreen(
     hearthRateChart: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-
-    var showConfirmDialog by remember { mutableStateOf(false) }
-    var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipDialog by remember { mutableStateOf(false) }
-
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
 
-    val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
-
     val pagerState = rememberPagerState(
-        initialPage = 1,
+        initialPage = 0,
         pageCount = {
-        3
+        4
     })
 
     LaunchedEffect(state) {
-        pagerState.scrollToPage(1)
-        showConfirmDialog = false
-        showGoBackDialog = false
+        pagerState.scrollToPage(0)
         showSkipDialog = false
         allowHorizontalScrolling = false
         delay(2000)
@@ -294,40 +437,7 @@ fun ExerciseScreen(
 
     LaunchedEffect(allowHorizontalScrolling) {
         if (!allowHorizontalScrolling) {
-            pagerState.scrollToPage(1)
-        }
-    }
-
-    val completeOrSkipExerciseComposable = @Composable {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            EnhancedButton(
-                buttonSize = 35.dp,
-                buttonModifier = Modifier
-                    .clip(CircleShape),
-                onClick ={
-                    VibrateOnce(context)
-                    showGoBackDialog = true
-                },
-                enabled = !isHistoryEmpty,
-                colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
-            ) {
-                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
-            }
-            Spacer(modifier = Modifier.width(5.dp))
-            EnhancedButton(
-                buttonSize = 35.dp,
-                buttonModifier = Modifier
-                    .clip(CircleShape),
-                onClick ={
-                    VibrateOnce(context)
-                    showConfirmDialog = true
-                },
-            ) {
-                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
-            }
+            pagerState.scrollToPage(0)
         }
     }
 
@@ -378,7 +488,6 @@ fun ExerciseScreen(
                     allowHorizontalScrolling = allowHorizontalScrolling,
                     updatedState = updatedState,
                     viewModel = viewModel,
-                    completeOrSkipExerciseComposable = completeOrSkipExerciseComposable,
                     onScrollEnabledChange = { allowHorizontalScrolling = it }
                 )
             }
@@ -399,30 +508,7 @@ fun ExerciseScreen(
         hearthRateChart()
     }
 
-    CustomDialogYesOnLongPress(
-        show = showConfirmDialog,
-        title = "Complete exercise",
-        message = "Do you want to save this data?",
-        handleYesClick = {
-            VibrateOnce(context)
-            viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false,context){
-                viewModel.upsertWorkoutRecord(state.set.id)
-                viewModel.goToNextState()
-            }
 
-            showConfirmDialog=false
-        },
-        handleNoClick = {
-            showConfirmDialog = false
-            VibrateOnce(context)
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showConfirmDialog = false
-        },
-        holdTimeInMillis = 1000
-    )
 
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
@@ -444,23 +530,5 @@ fun ExerciseScreen(
         holdTimeInMillis = 1000
     )
 
-    CustomDialogYesOnLongPress(
-        show = showGoBackDialog,
-        title = "Go to previous set",
-        message = "Do you want to go back?",
-        handleYesClick = {
-            VibrateOnce(context)
-            viewModel.goToPreviousSet()
-            showGoBackDialog = false
-        },
-        handleNoClick = {
-            showGoBackDialog = false
-            VibrateOnce(context)
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showGoBackDialog = false
-        },
-        holdTimeInMillis = 1000
-    )
+
 }

@@ -21,9 +21,14 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.copySetData
+import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
 import com.google.android.gms.wearable.DataClient
@@ -326,6 +331,82 @@ class AppViewModel : ViewModel(){
 
     fun registerHeartBeat(heartBeat: Int){
         if(heartBeat > 0) heartBeatHistory.add(heartBeat)
+    }
+
+    private fun addNewSet(currentState: WorkoutState.Set, newSetState: WorkoutState.Set) {
+
+        val index = setStates.indexOf(currentState)
+        if (index != -1) {
+            setStates.add(index + 1, newSetState)
+        } else {
+            setStates.add(newSetState)
+        }
+
+        workoutStateQueue.addFirst(newSetState)
+    }
+
+    fun addNewSetStandard(){
+        if (_workoutState.value !is WorkoutState.Set) return
+        val currentState = _workoutState.value as WorkoutState.Set
+
+        val currentSetData = initializeSetData(currentState.set)
+
+        val newSet = getNewSet(currentState.set)
+
+        val previousSetData = copySetData(currentSetData)
+
+        val newSetState: WorkoutState.Set = currentState.copy(
+            set = newSet,
+            order = currentState.order + 1,
+            previousSetData = previousSetData,
+            currentSetData = currentSetData,
+            hasNoHistory = true,
+            skipped = false
+        )
+
+
+        addNewSet(currentState,newSetState)
+
+        if (currentState.parentExercise.restTimeInSec >0) {
+            workoutStateQueue.addFirst(WorkoutState.Rest(currentState.parentExercise.restTimeInSec))
+        }
+    }
+
+    fun addNewRestPauseSet(){
+        if (_workoutState.value !is WorkoutState.Set) return
+        val currentState = _workoutState.value as WorkoutState.Set
+        if (currentState.set !is BodyWeightSet && currentState.set !is WeightSet) return
+
+        var currentSetData = initializeSetData(currentState.set)
+
+        if(currentSetData is WeightSetData ){
+            currentSetData = currentSetData.copy(
+                actualReps = 3,
+            )
+        }
+
+        if(currentSetData is BodyWeightSetData){
+            currentSetData = currentSetData.copy(
+                actualReps = 3,
+            )
+        }
+
+        val newSet = getNewSet(currentState.set)
+
+        val previousSetData = copySetData(currentSetData)
+
+        val newSetState: WorkoutState.Set = currentState.copy(
+            set = newSet,
+            order = currentState.order + 1,
+            previousSetData = previousSetData,
+            currentSetData = currentSetData,
+            hasNoHistory = true,
+            skipped = false
+        )
+
+        addNewSet(currentState,newSetState)
+
+        workoutStateQueue.addFirst(WorkoutState.Rest(20))
     }
 
     fun pushAndStoreWorkoutData(isDone: Boolean, context: Context? = null,forceNotSend: Boolean = false, onEnd: () -> Unit = {}) {
