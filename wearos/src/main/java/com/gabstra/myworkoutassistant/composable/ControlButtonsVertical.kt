@@ -94,7 +94,7 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(35.dp)
                     .clip(CircleShape)
-                    .background(Color.Red),
+                    .background(MaterialTheme.colors.error),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")

@@ -146,7 +146,7 @@ fun MissingAgeSettingMessage(
             Icon(
                 imageVector = Icons.AutoMirrored.Default.SendToMobile,
                 contentDescription = "SendToMobile",
-                modifier = Modifier.size(30.dp),
+                modifier = Modifier.size(30.dp)
             )
         }
     }
@@ -167,7 +167,6 @@ fun WorkoutSelectionScreen(
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
     val userAge by viewModel.userAge
-    val phoneNode = viewModel.phoneNode
 
     val context = LocalContext.current
     val versionName = getVersionName(context);

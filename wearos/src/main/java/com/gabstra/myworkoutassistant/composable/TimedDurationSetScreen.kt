@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -47,6 +48,7 @@ import com.gabstra.myworkoutassistant.data.VibrateShortImpulseAndBeep
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import kotlinx.coroutines.Job
@@ -248,7 +250,7 @@ fun TimedDurationSetScreen(
                         showStartButton=false
                     },
                     buttonSize = 35.dp,
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                    colors = ButtonDefaults.buttonColors(backgroundColor =MyColors.Green)
                 ) {
                     Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
                 }

@@ -251,7 +251,7 @@ fun EnduranceSetScreen (
                         showStartButton = false
                     },
                     buttonSize = 35.dp,
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                    colors = ButtonDefaults.buttonColors(backgroundColor = MyColors.Green)
                 ) {
                     Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
                 }
@@ -266,7 +266,7 @@ fun EnduranceSetScreen (
                     buttonSize = 35.dp,
                     colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
                 ) {
-                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop",tint = Color.Black)
                 }
             }
         }

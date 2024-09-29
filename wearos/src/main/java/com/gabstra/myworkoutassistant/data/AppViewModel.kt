@@ -356,6 +356,9 @@ class AppViewModel : ViewModel(){
         val previousSetData = copySetData(currentSetData)
 
         val newSetState: WorkoutState.Set = currentState.copy(
+            parentExercise = currentState.parentExercise.copy(
+                sets = currentState.parentExercise.sets + newSet
+            ),
             set = newSet,
             order = currentState.order + 1,
             previousSetData = previousSetData,
@@ -363,7 +366,6 @@ class AppViewModel : ViewModel(){
             hasNoHistory = true,
             skipped = false
         )
-
 
         addNewSet(currentState,newSetState)
 
@@ -376,6 +378,22 @@ class AppViewModel : ViewModel(){
         if (_workoutState.value !is WorkoutState.Set) return
         val currentState = _workoutState.value as WorkoutState.Set
         if (currentState.set !is BodyWeightSet && currentState.set !is WeightSet) return
+
+        val newSet = when (currentState.set) {
+            is WeightSet -> {
+                val it = currentState.set as WeightSet
+                WeightSet(
+                    id = UUID.randomUUID(),
+                    reps = 3,
+                    weight = it.weight,
+                )
+            }
+            is BodyWeightSet -> BodyWeightSet(
+                id = UUID.randomUUID(),
+                reps = 3,
+            )
+            else -> return
+        }
 
         var currentSetData = initializeSetData(currentState.set)
 
@@ -391,11 +409,12 @@ class AppViewModel : ViewModel(){
             )
         }
 
-        val newSet = getNewSet(currentState.set)
-
         val previousSetData = copySetData(currentSetData)
 
         val newSetState: WorkoutState.Set = currentState.copy(
+            parentExercise = currentState.parentExercise.copy(
+                sets = currentState.parentExercise.sets + newSet
+            ),
             set = newSet,
             order = currentState.order + 1,
             previousSetData = previousSetData,

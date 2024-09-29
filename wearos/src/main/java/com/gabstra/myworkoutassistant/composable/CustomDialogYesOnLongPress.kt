@@ -198,7 +198,7 @@ fun CustomDialogYesOnLongPress(
                                     .background(MaterialTheme.colors.primary),
                                 contentAlignment = Alignment.Center
                             ){
-                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done",tint = Color.Black)
                             }
                         }
                     }

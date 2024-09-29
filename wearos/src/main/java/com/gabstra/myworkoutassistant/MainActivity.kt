@@ -13,23 +13,16 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
 import android.util.Log
-import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,16 +40,12 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.MeasureDataViewModel
-import com.gabstra.myworkoutassistant.data.MeasureDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
-import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
-import com.gabstra.myworkoutassistant.repository.MeasureDataRepository
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.screens.LoadingScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
@@ -248,7 +237,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             composable(Screen.Loading.route) {
                 val progress by appViewModel.backupProgress
                 val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
-                Log.d("MainActivity", "Progress: $progress animatedProgress: $animatedProgress")
+
                 CircularProgressIndicator(
                     progress = animatedProgress,
                     modifier = Modifier.fillMaxSize(),

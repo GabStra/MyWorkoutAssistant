@@ -122,7 +122,7 @@ fun CustomDialog(
                             modifier = Modifier.size(35.dp),
                             colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
                         ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
+                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done",tint = Color.Black)
                         }
                     }
                 }

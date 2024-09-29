@@ -388,8 +388,10 @@ fun PageNewSets(
                 text = "Add Set",
                 onClick = {
                     VibrateOnce(context)
-                    viewModel.addNewSetStandard()
-                    viewModel.goToNextState()
+                    viewModel.pushAndStoreWorkoutData(false,context){
+                        viewModel.addNewSetStandard()
+                        viewModel.goToNextState()
+                    }
                 },
                 backgroundColor = Color.DarkGray
             )
@@ -400,8 +402,10 @@ fun PageNewSets(
                     text = "Add Rest-Pause Set",
                     onClick = {
                         VibrateOnce(context)
-                        viewModel.addNewRestPauseSet()
-                        viewModel.goToNextState()
+                        viewModel.pushAndStoreWorkoutData(false,context){
+                            viewModel.addNewRestPauseSet()
+                            viewModel.goToNextState()
+                        }
                     },
                     backgroundColor = Color.DarkGray
                 )
@@ -509,7 +513,6 @@ fun ExerciseScreen(
     }
 
 
-
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
         title = "Skip exercise",
@@ -529,6 +532,4 @@ fun ExerciseScreen(
         },
         holdTimeInMillis = 1000
     )
-
-
 }
