@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -272,22 +273,23 @@ class AppViewModel : ViewModel(){
     fun resumeLastState(){
         if(_workoutRecord == null) return
 
-        _isResuming.value = true
         val targetSetId = _workoutRecord!!.setId
-
         if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
-            _isResuming.value = false
             return
         }
 
-        while (_workoutState.value !is WorkoutState.Finished) {
-            goToNextState()
+        viewModelScope.launch(Dispatchers.IO) {
+            _isResuming.value = true
+            while (_workoutState.value !is WorkoutState.Finished) {
+                goToNextState()
 
-            if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
-                break
+                if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
+                    break
+                }
             }
+            delay(2000)
+            _isResuming.value = false
         }
-        _isResuming.value = false
     }
 
     fun startWorkout(){
@@ -381,24 +383,29 @@ class AppViewModel : ViewModel(){
     }
 
     fun RefreshAndGoToLastState(){
-        _isRefreshing.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            _isRefreshing.value = true
 
-        workoutStateQueue.clear()
-        workoutStateHistory.clear()
+            workoutStateQueue.clear()
+            workoutStateHistory.clear()
+            _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+            setStates.clear()
 
-        generateWorkoutStates()
+            generateWorkoutStates()
 
-        val lastState = _workoutState.value
-        _workoutState.value = workoutStateQueue.pollFirst()!!
+            val lastState = _workoutState.value
+            _workoutState.value = workoutStateQueue.pollFirst()!!
 
-        while (_workoutState.value !is WorkoutState.Finished) {
-            goToNextState()
+            while (_workoutState.value !is WorkoutState.Finished) {
+                goToNextState()
 
-            if (_workoutState.value == lastState) {
-                break
+                if (_workoutState.value == lastState) {
+                    break
+                }
             }
+            delay(2000)
+            _isRefreshing.value = false
         }
-        _isRefreshing.value = false
     }
 
     fun pushAndStoreWorkoutData(isDone: Boolean, context: Context? = null,forceNotSend: Boolean = false, onEnd: () -> Unit = {}) {

@@ -100,6 +100,7 @@ class MyReceiver(
                             popUpTo(0) { inclusive = true }
                         }
                     }else{
+                        Log.d("RestScreen", "Refreshing and going to last state")
                         appViewModel.RefreshAndGoToLastState()
                     }
                 }

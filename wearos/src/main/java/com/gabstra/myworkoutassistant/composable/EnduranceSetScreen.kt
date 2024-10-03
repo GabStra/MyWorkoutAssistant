@@ -71,7 +71,7 @@ fun EnduranceSetScreen (
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
     val previousSet = state.previousSetData as EnduranceSetData
-    var currentSet by remember(state.set.id) { mutableStateOf(state.currentSetData as EnduranceSetData) }
+    var currentSet by remember(set.id) { mutableStateOf(state.currentSetData as EnduranceSetData) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
@@ -104,7 +104,7 @@ fun EnduranceSetScreen (
         }
     }
 
-    var currentMillis by remember(state.set.id) { mutableIntStateOf(0) }
+    var currentMillis by remember(set.id) { mutableIntStateOf(0) }
     var showStopDialog by remember { mutableStateOf(false) }
 
     fun onMinusClick(){
@@ -181,7 +181,9 @@ fun EnduranceSetScreen (
                 }
             }
 
-            state.currentSetData = currentSet
+            state.currentSetData = currentSet.copy(
+                endTimer = currentSet.startTimer
+            )
             onTimerEnd()
         }
 
@@ -306,7 +308,7 @@ fun EnduranceSetScreen (
         message = "Do you want to stop this exercise?",
         handleYesClick = {
             VibrateOnce(context)
-            currentSet = currentSet.copy(
+            state.currentSetData = currentSet.copy(
                 endTimer = currentMillis
             )
 

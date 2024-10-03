@@ -133,7 +133,7 @@ fun initializeSetData(set: Set): SetData = when (set) {
     is BodyWeightSet -> BodyWeightSetData(set.reps)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0)
-    is RestSet -> RestSetData(set.timeInSeconds,0)
+    is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds)
 }
 
 fun getNewSet(set: Set): Set = when (set) {

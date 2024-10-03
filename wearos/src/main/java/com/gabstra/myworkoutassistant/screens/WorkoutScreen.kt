@@ -158,6 +158,7 @@ fun WorkoutScreen(
         }
 
         if(isRefreshing){
+            Log.d("RestScreen","Refreshing workout")
             LoadingScreen("Reloading workout")
             return@Box
         }

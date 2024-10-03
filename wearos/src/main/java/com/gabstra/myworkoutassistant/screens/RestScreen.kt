@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -159,13 +161,37 @@ fun RestScreen(
 ) {
     val set = state.set as RestSet
 
-    var currentSetData by remember { mutableStateOf(state.currentSetData as RestSetData) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var timerJob by remember { mutableStateOf<Job?>(null) }
+
+    var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
+    var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
+
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    var hasBeenStartedOnce by remember { mutableStateOf(false) }
+    var showSkipDialog by remember { mutableStateOf(false) }
+
+    val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
+    val nextWorkoutStateSet = if (nextWorkoutState is WorkoutState.Set) {
+        nextWorkoutState as WorkoutState.Set
+    } else {
+        null
+    }
+
+    val pagerState = rememberPagerState(
+        initialPage = 0,
+        pageCount = {
+            2
+        })
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
     }
+
+    val progress = currentSeconds.toFloat() / currentSetData.startTimer.toFloat()
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
@@ -180,27 +206,10 @@ fun RestScreen(
         state.currentSetData = currentSetData
     }
 
-    var currentSeconds by remember(state.set.id) { mutableIntStateOf(currentSetData.startTimer) }
-
-    var hasBeenStartedOnce by remember { mutableStateOf(false) }
-
-    val scope = rememberCoroutineScope()
-    var timerJob by remember { mutableStateOf<Job?>(null) }
-
-    var showSkipDialog by remember { mutableStateOf(false) }
-
-    val context = LocalContext.current
-
-    val pagerState = rememberPagerState(
-        initialPage = 0,
-        pageCount = {
-            2
-        })
-
     fun onMinusClick() {
-        if (currentSetData.startTimer > 5) {
-            val newTimerValue = currentSetData.startTimer - 5
-            currentSetData = currentSetData.copy(startTimer = newTimerValue)
+        if (currentSeconds > 5) {
+            val newTimerValue = currentSeconds - 5
+            currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
             currentSeconds = newTimerValue
             VibrateOnce(context)
         }
@@ -208,8 +217,8 @@ fun RestScreen(
     }
 
     fun onPlusClick() {
-        val newTimerValue = currentSetData.startTimer + 5
-        currentSetData = currentSetData.copy(startTimer = newTimerValue)
+        val newTimerValue = currentSeconds + 5
+        currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
         currentSeconds = newTimerValue
         VibrateOnce(context)
         updateInteractionTime()
@@ -218,7 +227,6 @@ fun RestScreen(
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-
             while (currentSeconds > 0) {
                 delay(1000) // Update every sec.
                 currentSeconds -= 1
@@ -232,11 +240,9 @@ fun RestScreen(
                 }
             }
 
-            currentSetData = currentSetData.copy(
+            state.currentSetData = currentSetData.copy(
                 endTimer = 0
             )
-
-            state.currentSetData = currentSetData
             VibrateTwiceAndBeep(context)
             onTimerEnd()
         }
@@ -244,6 +250,11 @@ fun RestScreen(
         if (!hasBeenStartedOnce) {
             hasBeenStartedOnce = true
         }
+    }
+
+    LaunchedEffect(set.id) {
+        delay(500)
+        startTimerJob()
     }
 
     val isPaused by viewModel.isPaused
@@ -262,16 +273,11 @@ fun RestScreen(
         }
     }
 
-    LaunchedEffect(set) {
-        delay(500)
-        startTimerJob()
-    }
-
-    val progress = (currentSeconds.toFloat() / (currentSetData.startTimer))
-
     val textComposable = @Composable {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -287,7 +293,7 @@ fun RestScreen(
                             VibrateOnce(context)
                         },
                         onDoubleClick = {
-                            if(timerJob?.isActive == true){
+                            if (timerJob?.isActive == true) {
                                 VibrateOnce(context)
                                 timerJob?.cancel()
                                 showSkipDialog = true
@@ -302,7 +308,10 @@ fun RestScreen(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxSize()
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(25.dp)
     ) {
         if (isTimerInEditMode) {
             ControlButtonsVertical(
@@ -324,19 +333,12 @@ fun RestScreen(
             )
         } else {
             textComposable()
-            val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
-            val nextWorkoutStateSet = if (nextWorkoutState is WorkoutState.Set) {
-                nextWorkoutState as WorkoutState.Set
-            } else {
-                null
-            }
-
             if (nextWorkoutStateSet != null) {
+                Spacer(modifier = Modifier.height(5.dp))
                 val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.execiseId]!!
                 CustomHorizontalPager(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(5.dp, 70.dp, 5.dp, 0.dp),
+                        .fillMaxSize(),
                     pagerState = pagerState,
                     userScrollEnabled = true
                 ) { page ->
@@ -344,7 +346,6 @@ fun RestScreen(
                         0 -> {
                             NextExerciseInfo(viewModel, nextWorkoutStateSet)
                         }
-
                         1 -> {
                             Box {
                                 Text(
@@ -406,7 +407,7 @@ fun RestScreen(
         message = "Do you want to proceed?",
         handleYesClick = {
             VibrateOnce(context)
-            currentSetData = currentSetData.copy(
+            state.currentSetData = currentSetData.copy(
                 endTimer =  currentSeconds
             )
             onTimerEnd()

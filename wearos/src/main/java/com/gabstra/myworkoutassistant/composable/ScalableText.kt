@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.util.Log
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +12,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,11 +44,22 @@ fun ScalableText(
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer() // Initialize the text measurer
 
-    val shouldBeInvisible = initialRender || readyToScale
+
     val minTextSize = 12.sp
 
+    var visibilityAmount by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(readyToScale,initialRender) {
+        val shouldBeInvisible = initialRender || readyToScale
+        visibilityAmount = if(shouldBeInvisible) {
+            0f
+        } else {
+            1f
+        }
+    }
+
     BoxWithConstraints(
-        modifier = modifier,
+        modifier = modifier.alpha(visibilityAmount),
         contentAlignment = Alignment.Center,
     ) {
         val boxWidth = maxWidth
@@ -65,7 +78,6 @@ fun ScalableText(
             color = color,
             textAlign = textAlign,
             modifier = Modifier
-                .alpha(if (shouldBeInvisible) 0f else 1f)
                 .onGloballyPositioned { coordinates ->
                     initialRender = false // Update the initial render flag
 

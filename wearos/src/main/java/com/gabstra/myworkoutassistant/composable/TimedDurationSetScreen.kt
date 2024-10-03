@@ -68,7 +68,7 @@ fun TimedDurationSetScreen(
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
 
     val previousSet =  state.previousSetData as TimedDurationSetData
-    var currentSet by remember { mutableStateOf(state.currentSetData as TimedDurationSetData) }
+    var currentSet by remember(set.id) { mutableStateOf(state.currentSetData as TimedDurationSetData) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
@@ -105,7 +105,7 @@ fun TimedDurationSetScreen(
         }
     }
 
-    var currentMillis by remember(state.set.id) { mutableIntStateOf(currentSet.startTimer) }
+    var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
 
     fun onMinusClick(){
@@ -143,11 +143,9 @@ fun TimedDurationSetScreen(
                 }
             }
 
-            currentSet = currentSet.copy(
+            state.currentSetData = currentSet.copy(
                 endTimer = 0
             )
-
-            state.currentSetData = currentSet
             VibrateTwiceAndBeep(context)
             onTimerEnd()
         }
@@ -307,7 +305,8 @@ fun TimedDurationSetScreen(
         message = "Do you want to stop this exercise?",
         handleYesClick = {
             VibrateOnce(context)
-            currentSet = currentSet.copy(
+
+            state.currentSetData = currentSet.copy(
                 endTimer =  currentMillis
             )
 
