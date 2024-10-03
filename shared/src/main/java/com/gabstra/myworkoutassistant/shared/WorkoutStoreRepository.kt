@@ -1,17 +1,5 @@
 package com.gabstra.myworkoutassistant.shared
 
-import android.util.Log
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
-import com.gabstra.myworkoutassistant.shared.sets.Set
-import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.google.gson.GsonBuilder
 import java.io.File
 
 class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepository {

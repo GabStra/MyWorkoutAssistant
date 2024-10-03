@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -70,7 +71,7 @@ fun WorkoutScreen(
     val userAge by viewModel.userAge
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
     val isResuming by viewModel.isResuming.collectAsState()
-
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
 
     val heartRateChartComposable =  @Composable {
         if(selectedWorkout.usePolarDevice){
@@ -153,50 +154,62 @@ fun WorkoutScreen(
         CurrentTime()
         if(isResuming){
             LoadingScreen("Resuming workout")
-        }else{
-            AnimatedContent(
-                targetState = workoutState,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                }, label = ""
-            ) { updatedWorkoutState ->
-                when(updatedWorkoutState){
-                    is WorkoutState.Preparing -> {
-                        val state = updatedWorkoutState as WorkoutState.Preparing
-                        if(!selectedWorkout.usePolarDevice)
-                            PreparingStandardScreen(viewModel,hrViewModel,state,onReady = {
-                                showWorkoutInProgressNotification(context)
-                            })
-                        else
-                            PreparingPolarScreen(viewModel,navController,polarViewModel,state,onReady = {
-                                showWorkoutInProgressNotification(context)
-                            })
-                    }
-                    is WorkoutState.Set -> {
-                        val state = updatedWorkoutState as WorkoutState.Set
-                        ExerciseScreen(
-                            viewModel,
-                            state,
-                            heartRateChartComposable
-                        )
-                    }
-                    is WorkoutState.Rest -> {
-                        val state = updatedWorkoutState as WorkoutState.Rest
-                        RestScreen(
-                            viewModel,
-                            state,
-                            heartRateChartComposable)
-                    }
-                    is WorkoutState.Finished -> {
-                        val state = updatedWorkoutState as WorkoutState.Finished
-                        WorkoutCompleteScreen(
-                            navController,
-                            viewModel,
-                            state,
-                            hrViewModel,
-                            polarViewModel
-                        )
-                    }
+            return@Box
+        }
+
+        if(isRefreshing){
+            LoadingScreen("Reloading workout")
+            return@Box
+        }
+
+        AnimatedContent(
+            targetState = workoutState,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+            }, label = ""
+        ) { updatedWorkoutState ->
+            when(updatedWorkoutState){
+                is WorkoutState.Preparing -> {
+                    val state = updatedWorkoutState as WorkoutState.Preparing
+                    if(!selectedWorkout.usePolarDevice)
+                        PreparingStandardScreen(viewModel,hrViewModel,state,onReady = {
+                            showWorkoutInProgressNotification(context)
+                        })
+                    else
+                        PreparingPolarScreen(viewModel,navController,polarViewModel,state,onReady = {
+                            showWorkoutInProgressNotification(context)
+                        })
+                }
+                is WorkoutState.Set -> {
+                    val state = updatedWorkoutState as WorkoutState.Set
+                    ExerciseScreen(
+                        viewModel,
+                        state,
+                        heartRateChartComposable
+                    )
+                }
+                is WorkoutState.Rest -> {
+                    val state = updatedWorkoutState as WorkoutState.Rest
+                    RestScreen(
+                        viewModel,
+                        state,
+                        heartRateChartComposable,
+                        onTimerEnd = {
+                            viewModel.storeSetData()
+                            viewModel.pushAndStoreWorkoutData(false,context){
+                                viewModel.goToNextState()
+                            }
+                        })
+                }
+                is WorkoutState.Finished -> {
+                    val state = updatedWorkoutState as WorkoutState.Finished
+                    WorkoutCompleteScreen(
+                        navController,
+                        viewModel,
+                        state,
+                        hrViewModel,
+                        polarViewModel
+                    )
                 }
             }
         }

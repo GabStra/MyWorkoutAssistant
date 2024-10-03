@@ -79,6 +79,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 
@@ -110,7 +111,7 @@ fun WorkoutHistoryScreen(
     val userAge by appViewModel.userAge
 
     val exerciseById = remember(workout) {
-        WorkoutManager.getAllExercisesFromWorkout(workout).associateBy { it.id }
+        workout.workoutComponents.filterIsInstance<Exercise>().associateBy { it.id }
     }
 
     val dateFormatter = remember(currentLocale) {
@@ -299,7 +300,7 @@ fun WorkoutHistoryScreen(
 
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
-            setHistoriesByExerciseId = setHistories.groupBy { it.exerciseId }
+            setHistoriesByExerciseId = setHistories.filter { it.exerciseId != null }.groupBy { it.exerciseId!! }
 
             isLoading = false
         }
@@ -535,6 +536,9 @@ fun WorkoutHistoryScreen(
                 color = Color.White.copy(alpha = .87f)
             )
             setHistoriesByExerciseId.keys.toList().forEach() { key ->
+                val exercise = exerciseById[key]!!
+                val setHistories = setHistoriesByExerciseId[key]!!
+
                 DarkModeContainer(whiteOverlayAlpha = .1f) {
                     Row(
                         modifier = Modifier
@@ -543,14 +547,15 @@ fun WorkoutHistoryScreen(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        WorkoutComponentTitle(
-                            modifier = Modifier.weight(1f),
-                            workoutComponent = exerciseById[key] as WorkoutComponent
+                        Text(
+                            modifier = Modifier.weight(1f)
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            text = exercise.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        SetHistoriesRenderer(
-                            setHistories = setHistoriesByExerciseId[key]!!
-                        )
+                        SetHistoriesRenderer(setHistories = setHistories)
                     }
                 }
             }

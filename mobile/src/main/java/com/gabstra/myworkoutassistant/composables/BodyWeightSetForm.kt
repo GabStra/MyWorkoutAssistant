@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
 
@@ -24,7 +23,7 @@ import java.util.UUID
 @Composable
 fun BodyWeightSetForm(
     onSetUpsert: (Set) -> Unit,
-    bodyWeightSet: BodyWeightSet? = null
+    bodyWeightSet: BodyWeightSet? = null,
 ) {
     // Mutable state for form fields
     val repsState = remember { mutableStateOf(bodyWeightSet?.reps?.toString() ?: "") }

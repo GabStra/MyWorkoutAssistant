@@ -10,8 +10,9 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,13 +26,19 @@ sealed class ScreenData() {
     class EditWorkout(val workoutId: UUID) : ScreenData()
     class WorkoutDetail(val workoutId: UUID) : ScreenData()
     class WorkoutHistory(val workoutId: UUID,val workoutHistoryId: UUID? = null) : ScreenData()
-    class ExerciseGroupDetail(val workoutId: UUID, val selectedExerciseGroupId: UUID) : ScreenData()
     class ExerciseDetail(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
     class ExerciseHistory(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
-    class NewExerciseGroup(val workoutId: UUID, val parentExerciseGroupId: UUID?) : ScreenData()
-    class EditExerciseGroup(val workoutId: UUID, val selectedExerciseGroupId: UUID) : ScreenData()
-    class NewExercise(val workoutId: UUID, val parentExerciseGroupId: UUID?) : ScreenData()
+
+    class NewExercise(val workoutId: UUID,) : ScreenData()
     class EditExercise(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
+
+
+    class NewRest(val workoutId: UUID, val parentExerciseId: UUID?) : ScreenData()
+    class EditRest(val workoutId: UUID, val selectedRest: Rest) : ScreenData()
+
+    class NewRestSet(val workoutId: UUID, val parentExerciseId: UUID) : ScreenData()
+    class EditRestSet(val workoutId: UUID, val selectedRestSet: RestSet, val parentExerciseId: UUID) : ScreenData()
+
     class NewSet(val workoutId: UUID, val parentExerciseId: UUID) : ScreenData()
     class EditSet(val workoutId: UUID, val selectedSet: Set, val parentExerciseId: UUID) : ScreenData()
 }
@@ -148,16 +155,16 @@ class AppViewModel() : ViewModel() {
         workouts = WorkoutManager.addWorkoutComponent(workouts,workout,newWorkoutComponent)
     }
 
-    fun addWorkoutComponentToExerciseGroup(workout: Workout, exerciseGroup: ExerciseGroup, newWorkoutComponent: WorkoutComponent) {
-        workouts = WorkoutManager.addWorkoutComponentToExerciseGroup(workouts,workout,exerciseGroup,newWorkoutComponent)
-    }
-
     fun addSetToExercise(workout: Workout, exercise: Exercise, newSet: Set) {
         workouts = WorkoutManager.addSetToExercise(workouts,workout,exercise,newSet)
     }
 
-    fun updateSetInExercise(workout: Workout, exercise: Exercise, oldSet:Set,updatedSet: Set) {
+    fun updateSetInExercise(workout: Workout, exercise: Exercise, oldSet: Set, updatedSet: Set) {
         workouts = WorkoutManager.updateSetInExercise(workouts,workout,exercise,oldSet,updatedSet)
+    }
+
+    fun deleteSet(workout: Workout, exercise: Exercise, setToDelete: Set) {
+        workouts = WorkoutManager.deleteSet(workouts,workout,exercise,setToDelete)
     }
 
     fun deleteWorkout(workoutToDelete: Workout) {
@@ -166,9 +173,5 @@ class AppViewModel() : ViewModel() {
 
     fun deleteWorkoutComponent(workout: Workout, workoutComponentToDelete: WorkoutComponent) {
         workouts = WorkoutManager.deleteWorkoutComponent(workouts,workout,workoutComponentToDelete)
-    }
-
-    fun deleteSet(workout: Workout, exercise: Exercise, setToDelete: Set) {
-        workouts = WorkoutManager.deleteSet(workouts,workout,exercise,setToDelete)
     }
 }

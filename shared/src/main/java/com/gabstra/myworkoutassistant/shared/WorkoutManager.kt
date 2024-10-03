@@ -2,10 +2,12 @@ package com.gabstra.myworkoutassistant.shared
 
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import java.time.LocalDate
 import java.util.UUID
@@ -33,11 +35,8 @@ class WorkoutManager {
         }
 
         fun updateWorkoutComponent(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
-
             val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
-
             val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
-
             return updateWorkout(workouts, parentWorkout, updatedWorkout)
         }
 
@@ -50,28 +49,29 @@ class WorkoutManager {
             return updateWorkoutOld(workouts, parentWorkout, updatedWorkout)
         }
 
-        // Funzione ricorsiva per aggiornare i componenti del workout
-        private fun updateWorkoutComponentsRecursively(components: List<WorkoutComponent>, oldComponent: WorkoutComponent, updatedComponent: WorkoutComponent): List<WorkoutComponent> {
-            return components.map { component ->
+        private fun updateWorkoutComponentsRecursively(workoutComponents: List<WorkoutComponent>, oldComponent: WorkoutComponent, updatedComponent: WorkoutComponent): List<WorkoutComponent> {
+            return workoutComponents.map { component ->
                 if (component == oldComponent) {
                     updatedComponent
                 } else {
+                    component
+                    /*
                     when (component) {
                         is ExerciseGroup -> component.copy(workoutComponents = updateWorkoutComponentsRecursively(component.workoutComponents, oldComponent, updatedComponent))
                         else -> component
                     }
+                    */
                 }
             }
         }
 
         fun addWorkoutComponent(workouts: List<Workout>, workout: Workout, newWorkoutComponent: WorkoutComponent): List<Workout> {
             val updatedComponents = workout.workoutComponents + newWorkoutComponent
-
             val updatedWorkout = workout.copy(workoutComponents = updatedComponents)
-
             return updateWorkout(workouts, workout, updatedWorkout)
         }
 
+        /*
         fun addWorkoutComponentToExerciseGroup(workouts: List<Workout>, workout: Workout, exerciseGroup: ExerciseGroup, newWorkoutComponent: WorkoutComponent): List<Workout> {
             // Crea una nuova lista di componenti del workout con il nuovo componente aggiunto all'ExerciseGroup
             val updatedComponents = addWorkoutComponentsRecursively(workout.workoutComponents, exerciseGroup, newWorkoutComponent)
@@ -81,9 +81,10 @@ class WorkoutManager {
 
             // Utilizza la funzione updateWorkout per creare una nuova versione del workout
             return updateWorkout(workouts, workout, updatedWorkout)
-        }
+        }*/
 
-        // Funzione ricorsiva per aggiungere componenti ai gruppi di esercizi
+        /*
+      // Funzione ricorsiva per aggiungere componenti ai gruppi di esercizi
         private fun addWorkoutComponentsRecursively(components: List<WorkoutComponent>, parentWorkoutComponent: WorkoutComponent, newWorkoutComponent: WorkoutComponent): List<WorkoutComponent> {
             return components.map { component ->
                 when (component) {
@@ -103,9 +104,9 @@ class WorkoutManager {
                     else -> component
                 }
             }
-        }
+        }*/
 
-        fun addSetToExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, newSet: com.gabstra.myworkoutassistant.shared.sets.Set, index: Int? = null): List<Workout> {
+        fun addSetToExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, newSet: Set, index: Int? = null): List<Workout> {
             return workouts.map { currentWorkout ->
                 if (currentWorkout == workout) {
                     currentWorkout.copy(workoutComponents = addSetToExerciseRecursively(currentWorkout.workoutComponents, exercise, newSet, index))
@@ -115,37 +116,24 @@ class WorkoutManager {
             }
         }
 
-        fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: com.gabstra.myworkoutassistant.shared.sets.Set, index: Int? = null): List<WorkoutComponent> {
+        fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: Set, index: Int? = null): List<WorkoutComponent> {
             return components.map { component ->
-                when (component) {
-                    is Exercise -> {
-                        if (component == parentExercise) {
-                            val mutableSets = component.sets.toMutableList()
-                            if (index != null && index in mutableSets.indices) {
-                                mutableSets.add(index, newSet)
-                            } else {
-                                mutableSets.add(newSet) // Add at the end if index is null or out of bounds
-                            }
-                            component.copy(sets = mutableSets.toList())
-                        } else {
-                            component
-                        }
+                if (component == parentExercise) {
+                    val exercise = component as Exercise
+                    val mutableSets= component.sets.toMutableList()
+                    if (index != null && index in mutableSets.indices) {
+                        mutableSets.add(index, newSet)
+                    } else {
+                        mutableSets.add(newSet) // Add at the end if index is null or out of bounds
                     }
-                    is ExerciseGroup -> {
-                        component.copy(
-                            workoutComponents = addSetToExerciseRecursively(
-                                component.workoutComponents,
-                                parentExercise,
-                                newSet,
-                                index
-                            )
-                        )
-                    }
+                    exercise.copy(sets = mutableSets.toList())
+                } else {
+                    component
                 }
             }
         }
 
-        fun updateSetInExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, oldSet: com.gabstra.myworkoutassistant.shared.sets.Set, updatedSet: com.gabstra.myworkoutassistant.shared.sets.Set) : List<Workout> {
+        fun updateSetInExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, oldSet: Set, updatedSet: Set) : List<Workout> {
             return workouts.map { it ->
                 if (it == workout) {
                     it.copy(workoutComponents = updateSetInExerciseRecursively(it.workoutComponents, exercise, oldSet, updatedSet))
@@ -155,30 +143,18 @@ class WorkoutManager {
             }
         }
 
-        fun updateSetInExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, oldSet: com.gabstra.myworkoutassistant.shared.sets.Set, updatedSet: com.gabstra.myworkoutassistant.shared.sets.Set): List<WorkoutComponent> {
+        fun updateSetInExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, oldSet: Set, updatedSet: Set): List<WorkoutComponent> {
             return components.map { component ->
-                when (component) {
-                    is Exercise ->
-                        if(component == parentExercise) {
-                            component.copy(sets = updateSet(component.sets,oldSet,updatedSet))
-                        }else{
-                            component
-                        }
-                    is ExerciseGroup -> {
-                        component.copy(
-                            workoutComponents = updateSetInExerciseRecursively(
-                                component.workoutComponents,
-                                parentExercise,
-                                oldSet,
-                                updatedSet
-                            )
-                        )
-                    }
+                if(component == parentExercise) {
+                    val exercise = component as Exercise
+                    exercise.copy(sets = updateSet(component.sets,oldSet,updatedSet))
+                }else{
+                    component
                 }
             }
         }
 
-        private fun updateSet(sets: List<com.gabstra.myworkoutassistant.shared.sets.Set>, oldSet: com.gabstra.myworkoutassistant.shared.sets.Set, updatedSet: com.gabstra.myworkoutassistant.shared.sets.Set): List<com.gabstra.myworkoutassistant.shared.sets.Set> {
+        private fun updateSet(sets: List<Set>, oldSet: Set, updatedSet: Set): List<Set> {
             return sets.map { set ->
                 if(set === oldSet) {
                     updatedSet
@@ -188,47 +164,7 @@ class WorkoutManager {
             }
         }
 
-        fun deleteWorkoutComponent(workouts: List<Workout>, workout: Workout, workoutComponentToDelete: WorkoutComponent) : List<Workout> {
-            return workouts.map {
-                if (it == workout) {
-                    if(workoutComponentToDelete in it.workoutComponents){
-                        it.copy(
-                            workoutComponents = it.workoutComponents.filter { workoutComponent -> workoutComponent != workoutComponentToDelete }  // Direct object comparison
-                        )
-                    }else{
-                        it.copy(
-                            workoutComponents = deleteWorkoutComponentsRecursively(it.workoutComponents, workoutComponentToDelete)
-                        )
-                    }
-                } else {
-                    it
-                }
-            }
-        }
-
-        private fun deleteWorkoutComponentsRecursively(components: List<WorkoutComponent>, workoutComponentToDelete: WorkoutComponent): List<WorkoutComponent> {
-            return components.map { component ->
-                when (component) {
-                    is ExerciseGroup -> {
-                        if (workoutComponentToDelete in component.workoutComponents) {
-                            component.copy(
-                                workoutComponents = component.workoutComponents.filter { workoutComponent -> workoutComponent != workoutComponentToDelete }
-                            )
-                        } else {
-                            component.copy(
-                                workoutComponents = deleteWorkoutComponentsRecursively(
-                                    component.workoutComponents,
-                                    workoutComponentToDelete
-                                )
-                            )
-                        }
-                    }
-                    else -> component
-                }
-            }
-        }
-
-        fun deleteSet(workouts: List<Workout>, workout: Workout, exercise: Exercise, setToDelete: com.gabstra.myworkoutassistant.shared.sets.Set) : List<Workout> {
+        fun deleteSet(workouts: List<Workout>, workout: Workout, exercise: Exercise, setToDelete: Set) : List<Workout> {
             return workouts.map {
                 if (it == workout) {
                     workout.copy(
@@ -244,55 +180,33 @@ class WorkoutManager {
             }
         }
 
-        private fun deleteSetRecursively(components: List<WorkoutComponent>, exercise: Exercise, setToDelete: com.gabstra.myworkoutassistant.shared.sets.Set): List<WorkoutComponent> {
+        private fun deleteSetRecursively(components: List<WorkoutComponent>, exercise: Exercise, setToDelete: Set): List<WorkoutComponent> {
             return components.map { component ->
-                when (component) {
-                    is Exercise -> {
-                        if (component == exercise) {
-                            component.copy(
-                                sets = component.sets.filter { set -> set != setToDelete }
-                            )
-                        } else {
-                            component
-                        }
-                    }
-                    is ExerciseGroup -> {
-                        component.copy(
-                            workoutComponents = deleteSetRecursively(
-                                component.workoutComponents,
-                                exercise,
-                                setToDelete
-                            )
+                if (component == exercise) {
+                    val selectedExercise = component as Exercise
+                    selectedExercise.copy(
+                        sets = component.sets.filter { set -> set != setToDelete }
+                    )
+                } else {
+                    component
+                }
+            }
+        }
+
+        fun deleteWorkoutComponent(workouts: List<Workout>, workout: Workout, workoutComponentToDelete: WorkoutComponent) : List<Workout> {
+            return workouts.map {
+                if (it == workout) {
+                    if(workoutComponentToDelete in it.workoutComponents){
+                        it.copy(
+                            workoutComponents = it.workoutComponents.filter { workoutComponent -> workoutComponent != workoutComponentToDelete }  // Direct object comparison
                         )
+                    }else{
+                        it
                     }
+                } else {
+                    it
                 }
             }
-        }
-
-        fun getAllExercisesFromWorkout(workout: Workout): List<Exercise> {
-            val sets = mutableListOf<Exercise>()
-
-            for(workoutComponent in workout.workoutComponents){
-                when(workoutComponent){
-                    is Exercise -> sets.add(workoutComponent)
-                    is ExerciseGroup -> sets.addAll(getAllExercisesFromExerciseGroup(workoutComponent))
-                }
-            }
-
-            return sets.toList()
-        }
-
-        fun getAllExercisesFromExerciseGroup(exerciseGroup: ExerciseGroup): List<Exercise>{
-            val sets = mutableListOf<Exercise>()
-
-            for(workoutComponent in exerciseGroup.workoutComponents){
-                when(workoutComponent){
-                    is Exercise -> sets.add(workoutComponent)
-                    is ExerciseGroup -> sets.addAll(getAllExercisesFromExerciseGroup(workoutComponent))
-                }
-            }
-
-            return sets.toList()
         }
 
         fun cloneWorkoutComponent(workoutComponent: WorkoutComponent): WorkoutComponent {
@@ -300,19 +214,17 @@ class WorkoutManager {
                 is Exercise -> {
                     val newSets = workoutComponent.sets.map {
                         when (it){
-                            is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
-                            is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
-                            is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
-                            is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
+                            is BodyWeightSet -> it.copy(id = UUID.randomUUID())
+                            is WeightSet -> it.copy(id = UUID.randomUUID())
+                            is EnduranceSet -> it.copy(id = UUID.randomUUID())
+                            is TimedDurationSet -> it.copy(id = UUID.randomUUID())
+                            is RestSet -> it.copy(id = UUID.randomUUID())
                         }
                     }
-                    workoutComponent.copy(id = java.util.UUID.randomUUID(), sets = newSets)
+                    workoutComponent.copy(id = UUID.randomUUID(), sets = newSets)
                 }
-                is ExerciseGroup -> {
-                    val newWorkoutComponents = workoutComponent.workoutComponents.map {
-                        cloneWorkoutComponent(it) // Recursive call
-                    }
-                    workoutComponent.copy(id = java.util.UUID.randomUUID(), workoutComponents = newWorkoutComponents)
+                is Rest -> {
+                    workoutComponent.copy(id = UUID.randomUUID())
                 }
             }
         }

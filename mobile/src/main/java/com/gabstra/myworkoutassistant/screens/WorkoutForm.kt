@@ -51,9 +51,6 @@ fun WorkoutForm(
     val timesCompletedInAWeekState = remember { mutableStateOf(workout?.timesCompletedInAWeek?.toString() ?: "0") }
     val usePolarDeviceState = remember { mutableStateOf(workout?.usePolarDevice ?: false) }
 
-    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(workout?.restTimeInSec ?: 0)) }
-    val (hours, minutes, seconds) = hms.value
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -85,23 +82,6 @@ fun WorkoutForm(
                     .padding(8.dp)
             )
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-            ) {
-                Text("Rest Time Between Exercises")
-                Spacer(modifier = Modifier.height(15.dp))
-                CustomTimePicker(
-                    initialHour = hours,
-                    initialMinute = minutes,
-                    initialSecond = seconds,
-                    onTimeChange = { hour, minute, second ->
-                        hms.value = Triple(hour, minute, second)
-                    }
-                )
-            }
-
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -127,7 +107,6 @@ fun WorkoutForm(
                         id  = workout?.id ?: java.util.UUID.randomUUID(),
                         name = workoutNameState.value.trim(),
                         description = workoutDescriptionState.value.trim(),
-                        restTimeInSec = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
                         workoutComponents = workout?.workoutComponents ?: listOf(),
                         usePolarDevice = usePolarDeviceState.value,
                         creationDate = LocalDate.now(),

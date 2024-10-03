@@ -99,6 +99,8 @@ class MyReceiver(
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
+                    }else{
+                        appViewModel.RefreshAndGoToLastState()
                     }
                 }
 

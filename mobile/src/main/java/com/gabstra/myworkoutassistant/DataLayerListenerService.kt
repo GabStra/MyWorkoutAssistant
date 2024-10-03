@@ -7,6 +7,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -16,6 +17,7 @@ import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
@@ -65,59 +67,35 @@ class DataLayerListenerService : WearableListenerService() {
                                 setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
 
                                 val workoutStore = workoutStoreRepository.getWorkoutStore()
-                                val workout =
-                                    workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
+                                val workout = workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
 
                                 if (workout != null && workoutHistoryStore.WorkoutHistory.isDone) {
-                                    val setHistoriesByExerciseId =
-                                        workoutHistoryStore.ExerciseHistories.groupBy { it.exerciseId }
-
-                                    val exercises =
-                                        WorkoutManager.getAllExercisesFromWorkout(workout)
+                                    val setHistoriesByExerciseId = workoutHistoryStore.ExerciseHistories
+                                        .filter { it.exerciseId != null }
+                                        .groupBy { it.exerciseId }
+                                    val exercises = workout.workoutComponents.filterIsInstance<Exercise>()
                                     var workoutComponents = workout.workoutComponents
 
                                     for (exercise in exercises) {
-                                        if(exercise.doNotStoreHistory) continue
-
                                         val setById = exercise.sets.associateBy { it.id }
                                         val setHistories =
                                             setHistoriesByExerciseId[exercise.id] ?: continue
 
                                         for (setHistory in setHistories) {
-                                            val isExistingSet =
-                                                setById.containsKey(setHistory.setId)
+                                            val isExistingSet = setById.containsKey(setHistory.setId)
+
+                                            if(isExistingSet && exercise.doNotStoreHistory) continue
 
                                             workoutComponents =
                                                 if (isExistingSet) {
-                                                    val set = setById[setHistory.setId] ?: continue
-                                                    if (!isSetDataValid(
-                                                            set,
-                                                            setHistory.setData
-                                                        )
-                                                    ) continue
-                                                    val newSet = getNewSetFromSetData(
-                                                        set,
-                                                        setHistory.setData
-                                                    ) ?: continue
-                                                    updateSetInExerciseRecursively(
-                                                        workoutComponents,
-                                                        exercise,
-                                                        set,
-                                                        newSet
-                                                    )
+                                                    val oldSet = setById[setHistory.setId] ?: continue
+                                                    if (!isSetDataValid(oldSet,setHistory.setData)) continue
+                                                    val newSet = getNewSetFromSetData(oldSet,setHistory.setData) ?: continue
+                                                    updateSetInExerciseRecursively( workoutComponents,exercise,oldSet,newSet)
                                                 } else {
-                                                    val previousSet =
-                                                        exercise.sets[setHistory.order - 1]
-                                                    val newSet = getNewSetFromSetData(
-                                                        previousSet,
-                                                        setHistory.setData
-                                                    ) ?: continue
-                                                    WorkoutManager.addSetToExerciseRecursively(
-                                                        workoutComponents,
-                                                        exercise,
-                                                        newSet,
-                                                        setHistory.order
-                                                    )
+                                                    val previousSet = exercise.sets[setHistory.order - 1]
+                                                    val newSet = getNewSetFromSetData(previousSet,setHistory.setData) ?: continue
+                                                    addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                                                 }
                                         }
                                     }

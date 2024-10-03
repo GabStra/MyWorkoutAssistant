@@ -24,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.google.android.gms.wearable.DataClient
@@ -245,6 +246,7 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
             .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
+            .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
             .create()
         val jsonString = gson.toJson(workoutHistoryStore)

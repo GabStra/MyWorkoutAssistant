@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
@@ -57,12 +58,12 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                             horizontalAlignment = Alignment.End,
                         ) {
                             Text(
-                                "Timer set to: " + formatTime(setData.startTimer / 1000) + " (hh:mm:ss)",
+                                "Timer set to: " + formatTime(setData.startTimer / 1000),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .87f)
                             )
                             Text(
-                                "Stopped at: " + formatTime(setData.endTimer / 1000) + " (hh:mm:ss)",
+                                "Stopped at: " + formatTime(setData.endTimer / 1000),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .87f)
                             )
@@ -73,11 +74,26 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         Column(
                             horizontalAlignment = Alignment.End,
                         ) {
-                            Text("Timer set to: " + formatTime(setData.startTimer / 1000) + " (hh:mm:ss)",
+                            Text("Timer set to: " + formatTime(setData.startTimer / 1000),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .6f)
                             )
-                            Text("Stopped at: " + formatTime(setData.endTimer / 1000) + " (hh:mm:ss)",
+                            Text("Stopped at: " + formatTime(setData.endTimer / 1000),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = .6f)
+                            )
+                        }
+                    }
+
+                    is RestSetData -> {
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                        ) {
+                            Text("Rest Timer set to: " + formatTime(setData.startTimer),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = .6f)
+                            )
+                            Text("Stopped at: " + formatTime(setData.endTimer),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .6f)
                             )

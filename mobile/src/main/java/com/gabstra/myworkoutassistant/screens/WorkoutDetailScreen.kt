@@ -28,6 +28,7 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,17 +59,17 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
-import com.gabstra.myworkoutassistant.composables.ExerciseGroupRenderer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -118,7 +120,8 @@ fun Menu(
 
 @Composable
 fun WorkoutComponentRenderer(
-    workoutComponent: WorkoutComponent
+    workoutComponent: WorkoutComponent,
+    showRest:Boolean
 ) {
     Row(
         modifier = Modifier
@@ -126,50 +129,23 @@ fun WorkoutComponentRenderer(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            modifier = Modifier
-                .weight(1f)
-                .basicMarquee(iterations = Int.MAX_VALUE),
-            text = workoutComponent.name,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
-        )
-        Spacer(modifier = Modifier.width(10.dp))
         when (workoutComponent) {
             is Exercise -> ExerciseRenderer(
-                exercise = workoutComponent
+                modifier = Modifier.weight(1f),
+                exercise = workoutComponent,
+                showRest = showRest
             )
 
-            is ExerciseGroup -> ExerciseGroupRenderer(
-                exerciseGroup = workoutComponent,
+            is Rest -> Text(
+                modifier = Modifier.weight(1f),
+                text = "Rest for: "+ formatTime(workoutComponent.timeInSeconds),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
+                textAlign = TextAlign.End
             )
         }
     }
 }
-
-@Composable
-fun WorkoutComponentTitle(
-    modifier: Modifier = Modifier,
-    workoutComponent: WorkoutComponent
-) {
-    val suffix = if (workoutComponent is ExerciseGroup) " (Group)" else ""
-
-    Row(
-        horizontalArrangement = Arrangement.End,
-        modifier = modifier.padding(vertical = 10.dp),
-    ) {
-        Text(
-            modifier = Modifier
-                .weight(2.7f)
-                .basicMarquee(iterations = Int.MAX_VALUE),
-            text = workoutComponent.name + suffix,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = .87f),
-        )
-    }
-}
-
-
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -183,12 +159,18 @@ fun WorkoutDetailScreen(
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
+    var showRest by remember { mutableStateOf(false) }
+
     var isDragDisabled by remember {
         mutableStateOf(false)
     }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(showRest) {
+        selectedWorkoutComponents = emptyList()
+    }
 
     val editModeBottomBar = @Composable {
         BottomAppBar(
@@ -262,7 +244,7 @@ fun WorkoutDetailScreen(
                                         if (selectedWorkoutComponents.any { it === workoutComponent }) {
                                             when (workoutComponent) {
                                                 is Exercise -> workoutComponent.copy(enabled = true)
-                                                is ExerciseGroup -> workoutComponent.copy(enabled = true)
+                                                is Rest -> workoutComponent.copy(enabled = true)
                                                 else -> workoutComponent
                                             }
                                         } else {
@@ -289,7 +271,7 @@ fun WorkoutDetailScreen(
                                         if (selectedWorkoutComponents.any { it === workoutComponent }) {
                                             when (workoutComponent) {
                                                 is Exercise -> workoutComponent.copy(enabled = false)
-                                                is ExerciseGroup -> workoutComponent.copy(enabled = false)
+                                                is Rest -> workoutComponent.copy(enabled = false)
                                                 else -> workoutComponent
                                             }
                                         } else {
@@ -405,14 +387,13 @@ fun WorkoutDetailScreen(
                                         MenuItem("Add Exercise") {
                                             appViewModel.setScreenData(
                                                 ScreenData.NewExercise(
-                                                    workout.id,
-                                                    null
+                                                    workout.id
                                                 )
                                             );
                                         },
-                                        MenuItem("Add Exercise Group") {
+                                        MenuItem("Add Rest") {
                                             appViewModel.setScreenData(
-                                                ScreenData.NewExerciseGroup(
+                                                ScreenData.NewRest(
                                                     workout.id,
                                                     null
                                                 )
@@ -502,9 +483,23 @@ fun WorkoutDetailScreen(
                     }
                 }
 
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                ) {
+                    Checkbox(
+                        checked = showRest,
+                        onCheckedChange = { showRest = it },
+                    )
+                    Text(text = "Show Rests")
+                }
+
                 GenericSelectableList(
                     it = PaddingValues(0.dp, 5.dp),
-                    items = workout.workoutComponents,
+                    items = if(!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
                     selectedItems = selectedWorkoutComponents,
                     isSelectionModeActive,
                     onItemClick = {
@@ -518,11 +513,11 @@ fun WorkoutDetailScreen(
                                 )
                             }
 
-                            is ExerciseGroup -> {
+                            is Rest -> {
                                 appViewModel.setScreenData(
-                                    ScreenData.ExerciseGroupDetail(
+                                    ScreenData.EditRest(
                                         workout.id,
-                                        it.id
+                                        it
                                     )
                                 )
                             }
@@ -540,7 +535,8 @@ fun WorkoutDetailScreen(
                     itemContent = { it ->
                         DarkModeContainer(whiteOverlayAlpha = .1f) {
                             WorkoutComponentRenderer(
-                                workoutComponent = it
+                                workoutComponent = it,
+                                showRest = showRest
                             )
                         }
                     },

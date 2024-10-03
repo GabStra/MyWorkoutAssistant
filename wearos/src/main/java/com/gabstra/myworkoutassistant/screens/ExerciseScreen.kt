@@ -1,37 +1,26 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,9 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -51,12 +38,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.ButtonDefaults
-import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
@@ -67,8 +50,8 @@ import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
-import com.gabstra.myworkoutassistant.composable.EnhancedButton
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composable.RestSetScreen
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
@@ -82,6 +65,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.delay
@@ -163,6 +147,22 @@ fun ExerciseDetail(
             onTimerEnabled = onTimerEnabled,
             extraInfo = extraInfo
         )
+        is RestSet -> {
+            RestSetScreen(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize(),
+                state = updatedState,
+                onTimerEnd = {
+                    viewModel.storeSetData()
+                    viewModel.pushAndStoreWorkoutData(false,context){
+                        viewModel.upsertWorkoutRecord(updatedState.set.id)
+                        viewModel.goToNextState()
+                    }
+                },
+                onTimerDisabled = onTimerDisabled,
+                onTimerEnabled = onTimerEnabled,
+            )
+        }
     }
 }
 
@@ -175,6 +175,8 @@ fun SimplifiedHorizontalPager(
     viewModel: AppViewModel,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
+    val exercise = viewModel.exercisesById[updatedState.execiseId]!!
+
     CustomHorizontalPager(
         modifier = modifier,
         pagerState = pagerState,
@@ -188,7 +190,7 @@ fun SimplifiedHorizontalPager(
             )
             1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
             2 -> PageNewSets(pagerState,updatedState,viewModel)
-            3 -> PageNotes(updatedState.parentExercise.notes)
+            3 -> PageNotes(exercise.notes)
         }
     }
 }
@@ -310,6 +312,7 @@ fun PageExerciseDetail(
                 is BodyWeightSet -> BodyWeightSetDataViewerMinimal(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption2)
                 is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption2,historyMode = true)
                 is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2,historyMode = true)
+                is RestSet -> throw IllegalStateException("Rest set should not be here")
             }
         }
     }
@@ -368,7 +371,8 @@ fun PageNewSets(
         listState.scrollToItem(0);
     }
 
-    val exerciseSets = updatedState.parentExercise.sets
+    val exercise = viewModel.exercisesById[updatedState.execiseId]!!
+    val exerciseSets = exercise.sets
 
     val setIndex =  exerciseSets.indexOfFirst { it === updatedState.set }
     val isLastSet = setIndex == exerciseSets.size - 1
@@ -460,6 +464,7 @@ fun ExerciseScreen(
                 fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
             }, label = ""
         ) { updatedState ->
+            val exercise = viewModel.exercisesById[updatedState.execiseId]!!
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -479,7 +484,7 @@ fun ExerciseScreen(
                             }
                         )
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    text = updatedState.parentExercise.name,
+                    text = exercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                     maxLines = 1,

@@ -4,42 +4,21 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import com.gabstra.myworkoutassistant.shared.AppBackup
-import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
-import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
-import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.shared.logLargeString
-import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
-import com.gabstra.myworkoutassistant.shared.setdata.SetData
-import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
-import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
-import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
-import com.google.gson.Gson
-import com.google.gson.GsonBuilder
 import kotlinx.coroutines.delay
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -120,61 +99,10 @@ fun formatMillisecondsToMinutesSeconds(milliseconds: Int): String {
     return String.format("%02d:%02d:%03d", minutes, remainingSeconds, remainingMilliseconds)
 }
 
-fun findParentWorkoutComponent(workout: Workout, component: WorkoutComponent): ExerciseGroup? {
-    for (workoutComponent in workout.workoutComponents) {
-        if (workoutComponent is ExerciseGroup) {
-            val parent = findParentWorkoutComponent(workoutComponent, component)
-            if (parent != null) {
-                return parent
-            }
-        }
-    }
-    return null
-}
-
-fun findParentWorkoutComponent(exerciseGroup: ExerciseGroup, component: WorkoutComponent): ExerciseGroup? {
-    for (workoutComponent in exerciseGroup.workoutComponents) {
-        if (workoutComponent == component) {
-            return exerciseGroup
-        }
-
-        if (workoutComponent is ExerciseGroup) {
-            val parent = findParentWorkoutComponent(workoutComponent, component)
-            if (parent != null) {
-                return parent
-            }
-        }
-    }
-    return null
-}
-
 fun findWorkoutComponentByIdInWorkout(workout: Workout, id: UUID): WorkoutComponent? {
     for (workoutComponent in workout.workoutComponents) {
         if (workoutComponent.id == id) {
             return workoutComponent
-        }
-
-        if (workoutComponent is ExerciseGroup) {
-            val result = findWorkoutComponentById(workoutComponent, id)
-            if (result != null) {
-                return result
-            }
-        }
-    }
-    return null
-}
-
-fun findWorkoutComponentById(exerciseGroup: ExerciseGroup, id: UUID): WorkoutComponent? {
-    for (workoutComponent in exerciseGroup.workoutComponents) {
-        if (workoutComponent.id == id) {
-            return workoutComponent
-        }
-
-        if (workoutComponent is ExerciseGroup) {
-            val result = findWorkoutComponentById(workoutComponent, id)
-            if (result != null) {
-                return result
-            }
         }
     }
     return null
@@ -221,7 +149,7 @@ fun formatTime(seconds: Int): String {
 fun getEnabledStatusOfWorkoutComponent(workoutComponent: WorkoutComponent): Boolean {
     return when (workoutComponent) {
         is Exercise -> workoutComponent.enabled
-        is ExerciseGroup -> workoutComponent.enabled
+        is Rest -> workoutComponent.enabled
         else -> false // Default case if the component type is unknown
     }
 }

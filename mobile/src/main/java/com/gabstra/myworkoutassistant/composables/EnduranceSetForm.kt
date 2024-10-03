@@ -6,23 +6,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.formatMillisecondsToMinutesSeconds
-import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
@@ -31,7 +26,7 @@ import java.util.UUID
 @Composable
 fun EnduranceSetForm(
     onSetUpsert: (Set) -> Unit,
-    enduranceSet: EnduranceSet? = null // Add exercise parameter with default value null
+    enduranceSet: EnduranceSet? = null,
 ) {
 
     val autoStartState = remember { mutableStateOf(enduranceSet?.autoStart ?: false) }

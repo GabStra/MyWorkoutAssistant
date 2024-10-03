@@ -24,7 +24,7 @@ import java.util.UUID
 @Composable
 fun WeightSetForm(
     onSetUpsert: (Set) -> Unit,
-    weightSet: WeightSet? = null // Add exercise parameter with default value null
+    weightSet: WeightSet? = null, // Add exercise parameter with default value null,
 ) {
     // Mutable state for form fields
     val repsState = remember { mutableStateOf(weightSet?.reps?.toString() ?: "") }

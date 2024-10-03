@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared
 
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import java.time.LocalDate
 import java.util.UUID
@@ -10,7 +12,6 @@ data class Workout(
     val description: String,
     val workoutComponents: List<WorkoutComponent>,
     val order : Int,
-    val restTimeInSec: Int,
     val enabled: Boolean = true,
     val usePolarDevice: Boolean = false,
     val creationDate: LocalDate,

@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.adapters
 
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -22,6 +23,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             is BodyWeightSetData -> "BodyWeightSetData"
             is TimedDurationSetData -> "TimedDurationSetData"
             is EnduranceSetData -> "EnduranceSetData"
+            is RestSetData -> "RestSetData"
         }
         jsonObject.addProperty("type", exerciseType)
 
@@ -38,6 +40,10 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 jsonObject.addProperty("endTimer", src.endTimer)
             }
             is EnduranceSetData ->{
+                jsonObject.addProperty("startTimer", src.startTimer)
+                jsonObject.addProperty("endTimer", src.endTimer)
+            }
+            is RestSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
                 jsonObject.addProperty("endTimer", src.endTimer)
             }
@@ -68,6 +74,11 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 val startTimer = jsonObject.get("startTimer").asInt
                 val endTimer = jsonObject.get("endTimer").asInt
                 EnduranceSetData(startTimer,endTimer)
+            }
+            "RestSetData" -> {
+                val startTimer = jsonObject.get("startTimer").asInt
+                val endTimer = jsonObject.get("endTimer").asInt
+                RestSetData(startTimer,endTimer)
             }
             else -> throw RuntimeException("Unsupported set type")
         }

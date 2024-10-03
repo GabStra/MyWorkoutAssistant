@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,17 +12,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,27 +44,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
+import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
-import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
+import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 @Composable
-fun SetRenderer(set: Set) {
+fun ComponentRenderer(set: Set) {
     Row(
         modifier = Modifier.padding(15.dp),
         horizontalArrangement = Arrangement.Center
@@ -105,7 +101,7 @@ fun SetRenderer(set: Set) {
             is EnduranceSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "${formatTime(set.timeInMillis / 1000)} (hh:mm:ss)",
+                    text = formatTime(set.timeInMillis / 1000),
                     textAlign = TextAlign.Center,
                     color = Color.White.copy(alpha = .87f),
                     style = MaterialTheme.typography.bodyMedium,
@@ -115,7 +111,17 @@ fun SetRenderer(set: Set) {
             is TimedDurationSet -> {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "${formatTime(set.timeInMillis / 1000)} (hh:mm:ss)",
+                    text = formatTime(set.timeInMillis / 1000),
+                    textAlign = TextAlign.Center,
+                    color = Color.White.copy(alpha = .87f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            is RestSet -> {
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = "Rest for: ${formatTime(set.timeInSeconds)}",
                     textAlign = TextAlign.Center,
                     color = Color.White.copy(alpha = .87f),
                     style = MaterialTheme.typography.bodyMedium,
@@ -136,8 +142,14 @@ fun ExerciseDetailScreen(
     onGoBack: () -> Unit
 ) {
     var sets by remember { mutableStateOf(exercise.sets) }
-    var selectedSets by remember { mutableStateOf(listOf<com.gabstra.myworkoutassistant.shared.sets.Set>()) }
+    var selectedSets by remember { mutableStateOf(listOf<Set>()) }
+
     var isSelectionModeActive by remember { mutableStateOf(false) }
+    var showRest by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showRest) {
+        selectedSets = emptyList()
+    }
 
     Scaffold(
         topBar = {
@@ -193,11 +205,76 @@ fun ExerciseDetailScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            IconButton(
+                                enabled = selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0,
+                                onClick = {
+                                    val currentSets = exercise.sets
+                                    val selectedComponent = selectedSets.first()
+
+                                    val selectedIndex =
+                                        currentSets.indexOfFirst { it === selectedComponent }
+
+                                    val newSets =
+                                        currentSets.toMutableList().apply {
+                                            removeAt(selectedIndex)
+                                            add(selectedIndex - 1, selectedComponent)
+                                        }
+
+                                    val updatedExercise = exercise.copy(sets = newSets)
+
+                                    appViewModel.updateWorkoutComponent(
+                                        workout,
+                                        exercise,
+                                        updatedExercise
+                                    )
+
+                                    sets = newSets
+                                }) {
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowUpward,
+                                    contentDescription = "Go Higher",
+                                    tint = Color.White.copy(alpha = .87f)
+                                )
+                            }
+
+                            IconButton(
+                                enabled = selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1,
+                                onClick = {
+                                    val currentSets = exercise.sets
+                                    val selectedComponent = selectedSets.first()
+
+                                    val selectedIndex =
+                                        currentSets.indexOfFirst { it === selectedComponent }
+
+                                    val newSets =
+                                        currentSets.toMutableList().apply {
+                                            removeAt(selectedIndex)
+                                            add(selectedIndex + 1, selectedComponent)
+                                        }
+
+                                    val updatedExercise = exercise.copy(sets = newSets)
+
+                                    sets = newSets
+
+                                    appViewModel.updateWorkoutComponent(
+                                        workout,
+                                        exercise,
+                                        updatedExercise
+                                    )
+                                }) {
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDownward,
+                                    contentDescription = "Go Lower"
+                                    ,tint = Color.White.copy(alpha = .87f)
+                                )
+                            }
+
                             IconButton(onClick = {
                                 val newSets = sets.filter { set ->
                                     selectedSets.none { it === set }
                                 }
                                 sets = newSets
+
                                 val updatedExercise = exercise.copy(sets = newSets)
 
                                 appViewModel.updateWorkoutComponent(
@@ -205,6 +282,7 @@ fun ExerciseDetailScreen(
                                     exercise,
                                     updatedExercise
                                 )
+
                                 selectedSets = emptyList()
                                 isSelectionModeActive = false
                             }) {
@@ -216,17 +294,21 @@ fun ExerciseDetailScreen(
                             IconButton(
                                 enabled = selectedSets.size == 1,
                                 onClick = {
-                                    val selectedSet = selectedSets.first()
-                                    val newSet = when (selectedSet) {
+                                    val newSet = when (val selectedSet = selectedSets.first()) {
                                         is WeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
                                         is BodyWeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
                                         is EnduranceSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
                                         is TimedDurationSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                        is RestSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
+                                        else -> throw IllegalArgumentException("Unknown type")
                                     }
                                     appViewModel.addSetToExercise(workout, exercise, newSet)
 
+
+
                                     sets = sets + newSet
                                     selectedSets = emptyList()
+
                                     isSelectionModeActive = false
                                 }) {
                                 Icon(
@@ -248,16 +330,22 @@ fun ExerciseDetailScreen(
                         horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
                         verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                     ){
-                        Button(
-                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                            onClick = {
-                                appViewModel.setScreenData(
-                                    ScreenData.NewSet(workout.id, exercise.id)
-                                )
-                            },
-                        ) {
-                            Text("Add")
-                        }
+                        GenericButtonWithMenu(
+                            menuItems = listOf(
+                                MenuItem("Add Set") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewSet(workout.id, exercise.id)
+                                    );
+                                },
+                                MenuItem("Add Rest") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewRestSet(workout.id, exercise.id)
+                                    );
+                                }
+
+                            ),
+                            content = {  Text("New Component") }
+                        )
                     }
                 }
             }
@@ -327,24 +415,49 @@ fun ExerciseDetailScreen(
                     }
                 }
 
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                ) {
+                    Checkbox(
+                        checked = showRest,
+                        onCheckedChange = { showRest = it },
+                    )
+                    Text(text = "Show Rests")
+                }
+
                 GenericSelectableList(
                     it = PaddingValues(0.dp, 5.dp),
-                    items = sets,
+                    items =  if(!showRest) sets.filter { it !is RestSet } else sets,
                     selectedItems = selectedSets,
                     isSelectionModeActive,
-                    onItemClick = { },
+                    onItemClick = {
+                        if(it is RestSet){
+                            appViewModel.setScreenData(
+                                ScreenData.EditRestSet(
+                                    workout.id,
+                                    it,
+                                    exercise.id
+                                )
+                            )
+                        }
+                    },
                     onEnableSelection = { isSelectionModeActive = true },
                     onDisableSelection = { isSelectionModeActive = false },
                     onSelectionChange = { newSelection -> selectedSets = newSelection },
-                    onOrderChange = { newSets ->
-                        val updatedExercise = exercise.copy(sets = newSets)
+                    onOrderChange = { newComponents ->
+                        val updatedExercise = exercise.copy(sets = newComponents)
                         appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
-                        sets = newSets
+
+                        sets = newComponents
                     },
                     isDragDisabled = true,
                     itemContent = { it ->
                         DarkModeContainer(whiteOverlayAlpha = .1f) {
-                            SetRenderer(it)
+                            ComponentRenderer(it)
                         }
                     }
                 )

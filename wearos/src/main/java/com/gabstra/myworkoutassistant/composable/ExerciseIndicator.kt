@@ -11,7 +11,7 @@ import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -23,15 +23,15 @@ fun ExerciseIndicator(
     viewModel: AppViewModel,
     set: WorkoutState.Set,
 ){
-    val parentIndex = viewModel.setsByExercise.keys.indexOf(set.parentExercise)
-    val totalGroups = viewModel.setsByExercise.keys.count()
+    val parentIndex = viewModel.setsByExerciseId.keys.indexOf(set.execiseId)
+    val totalGroups = viewModel.setsByExerciseId.keys.count()
     val maxCount = 1
 
     // Determine the range of elements to display based on parentIndex and total available elements
     val elementsToSkip = (parentIndex ).coerceAtLeast(0).coerceAtMost((totalGroups - maxCount).coerceAtLeast(0))
     val areMoreElementsAvailable = totalGroups > elementsToSkip + maxCount
 
-    val exerciseSelection = viewModel.setsByExercise.keys.drop(elementsToSkip).take(maxCount)
+    val exerciseSelection = viewModel.setsByExerciseId.keys.drop(elementsToSkip).take(maxCount)
 
     val numberOfElementsLeft = totalGroups - (elementsToSkip + exerciseSelection.size)
 
@@ -65,7 +65,9 @@ fun ExerciseIndicator(
             accumulatedAngle += size + baseGapAngle
         }
 
-        SetIndicator(accumulatedAngle+ baseGapAngle,angleForCurrentExercise -  (baseGapAngle*2), set, viewModel.setsByExercise[set.parentExercise] ?: listOf(), Modifier.fillMaxSize())
+        val allSets = viewModel.setsByExerciseId[set.execiseId] ?: listOf()
+        val filteredSets = allSets.filter { it.set !is RestSet }
+        SetIndicator(accumulatedAngle+ baseGapAngle,angleForCurrentExercise -  (baseGapAngle*2), set, filteredSets, Modifier.fillMaxSize())
         accumulatedAngle += angleForCurrentExercise + baseGapAngle
         // Indicate more elements available at the end
         if (areMoreElementsAvailable) {

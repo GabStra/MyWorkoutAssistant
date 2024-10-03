@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,9 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +30,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import java.util.UUID
 
 
 fun SetType.toReadableString(): String {
@@ -54,7 +51,7 @@ fun SetForm(
     onSetUpsert: (Set) -> Unit,
     onCancel: () -> Unit,
     set: Set? = null, // Add exercise parameter with default value null
-    exerciseType : ExerciseType
+    exerciseType : ExerciseType,
 ) {
     val selectedSetType = remember { mutableStateOf(getSetTypeFromExerciseType(exerciseType)) }
 
@@ -88,25 +85,25 @@ fun SetForm(
             SetType.WEIGHT_SET -> {
                 WeightSetForm(
                     onSetUpsert = onSetUpsert,
-                    weightSet = set as WeightSet?
+                    weightSet = set as WeightSet?,
                 )
             }
             SetType.BODY_WEIGHT_SET -> {
                 BodyWeightSetForm(
                     onSetUpsert = onSetUpsert,
-                    bodyWeightSet = set as BodyWeightSet?
+                    bodyWeightSet = set as BodyWeightSet?,
                 )
             }
             SetType.COUNTUP_SET -> {
                 EnduranceSetForm(
                     onSetUpsert = onSetUpsert,
-                    enduranceSet = set as EnduranceSet?
+                    enduranceSet = set as EnduranceSet?,
                 )
             }
             SetType.COUNTDOWN_SET -> {
                 TimedDurationSetForm(
                     onSetUpsert = onSetUpsert,
-                    timedDurationSet = set as TimedDurationSet?
+                    timedDurationSet = set as TimedDurationSet?,
                 )
             }
         }

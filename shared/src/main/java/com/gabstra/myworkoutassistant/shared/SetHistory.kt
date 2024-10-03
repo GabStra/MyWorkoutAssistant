@@ -25,7 +25,7 @@ data class SetHistory(
     @PrimaryKey(autoGenerate = false)
     val id: UUID,
     var workoutHistoryId: UUID? = null,
-    val exerciseId : UUID,
+    val exerciseId : UUID? = null,
     val setId: UUID,
     val order: Int,
     val setData: SetData,

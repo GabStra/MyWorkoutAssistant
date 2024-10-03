@@ -12,16 +12,18 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.ExerciseGroup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.gson.GsonBuilder
 import java.io.ByteArrayInputStream
@@ -36,11 +38,12 @@ import java.util.zip.GZIPOutputStream
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
     val gson = GsonBuilder()
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
-        .registerTypeAdapter(ExerciseGroup::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
         .registerTypeAdapter(TimedDurationSet::class.java, SetAdapter())
         .registerTypeAdapter(EnduranceSet::class.java, SetAdapter())
+        .registerTypeAdapter(RestSet::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
@@ -71,14 +74,16 @@ fun logLargeString(tag: String, content: String, chunkSize: Int  = 200) {
 fun fromAppBackupToJSON(appBackup: AppBackup) : String {
     val gson = GsonBuilder()
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
-        .registerTypeAdapter(ExerciseGroup::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
         .registerTypeAdapter(TimedDurationSet::class.java, SetAdapter())
         .registerTypeAdapter(EnduranceSet::class.java, SetAdapter())
+        .registerTypeAdapter(RestSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
@@ -91,15 +96,17 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
 fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
     val gson = GsonBuilder()
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
-        .registerTypeAdapter(ExerciseGroup::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
         .registerTypeAdapter(TimedDurationSet::class.java, SetAdapter())
         .registerTypeAdapter(EnduranceSet::class.java, SetAdapter())
+        .registerTypeAdapter(RestSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
@@ -126,6 +133,7 @@ fun initializeSetData(set: Set): SetData = when (set) {
     is BodyWeightSet -> BodyWeightSetData(set.reps)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0)
+    is RestSet -> RestSetData(set.timeInSeconds,0)
 }
 
 fun getNewSet(set: Set): Set = when (set) {
@@ -133,6 +141,7 @@ fun getNewSet(set: Set): Set = when (set) {
     is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps)
     is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
     is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
+    is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds)
 }
 
 fun copySetData(setData: SetData): SetData = when (setData) {
@@ -140,6 +149,7 @@ fun copySetData(setData: SetData): SetData = when (setData) {
     is BodyWeightSetData -> setData.copy()
     is TimedDurationSetData -> setData.copy()
     is EnduranceSetData -> setData.copy()
+    is RestSetData -> setData.copy()
 }
 
 fun isSetDataValid(set: Set, setData: SetData): Boolean {
@@ -148,6 +158,7 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
         is BodyWeightSet -> setData is BodyWeightSetData
         is TimedDurationSet -> setData is TimedDurationSetData
         is EnduranceSet -> setData is EnduranceSetData
+        is RestSet -> setData is RestSetData
     }
 }
 
@@ -182,6 +193,14 @@ fun getNewSetFromSetData(set: Set, setData: SetData): Set? {
             if (setData is EnduranceSetData) {
                 return set.copy(
                     timeInMillis = setData.startTimer
+                )
+            }
+        }
+
+        is RestSet -> {
+            if (setData is RestSetData) {
+                return set.copy(
+                    timeInSeconds = setData.startTimer
                 )
             }
         }
@@ -271,6 +290,7 @@ fun getSetTypeFromSet(set: Set): SetType {
         is BodyWeightSet -> SetType.BODY_WEIGHT_SET
         is EnduranceSet -> SetType.COUNTUP_SET
         is TimedDurationSet -> SetType.COUNTDOWN_SET
+        is RestSet -> throw IllegalArgumentException("RestSet is not a valid set type")
     }
 }
 

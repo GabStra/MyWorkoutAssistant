@@ -1,12 +1,9 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.app.TimePickerDialog
-import android.widget.TimePicker
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -14,16 +11,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
-import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.SetType
-import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 fun ExerciseType.toReadableString(): String {
@@ -52,16 +43,11 @@ fun ExerciseForm(
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(exercise?.name ?: "") }
     val notesState = remember { mutableStateOf(exercise?.notes ?: "") }
-    val restTimeState = remember { mutableStateOf(exercise?.restTimeInSec?.toString() ?: "0") }
-    val skipWorkoutRest = remember { mutableStateOf(exercise?.skipWorkoutRest ?: false) }
     val doNotStoreHistory = remember { mutableStateOf(exercise?.doNotStoreHistory ?: !allowSettingDoNotStoreHistory) }
 
     val exerciseTypeDescriptions = getExerciseTypeDescriptions()
     val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
     val expanded = remember { mutableStateOf(false) }
-
-    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(exercise?.restTimeInSec ?: 0)) }
-    val (hours, minutes, seconds) = hms.value
 
     Column(
         modifier = Modifier
@@ -117,36 +103,6 @@ fun ExerciseForm(
             Spacer(modifier = Modifier.height(10.dp))
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-        ) {
-            Text("Rest Time Between Sets")
-            Spacer(modifier = Modifier.height(15.dp))
-            CustomTimePicker(
-                initialHour = hours,
-                initialMinute = minutes,
-                initialSecond = seconds,
-                onTimeChange = { hour, minute, second ->
-                    hms.value = Triple(hour, minute, second)
-                }
-            )
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Checkbox(
-                checked = skipWorkoutRest.value,
-                onCheckedChange = { skipWorkoutRest.value = it },
-            )
-            Text(text = "Skip workout rest")
-        }
-
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -181,30 +137,23 @@ fun ExerciseForm(
         Button(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
-                if (nameState.value.isBlank()) {
-                    return@Button
-                }
-
-                val restTimeInSec = restTimeState.value.toIntOrNull() ?: 0
                 val newExercise = Exercise(
                     id = exercise?.id ?: java.util.UUID.randomUUID(),
                     name = nameState.value.trim(),
-                    restTimeInSec = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
-                    skipWorkoutRest = skipWorkoutRest.value,
                     doNotStoreHistory = doNotStoreHistory.value,
                     enabled = exercise?.enabled ?: true,
                     sets = exercise?.sets ?: listOf(),
+
                     exerciseType = selectedExerciseType.value,
                     notes = notesState.value.trim(),
                 )
 
-                // Call the callback to insert/update the exercise
                 onExerciseUpsert(newExercise)
-
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp)
+                .padding(8.dp),
+            enabled = nameState.value.isNotBlank()
         ) {
             if (exercise == null) Text("Insert Exercise") else Text("Edit Exercise")
         }

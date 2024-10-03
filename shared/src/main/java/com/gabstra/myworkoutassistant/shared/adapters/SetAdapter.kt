@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.shared.adapters
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.google.gson.JsonDeserializationContext
@@ -22,6 +24,8 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is BodyWeightSet -> "BodyWeightSet"
             is TimedDurationSet -> "TimedDurationSet"
             is EnduranceSet -> "EnduranceSet"
+            is RestSet -> "RestSet"
+            else -> throw RuntimeException("Unsupported set type")
         }
 
         jsonObject.addProperty("id", src.id.toString())
@@ -45,6 +49,9 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 jsonObject.addProperty("autoStart", src.autoStart)
                 jsonObject.addProperty("autoStop", src.autoStop)
             }
+            is RestSet ->{
+                jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
+            }
         }
         return jsonObject
     }
@@ -52,36 +59,36 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
     override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): Set {
         val jsonObject = json.asJsonObject
 
-        val id = if (jsonObject.has("id")) {
-            jsonObject.get("id").asString
-        } else {
-            UUID.randomUUID().toString()
-        }
-
+        val id = UUID.fromString(jsonObject.get("id").asString)
         val type = jsonObject.get("type").asString
 
         return when (type) {
             "WeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
                 val weight = jsonObject.get("weight").asFloat
-                WeightSet(UUID.fromString(id),reps, weight)
+                WeightSet(id,reps, weight)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
-                BodyWeightSet(UUID.fromString(id),reps)
+                BodyWeightSet(id,reps)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
                 val autoStart = jsonObject.get("autoStart").asBoolean
                 val autoStop = jsonObject.get("autoStop").asBoolean
-                TimedDurationSet(UUID.fromString(id),timeInMillis,autoStart,autoStop)
+                TimedDurationSet(id,timeInMillis,autoStart,autoStop)
             }
             "EnduranceSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
                 val autoStart = jsonObject.get("autoStart").asBoolean
                 val autoStop = jsonObject.get("autoStop").asBoolean
-                EnduranceSet(UUID.fromString(id),timeInMillis,autoStart,autoStop)
+                EnduranceSet(id,timeInMillis,autoStart,autoStop)
             }
+            "RestSet" -> {
+                val timeInSeconds = jsonObject.get("timeInSeconds").asInt
+                RestSet(id,timeInSeconds)
+            }
+
             else -> throw RuntimeException("Unsupported set type")
         }
     }

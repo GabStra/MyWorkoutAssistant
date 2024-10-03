@@ -28,7 +28,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
@@ -40,7 +39,9 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -48,34 +49,29 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TimedDurationSetScreen(
+fun RestSetScreen(
     viewModel: AppViewModel,
     modifier: Modifier,
     state: WorkoutState.Set,
     onTimerEnd: () -> Unit,
     onTimerEnabled : () -> Unit,
-    onTimerDisabled: () -> Unit,
-    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null
+    onTimerDisabled: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
-    val set = state.set as TimedDurationSet
+    val set = state.set as RestSet
 
-    var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
-
-    var hasBeenStartedOnce by remember { mutableStateOf(false) }
-
-    val previousSet =  state.previousSetData as TimedDurationSetData
-    var currentSet by remember { mutableStateOf(state.currentSetData as TimedDurationSetData) }
+    var currentSetData by remember { mutableStateOf(state.currentSetData as RestSetData) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
     val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
-    var timerEnabledCalled by remember { mutableStateOf(false) }
 
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    var showSkipDialog by remember { mutableStateOf(false) }
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
@@ -90,10 +86,11 @@ fun TimedDurationSetScreen(
         }
     }
 
-    LaunchedEffect(currentSet) {
-        state.currentSetData = currentSet
+    LaunchedEffect(currentSetData) {
+        state.currentSetData = currentSetData
     }
 
+    var timerEnabledCalled by remember { mutableStateOf(false) }
     LaunchedEffect(stopScrolling) {
         if (stopScrolling) {
             onTimerEnabled()
@@ -105,23 +102,23 @@ fun TimedDurationSetScreen(
         }
     }
 
-    var currentMillis by remember(state.set.id) { mutableIntStateOf(currentSet.startTimer) }
-    var showStopDialog by remember { mutableStateOf(false) }
+    var hasBeenStartedOnce by remember { mutableStateOf(false) }
+    var currentSeconds by remember(state.set.id) { mutableIntStateOf(currentSetData.startTimer) }
 
     fun onMinusClick(){
-        if (currentSet.startTimer > 5000){
-            val newTimerValue = currentSet.startTimer - 5000
-            currentSet = currentSet.copy(startTimer = newTimerValue)
-            currentMillis = newTimerValue
+        if (currentSetData.startTimer > 5){
+            val newTimerValue = currentSetData.startTimer - 5
+            currentSetData = currentSetData.copy(startTimer = newTimerValue)
+            currentSeconds = newTimerValue
             VibrateOnce(context)
         }
         updateInteractionTime()
     }
 
     fun onPlusClick(){
-        val newTimerValue = currentSet.startTimer + 5000
-        currentSet = currentSet.copy(startTimer = newTimerValue)
-        currentMillis = newTimerValue
+        val newTimerValue = currentSetData.startTimer + 5
+        currentSetData = currentSetData.copy(startTimer = newTimerValue)
+        currentSeconds = newTimerValue
         VibrateOnce(context)
         updateInteractionTime()
     }
@@ -130,24 +127,24 @@ fun TimedDurationSetScreen(
         timerJob?.cancel()
         timerJob = scope.launch {
 
-            while (currentMillis > 0) {
+            while (currentSeconds > 0) {
                 delay(1000) // Update every sec.
-                currentMillis -= 1000
+                currentSeconds -= 1
 
-                currentSet = currentSet.copy(
-                    endTimer = currentMillis
+                currentSetData = currentSetData.copy(
+                    endTimer = currentSeconds
                 )
 
-                if (currentMillis in 1..3000) {
+                if (currentSeconds in 1..3) {
                     VibrateAndBeep(context)
                 }
             }
 
-            currentSet = currentSet.copy(
+            currentSetData = currentSetData.copy(
                 endTimer = 0
             )
 
-            state.currentSetData = currentSet
+            state.currentSetData = currentSetData
             VibrateTwiceAndBeep(context)
             onTimerEnd()
         }
@@ -158,18 +155,7 @@ fun TimedDurationSetScreen(
     }
 
     LaunchedEffect(set) {
-        if (set.autoStart) {
-            delay(500)
-            VibrateAndBeep(context)
-            delay(1000)
-            VibrateAndBeep(context)
-            delay(1000)
-            VibrateAndBeep(context)
-            delay(1000)
-            VibrateTwiceAndBeep(context)
-            delay(500)
-            startTimerJob()
-        }
+        startTimerJob()
     }
 
     val isPaused by viewModel.isPaused
@@ -201,62 +187,21 @@ fun TimedDurationSetScreen(
                         onClick = {
                         },
                         onLongClick = {
-                            if (showStartButton) {
-                                isTimerInEditMode = !isTimerInEditMode
-                                updateInteractionTime()
-                                VibrateOnce(context)
-                            }
+                            isTimerInEditMode = !isTimerInEditMode
+                            updateInteractionTime()
+                            VibrateOnce(context)
                         },
                         onDoubleClick = {
-                            if (isTimerInEditMode) {
-                                val newTimerValue = previousSet.startTimer
-                                currentSet = currentSet.copy(startTimer = newTimerValue)
-                                currentMillis = newTimerValue
-                                VibrateTwice(context)
+                            if(timerJob?.isActive == true){
+                                VibrateOnce(context)
+                                timerJob?.cancel()
+                                showSkipDialog = true
                             }
                         }
                     ),
-                text = FormatTime(currentMillis / 1000),
+                text = FormatTime(currentSeconds),
                 style = MaterialTheme.typography.display2,
             )
-        }
-    }
-
-    @Composable
-    fun SetScreen(customModifier: Modifier) {
-        Column(
-            modifier = customModifier,
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            textComposable()
-            if (showStartButton) {
-                EnhancedButton(
-                    boxModifier = Modifier.weight(1f),
-                    onClick = {
-                        VibrateOnce(context)
-                        startTimerJob()
-                        showStartButton=false
-                    },
-                    buttonSize = 35.dp,
-                    colors = ButtonDefaults.buttonColors(backgroundColor =MyColors.Green)
-                ) {
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
-                }
-            }else{
-                EnhancedButton(
-                    boxModifier = Modifier.weight(1f).alpha(if(timerJob?.isActive == true) 1f else 0f),
-                    onClick = {
-                        VibrateOnce(context)
-                        timerJob?.cancel()
-                        showStopDialog = true
-                    },
-                    buttonSize = 35.dp,
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
-                ) {
-                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
-                }
-            }
         }
     }
 
@@ -285,41 +230,27 @@ fun TimedDurationSetScreen(
         }
         else
         {
-            if(extraInfo != null){
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ){
-                    SetScreen(customModifier = Modifier.weight(1f))
-                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    extraInfo(state)
-                }
-            }else{
-                SetScreen(customModifier = Modifier.fillMaxSize())
-            }
+            textComposable()
         }
     }
 
     CustomDialogYesOnLongPress(
-        show = showStopDialog,
-        title = "Stop exercise",
-        message = "Do you want to stop this exercise?",
+        show = showSkipDialog,
+        title = "Skip rest",
+        message = "Do you want to proceed?",
         handleYesClick = {
             VibrateOnce(context)
-            currentSet = currentSet.copy(
-                endTimer =  currentMillis
+            currentSetData = currentSetData.copy(
+                endTimer =  currentSeconds
             )
-
             onTimerEnd()
-            showStopDialog = false
+            showSkipDialog = false
         },
         handleNoClick = {
             VibrateOnce(context)
-            showStopDialog = false
+            showSkipDialog = false
             startTimerJob()
         },
-        closeTimerInMillis = 5000,
         handleOnAutomaticClose = {},
         holdTimeInMillis = 1000
     )
