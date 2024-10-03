@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -84,7 +85,7 @@ class MainActivity : ComponentActivity() {
             override fun onReceive(context: Context, intent: Intent) {
                 try{
                     if( intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
-                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore(),false)
                         appViewModel.triggerUpdate()
                         Toast.makeText(context, "Workout history received", Toast.LENGTH_SHORT).show()
                     }
@@ -275,20 +276,30 @@ fun MyWorkoutAssistantNavHost(
                 },
                 onBackupClick = {
                     scope.launch {
-                        val sdf = SimpleDateFormat("dd_MM_yyyy", Locale.getDefault())
-                        val currentDate = sdf.format(Date())
-                        val filename = "my_workout_history_$currentDate.json"
+                        try{
+                            val sdf = SimpleDateFormat("dd_MM_yyyy", Locale.getDefault())
+                            val currentDate = sdf.format(Date())
+                            val filename = "my_workout_history_$currentDate.json"
 
-                        val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-                        val setHistories = setHistoryDao.getAllSetHistories()
-                        val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories)
-                        val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
-                        writeJsonToDownloadsFolder(context, filename, jsonString)
-                        Toast.makeText(
-                            context,
-                            "Backup saved to downloads folder",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                            val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+                            val setHistories = setHistoryDao.getAllSetHistories()
+                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories)
+                            val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
+                            writeJsonToDownloadsFolder(context, filename, jsonString)
+                            Toast.makeText(
+                                context,
+                                "Backup saved to downloads folder",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }catch (e: Exception){
+                            Log.e("MainActivity", "Error saving backup", e)
+                            Toast.makeText(
+                                context,
+                                "Backup failed",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+
                     }
 
                 },

@@ -40,6 +40,7 @@ import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.data.getOneRepMax
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -67,19 +68,22 @@ fun WeightSetScreen (
         lastInteractionTime = System.currentTimeMillis()
     }
 
-    val previous1RM = getOneRepMax(previousSet.actualWeight, previousSet.actualReps)
+    val exercise = viewModel.exercisesById[state.execiseId]!!
+
+    val weightSets = exercise.sets.filterIsInstance<WeightSet>()
+    val totalVolume = weightSets.sumOf { calculateVolume(it.weight, it.reps).toDouble() }.toFloat()
+    val averageVolume = if (weightSets.isNotEmpty()) totalVolume / weightSets.size else 0.0
+
+    val maxWeightSet = weightSets.maxByOrNull { it.weight }!!
+    val minRepsMaxWeightSet = weightSets.filter { it.weight == maxWeightSet.weight }.minByOrNull { it.reps }!!
+    val max1RM = getOneRepMax(minRepsMaxWeightSet.weight, minRepsMaxWeightSet.reps)
+
     val current1RM = getOneRepMax(currentSet.actualWeight, currentSet.actualReps)
 
     val currentVolume = calculateVolume(
         currentSet.actualWeight,
         currentSet.actualReps,
     )
-
-    val previousVolume = calculateVolume(
-        previousSet.actualWeight,
-        previousSet.actualReps,
-    )
-
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
@@ -269,9 +273,9 @@ fun WeightSetScreen (
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center)
             {
-                TrendComponent(Modifier,"Vol:",currentVolume, previousVolume)
+                TrendComponent(Modifier,"ΔVol:",currentVolume, averageVolume)
                 Spacer(modifier = Modifier.width(5.dp))
-                TrendComponent(Modifier,"1RM:",current1RM, previous1RM)
+                TrendComponent(Modifier,"Δ1RM:",current1RM, max1RM)
             }
         }
     }

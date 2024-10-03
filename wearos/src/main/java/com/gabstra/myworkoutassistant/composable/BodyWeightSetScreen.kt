@@ -32,7 +32,10 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -47,6 +50,12 @@ fun BodyWeightSetScreen(
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null
 ) {
     val context = LocalContext.current
+
+    val exercise = viewModel.exercisesById[state.execiseId]!!
+    val bodyWeightSets = exercise.sets.filterIsInstance<BodyWeightSet>()
+
+    val totalReps = bodyWeightSets.sumOf { it.reps }
+    val averageReps = if (bodyWeightSets.isNotEmpty()) totalReps / bodyWeightSets.size else 0.0
 
     val previousSet = state.previousSetData as BodyWeightSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
@@ -169,7 +178,7 @@ fun BodyWeightSetScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center )
             {
-                TrendComponent(Modifier,"Vol:",currentSet.actualReps, previousSet.actualReps)
+                TrendComponent(Modifier,"ΔVol:",currentSet.actualReps, averageReps)
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -384,6 +385,8 @@ class AppViewModel : ViewModel(){
 
     fun RefreshAndGoToLastState(){
         viewModelScope.launch(Dispatchers.IO) {
+            if(_isRefreshing.value || (_workoutState.value !is WorkoutState.Set && _workoutState.value !is WorkoutState.Rest)) return@launch
+
             _isRefreshing.value = true
 
             workoutStateQueue.clear()
@@ -392,18 +395,29 @@ class AppViewModel : ViewModel(){
             setStates.clear()
 
             generateWorkoutStates()
+            workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
 
-            val lastState = _workoutState.value
+            val targetSetId = when(_workoutState.value){
+                is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
+                is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
+                else -> throw RuntimeException("Invalid state")
+            }
+
             _workoutState.value = workoutStateQueue.pollFirst()!!
 
             while (_workoutState.value !is WorkoutState.Finished) {
                 goToNextState()
 
-                if (_workoutState.value == lastState) {
+                val currentSetId = when(_workoutState.value){
+                    is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
+                    is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
+                    else -> throw RuntimeException("Invalid state")
+                }
+
+                if (currentSetId == targetSetId) {
                     break
                 }
             }
-            delay(2000)
             _isRefreshing.value = false
         }
     }
@@ -507,7 +521,7 @@ class AppViewModel : ViewModel(){
             when(workoutComponent){
                 is Exercise -> addStatesFromExercise(workoutComponent)
                 is Rest -> {
-                    val restSet = RestSet(UUID.randomUUID(),workoutComponent.timeInSeconds)
+                    val restSet = RestSet(workoutComponent.id,workoutComponent.timeInSeconds)
 
                     val restState = WorkoutState.Rest(
                         set = restSet,
@@ -522,21 +536,32 @@ class AppViewModel : ViewModel(){
 
     private fun addStatesFromExercise(exercise: Exercise){
         for ((index, set) in exercise.sets.withIndex()) {
-            val historySet = if(exercise.doNotStoreHistory || set is RestSet) null else latestSetHistoryMap[set.id];
+            if(set is RestSet){
+                val restSet = RestSet(set.id,set.timeInSeconds)
 
-            var currentSet = initializeSetData(set)
+                val restState = WorkoutState.Rest(
+                    set = restSet,
+                    order = index,
+                    currentSetData = initializeSetData(RestSet(set.id,set.timeInSeconds))
+                )
+                workoutStateQueue.addLast(restState)
+            }else{
+                val historySet = if(exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
 
-            if(historySet != null){
-                val historySetData = historySet.setData
-                if(isSetDataValid(set,historySetData)){
-                    currentSet = historySet.setData
+                var currentSet = initializeSetData(set)
+
+                if(historySet != null){
+                    val historySetData = historySet.setData
+                    if(isSetDataValid(set,historySetData)){
+                        currentSet = historySet.setData
+                    }
                 }
-            }
 
-            val previousSet = copySetData(currentSet)
-            val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index,previousSet, currentSet,historySet == null,false)
-            workoutStateQueue.addLast(setState)
-            setStates.addLast(setState)
+                val previousSet = copySetData(currentSet)
+                val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index,previousSet, currentSet,historySet == null,false)
+                workoutStateQueue.addLast(setState)
+                setStates.addLast(setState)
+            }
         }
     }
 

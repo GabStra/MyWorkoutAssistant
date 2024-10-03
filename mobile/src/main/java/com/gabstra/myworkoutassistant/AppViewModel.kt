@@ -118,12 +118,12 @@ class AppViewModel() : ViewModel() {
             triggerMobile()
         }
 
-    fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
+    fun updateWorkoutStore(newWorkoutStore: WorkoutStore,triggerSend:Boolean = true) {
         workoutStore = newWorkoutStore
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue =  currentYear - workoutStore.birthDateYear
         _workoutsFlow.value = newWorkoutStore.workouts
-        triggerMobile()
+        if(triggerSend) triggerMobile()
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {
