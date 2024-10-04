@@ -241,8 +241,6 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                     progress = animatedProgress,
                     modifier = Modifier.fillMaxSize(),
                     strokeWidth = 4.dp,
-                    startAngle = 300f,
-                    endAngle =  240f,
                     indicatorColor = MaterialTheme.colors.primary,
                     trackColor = Color.DarkGray
                 )

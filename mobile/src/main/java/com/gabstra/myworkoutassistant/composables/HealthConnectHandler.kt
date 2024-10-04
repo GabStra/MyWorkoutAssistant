@@ -40,7 +40,7 @@ fun HealthConnectHandler(
     appViewModel: AppViewModel,
     healthConnectClient: HealthConnectClient,
     workoutHistoryDao: WorkoutHistoryDao,
-){
+) {
     val context = LocalContext.current
     var hasAllPermissions by remember { mutableStateOf(false) }
 
@@ -57,7 +57,7 @@ fun HealthConnectHandler(
         hasAllPermissions = permissions.values.all { it }
     }
 
-    suspend fun CheckPermissions(){
+    suspend fun CheckPermissions() {
         val grantedPermissions = healthConnectClient.permissionController.getGrantedPermissions()
         val missingPermissions = requiredPermissions - grantedPermissions
 
@@ -71,69 +71,93 @@ fun HealthConnectHandler(
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
 
     LaunchedEffect(updateMessage) {
-        withContext(Dispatchers.IO){
+        withContext(Dispatchers.IO) {
             CheckPermissions()
-            if(!hasAllPermissions) return@withContext
+            if (!hasAllPermissions) return@withContext
+            if (appViewModel.workouts.isEmpty()) return@withContext
 
-            val workoutHistories = workoutHistoryDao.getWorkoutHistoriesByHasBeenSentToHealth(false)
+            try {
+                val workoutHistories =
+                    workoutHistoryDao.getWorkoutHistoriesByHasBeenSentToHealth(false)
+                if (workoutHistories.isEmpty()) return@withContext
 
-            if(workoutHistories.isEmpty()) return@withContext
+                val workoutIds = workoutHistories.map { it.workoutId.toString() }.distinct()
+                val workoutsById = appViewModel.workouts.associateBy { it.id }
 
-            val workoutIds = workoutHistories.map { it.workoutId.toString() }.distinct()
-
-            if(appViewModel.workouts.isEmpty()) return@withContext
-
-            val workoutsById = appViewModel.workouts.associateBy { it.id }
-
-            try{
-                healthConnectClient.deleteRecords(recordType = ExerciseSessionRecord::class,emptyList(),workoutIds)
-                healthConnectClient.deleteRecords(recordType = HeartRateRecord::class,emptyList(),workoutIds)
-            }catch (e: Exception){
-                Log.e("MainActivity", "Error deleting records", e)
-            }
-
-            val exerciseSessionRecords = workoutHistories.map {
-                ExerciseSessionRecord(
-                    startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
-                    endTime = it.startTime.plusSeconds(it.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant(),
-                    startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-                    endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-                    title = workoutsById[it.workoutId]!!.name,
-                    exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_WEIGHTLIFTING,
-                    metadata = androidx.health.connect.client.records.metadata.Metadata(clientRecordId= it.workoutId.toString())
+                healthConnectClient.deleteRecords(
+                    recordType = ExerciseSessionRecord::class,
+                    emptyList(),
+                    workoutIds
                 )
-            }
+                healthConnectClient.deleteRecords(
+                    recordType = HeartRateRecord::class,
+                    emptyList(),
+                    workoutIds
+                )
 
-            val heartRateRecords = workoutHistories.filter { it.heartBeatRecords.isNotEmpty() }.map {
-                HeartRateRecord(
-                    startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
-                    endTime = it.startTime.plusSeconds(it.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant(),
-                    startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-                    endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-                    samples = it.heartBeatRecords.mapIndexed { index, bpm ->
-                        HeartRateRecord.Sample(
-                            time = it.startTime.atZone(ZoneId.systemDefault()).toInstant() + Duration.ofMillis(index.toLong() * 500),
-                            beatsPerMinute = bpm.toLong()
+                val exerciseSessionRecords = workoutHistories.map {
+                    ExerciseSessionRecord(
+                        startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
+                        endTime = it.startTime.plusSeconds(it.duration.toLong())
+                            .atZone(ZoneId.systemDefault()).toInstant(),
+                        startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                        endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                        title = workoutsById[it.workoutId]!!.name,
+                        exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_WEIGHTLIFTING,
+                        metadata = androidx.health.connect.client.records.metadata.Metadata(
+                            clientRecordId = it.workoutId.toString()
                         )
-                    },
-                    metadata = androidx.health.connect.client.records.metadata.Metadata(clientRecordId= it.workoutId.toString())
-                )
-            }
+                    )
+                }
 
-            try{
+                val heartRateRecords =
+                    workoutHistories.filter { it.heartBeatRecords.isNotEmpty() }.map {
+                        HeartRateRecord(
+                            startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
+                            endTime = it.startTime.plusSeconds(it.duration.toLong())
+                                .atZone(ZoneId.systemDefault()).toInstant(),
+                            startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                            endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                            samples = it.heartBeatRecords.mapIndexed { index, bpm ->
+                                HeartRateRecord.Sample(
+                                    time = it.startTime.atZone(ZoneId.systemDefault())
+                                        .toInstant() + Duration.ofMillis(index.toLong() * 500),
+                                    beatsPerMinute = bpm.toLong()
+                                )
+                            },
+                            metadata = androidx.health.connect.client.records.metadata.Metadata(
+                                clientRecordId = it.workoutId.toString()
+                            )
+                        )
+                    }
+
                 healthConnectClient.insertRecords(exerciseSessionRecords + heartRateRecords)
+
                 for (workoutHistory in workoutHistories) {
                     workoutHistoryDao.updateHasBeenSentToHealth(workoutHistory.id, true)
                 }
-            }catch (e: Exception){
-                withContext(Dispatchers.Main){
-                    Toast.makeText(context, "Failed to save workouts to Health Connect", Toast.LENGTH_SHORT).show()
+
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        "Saved workouts to Health Connect",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                Log.e("HealthConnectHandler", "Error saving workouts to Health Connect", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        "Failed to save workouts to Health Connect",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         }
     }
 
-    if(!hasAllPermissions) {
+    if (!hasAllPermissions) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center
@@ -142,9 +166,9 @@ fun HealthConnectHandler(
                 modifier = Modifier.padding(10.dp),
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
-                    try{
+                    try {
                         permissionLauncher.launch(requiredPermissions.toTypedArray())
-                    }catch (e: Exception){
+                    } catch (e: Exception) {
                         Log.e("MainActivity", "Error launching permission launcher", e)
                     }
                 }) {

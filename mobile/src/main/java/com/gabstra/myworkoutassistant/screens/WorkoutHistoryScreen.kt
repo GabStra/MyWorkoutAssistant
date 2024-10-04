@@ -298,9 +298,10 @@ fun WorkoutHistoryScreen(
                     })
             }
 
-            val setHistories =
-                setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
-            setHistoriesByExerciseId = setHistories.filter { it.exerciseId != null }.groupBy { it.exerciseId!! }
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
+            setHistoriesByExerciseId = setHistories
+                .filter { it.exerciseId != null }
+                .groupBy { it.exerciseId!! }
 
             isLoading = false
         }

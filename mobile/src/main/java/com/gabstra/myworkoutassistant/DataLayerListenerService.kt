@@ -65,6 +65,8 @@ class DataLayerListenerService : WearableListenerService() {
                                     WorkoutHistoryStore::class.java
                                 )
 
+                                Log.d("DataLayerListenerService", "ExerciseHistories: ${workoutHistoryStore.ExerciseHistories.first().workoutHistoryId}")
+
                                 workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
                                 setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
 

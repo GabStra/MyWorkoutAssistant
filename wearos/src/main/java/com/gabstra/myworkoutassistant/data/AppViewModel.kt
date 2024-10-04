@@ -449,10 +449,11 @@ class AppViewModel : ViewModel(){
                 )
             }
 
+            executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
+
             if(isDone){
                 workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
                 workoutHistoryDao.insert(currentWorkoutHistory!!)
-                executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
                 setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
             }
 
