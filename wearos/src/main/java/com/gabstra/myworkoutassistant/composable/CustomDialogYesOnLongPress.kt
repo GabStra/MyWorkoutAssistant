@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -43,6 +44,7 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.CircularProgressIndicator
+import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -63,6 +65,8 @@ fun CustomDialogYesOnLongPress(
     handleOnAutomaticClose: () -> Unit = {},
     holdTimeInMillis: Long = 0,
 ) {
+    val context = LocalContext.current
+
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val longPressCoroutineScope = rememberCoroutineScope()
@@ -182,9 +186,9 @@ fun CustomDialogYesOnLongPress(
                                 .size(52.5.dp)
                                 .repeatActionOnLongPress(
                                     longPressCoroutineScope,
-                                    thresholdMillis = 200,
+                                    thresholdMillis = 10,
                                     intervalMillis = 10,
-                                    onPressStart = { },
+                                    onPressStart = {  },
                                     onBeforeLongPressRepeat = { onBeforeLongPressRepeat() },
                                     onLongPressRepeat = { onLongPressRepeat() },
                                     onRelease = { onRelease() }
@@ -209,8 +213,6 @@ fun CustomDialogYesOnLongPress(
                 CircularProgressIndicator(
                     progress = progress,
                     modifier = Modifier.fillMaxSize(),
-                    startAngle = 300f,
-                    endAngle =  240f,
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colors.primary,
                     trackColor = Color.DarkGray

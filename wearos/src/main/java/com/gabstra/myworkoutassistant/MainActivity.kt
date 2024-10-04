@@ -145,16 +145,12 @@ class MainActivity : ComponentActivity() {
         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
     }
 
-    override fun onStop() {
-        super.onStop()
-        if(::myReceiver.isInitialized) {
-            unregisterReceiver(myReceiver)
-        }
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         cancelWorkoutInProgressNotification(this)
+        if(::myReceiver.isInitialized) {
+            unregisterReceiver(myReceiver)
+        }
     }
 
     @OptIn(ExperimentalHorologistApi::class)

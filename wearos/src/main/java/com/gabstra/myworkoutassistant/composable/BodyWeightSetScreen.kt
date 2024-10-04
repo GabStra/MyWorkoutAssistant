@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.delay
@@ -51,14 +52,34 @@ fun BodyWeightSetScreen(
 ) {
     val context = LocalContext.current
 
-    val exercise = viewModel.exercisesById[state.execiseId]!!
-    val bodyWeightSets = exercise.sets.filterIsInstance<BodyWeightSet>()
-
-    val totalReps = bodyWeightSets.sumOf { it.reps }
-    val averageReps = if (bodyWeightSets.isNotEmpty()) totalReps / bodyWeightSets.size else 0.0
-
     val previousSet = state.previousSetData as BodyWeightSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
+
+    val historicalSetDataList = remember {
+        val data = viewModel.getHistoricalSetsDataByExerciseId<BodyWeightSetData>(state.execiseId)
+        data.ifEmpty {
+            viewModel.getAllExecutedSetsDataByExerciseId<BodyWeightSetData>(state.execiseId)
+        }
+    }
+    val historicalVolume = remember {
+        historicalSetDataList.sumOf { it.actualReps }.toDouble()
+    }
+
+    val executedSetDataList = remember {
+        viewModel.getExecutedSetsDataByExerciseIdAndLowerOrder<BodyWeightSetData>(state.execiseId, state.order)
+    }
+
+    val executedVolume = remember {
+        executedSetDataList.sumOf { it.actualReps }
+    }
+
+    val averageVolume = remember { if (historicalSetDataList.isNotEmpty()) historicalVolume / historicalSetDataList.size else 0.0 }
+
+    val currentVolume = currentSet.actualReps
+
+    val currentTotalVolume = currentVolume + executedVolume
+
+    val volumeProgress = if (historicalVolume > 0) currentTotalVolume / historicalVolume else 0.0
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
 
@@ -170,15 +191,21 @@ fun BodyWeightSetScreen(
             ) {
                 RepsRow(Modifier)
             }
-            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+            if(volumeProgress > 0) {
+                TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Tot Vol:", volumeProgress)
+            }
             Row(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center )
+                horizontalArrangement = Arrangement.Center)
             {
-                TrendComponent(Modifier,"ΔVol:",currentSet.actualReps, averageReps)
+                if(averageVolume > 0) {
+                    TrendComponent(Modifier, "Target Vol:", currentVolume, averageVolume)
+                }
+                //Spacer(modifier = Modifier.width(5.dp))
+                //TrendComponent(Modifier,"1RM:",current1RM, max1RM)
             }
         }
     }

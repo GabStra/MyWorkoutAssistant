@@ -53,6 +53,7 @@ import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateAndBeep
 import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -293,11 +294,11 @@ fun RestScreen(
                             VibrateOnce(context)
                         },
                         onDoubleClick = {
-                            if (timerJob?.isActive == true) {
-                                VibrateOnce(context)
-                                timerJob?.cancel()
-                                showSkipDialog = true
-                            }
+                            if (timerJob?.isActive != true) return@combinedClickable
+
+                            VibrateTwice(context)
+                            timerJob?.cancel()
+                            showSkipDialog = true
                         }
                     ),
                 text = FormatTime(currentSeconds),

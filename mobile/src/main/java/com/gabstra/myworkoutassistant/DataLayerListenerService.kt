@@ -36,7 +36,9 @@ class DataLayerListenerService : WearableListenerService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+
     override fun onDataChanged(dataEvents: DataEventBuffer) {
+        val packageName = this.packageName
         try {
             dataEvents.forEach { dataEvent ->
                 val uri = dataEvent.dataItem.uri
@@ -115,10 +117,11 @@ class DataLayerListenerService : WearableListenerService() {
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
                                 }
+                                intent.apply { setPackage(packageName) }
                                 sendBroadcast(intent)
 
                             } catch (exception: Exception) {
-                                exception.printStackTrace()
+                                Log.e("DataLayerListenerService", "Error processing workout history store", exception)
                             }
                         }
                     }
@@ -142,7 +145,7 @@ class DataLayerListenerService : WearableListenerService() {
                 }
             }
         } catch (exception: Exception) {
-            exception.printStackTrace()
+            Log.e("DataLayerListenerService", "Error processing data events", exception)
         } finally {
             super.onDataChanged(dataEvents)
         }
@@ -156,7 +159,7 @@ class DataLayerListenerService : WearableListenerService() {
     companion object {
         private const val WORKOUT_HISTORY_STORE_PATH = "/workoutHistoryStore"
         private const val OPEN_PAGE_PATH = "/openPagePath" // Define your new URI path here
-        const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"
+        const val INTENT_ID = "com.gabstra.myworkoutassistant.WORKOUT_STORE"
         const val UPDATE_WORKOUTS = "update_workouts"
         const val PAGE = "page"
     }

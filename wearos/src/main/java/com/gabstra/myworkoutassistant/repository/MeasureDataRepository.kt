@@ -1,3 +1,4 @@
+/*
 package com.gabstra.myworkoutassistant.repository
 
 import android.content.Context
@@ -13,9 +14,11 @@ import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.runBlocking
 
+*/
 /**
  * Entry point for [HealthServicesClient] APIs, wrapping them in coroutine-friendly APIs.
- */
+ *//*
+
 class MeasureDataRepository(
     context: Context
 ) {
@@ -27,13 +30,15 @@ class MeasureDataRepository(
         return (DataType.HEART_RATE_BPM in capabilities.supportedDataTypesMeasure)
     }
 
-    /**
+    */
+/**
      * Returns a cold flow. When activated, the flow will register a callback for heart rate data
      * and start to emit messages. When the consuming coroutine is cancelled, the measure callback
      * is unregistered.
      *
      * [callbackFlow] is used to bridge between a callback-based API and Kotlin flows.
-     */
+     *//*
+
     @ExperimentalCoroutinesApi
     fun heartRateMeasureFlow() = callbackFlow {
         val callback = object : MeasureCallback {
@@ -63,4 +68,4 @@ class MeasureDataRepository(
 sealed class MeasureMessage {
     class MeasureAvailability(val availability: DataTypeAvailability) : MeasureMessage()
     class MeasureData(val data: List<SampleDataPoint<Double>>): MeasureMessage()
-}
+}*/

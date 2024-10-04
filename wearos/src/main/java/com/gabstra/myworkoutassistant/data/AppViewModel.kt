@@ -31,6 +31,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -159,7 +160,7 @@ class AppViewModel : ViewModel(){
     private val _nextWorkoutState = MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val nextWorkoutState = _nextWorkoutState.asStateFlow()
 
-    private val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
+    public val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
 
     private val heartBeatHistory: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
 
@@ -172,7 +173,7 @@ class AppViewModel : ViewModel(){
 
     private val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
-    private val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
+    public val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
 
     private var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
 
@@ -435,14 +436,16 @@ class AppViewModel : ViewModel(){
                     heartBeatRecords = heartBeatHistory.toList(),
                     time = LocalTime.now(),
                     startTime = startWorkoutTime!!,
-                    isDone = isDone
+                    isDone = isDone,
+                    hasBeenSentToHealth = false
                 )
             }else{
                 currentWorkoutHistory = currentWorkoutHistory!!.copy(
                     duration = duration.seconds.toInt(),
                     heartBeatRecords = heartBeatHistory.toList(),
                     time = LocalTime.now(),
-                    isDone = isDone
+                    isDone = isDone,
+                    hasBeenSentToHealth = false
                 )
             }
 
@@ -515,6 +518,23 @@ class AppViewModel : ViewModel(){
         }
     }
 
+    inline fun <reified T : SetData> getAllExecutedSetsDataByExerciseId(exerciseId: UUID): List<T> {
+        return executedSetsHistory
+            .filter { it.exerciseId == exerciseId }
+            .mapNotNull { it.setData as? T }
+    }
+
+    inline fun <reified T : SetData> getExecutedSetsDataByExerciseIdAndLowerOrder(exerciseId: UUID, order: Int): List<T> {
+        return executedSetsHistory
+            .filter { it.exerciseId == exerciseId }
+            .filter { it.order < order }
+            .mapNotNull { it.setData as? T }
+    }
+
+    inline fun <reified T : SetData> getHistoricalSetsDataByExerciseId(exerciseId: UUID): List<T> {
+        return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) }.map{ latestSetHistoryMap[it.id]!!.setData as T }
+    }
+
     private fun generateWorkoutStates() {
         val workoutComponents = selectedWorkout.value.workoutComponents.filter { it.enabled }
         for ((index, workoutComponent) in workoutComponents.withIndex()) {
@@ -535,6 +555,8 @@ class AppViewModel : ViewModel(){
     }
 
     private fun addStatesFromExercise(exercise: Exercise){
+        if(exercise.sets.isEmpty()) return
+
         for ((index, set) in exercise.sets.withIndex()) {
             if(set is RestSet){
                 val restSet = RestSet(set.id,set.timeInSeconds)

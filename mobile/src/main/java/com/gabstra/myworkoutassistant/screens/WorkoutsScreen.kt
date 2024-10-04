@@ -67,11 +67,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
+import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
@@ -206,6 +208,7 @@ fun WorkoutsScreen(
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
+    healthConnectClient: HealthConnectClient,
     onSyncClick: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
@@ -577,6 +580,12 @@ fun WorkoutsScreen(
                     }
                 }
             }
+
+            HealthConnectHandler(
+                healthConnectClient = healthConnectClient,
+                appViewModel = appViewModel,
+                workoutHistoryDao = workoutHistoryDao
+            )
 
             AnimatedContent(
                 targetState = selectedTabIndex,

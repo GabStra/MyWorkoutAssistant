@@ -121,14 +121,14 @@ fun VibrateAndBeep(context: Context, vibrationDuration: Long = 50, beepDuration:
 
     runBlocking {
         val vibrationJob = launch {
-            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
         }
 
         val beepJob = launch {
-            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100) // Beep for 100ms
+            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50) // Beep for 100ms
         }
 
-        // Wait for both jobs to complete
+        delay(50)
         joinAll(vibrationJob, beepJob)
     }
 }
@@ -141,87 +141,15 @@ fun VibrateTwiceAndBeep(context: Context) {
         repeat(2) { // Run this block twice
             // Launch vibration and beep in parallel
             val vibrationJob = launch {
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
             }
 
             val beepJob = launch {
-                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100) // Beep for 100ms
+                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50) // Beep for 100ms
             }
 
-            // Wait for both jobs to complete
+            delay(150)
             joinAll(vibrationJob, beepJob)
-
-            delay(100)
-        }
-    }
-}
-
-suspend fun VibrateShortImpulseAndBeep(context: Context) {
-    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-    val timings = longArrayOf(
-        0,
-        100,
-        100,
-        100,
-        100,
-        100
-    )
-
-    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-
-    runBlocking {
-        launch(Dispatchers.IO) {
-            vibrator?.let {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    it.vibrate(VibrationEffect.createWaveform(timings, -1)) // -1 means don't repeat.
-                } else {
-                    @Suppress("DEPRECATION")
-                    it.vibrate(timings, -1)
-                }
-            }
-        }
-        launch(Dispatchers.IO) {
-            repeat(3) {
-                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                delay(100)  // 200 ms delay between beeps
-            }
-        }
-        delay(500)
-    }
-}
-
-
-fun PlayBeep() {
-    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-    toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50)
-}
-
-fun PlayNBeeps(n:Int) {
-    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-    runBlocking{
-        launch(Dispatchers.Default) {
-            repeat(n) {
-                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                delay(100)
-            }
-        }
-        delay(500)
-    }
-}
-
-fun CoroutineScope.onClickWithDelay(
-    delayMillis: Long = 500L,
-    onClick: () -> Unit
-): () -> Unit {
-    var lastClickTime = 0L
-
-    return {
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastClickTime > delayMillis) {
-            lastClickTime = currentTime
-            launch {
-                onClick()
-            }
         }
     }
 }

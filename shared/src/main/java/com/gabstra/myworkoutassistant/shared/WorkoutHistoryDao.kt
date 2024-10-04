@@ -22,6 +22,9 @@ interface WorkoutHistoryDao {
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId AND isDone = :isDone ORDER BY date DESC LIMIT 1")
     suspend fun getLatestWorkoutHistoryByWorkoutId(workoutId: UUID,isDone: Boolean = true): WorkoutHistory?
 
+    @Query("SELECT * FROM workout_history WHERE hasBeenSentToHealth = :hasBeenSentToHealth")
+    suspend fun getWorkoutHistoriesByHasBeenSentToHealth(hasBeenSentToHealth: Boolean): List<WorkoutHistory>
+
     @Query("SELECT * FROM workout_history")
     suspend fun getAllWorkoutHistories(): List<WorkoutHistory>
 
@@ -56,6 +59,9 @@ interface WorkoutHistoryDao {
     //add one to update workout histories
     @Query("UPDATE workout_history SET isDone = :isDone WHERE id = :id")
     suspend fun updateIsDone(id: UUID, isDone: Boolean)
+
+    @Query("UPDATE workout_history SET hasBeenSentToHealth = :hasBeenSentToHealth WHERE id = :id")
+    suspend fun updateHasBeenSentToHealth(id: UUID, hasBeenSentToHealth: Boolean)
 
     //add one to update every thing
     @Query("UPDATE workout_history SET workoutId = :workoutId, date = :date, time = :time, duration = :duration, heartBeatRecords = :heartBeatRecords, isDone = :isDone WHERE id = :id")

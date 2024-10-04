@@ -305,7 +305,6 @@ fun TimedDurationSetScreen(
         message = "Do you want to stop this exercise?",
         handleYesClick = {
             VibrateOnce(context)
-
             state.currentSetData = currentSet.copy(
                 endTimer =  currentMillis
             )

@@ -68,8 +68,8 @@ android {
 
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
-        minSdk = 30
-        targetSdk = 33
+        minSdk = 34
+        targetSdk = 34
         versionCode = oldVersionCode
         versionName = newVersionName
         vectorDrawables {
@@ -111,24 +111,16 @@ dependencies {
     implementation(project(":shared"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.google.android.gms:play-services-wearable:18.2.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
-    implementation("androidx.activity:activity-compose:1.9.0")
-    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    implementation("androidx.activity:activity-compose:1.9.2")
+    implementation(platform("androidx.compose:compose-bom:2024.09.03"))
     implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")
 
-    val lifecycle_version = "2.8.2"
-
-    // ViewModel
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:$lifecycle_version")
-    // ViewModel utilities for Compose
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:$lifecycle_version")
-
-    // Lifecycles only (without ViewModel or LiveData)
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:$lifecycle_version")
-    // Lifecycle utilities for Compose
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:$lifecycle_version")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
-
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
+    implementation("androidx.navigation:navigation-compose:2.8.2")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -136,25 +128,25 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.34.0")
     implementation("com.google.accompanist:accompanist-permissions:0.35.0-alpha")
-    implementation("com.google.code.gson:gson:2.10.1")
-    implementation("androidx.compose.material:material-icons-extended:1.6.8")
+    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("androidx.compose.material:material-icons-extended:1.7.3")
     implementation("com.google.accompanist:accompanist-permissions:0.35.0-alpha")
-    implementation("com.google.android.horologist:horologist-datalayer:0.5.21")
+    implementation("com.google.android.horologist:horologist-datalayer:0.6.17")
     implementation("com.google.android.horologist:horologist-datalayer-phone:0.5.21")
-    ksp("androidx.room:room-compiler:+")
-    implementation("androidx.room:room-ktx:+")
-
+    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
 
     testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.09.03"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     implementation("com.patrykandpatrick.vico:compose:2.0.0-alpha.21")
     implementation("com.kizitonwose.calendar:compose:2.5.0")
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha02")
 }
 
 

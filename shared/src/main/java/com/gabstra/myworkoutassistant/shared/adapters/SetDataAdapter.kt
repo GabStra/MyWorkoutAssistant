@@ -24,6 +24,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             is TimedDurationSetData -> "TimedDurationSetData"
             is EnduranceSetData -> "EnduranceSetData"
             is RestSetData -> "RestSetData"
+            else -> throw RuntimeException("Unsupported set type")
         }
         jsonObject.addProperty("type", exerciseType)
 

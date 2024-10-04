@@ -51,7 +51,6 @@ import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composable.RestSetScreen
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
@@ -147,22 +146,7 @@ fun ExerciseDetail(
             onTimerEnabled = onTimerEnabled,
             extraInfo = extraInfo
         )
-        is RestSet -> {
-            RestSetScreen(
-                viewModel = viewModel,
-                modifier = Modifier.fillMaxSize(),
-                state = updatedState,
-                onTimerEnd = {
-                    viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false,context){
-                        viewModel.upsertWorkoutRecord(updatedState.set.id)
-                        viewModel.goToNextState()
-                    }
-                },
-                onTimerDisabled = onTimerDisabled,
-                onTimerEnabled = onTimerEnabled,
-            )
-        }
+        is RestSet -> throw IllegalStateException("Rest set should not be here")
     }
 }
 

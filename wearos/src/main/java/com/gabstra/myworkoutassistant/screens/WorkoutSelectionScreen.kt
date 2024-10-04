@@ -49,6 +49,7 @@ import androidx.wear.compose.material.Icon
 import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.google.android.gms.wearable.DataClient
@@ -139,6 +140,7 @@ fun MissingAgeSettingMessage(
         Spacer(modifier = Modifier.height(15.dp))
         Button(
             onClick = {
+                VibrateOnce(context)
                 scope.launch {
                     openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
                 }

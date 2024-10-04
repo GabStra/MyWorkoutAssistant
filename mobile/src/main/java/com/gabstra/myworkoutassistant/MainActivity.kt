@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant
 
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -15,18 +16,31 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.HealthConnectClient
+import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
 import com.gabstra.myworkoutassistant.screens.ExerciseHistoryScreen
@@ -40,10 +54,13 @@ import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.SetHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
@@ -52,8 +69,32 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.Date
 import java.util.Locale
+
+class MyReceiver(
+    private val appViewModel: AppViewModel,
+    private val workoutStoreRepository: WorkoutStoreRepository,
+    private val activity: Activity
+) : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        activity.run {
+            try{
+                if(intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
+                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore(),false)
+                    appViewModel.triggerUpdate()
+                }
+            }catch (e: Exception) {
+                Toast.makeText(context, "Error receiving workout history", Toast.LENGTH_SHORT)
+                    .show()
+            }
+        }
+    }
+}
 
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
@@ -66,33 +107,27 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var myReceiver: BroadcastReceiver
 
+    private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
+
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
-        registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
     }
 
-    override fun onStop() {
-        super.onStop()
-        unregisterReceiver(myReceiver)
+    override fun onDestroy(){
+        super.onDestroy()
+        db.close()
+        if(::myReceiver.isInitialized) {
+            unregisterReceiver(myReceiver)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        myReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                try{
-                    if( intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
-                        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore(),false)
-                        appViewModel.triggerUpdate()
-                        Toast.makeText(context, "Workout history received", Toast.LENGTH_SHORT).show()
-                    }
-                }catch (_: Exception) {
-                }
-            }
-        }
+        myReceiver = MyReceiver(appViewModel, workoutStoreRepository,this)
+        val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
+        registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
 
         setContent {
             MyWorkoutAssistantTheme {
@@ -101,7 +136,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MyWorkoutAssistantNavHost(dataClient, appViewModel, workoutStoreRepository, db)
+                    MyWorkoutAssistantNavHost(dataClient, appViewModel, workoutStoreRepository, db,healthConnectClient)
                 }
             }
         }
@@ -131,7 +166,8 @@ fun MyWorkoutAssistantNavHost(
     dataClient: DataClient,
     appViewModel: AppViewModel,
     workoutStoreRepository: WorkoutStoreRepository,
-    db: AppDatabase
+    db: AppDatabase,
+    healthConnectClient: HealthConnectClient
 ) {
     val context = LocalContext.current
 
@@ -254,6 +290,7 @@ fun MyWorkoutAssistantNavHost(
                 appViewModel,
                 workoutHistoryDao,
                 setHistoryDao,
+                healthConnectClient,
                 onSyncClick = {
                     scope.launch {
                         withContext(Dispatchers.IO){

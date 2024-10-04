@@ -1,3 +1,4 @@
+/*
 package com.gabstra.myworkoutassistant.data
 
 import android.util.Log
@@ -88,6 +89,7 @@ sealed class UiState {
     object HeartRateNotAvailable : UiState()
 }
 
+*/
 /*
 import android.util.Log
 import androidx.compose.runtime.MutableState

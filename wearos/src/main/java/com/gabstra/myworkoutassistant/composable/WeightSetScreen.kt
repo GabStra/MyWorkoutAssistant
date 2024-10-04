@@ -59,6 +59,38 @@ fun WeightSetScreen (
     val previousSet = state.previousSetData as WeightSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
+    val historicalSetDataList = remember {
+        val data = viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
+        data.ifEmpty {
+            viewModel.getAllExecutedSetsDataByExerciseId<WeightSetData>(state.execiseId)
+        }
+    }
+
+    // Calculate the historical volume
+    val historicalVolume = remember {
+        historicalSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
+    }
+
+    // Store the executed set data list
+    val executedSetDataList = remember {
+        viewModel.getExecutedSetsDataByExerciseIdAndLowerOrder<WeightSetData>(state.execiseId, state.order)
+    }
+
+    val executedVolume = remember {
+        executedSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
+    }
+
+    val averageVolume = remember { if (historicalSetDataList.isNotEmpty()) historicalVolume / historicalSetDataList.size else 0.0 }
+
+    val currentVolume = calculateVolume(
+        currentSet.actualWeight,
+        currentSet.actualReps,
+    )
+
+    val currentTotalVolume = currentVolume + executedVolume
+
+    val volumeProgress = if (historicalVolume > 0) currentTotalVolume / historicalVolume else 0.0
+
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
 
@@ -68,22 +100,11 @@ fun WeightSetScreen (
         lastInteractionTime = System.currentTimeMillis()
     }
 
-    val exercise = viewModel.exercisesById[state.execiseId]!!
+/*    val maxWeightSetData = historicalSetDataList.maxByOrNull { it.actualWeight }!!
+    val minRepsMaxWeightSetData = historicalSetDataList.filter { it.actualWeight == maxWeightSetData.actualWeight }.minByOrNull { it.actualReps }!!
+    val max1RM = getOneRepMax(minRepsMaxWeightSetData.actualWeight, minRepsMaxWeightSetData.actualReps)
 
-    val weightSets = exercise.sets.filterIsInstance<WeightSet>()
-    val totalVolume = weightSets.sumOf { calculateVolume(it.weight, it.reps).toDouble() }.toFloat()
-    val averageVolume = if (weightSets.isNotEmpty()) totalVolume / weightSets.size else 0.0
-
-    val maxWeightSet = weightSets.maxByOrNull { it.weight }!!
-    val minRepsMaxWeightSet = weightSets.filter { it.weight == maxWeightSet.weight }.minByOrNull { it.reps }!!
-    val max1RM = getOneRepMax(minRepsMaxWeightSet.weight, minRepsMaxWeightSet.reps)
-
-    val current1RM = getOneRepMax(currentSet.actualWeight, currentSet.actualReps)
-
-    val currentVolume = calculateVolume(
-        currentSet.actualWeight,
-        currentSet.actualReps,
-    )
+    val current1RM = getOneRepMax(currentSet.actualWeight, currentSet.actualReps)*/
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
@@ -257,7 +278,9 @@ fun WeightSetScreen (
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
-                modifier = Modifier.weight(2f).fillMaxWidth(),
+                modifier = Modifier
+                    .weight(2f)
+                    .fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.Center
             ) {
@@ -265,7 +288,12 @@ fun WeightSetScreen (
                 Spacer(modifier = Modifier.width(5.dp))
                 WeightRow(Modifier)
             }
-            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+            if(volumeProgress > 0) {
+                TrendComponentProgressBar(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 5.dp), "Tot Vol:", volumeProgress)
+            }
             Row(
                 modifier = Modifier
                     .weight(1f)
@@ -273,9 +301,11 @@ fun WeightSetScreen (
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center)
             {
-                TrendComponent(Modifier,"ΔVol:",currentVolume, averageVolume)
-                Spacer(modifier = Modifier.width(5.dp))
-                TrendComponent(Modifier,"Δ1RM:",current1RM, max1RM)
+                if(averageVolume > 0) {
+                    TrendComponent(Modifier, "Target Vol:", currentVolume, averageVolume)
+                }
+                //Spacer(modifier = Modifier.width(5.dp))
+                //TrendComponent(Modifier,"1RM:",current1RM, max1RM)
             }
         }
     }

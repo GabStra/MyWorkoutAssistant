@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -41,7 +42,6 @@ fun SettingsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh) // Set the background color to black
     ) {
         Column(
             modifier = Modifier
@@ -74,6 +74,7 @@ fun SettingsScreen(
             )
 
             Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
                     val birthDateYear = birthDateYearState.value.toIntOrNull() ?: 0
 
@@ -99,6 +100,7 @@ fun SettingsScreen(
 
             // Cancel button
             Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
                     onCancel()
                 },

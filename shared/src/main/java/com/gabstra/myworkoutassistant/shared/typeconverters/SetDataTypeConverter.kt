@@ -7,6 +7,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 
 import com.google.gson.GsonBuilder
 
@@ -18,6 +19,7 @@ class SetDataTypeConverter {
             .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
+            .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
             .create()
         return gson.toJson(set)
     }
