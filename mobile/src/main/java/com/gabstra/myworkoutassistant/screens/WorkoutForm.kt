@@ -18,6 +18,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -82,6 +83,31 @@ fun WorkoutForm(
                     .padding(8.dp)
             )
 
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = timesCompletedInAWeekState.value,
+                    onValueChange = { input ->
+                        if (input.isEmpty() || input.all { it -> it.isDigit() }) {
+                            val inputValue = input.toIntOrNull()
+
+                            if (inputValue != null && inputValue == 0) {
+                                timesCompletedInAWeekState.value = "1"
+                            } else {
+                                timesCompletedInAWeekState.value = input
+                            }
+                        }
+                    },
+                    label = { Text("Objective per week") },
+                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                )
+            }
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -91,6 +117,9 @@ fun WorkoutForm(
                 Checkbox(
                     checked = usePolarDeviceState.value,
                     onCheckedChange = { usePolarDeviceState.value = it },
+                    colors =  CheckboxDefaults.colors().copy(
+                        checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    )
                 )
                 Text(text = "Use Polar Device")
             }

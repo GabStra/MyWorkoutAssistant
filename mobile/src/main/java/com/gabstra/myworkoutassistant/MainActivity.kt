@@ -200,8 +200,6 @@ fun MyWorkoutAssistantNavHost(
     val setHistoryDao = db.setHistoryDao()
     val workoutHistoryDao = db.workoutHistoryDao()
 
-    val updateMobile by appViewModel.updateMobileFlow.collectAsState(initial = null)
-
     val updateMobileFlow = appViewModel.updateMobileFlow
 
     LaunchedEffect(Unit) {
@@ -366,6 +364,7 @@ fun MyWorkoutAssistantNavHost(
                         Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
 
                         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                        appViewModel.triggerUpdate()
                     }
                 },
                 onSyncToHealthConnectClick = {
@@ -638,12 +637,12 @@ fun MyWorkoutAssistantNavHost(
                 screenData.parentExerciseId
             ) as Exercise
             RestSetForm(
-                onRestSetUpsert = { updatedSet ->
+                onRestSetUpsert = { newRestSet ->
                     val oldSets = parentExercise.sets.filter { it !is RestSet }
                     val modifiedSets = oldSets
                         .flatMapIndexed { index, element ->
                             if (index != oldSets.size - 1) {
-                                listOf(element, updatedSet)
+                                listOf(element, newRestSet.copy(id = java.util.UUID.randomUUID()))
                             } else {
                                 listOf(element)
                             }
@@ -722,7 +721,7 @@ fun MyWorkoutAssistantNavHost(
                     val modifiedWorkoutComponents = oldWorkoutComponents
                         .flatMapIndexed { index, element ->
                             if (index != oldWorkoutComponents.size - 1) {
-                                listOf(element, newRest)
+                                listOf(element, newRest.copy(id = java.util.UUID.randomUUID()))
                             } else {
                                 listOf(element)
                             }
@@ -757,6 +756,7 @@ fun MyWorkoutAssistantNavHost(
                     appViewModel.goBack()
                 },
                 onCancel = { appViewModel.goBack() },
+                rest = screenData.selectedRest
             )
         }
 

@@ -112,7 +112,10 @@ fun ExerciseForm(
             Checkbox(
                 checked = doNotStoreHistory.value,
                 onCheckedChange = { doNotStoreHistory.value = it },
-                enabled = allowSettingDoNotStoreHistory
+                enabled = allowSettingDoNotStoreHistory,
+                colors =  CheckboxDefaults.colors().copy(
+                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                )
             )
             Text(text = "Do not store history")
         }

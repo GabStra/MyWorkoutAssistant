@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,7 +65,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 fun ComponentRenderer(set: Set) {
     Row(
         modifier = Modifier.padding(15.dp),
-        horizontalArrangement = Arrangement.Center
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         when (set) {
             is WeightSet -> {
@@ -427,6 +429,9 @@ fun ExerciseDetailScreen(
                     Checkbox(
                         checked = showRest,
                         onCheckedChange = { showRest = it },
+                        colors =  CheckboxDefaults.colors().copy(
+                            checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                        )
                     )
                     Text(text = "Show Rests")
                 }
