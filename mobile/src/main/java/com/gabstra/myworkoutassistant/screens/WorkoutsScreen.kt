@@ -104,6 +104,7 @@ fun Menu(
     onOpenSettingsClick: () -> Unit,
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
+    onSyncToHealthConnectClick: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -151,7 +152,14 @@ fun Menu(
                 }
             )
             DropdownMenuItem(
-                text = { Text("Clear unfinished workouts") },
+                text = { Text("Sync to Health Connect") },
+                onClick = {
+                    onSyncToHealthConnectClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Clear partial workouts") },
                 onClick = {
                     onClearUnfinishedWorkouts()
                     expanded = false
@@ -215,6 +223,7 @@ fun WorkoutsScreen(
     onOpenSettingsClick: () -> Unit,
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
+    onSyncToHealthConnectClick: () -> Unit,
     selectedTabIndex: Int
 ) {
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
@@ -425,7 +434,8 @@ fun WorkoutsScreen(
                             onBackupClick = onBackupClick,
                             onRestoreClick = onRestoreClick,
                             onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
-                            onClearAllHistories = onClearAllHistories
+                            onClearAllHistories = onClearAllHistories,
+                            onSyncToHealthConnectClick = onSyncToHealthConnectClick
                         )
                     }
                 )
@@ -581,11 +591,7 @@ fun WorkoutsScreen(
                 }
             }
 
-            HealthConnectHandler(
-                healthConnectClient = healthConnectClient,
-                appViewModel = appViewModel,
-                workoutHistoryDao = workoutHistoryDao
-            )
+            HealthConnectHandler(healthConnectClient)
 
             AnimatedContent(
                 targetState = selectedTabIndex,

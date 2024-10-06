@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -25,13 +24,9 @@ import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
-import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
-import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.Set
-import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -314,21 +309,27 @@ class AppViewModel : ViewModel(){
     }
 
     fun sendWorkoutHistoryToPhone(onEnd: (Boolean) -> Unit = {}){
-        viewModelScope.launch(Dispatchers.Main) {
+        viewModelScope.launch(Dispatchers.IO) {
             val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
-            if(workoutHistory !=null){
-                val exerciseHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-
-                dataClient?.let {
-                    sendWorkoutHistoryStore(
-                        it,WorkoutHistoryStore(
-                            WorkoutHistory = workoutHistory,
-                            ExerciseHistories =  exerciseHistories
-                        ))
+            if(workoutHistory == null){
+                withContext(Dispatchers.Main){
+                    onEnd(false)
                 }
+                return@launch
+            }
+
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+
+            dataClient?.let {
+                sendWorkoutHistoryStore(
+                    it,WorkoutHistoryStore(
+                        WorkoutHistory = workoutHistory,
+                        ExerciseHistories =  setHistories
+                    ))
+            }
+
+            withContext(Dispatchers.Main){
                 onEnd(true)
-            }else{
-                onEnd(false)
             }
         }
     }
@@ -458,25 +459,33 @@ class AppViewModel : ViewModel(){
             }
 
             val currentState = _workoutState.value
-            val shouldSendData = !(currentState == setStates.last() && !isDone)
+            val shouldSendData = currentState != setStates.last() || isDone
 
-            if(shouldSendData && !forceNotSend){
-                withContext(Dispatchers.Main){
-                    val result = sendWorkoutHistoryStore(
-                        dataClient!!,
-                        WorkoutHistoryStore(
-                            WorkoutHistory = currentWorkoutHistory!!,
-                            ExerciseHistories =  executedSetsHistory
-                        )
-                    )
-
-                    if(context != null && !result){
-                        Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
-                    }
-                }
+            if(forceNotSend || !shouldSendData){
+                onEnd()
+                return@launch
             }
 
-            onEnd()
+            withContext(Dispatchers.IO){
+                val result = sendWorkoutHistoryStore(
+                    dataClient!!,
+                    WorkoutHistoryStore(
+                        WorkoutHistory = currentWorkoutHistory!!,
+                        ExerciseHistories =  executedSetsHistory
+                    )
+                )
+
+                if(context != null && !result){
+                    withContext(Dispatchers.Main){
+                        Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                    }
+                    Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                }
+
+                withContext(Dispatchers.Main){
+                    onEnd()
+                }
+            }
         }
     }
 

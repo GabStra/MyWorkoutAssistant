@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -23,6 +22,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 
+@SuppressLint("DefaultLocale")
 @Composable
 fun <T : Number> TrendComponent(
     modifier: Modifier = Modifier,
@@ -30,7 +30,7 @@ fun <T : Number> TrendComponent(
     currentValue: T,
     previousValue: T
 ) {
-    val percentageChange = if (previousValue.toDouble() != 0.0) {
+    val ratio = if (previousValue.toDouble() != 0.0) {
         (currentValue.toDouble() - previousValue.toDouble()) / previousValue.toDouble()
     } else {
         0.0
@@ -47,13 +47,19 @@ fun <T : Number> TrendComponent(
             textAlign = TextAlign.End
         )
 
-        if(percentageChange != 0.0){
-            val percentage = (percentageChange * 100).toInt()
-            val displayText = if (percentage > 0) "+${percentage}%" else "${percentage}%"
+        if(ratio != 0.0){
+            val displayText = when {
+                ratio >= 2 -> String.format("x%.2f", ratio)
+                ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).toInt())
+                ratio > 0 -> String.format("+%.1f%%", (ratio * 100))
+                ratio <= -0.1 -> String.format("%d%%", (ratio * 100).toInt())
+                else -> String.format("%.1f%%", (ratio * 100))
+            }
+
             Text(
                 text = displayText,
                 style = MaterialTheme.typography.caption3,
-                color = if (percentageChange > 0) MyColors.Green else MyColors.ComplementaryGreen
+                color = if (ratio > 0) MyColors.Green else MyColors.ComplementaryGreen
             )
         }else{
             Text(
@@ -64,45 +70,12 @@ fun <T : Number> TrendComponent(
     }
 }
 
-@Composable
-fun <T : Number> TrendComponent(
-    modifier: Modifier = Modifier,
-    label: String,
-    percentage: Double
-) {
-
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ){
-        Text(
-            text = label,
-            style = MaterialTheme.typography.caption3,
-            textAlign = TextAlign.End
-        )
-
-        if(percentage != 0.0){
-            val displayText = "${percentage.toInt()}%"
-            Text(
-                text = displayText,
-                style = MaterialTheme.typography.caption3,
-                color = if (percentage >= 1) MyColors.Green else MyColors.ComplementaryGreen
-            )
-        }else{
-            Text(
-                text = "-",
-                style = MaterialTheme.typography.caption3,
-            )
-        }
-    }
-}
-
+@SuppressLint("DefaultLocale")
 @Composable
 fun TrendComponentProgressBar(
     modifier: Modifier = Modifier,
     label: String,
-    percentage: Double
+    ratio: Double
 ) {
 
     Row(
@@ -117,13 +90,17 @@ fun TrendComponentProgressBar(
         )
 
         LinearProgressBarWithRounderBorders(
-            progress = percentage.toFloat(),
+            progress = ratio.toFloat(),
             modifier = Modifier
                 .weight(1f)
         )
 
-        if(percentage != 0.0 && percentage>1){
-            val displayText = "+${((percentage.toInt()*100)-100)}%"
+        if(ratio != 0.0 && ratio>1){
+            val displayText = when {
+                ratio >= 2 -> String.format("x%.2f", ratio)
+                ratio >= 1.1 -> String.format("+%d%%", ((ratio - 1) * 100).toInt())
+                else -> String.format("+%.1f%%", ((ratio - 1) * 100))
+            }
             Text(
                 text = displayText,
                 style = MaterialTheme.typography.caption3,

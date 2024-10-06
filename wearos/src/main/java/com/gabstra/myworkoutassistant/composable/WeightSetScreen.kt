@@ -60,10 +60,7 @@ fun WeightSetScreen (
     var currentSet by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
     val historicalSetDataList = remember {
-        val data = viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
-        data.ifEmpty {
-            viewModel.getAllExecutedSetsDataByExerciseId<WeightSetData>(state.execiseId)
-        }
+        viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
     }
 
     // Calculate the historical volume

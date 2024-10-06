@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -61,34 +62,40 @@ fun FormatTime(seconds: Int): String {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
 }
-fun VibrateOnce(context: Context,durationInMillis:Long=50) {
+fun VibrateOnce(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    vibrator?.let {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            it.vibrate(VibrationEffect.createOneShot(durationInMillis, VibrationEffect.DEFAULT_AMPLITUDE))
-        } else {
-            @Suppress("DEPRECATION")
-            it.vibrate(durationInMillis)
+    runBlocking {
+        val startTime = System.currentTimeMillis()
+        val vibrationJob = launch {
+            vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+        }
+
+        joinAll(vibrationJob)
+
+        val elapsedTime = System.currentTimeMillis() - startTime
+        if (elapsedTime < 50) {
+            delay(50 - elapsedTime)
         }
     }
 }
 
 fun VibrateTwice(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-    val timings = longArrayOf(
-        0,
-        100,
-        50,
-        100,
-    ) // Start immediately, vibrate 100ms, pause 100ms, vibrate 100ms.
 
-    vibrator?.let {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            it.vibrate(VibrationEffect.createWaveform(timings, -1)) // -1 means don't repeat.
-        } else {
-            @Suppress("DEPRECATION")
-            it.vibrate(timings, -1)
+    runBlocking {
+        repeat(2) {
+            val startTime = System.currentTimeMillis()
+            val vibrationJob = launch {
+                vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+
+            joinAll(vibrationJob)
+
+            val elapsedTime = System.currentTimeMillis() - startTime
+            if (elapsedTime < 150) {
+                delay(150 - elapsedTime)
+            }
         }
     }
 }
@@ -96,40 +103,44 @@ fun VibrateTwice(context: Context) {
 // Trigger vibration: two short impulses with a gap in between.
 fun VibrateShortImpulse(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-    val timings = longArrayOf(
-        0,
-        100,
-        50,
-        100,
-        50,
-        100
-    ) // Start immediately, vibrate 100ms, pause 100ms, vibrate 100ms.
 
-    vibrator?.let {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            it.vibrate(VibrationEffect.createWaveform(timings, -1)) // -1 means don't repeat.
-        } else {
-            @Suppress("DEPRECATION")
-            it.vibrate(timings, -1)
+    runBlocking {
+        repeat(3) {
+            val startTime = System.currentTimeMillis()
+            val vibrationJob = launch {
+                vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+
+            joinAll(vibrationJob)
+
+            val elapsedTime = System.currentTimeMillis() - startTime
+            if (elapsedTime < 150) {
+                delay(150 - elapsedTime)
+            }
         }
     }
 }
 
-fun VibrateAndBeep(context: Context, vibrationDuration: Long = 50, beepDuration: Int = 50) {
+fun VibrateAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
     runBlocking {
+        val startTime = System.currentTimeMillis()
         val vibrationJob = launch {
             vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
         }
 
         val beepJob = launch {
-            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50) // Beep for 100ms
+            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50)
         }
 
-        delay(50)
         joinAll(vibrationJob, beepJob)
+
+        val elapsedTime = System.currentTimeMillis() - startTime
+        if (elapsedTime < 50) {
+            delay(50 - elapsedTime)
+        }
     }
 }
 
@@ -138,8 +149,8 @@ fun VibrateTwiceAndBeep(context: Context) {
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
     runBlocking {
-        repeat(2) { // Run this block twice
-            // Launch vibration and beep in parallel
+        repeat(2) {
+            val startTime = System.currentTimeMillis()
             val vibrationJob = launch {
                 vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
             }
@@ -148,8 +159,12 @@ fun VibrateTwiceAndBeep(context: Context) {
                 toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50) // Beep for 100ms
             }
 
-            delay(150)
             joinAll(vibrationJob, beepJob)
+
+            val elapsedTime = System.currentTimeMillis() - startTime
+            if (elapsedTime < 150) {
+                delay(150 - elapsedTime)
+            }
         }
     }
 }
@@ -215,6 +230,7 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
     }
 }
 
+@SuppressLint("SuspiciousModifierThen")
 @OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.repeatActionOnLongPressOrTap(
     coroutineScope: CoroutineScope,
@@ -246,6 +262,7 @@ fun Modifier.repeatActionOnLongPressOrTap(
     }
 )
 
+@SuppressLint("SuspiciousModifierThen")
 @OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.repeatActionOnLongPress(
     coroutineScope: CoroutineScope,
@@ -301,12 +318,6 @@ fun calculateIntensity(weight: Float, oneRepMax: Float): Float {
 fun calculateVolume(weight: Float, reps: Int): Float {
     if(weight == 0f) return reps.toFloat()
     return weight * reps
-}
-
-fun calculateAdjustedVolume(weight: Float, reps: Int, oneRepMax: Float): Float {
-    val volume = calculateVolume(weight, reps)
-    val intensity = calculateIntensity(weight, oneRepMax)
-    return volume * intensity
 }
 
 fun getContrastRatio(color1: Color, color2: Color): Double {

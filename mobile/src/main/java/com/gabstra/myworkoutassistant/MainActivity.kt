@@ -59,6 +59,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
@@ -66,6 +67,9 @@ import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -161,6 +165,7 @@ class MainActivity : ComponentActivity() {
 
 }
 
+@OptIn(FlowPreview::class)
 @Composable
 fun MyWorkoutAssistantNavHost(
     dataClient: DataClient,
@@ -197,24 +202,31 @@ fun MyWorkoutAssistantNavHost(
 
     val updateMobile by appViewModel.updateMobileFlow.collectAsState(initial = null)
 
-    LaunchedEffect(updateMobile) {
-        if(updateMobile == null) return@LaunchedEffect
+    val updateMobileFlow = appViewModel.updateMobileFlow
 
-        val latestWorkoutHistories = appViewModel.workouts.filter { it -> it.isActive && it.enabled }.mapNotNull { workout ->
-            workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
-        }
+    LaunchedEffect(Unit) {
+        updateMobileFlow
+            .filterNotNull()
+            .debounce(5000) // Adjust the delay (in milliseconds) as needed
+            .collect { updateMobile ->
+                val latestWorkoutHistories = appViewModel.workouts
+                    .filter { it.isActive && it.enabled }
+                    .mapNotNull { workout ->
+                        workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
+                    }
 
-        val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
-            setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-        }
+                val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
+                    setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+                }
 
-        val workoutStore = appViewModel.workoutStore.copy(
-            workouts = appViewModel.workouts.filter { it -> it.isActive && it.enabled }
-        )
+                val workoutStore = appViewModel.workoutStore.copy(
+                    workouts = appViewModel.workouts.filter { it.isActive && it.enabled }
+                )
 
-        val filteredAppBackup = AppBackup(workoutStore, latestWorkoutHistories, setHistories)
+                val filteredAppBackup = AppBackup(workoutStore, latestWorkoutHistories, setHistories)
 
-        sendAppBackup(dataClient, filteredAppBackup)
+                sendAppBackup(dataClient, filteredAppBackup)
+            }
     }
 
     LaunchedEffect(appViewModel.workouts) {
@@ -336,9 +348,7 @@ fun MyWorkoutAssistantNavHost(
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
-
                     }
-
                 },
                 onRestoreClick = {
                     jsonPickerLauncher.launch(arrayOf("application/json"))
@@ -356,6 +366,21 @@ fun MyWorkoutAssistantNavHost(
                         Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
 
                         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                    }
+                },
+                onSyncToHealthConnectClick = {
+                    scope.launch {
+                        try{
+                            sendWorkoutsToHealthConnect(
+                                healthConnectClient = healthConnectClient,
+                                workouts = appViewModel.workouts,
+                                workoutHistoryDao = workoutHistoryDao
+                            )
+                            Toast.makeText(context, "Synced to HealthConnect", Toast.LENGTH_SHORT).show()
+                        }catch (e: Exception){
+                            Log.e("MainActivity", "Error syncing to HealthConnect", e)
+                            Toast.makeText(context, "Error syncing to HealthConnect", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 },
                 selectedTabIndex = appViewModel.selectedHomeTab
@@ -614,7 +639,24 @@ fun MyWorkoutAssistantNavHost(
             ) as Exercise
             RestSetForm(
                 onRestSetUpsert = { updatedSet ->
-                    appViewModel.addSetToExercise(selectedWorkout, parentExercise, updatedSet)
+                    val oldSets = parentExercise.sets.filter { it !is RestSet }
+                    val modifiedSets = oldSets
+                        .flatMapIndexed { index, element ->
+                            if (index != oldSets.size - 1) {
+                                listOf(element, updatedSet)
+                            } else {
+                                listOf(element)
+                            }
+                        }
+
+                    val updatedExercise = parentExercise.copy(sets = modifiedSets)
+
+                    appViewModel.updateWorkoutComponent(
+                        selectedWorkout,
+                        parentExercise,
+                        updatedExercise
+                    )
+
                     appViewModel.goBack()
                 },
                 onCancel = {
@@ -675,7 +717,19 @@ fun MyWorkoutAssistantNavHost(
 
             RestForm(
                 onRestUpsert = { newRest ->
-                    appViewModel.addWorkoutComponent(selectedWorkout, newRest)
+                    val oldWorkoutComponents = selectedWorkout.workoutComponents.filter { it !is Rest }
+
+                    val modifiedWorkoutComponents = oldWorkoutComponents
+                        .flatMapIndexed { index, element ->
+                            if (index != oldWorkoutComponents.size - 1) {
+                                listOf(element, newRest)
+                            } else {
+                                listOf(element)
+                            }
+                        }
+
+                    val updatedWorkout = selectedWorkout.copy(workoutComponents = modifiedWorkoutComponents)
+                    appViewModel.updateWorkout(selectedWorkout, updatedWorkout)
                     appViewModel.goBack()
                 },
                 onCancel = { appViewModel.goBack() },

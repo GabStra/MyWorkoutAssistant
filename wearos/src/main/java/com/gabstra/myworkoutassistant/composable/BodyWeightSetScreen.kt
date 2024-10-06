@@ -56,10 +56,7 @@ fun BodyWeightSetScreen(
     var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
     val historicalSetDataList = remember {
-        val data = viewModel.getHistoricalSetsDataByExerciseId<BodyWeightSetData>(state.execiseId)
-        data.ifEmpty {
-            viewModel.getAllExecutedSetsDataByExerciseId<BodyWeightSetData>(state.execiseId)
-        }
+        viewModel.getHistoricalSetsDataByExerciseId<BodyWeightSetData>(state.execiseId)
     }
     val historicalVolume = remember {
         historicalSetDataList.sumOf { it.actualReps }.toDouble()

@@ -68,6 +68,8 @@ import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -159,7 +161,7 @@ fun WorkoutDetailScreen(
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
-    var showRest by remember { mutableStateOf(false) }
+    var showRest by remember { mutableStateOf(true) }
 
     var isDragDisabled by remember {
         mutableStateOf(false)
@@ -183,7 +185,7 @@ fun WorkoutDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
-                        enabled = selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0,
+                        enabled = showRest && (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0),
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
@@ -197,9 +199,8 @@ fun WorkoutDetailScreen(
                                     add(selectedIndex - 1, selectedComponent)
                                 }
 
-                            // Update the workout with the new list of components
-                            val updatedWorkout =
-                                workout.copy(workoutComponents = newWorkoutComponents)
+                            val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
+                            val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                             appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         }) {
                         Icon(
@@ -209,7 +210,7 @@ fun WorkoutDetailScreen(
                         )
                     }
                     IconButton(
-                        enabled = selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1,
+                        enabled = showRest && (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1),
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
@@ -223,9 +224,8 @@ fun WorkoutDetailScreen(
                                     add(selectedIndex + 1, selectedComponent)
                                 }
 
-                            // Update the workout with the new list of components
-                            val updatedWorkout =
-                                workout.copy(workoutComponents = newWorkoutComponents)
+                            val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
+                            val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                             appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         }) {
                         Icon(
@@ -391,7 +391,7 @@ fun WorkoutDetailScreen(
                                                 )
                                             );
                                         },
-                                        MenuItem("Add Rest") {
+                                        MenuItem("Add Rests Between Exercises") {
                                             appViewModel.setScreenData(
                                                 ScreenData.NewRest(
                                                     workout.id,
@@ -529,7 +529,10 @@ fun WorkoutDetailScreen(
                         selectedWorkoutComponents = newSelection
                     },
                     onOrderChange = { newWorkoutComponents ->
-                        val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
+                        if(!showRest) return@GenericSelectableList
+
+                        val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
+                        val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                     },
                     itemContent = { it ->
@@ -545,4 +548,23 @@ fun WorkoutDetailScreen(
             }
         }
     }
+}
+
+fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<WorkoutComponent> {
+    val adjustedComponents = mutableListOf<WorkoutComponent>()
+    var lastWasExercise = false
+
+    for (component in components) {
+        if(component !is Rest) {
+            adjustedComponents.add(component)
+            lastWasExercise = true
+        }else{
+            if(lastWasExercise){
+                adjustedComponents.add(component)
+            }
+
+            lastWasExercise = false
+        }
+    }
+    return adjustedComponents
 }

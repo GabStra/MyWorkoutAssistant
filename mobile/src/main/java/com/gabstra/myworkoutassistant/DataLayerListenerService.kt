@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant
 
 import android.content.Intent
 import android.util.Log
+import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateSetInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -36,6 +37,9 @@ class DataLayerListenerService : WearableListenerService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
+
+    private val db by lazy { AppDatabase.getDatabase(this) }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         val packageName = this.packageName
@@ -46,11 +50,11 @@ class DataLayerListenerService : WearableListenerService() {
                     WORKOUT_HISTORY_STORE_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val compressedJson = dataMap.getByteArray("compressedJson")
-                        val workoutHistoryStoreJson = decompressToString(compressedJson!!)
 
                         scope.launch(Dispatchers.IO) {
                             try {
-                                val db = AppDatabase.getDatabase(this@DataLayerListenerService)
+                                val workoutHistoryStoreJson = decompressToString(compressedJson!!)
+
                                 val setHistoryDao = db.setHistoryDao()
                                 val workoutHistoryDao = db.workoutHistoryDao()
 
@@ -60,12 +64,11 @@ class DataLayerListenerService : WearableListenerService() {
                                     .registerTypeAdapter(LocalDateTime::class.java,LocalDateTimeAdapter())
                                     .registerTypeAdapter(SetData::class.java, SetDataAdapter())
                                     .create()
+
                                 val workoutHistoryStore = gson.fromJson(
                                     workoutHistoryStoreJson,
                                     WorkoutHistoryStore::class.java
                                 )
-
-                                Log.d("DataLayerListenerService", "ExerciseHistories: ${workoutHistoryStore.ExerciseHistories.first().workoutHistoryId}")
 
                                 workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
                                 setHistoryDao.insertAll(*workoutHistoryStore.ExerciseHistories.toTypedArray())
@@ -116,9 +119,20 @@ class DataLayerListenerService : WearableListenerService() {
                                     workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
                                 }
 
+                                try{
+                                    sendWorkoutsToHealthConnect(
+                                        healthConnectClient = healthConnectClient,
+                                        workouts = workoutStore.workouts,
+                                        workoutHistoryDao = workoutHistoryDao
+                                    )
+                                }catch (exception: Exception){
+                                    Log.e("DataLayerListenerService", "Error sending workouts to HealthConnect", exception)
+                                }
+
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
                                 }
+
                                 intent.apply { setPackage(packageName) }
                                 sendBroadcast(intent)
 
@@ -129,20 +143,23 @@ class DataLayerListenerService : WearableListenerService() {
                     }
 
                     OPEN_PAGE_PATH -> {
+                        val context = this
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val valueToPass =
                             dataMap.getString(PAGE) // Replace "key" with your actual key
 
-                        // Start an activity and pass the extracted value
-                        val intent = Intent(this, MainActivity::class.java).apply {
-                            putExtra(
-                                PAGE,
-                                valueToPass
-                            ) // Replace "extra_key" with your actual extra key
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // Required for starting an activity from a service
-                            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // This flag helps to reuse the existing instance
+                        scope.launch(Dispatchers.IO) {
+                            // Start an activity and pass the extracted value
+                            val intent = Intent(context, MainActivity::class.java).apply {
+                                putExtra(
+                                    PAGE,
+                                    valueToPass
+                                ) // Replace "extra_key" with your actual extra key
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // Required for starting an activity from a service
+                                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // This flag helps to reuse the existing instance
+                            }
+                            startActivity(intent)
                         }
-                        startActivity(intent)
                     }
                 }
             }

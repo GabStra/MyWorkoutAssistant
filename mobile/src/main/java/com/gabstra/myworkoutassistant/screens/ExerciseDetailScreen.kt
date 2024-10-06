@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -18,8 +19,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -145,7 +144,7 @@ fun ExerciseDetailScreen(
     var selectedSets by remember { mutableStateOf(listOf<Set>()) }
 
     var isSelectionModeActive by remember { mutableStateOf(false) }
-    var showRest by remember { mutableStateOf(false) }
+    var showRest by remember { mutableStateOf(true) }
 
     LaunchedEffect(showRest) {
         selectedSets = emptyList()
@@ -206,7 +205,7 @@ fun ExerciseDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             IconButton(
-                                enabled = selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0,
+                                enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0),
                                 onClick = {
                                     val currentSets = exercise.sets
                                     val selectedComponent = selectedSets.first()
@@ -220,7 +219,9 @@ fun ExerciseDetailScreen(
                                             add(selectedIndex - 1, selectedComponent)
                                         }
 
-                                    val updatedExercise = exercise.copy(sets = newSets)
+
+                                    val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                    val updatedExercise = exercise.copy(sets = adjustedComponents)
 
                                     appViewModel.updateWorkoutComponent(
                                         workout,
@@ -238,7 +239,7 @@ fun ExerciseDetailScreen(
                             }
 
                             IconButton(
-                                enabled = selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1,
+                                enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1),
                                 onClick = {
                                     val currentSets = exercise.sets
                                     val selectedComponent = selectedSets.first()
@@ -252,7 +253,8 @@ fun ExerciseDetailScreen(
                                             add(selectedIndex + 1, selectedComponent)
                                         }
 
-                                    val updatedExercise = exercise.copy(sets = newSets)
+                                    val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                    val updatedExercise = exercise.copy(sets = adjustedComponents)
 
                                     sets = newSets
 
@@ -337,7 +339,7 @@ fun ExerciseDetailScreen(
                                         ScreenData.NewSet(workout.id, exercise.id)
                                     );
                                 },
-                                MenuItem("Add Rest") {
+                                MenuItem("Add Rests between sets") {
                                     appViewModel.setScreenData(
                                         ScreenData.NewRestSet(workout.id, exercise.id)
                                     );
@@ -449,10 +451,11 @@ fun ExerciseDetailScreen(
                     onDisableSelection = { isSelectionModeActive = false },
                     onSelectionChange = { newSelection -> selectedSets = newSelection },
                     onOrderChange = { newComponents ->
-                        val updatedExercise = exercise.copy(sets = newComponents)
+                        if(!showRest) return@GenericSelectableList
+                        val adjustedComponents = ensureRestSeparatedBySets(newComponents)
+                        val updatedExercise = exercise.copy(sets = adjustedComponents)
                         appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
-
-                        sets = newComponents
+                        sets = adjustedComponents
                     },
                     isDragDisabled = true,
                     itemContent = { it ->
@@ -464,4 +467,23 @@ fun ExerciseDetailScreen(
             }
         }
     }
+}
+
+fun ensureRestSeparatedBySets(components: List<Set>): List<Set> {
+    val adjustedComponents = mutableListOf<Set>()
+    var lastWasSet = false
+
+    for (component in components) {
+        if(component !is RestSet) {
+            adjustedComponents.add(component)
+            lastWasSet = true
+        }else{
+            if(lastWasSet){
+                adjustedComponents.add(component)
+            }
+
+            lastWasSet = false
+        }
+    }
+    return adjustedComponents
 }

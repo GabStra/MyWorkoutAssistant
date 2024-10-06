@@ -4,12 +4,18 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.HeartRateRecord
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
@@ -21,7 +27,11 @@ import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.delay
 import java.time.DayOfWeek
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import java.util.concurrent.CancellationException
@@ -164,4 +174,87 @@ fun getEndOfWeek(date: LocalDate): LocalDate {
 
 fun getOneRepMax(weight: Float, reps: Int): Float {
     return weight / (1.0278f - (0.0278f * reps))
+}
+
+suspend fun sendWorkoutsToHealthConnect(
+    workouts: List<Workout>,
+    healthConnectClient: HealthConnectClient,
+    workoutHistoryDao: WorkoutHistoryDao,
+) {
+    if (workouts.isEmpty()) return
+
+    val requiredPermissions = setOf(
+        HealthPermission.getReadPermission(ExerciseSessionRecord::class),
+        HealthPermission.getWritePermission(ExerciseSessionRecord::class),
+        HealthPermission.getReadPermission(HeartRateRecord::class),
+        HealthPermission.getWritePermission(HeartRateRecord::class)
+    )
+
+    val grantedPermissions = healthConnectClient.permissionController.getGrantedPermissions()
+    val missingPermissions = requiredPermissions - grantedPermissions
+
+    if (missingPermissions.isNotEmpty()) {
+        throw IllegalStateException("Missing required permissions: $missingPermissions")
+    }
+
+    val workoutHistories =
+        workoutHistoryDao.getWorkoutHistoriesByHasBeenSentToHealth(false)
+
+    if (workoutHistories.isEmpty()) return
+
+    val workoutIds = workoutHistories.map { it.workoutId.toString() }.distinct()
+    val workoutsById = workouts.associateBy { it.id }
+
+    healthConnectClient.deleteRecords(
+        recordType = ExerciseSessionRecord::class,
+        emptyList(),
+        workoutIds
+    )
+    healthConnectClient.deleteRecords(
+        recordType = HeartRateRecord::class,
+        emptyList(),
+        workoutIds
+    )
+
+    val exerciseSessionRecords = workoutHistories.filter { workoutsById.containsKey(it.workoutId) }.map {
+        ExerciseSessionRecord(
+            startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
+            endTime = it.startTime.plusSeconds(it.duration.toLong())
+                .atZone(ZoneId.systemDefault()).toInstant(),
+            startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+            endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+            title = workoutsById[it.workoutId]!!.name,
+            exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_WEIGHTLIFTING,
+            metadata = androidx.health.connect.client.records.metadata.Metadata(
+                clientRecordId = it.workoutId.toString()
+            )
+        )
+    }
+
+    val heartRateRecords =
+        workoutHistories.filter { it.heartBeatRecords.isNotEmpty() }.map {
+            HeartRateRecord(
+                startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
+                endTime = it.startTime.plusSeconds(it.duration.toLong())
+                    .atZone(ZoneId.systemDefault()).toInstant(),
+                startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                samples = it.heartBeatRecords.mapIndexed { index, bpm ->
+                    HeartRateRecord.Sample(
+                        time = it.startTime.atZone(ZoneId.systemDefault())
+                            .toInstant() + Duration.ofMillis(index.toLong() * 500),
+                        beatsPerMinute = bpm.toLong()
+                    )
+                },
+                metadata = androidx.health.connect.client.records.metadata.Metadata(
+                    clientRecordId = it.workoutId.toString()
+                )
+            )
+        }
+
+    healthConnectClient.insertRecords(exerciseSessionRecords + heartRateRecords)
+
+    for (workoutHistory in workoutHistories) {
+        workoutHistoryDao.updateHasBeenSentToHealth(workoutHistory.id, true)
+    }
 }
