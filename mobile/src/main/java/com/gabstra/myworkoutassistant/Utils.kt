@@ -205,17 +205,6 @@ suspend fun sendWorkoutsToHealthConnect(
     val workoutIds = workoutHistories.map { it.workoutId.toString() }.distinct()
     val workoutsById = workouts.associateBy { it.id }
 
-    healthConnectClient.deleteRecords(
-        recordType = ExerciseSessionRecord::class,
-        emptyList(),
-        workoutIds
-    )
-    healthConnectClient.deleteRecords(
-        recordType = HeartRateRecord::class,
-        emptyList(),
-        workoutIds
-    )
-
     val exerciseSessionRecords = workoutHistories.filter { workoutsById.containsKey(it.workoutId) }.map {
         ExerciseSessionRecord(
             startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
@@ -231,23 +220,31 @@ suspend fun sendWorkoutsToHealthConnect(
         )
     }
 
-    val heartRateRecords =
-        workoutHistories.filter { it.heartBeatRecords.isNotEmpty() }.map {
+    val heartRateRecords = workoutHistories
+        .filter { it.heartBeatRecords.isNotEmpty() }
+        .map { workout ->
+            val startTime = workout.startTime.atZone(ZoneId.systemDefault()).toInstant()
+            val endTime = workout.startTime.plusSeconds(workout.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
+            val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
+
             HeartRateRecord(
-                startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
-                endTime = it.startTime.plusSeconds(it.duration.toLong())
-                    .atZone(ZoneId.systemDefault()).toInstant(),
-                startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-                endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-                samples = it.heartBeatRecords.mapIndexed { index, bpm ->
-                    HeartRateRecord.Sample(
-                        time = it.startTime.atZone(ZoneId.systemDefault())
-                            .toInstant() + Duration.ofMillis(index.toLong() * 500),
-                        beatsPerMinute = bpm.toLong()
-                    )
+                startTime = startTime,
+                endTime = endTime,
+                startZoneOffset = zoneOffset,
+                endZoneOffset = zoneOffset,
+                samples = workout.heartBeatRecords.mapIndexedNotNull { index, bpm ->
+                    val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 500))
+                    if (sampleTime.isAfter(endTime)) {
+                        null
+                    } else {
+                        HeartRateRecord.Sample(
+                            time = sampleTime,
+                            beatsPerMinute = bpm.toLong()
+                        )
+                    }
                 },
                 metadata = androidx.health.connect.client.records.metadata.Metadata(
-                    clientRecordId = it.workoutId.toString()
+                    clientRecordId = workout.workoutId.toString()
                 )
             )
         }
