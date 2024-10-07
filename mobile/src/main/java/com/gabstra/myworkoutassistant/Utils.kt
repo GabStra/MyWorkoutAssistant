@@ -224,7 +224,7 @@ suspend fun sendWorkoutsToHealthConnect(
             startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
             endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
             title = workoutsById[it.workoutId]!!.name,
-            exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_WEIGHTLIFTING,
+            exerciseType = workoutsById[it.workoutId]!!.type,
             metadata = androidx.health.connect.client.records.metadata.Metadata(
                 clientRecordId = it.workoutId.toString()
             )

@@ -639,6 +639,7 @@ fun WorkoutsScreen(
                                             color = Color.White.copy(alpha = .87f)
                                         )
                                         ExpandableContainer(
+                                            isOpen = true,
                                             isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
                                             title = { modifier ->
                                                 Row(
@@ -662,13 +663,15 @@ fun WorkoutsScreen(
                                                     )
                                                 }
                                             }, content = {
-                                                Column{
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                                ){
                                                     weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
                                                         Row(
-                                                            modifier = Modifier.padding(
-                                                                vertical = 5.dp,
-                                                                horizontal = 10.dp
-                                                            ),
+                                                            modifier = Modifier.padding(horizontal = 10.dp),
                                                             horizontalArrangement = Arrangement.SpaceBetween
                                                         ) {
                                                             Text(
