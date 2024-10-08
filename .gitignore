@@ -24,3 +24,4 @@ wearos/release/wearos-release.apk
 .idea/
 *.aab
 *.kts
+mobile/version.properties.mobile
