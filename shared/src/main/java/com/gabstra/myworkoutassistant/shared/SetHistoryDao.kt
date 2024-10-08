@@ -33,6 +33,9 @@ interface SetHistoryDao {
     @Query("DELETE FROM set_history WHERE workoutHistoryId = :workoutHistoryId")
     suspend fun deleteByWorkoutHistoryId(workoutHistoryId: UUID)
 
+    @Query("DELETE FROM set_history WHERE exerciseId = :exerciseId")
+    suspend fun deleteByExerciseId(exerciseId: UUID)
+
     @Query("DELETE FROM set_history")
     suspend fun deleteAll()
 }

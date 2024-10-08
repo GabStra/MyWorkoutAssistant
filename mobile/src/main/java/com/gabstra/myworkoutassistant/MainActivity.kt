@@ -199,6 +199,7 @@ fun MyWorkoutAssistantNavHost(
 
     val setHistoryDao = db.setHistoryDao()
     val workoutHistoryDao = db.workoutHistoryDao()
+    val exerciseInfoDao = db.exerciseInfoDao()
 
     val updateMobileFlow = appViewModel.updateMobileFlow
 
@@ -221,7 +222,9 @@ fun MyWorkoutAssistantNavHost(
                     workouts = appViewModel.workouts.filter { it.isActive && it.enabled }
                 )
 
-                val filteredAppBackup = AppBackup(workoutStore, latestWorkoutHistories, setHistories)
+                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+
+                val filteredAppBackup = AppBackup(workoutStore, latestWorkoutHistories, setHistories, exerciseInfos)
 
                 sendAppBackup(dataClient, filteredAppBackup)
             }
@@ -312,7 +315,9 @@ fun MyWorkoutAssistantNavHost(
                                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
                             }
 
-                            val appBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories)
+                            val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+
+                            val appBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories,exerciseInfos)
                             sendAppBackup(dataClient, appBackup)
                         }
                         Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
@@ -330,7 +335,8 @@ fun MyWorkoutAssistantNavHost(
 
                             val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
                             val setHistories = setHistoryDao.getAllSetHistories()
-                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories)
+                            val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories,exerciseInfos)
                             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                             writeJsonToDownloadsFolder(context, filename, jsonString)
                             Toast.makeText(
@@ -446,6 +452,8 @@ fun MyWorkoutAssistantNavHost(
             WorkoutDetailScreen(
                 appViewModel,
                 workoutHistoryDao,
+                setHistoryDao,
+                exerciseInfoDao,
                 selectedWorkout,
             ) {
                 appViewModel.goBack()

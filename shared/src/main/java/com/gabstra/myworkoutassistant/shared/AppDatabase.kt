@@ -12,13 +12,14 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.SetDataTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
-@Database(entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class], version = 24, exportSchema = false)
+@Database(entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class], version = 25, exportSchema = false)
 @TypeConverters(DateTimeTypeConverter::class,DateTypeConverter::class, TimeTypeConverter::class, SetDataTypeConverter::class, UUIDConverter::class,ListIntConverter::class)
 
 abstract class AppDatabase : RoomDatabase() {
     abstract fun setHistoryDao(): SetHistoryDao
     abstract fun workoutHistoryDao(): WorkoutHistoryDao
     abstract fun workoutRecordDao(): WorkoutRecordDao
+    abstract fun exerciseInfoDao(): ExerciseInfoDao
 
     companion object {
         @Volatile

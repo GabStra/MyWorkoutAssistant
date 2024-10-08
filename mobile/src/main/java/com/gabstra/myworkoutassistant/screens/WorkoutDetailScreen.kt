@@ -66,6 +66,8 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
+import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
@@ -158,6 +160,8 @@ fun WorkoutComponentRenderer(
 fun WorkoutDetailScreen(
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
+    setHistoryDao: SetHistoryDao,
+    exerciseInfoDao: ExerciseInfoDao,
     workout: Workout,
     onGoBack: () -> Unit
 ) {
@@ -320,6 +324,18 @@ fun WorkoutDetailScreen(
                         appViewModel.updateWorkout(workout, updatedWorkout)
                         selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
+
+                        val selectedExerciseIds = selectedWorkoutComponents.toList().filterIsInstance<Exercise>().map { it.id }
+                        if(selectedExerciseIds.isNotEmpty()){
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    selectedExerciseIds.forEach {
+                                        setHistoryDao.deleteByExerciseId(it)
+                                        exerciseInfoDao.deleteById(it)
+                                    }
+                                }
+                            }
+                        }
                     }) {
                         Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = Color.White.copy(alpha = .87f))
                     }

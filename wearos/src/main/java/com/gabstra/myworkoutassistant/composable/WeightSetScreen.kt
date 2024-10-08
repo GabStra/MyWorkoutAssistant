@@ -10,14 +10,11 @@ import androidx.compose.foundation.layout.Column
 
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,9 +35,7 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.calculateVolume
-import com.gabstra.myworkoutassistant.data.getOneRepMax
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -59,12 +54,18 @@ fun WeightSetScreen (
     val previousSet = state.previousSetData as WeightSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
+    var bestTotalVolume by remember { mutableStateOf<Double?>(null) }
+
+    LaunchedEffect(state.execiseId) {
+        bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)
+    }
+
     val historicalSetDataList = remember {
         viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
     }
 
     // Calculate the historical volume
-    val historicalVolume = remember {
+    val lastTotalVolume = remember {
         historicalSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
     }
 
@@ -77,7 +78,7 @@ fun WeightSetScreen (
         executedSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
     }
 
-    val averageVolume = remember { if (historicalSetDataList.isNotEmpty()) historicalVolume / historicalSetDataList.size else 0.0 }
+    val averageVolume = remember { if (historicalSetDataList.isNotEmpty()) lastTotalVolume / historicalSetDataList.size else 0.0 }
 
     val currentVolume = calculateVolume(
         currentSet.actualWeight,
@@ -86,7 +87,9 @@ fun WeightSetScreen (
 
     val currentTotalVolume = currentVolume + executedVolume
 
-    val volumeProgress = if (historicalVolume > 0) currentTotalVolume / historicalVolume else 0.0
+    val volumeProgress = if (lastTotalVolume > 0) currentTotalVolume / lastTotalVolume else 0.0
+
+    val bestVolumeProgress = if (bestTotalVolume != null && bestTotalVolume!! > 0) currentTotalVolume / bestTotalVolume!! else 0.0
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
@@ -285,12 +288,15 @@ fun WeightSetScreen (
                 Spacer(modifier = Modifier.width(5.dp))
                 WeightRow(Modifier)
             }
-            if(volumeProgress > 0) {
-                TrendComponentProgressBar(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 5.dp), "Tot Vol:", volumeProgress)
+
+            if(bestTotalVolume != null && bestTotalVolume!! > 0 && (currentTotalVolume >= lastTotalVolume || bestTotalVolume == lastTotalVolume) ) {
+                TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress)
+            }else{
+                if(volumeProgress > 0) {
+                    TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Tot Vol:", volumeProgress)
+                }
             }
+
             Row(
                 modifier = Modifier
                     .weight(1f)
@@ -299,7 +305,7 @@ fun WeightSetScreen (
                 horizontalArrangement = Arrangement.Center)
             {
                 if(averageVolume > 0) {
-                    TrendComponent(Modifier, "Target Vol:", currentVolume, averageVolume)
+                    TrendComponent(Modifier, "Avg Vol:", currentVolume, averageVolume)
                 }
                 //Spacer(modifier = Modifier.width(5.dp))
                 //TrendComponent(Modifier,"1RM:",current1RM, max1RM)

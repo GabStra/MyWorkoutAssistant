@@ -6,11 +6,13 @@ import android.os.Looper
 import android.util.Log
 import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
@@ -26,6 +28,7 @@ class DataLayerListenerService : WearableListenerService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
+    private lateinit var exerciseInfoDao: ExerciseInfoDao
 
     private var backupChunks = mutableListOf<ByteArray>()
 
@@ -40,6 +43,7 @@ class DataLayerListenerService : WearableListenerService() {
         val db = AppDatabase.getDatabase(this)
         setHistoryDao = db.setHistoryDao()
         workoutHistoryDao = db.workoutHistoryDao()
+        exerciseInfoDao = db.exerciseInfoDao()
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -124,6 +128,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 setHistoryDao.deleteAll()
                                 workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
                                 setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
+                                exerciseInfoDao.deleteAll()
+                                exerciseInfoDao.insertAll(*appBackup.ExerciseInfos.toTypedArray())
                             }
 
                             val intent = Intent(INTENT_ID).apply {

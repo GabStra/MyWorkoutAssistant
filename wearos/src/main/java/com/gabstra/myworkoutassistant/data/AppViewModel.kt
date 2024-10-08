@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -24,7 +25,9 @@ import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -140,6 +143,11 @@ class AppViewModel : ViewModel(){
         workoutRecordDao = db.workoutRecordDao()
     }
 
+    fun initExerciseInfoDao(context: Context){
+        val db = AppDatabase.getDatabase(context)
+        exerciseInfoDao = db.exerciseInfoDao()
+    }
+
     private val _selectedWorkout = mutableStateOf(Workout(UUID.randomUUID(),"","", listOf(),0,true, creationDate = LocalDate.now(), type = 0, globalId = UUID.randomUUID()))
     val selectedWorkout: State<Workout> get() = _selectedWorkout
 
@@ -148,6 +156,8 @@ class AppViewModel : ViewModel(){
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
 
     private lateinit var setHistoryDao: SetHistoryDao
+
+    private lateinit var exerciseInfoDao: ExerciseInfoDao
 
     private val _workoutState = MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val workoutState = _workoutState.asStateFlow()
@@ -456,6 +466,44 @@ class AppViewModel : ViewModel(){
                 workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
                 workoutHistoryDao.insert(currentWorkoutHistory!!)
                 setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
+
+                //group executedSetsHistory by exerciseId
+
+                val exerciseHistories = executedSetsHistory.groupBy { it.exerciseId }
+
+                //get only the groups that have the histories with the proporty of set data of type body weight set data or weight set data
+
+                val filteredExerciseHistories = exerciseHistories.filter { it.value.any { it.setData is BodyWeightSetData || it.setData is WeightSetData } }
+                  filteredExerciseHistories.forEach{
+                    val firstSetData = it.value.first().setData
+
+                    val volume = when(firstSetData){
+                        is BodyWeightSetData -> {
+                            it.value.sumOf {item -> (item.setData as BodyWeightSetData).actualReps }.toDouble()
+                        }
+                        is WeightSetData -> {
+                            it.value.sumOf { item ->
+                                val weightSetData = item.setData as WeightSetData
+                                calculateVolume(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
+                            }
+                        }
+                        else -> throw IllegalArgumentException("Unknown set type")
+                    }
+
+                    val exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
+
+                    if(exerciseInfo == null){
+                        exerciseInfoDao.insert(com.gabstra.myworkoutassistant.shared.ExerciseInfo(
+                            id = it.key!!,
+                            bestVolume = volume,
+                            oneRepMax = 0.0
+                        ))
+                    }else{
+                        if(exerciseInfo.bestVolume < volume){
+                            exerciseInfoDao.updateBestVolume(it.key!!,volume)
+                        }
+                    }
+                }
             }
 
             val currentState = _workoutState.value
@@ -487,6 +535,10 @@ class AppViewModel : ViewModel(){
                 }
             }
         }
+    }
+
+    suspend fun getBestVolumeByExerciseId(exerciseId: UUID): Double?{
+        return exerciseInfoDao.getExerciseInfoById(exerciseId)?.bestVolume
     }
 
     fun storeSetData() {

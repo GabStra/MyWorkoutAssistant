@@ -187,6 +187,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
         appViewModel.initWorkoutRecordDao(localContext)
+        appViewModel.initExerciseInfoDao(localContext)
 
         onNavControllerAvailable(navController)
 

@@ -294,7 +294,7 @@ fun ExerciseDetailScreen(
                                 Icon(
                                     imageVector = Icons.Default.Delete,
                                     contentDescription = "Delete",
-                                    tint = Color.White.copy(alpha = .87f)
+                                            tint = Color.White.copy(alpha = .87f)
                                 )
                             }
                             IconButton(
