@@ -60,6 +60,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
+import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
@@ -125,27 +126,30 @@ fun WorkoutComponentRenderer(
     workoutComponent: WorkoutComponent,
     showRest:Boolean
 ) {
-    Row(
-        modifier = Modifier.padding(15.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        when (workoutComponent) {
-            is Exercise -> ExerciseRenderer(
-                modifier = Modifier.weight(1f),
-                exercise = workoutComponent,
-                showRest = showRest
-            )
+    when (workoutComponent) {
+        is Exercise -> ExerciseRenderer(
+            exercise = workoutComponent,
+            showRest = showRest
+        )
 
-            is Rest -> Text(
-                modifier = Modifier.weight(1f),
-                text = "Rest for: "+ formatTime(workoutComponent.timeInSeconds),
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
-                textAlign = TextAlign.Center
-            )
+        is Rest ->
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                Row(
+                    modifier = Modifier.padding(15.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = "Rest for: "+ formatTime(workoutComponent.timeInSeconds),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
         }
-    }
 }
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -538,12 +542,10 @@ fun WorkoutDetailScreen(
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                     },
                     itemContent = { it ->
-                        DarkModeContainer(whiteOverlayAlpha = .1f) {
-                            WorkoutComponentRenderer(
-                                workoutComponent = it,
-                                showRest = showRest
-                            )
-                        }
+                        WorkoutComponentRenderer(
+                            workoutComponent = it,
+                            showRest = showRest
+                        )
                     },
                     isDragDisabled = true
                 )

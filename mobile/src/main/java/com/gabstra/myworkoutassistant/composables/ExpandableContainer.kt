@@ -44,17 +44,18 @@ fun ExpandableContainer(
                 modifier = Modifier.fillMaxWidth(),
             ){
                 title(Modifier.weight(1f))
-                IconButton(
-                    modifier = Modifier.alpha(if(isExpandable) 1f else 0.4f),
-                    onClick = { if(isExpandable){
-                        openStatus = !openStatus
-                        if(openStatus){
-                            onOpen()
-                        }else{
-                            onClose()
-                        }
-                    } }) {
-                    Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
+                if(isExpandable){
+                    IconButton(
+                        onClick = { if(isExpandable){
+                            openStatus = !openStatus
+                            if(openStatus){
+                                onOpen()
+                            }else{
+                                onClose()
+                            }
+                        } }) {
+                        Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
+                    }
                 }
             }
             subContent()

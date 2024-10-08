@@ -30,78 +30,103 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 @Composable
 fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHistory>) {
     Column(
-        modifier = modifier,
+        modifier = modifier.padding(10.dp),
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        for (set in setHistories) {
-            Row {
-                when (val setData = set.setData) {
-                    is WeightSetData -> {
-                        Text(
-                            text = "${setData.actualReps} @ ${setData.actualWeight} kg",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f),
-                        )
-                    }
+        var index = 0
+        setHistories.forEach() { set ->
+            val setData = set.setData
+            if(setData !is RestSetData){
+                index += 1
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Set ${index}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .87f),
+                    )
+                    when (setData) {
+                        is WeightSetData -> {
+                            val weightText = if (setData.actualWeight % 1 == 0f) {
+                                "${setData.actualWeight.toInt()}"
+                            } else {
+                                "${setData.actualWeight}"
+                            }
 
-                    is BodyWeightSetData -> {
-                        Text(
-                            text = "x${setData.actualReps}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f),
-                        )
-                    }
-
-                    is TimedDurationSetData -> {
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                        ) {
                             Text(
-                                "Timer set to: " + formatTime(setData.startTimer / 1000),
+                                text = "${weightText}kg x ${setData.actualReps}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .87f)
+                                color = Color.White.copy(alpha = .87f),
                             )
+                        }
+
+                        is BodyWeightSetData -> {
                             Text(
-                                "Stopped at: " + formatTime(setData.endTimer / 1000),
+                                text = "${setData.actualReps}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .87f)
+                                color = Color.White.copy(alpha = .87f),
                             )
                         }
-                    }
 
-                    is EnduranceSetData -> {
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                        ) {
-                            Text("Timer set to: " + formatTime(setData.startTimer / 1000),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .6f)
-                            )
-                            Text("Stopped at: " + formatTime(setData.endTimer / 1000),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .6f)
-                            )
+                        is TimedDurationSetData -> {
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Text(
+                                    "Timer set to: " + formatTime(setData.startTimer / 1000),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = .87f)
+                                )
+                                Text(
+                                    "Stopped at: " + formatTime(setData.endTimer / 1000),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = .87f)
+                                )
+                            }
                         }
-                    }
 
-                    is RestSetData -> {
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                        ) {
-                            Text("Rest Timer set to: " + formatTime(setData.startTimer),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .6f)
-                            )
-                            Text("Stopped at: " + formatTime(setData.endTimer),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .6f)
-                            )
+                        is EnduranceSetData -> {
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Text("Timer set to: " + formatTime(setData.startTimer / 1000),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = .6f)
+                                )
+                                Text("Stopped at: " + formatTime(setData.endTimer / 1000),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = .6f)
+                                )
+                            }
                         }
+                        else -> throw IllegalArgumentException("Unknown set type")
+                    }
+                }
+            }else{
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ){
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Text("Rest Timer set to: " + formatTime(setData.startTimer),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f)
+                        )
+                        Text("Stopped at: " + formatTime(setData.endTimer),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = .6f)
+                        )
                     }
                 }
             }
-
         }
     }
 }

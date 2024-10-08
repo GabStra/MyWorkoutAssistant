@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant
 
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.shared.AppDatabase
@@ -38,6 +40,15 @@ class DataLayerListenerService : WearableListenerService() {
         val db = AppDatabase.getDatabase(this)
         setHistoryDao = db.setHistoryDao()
         workoutHistoryDao = db.workoutHistoryDao()
+    }
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val timeoutRunnable = Runnable {
+        val intent = Intent(INTENT_ID).apply {
+            putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+        }
+        sendBroadcast(intent)
+        ignoreUntilStartOrEnd = true
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -88,6 +99,9 @@ class DataLayerListenerService : WearableListenerService() {
                         }
 
                         if (backupChunk != null && !ignoreUntilStartOrEnd) {
+                            handler.removeCallbacks(timeoutRunnable)
+                            handler.postDelayed(timeoutRunnable, 5000)
+                            
                             backupChunks.add(backupChunk)
 
                             val progress = backupChunks.size.toFloat() / expectedChunks

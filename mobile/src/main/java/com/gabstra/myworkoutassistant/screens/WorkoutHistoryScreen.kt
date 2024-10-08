@@ -540,25 +540,25 @@ fun WorkoutHistoryScreen(
                 val exercise = exerciseById[key]!!
                 val setHistories = setHistoriesByExerciseId[key]!!
 
-                DarkModeContainer(whiteOverlayAlpha = .1f) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                ExpandableContainer(
+                    isOpen = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    isExpandable = setHistories.isNotEmpty(),
+                    title = { m ->
                         Text(
-                            modifier = Modifier.weight(1f)
+                            modifier = m.fillMaxWidth().padding(horizontal = 10.dp)
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             text = exercise.name,
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
+                    },
+                    content = {
                         SetHistoriesRenderer(setHistories = setHistories)
                     }
-                }
+                )
             }
         }
     }

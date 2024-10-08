@@ -667,11 +667,10 @@ fun WorkoutsScreen(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
                                                         .padding(10.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                                 ){
                                                     weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
                                                         Row(
-                                                            modifier = Modifier.padding(horizontal = 10.dp),
                                                             horizontalArrangement = Arrangement.SpaceBetween
                                                         ) {
                                                             Text(
