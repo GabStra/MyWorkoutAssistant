@@ -62,7 +62,10 @@ fun <T> SelectableList(
                                     selection.filter{ it !== item }
                                 }
                             onSelectionChange(newSelection)
-                        }
+                        },
+                        colors =  CheckboxDefaults.colors().copy(
+                            checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                        )
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))

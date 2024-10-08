@@ -100,8 +100,8 @@ class DataLayerListenerService : WearableListenerService() {
 
                         if (backupChunk != null && !ignoreUntilStartOrEnd) {
                             handler.removeCallbacks(timeoutRunnable)
-                            handler.postDelayed(timeoutRunnable, 5000)
-                            
+                            handler.postDelayed(timeoutRunnable, 10000)
+
                             backupChunks.add(backupChunk)
 
                             val progress = backupChunks.size.toFloat() / expectedChunks
@@ -112,6 +112,7 @@ class DataLayerListenerService : WearableListenerService() {
                         }
 
                         if (isLastChunk) {
+                            handler.removeCallbacks(timeoutRunnable)
                             val backupData = combineChunks(backupChunks)
                             val jsonBackup = decompressToString(backupData)
 

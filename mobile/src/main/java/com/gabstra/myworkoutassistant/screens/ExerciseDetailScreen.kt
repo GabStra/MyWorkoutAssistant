@@ -53,6 +53,7 @@ import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -292,33 +293,35 @@ fun ExerciseDetailScreen(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete"
+                                    contentDescription = "Delete",
+                                    tint = Color.White.copy(alpha = .87f)
                                 )
                             }
                             IconButton(
-                                enabled = selectedSets.size == 1,
+                                enabled = selectedSets.isNotEmpty(),
                                 onClick = {
-                                    val newSet = when (val selectedSet = selectedSets.first()) {
-                                        is WeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                        is BodyWeightSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                        is EnduranceSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                        is TimedDurationSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                        is RestSet -> selectedSet.copy(id = java.util.UUID.randomUUID())
-                                        else -> throw IllegalArgumentException("Unknown type")
+                                    selectedSets.forEach {
+                                        val newSet = when (it) {
+                                            is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                                            is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                                            is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
+                                            is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
+                                            is RestSet -> it.copy(id = java.util.UUID.randomUUID())
+                                            else -> throw IllegalArgumentException("Unknown type")
+                                        }
+                                        appViewModel.addSetToExercise(workout, exercise, newSet)
+                                        sets = sets + it
                                     }
-                                    appViewModel.addSetToExercise(workout, exercise, newSet)
 
-
-
-                                    sets = sets + newSet
                                     selectedSets = emptyList()
-
                                     isSelectionModeActive = false
                                 }) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy"
+                                val isEnabled = selectedSets.isNotEmpty()
+                                val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
+                                    alpha = .3f
                                 )
+
+                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
                             }
                         }
                     }

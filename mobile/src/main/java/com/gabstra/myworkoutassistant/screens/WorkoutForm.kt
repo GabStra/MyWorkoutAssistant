@@ -129,13 +129,7 @@ fun WorkoutForm(
                     value = timesCompletedInAWeekState.value,
                     onValueChange = { input ->
                         if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                            val inputValue = input.toIntOrNull()
-
-                            if (inputValue != null && inputValue == 0) {
-                                timesCompletedInAWeekState.value = "1"
-                            } else {
-                                timesCompletedInAWeekState.value = input
-                            }
+                            timesCompletedInAWeekState.value = input
                         }
                     },
                     label = { Text("Objective per week") },

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -65,6 +66,9 @@ fun EnduranceSetForm(
             Checkbox(
                 checked = autoStartState.value,
                 onCheckedChange = { autoStartState.value = it },
+                colors =  CheckboxDefaults.colors().copy(
+                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                )
             )
             Text(text = "Auto start")
         }
@@ -78,6 +82,9 @@ fun EnduranceSetForm(
             Checkbox(
                 checked = autoStopState.value,
                 onCheckedChange = { autoStopState.value = it },
+                colors =  CheckboxDefaults.colors().copy(
+                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                )
             )
             Text(text = "Auto stop")
         }
