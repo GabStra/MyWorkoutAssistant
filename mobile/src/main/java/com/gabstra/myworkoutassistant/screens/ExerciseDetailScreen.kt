@@ -83,7 +83,7 @@ fun ComponentRenderer(set: Set) {
                     )
                     Text(
                         modifier = Modifier.weight(1f),
-                        text = "Weight: ${set.weight}kg",
+                        text = "Weight: ${set.weight} kg",
                         color = Color.White.copy(alpha = .87f),
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.End

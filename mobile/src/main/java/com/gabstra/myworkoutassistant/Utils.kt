@@ -180,6 +180,7 @@ suspend fun sendWorkoutsToHealthConnect(
     workouts: List<Workout>,
     healthConnectClient: HealthConnectClient,
     workoutHistoryDao: WorkoutHistoryDao,
+    updateAll: Boolean = false
 ) {
     if (workouts.isEmpty()) return
 
@@ -197,12 +198,14 @@ suspend fun sendWorkoutsToHealthConnect(
         throw IllegalStateException("Missing required permissions: $missingPermissions")
     }
 
-    val workoutHistories =
+    val workoutHistories = if(updateAll){
+        workoutHistoryDao.getAllWorkoutHistoriesByIsDone()
+    }else {
         workoutHistoryDao.getWorkoutHistoriesByHasBeenSentToHealth(false)
+    }
 
     if (workoutHistories.isEmpty()) return
 
-    val workoutIds = workoutHistories.map { it.workoutId.toString() }.distinct()
     val workoutsById = workouts.associateBy { it.id }
 
     val exerciseSessionRecords = workoutHistories.filter { workoutsById.containsKey(it.workoutId) }.map {

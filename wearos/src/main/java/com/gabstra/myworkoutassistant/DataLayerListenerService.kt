@@ -100,6 +100,8 @@ class DataLayerListenerService : WearableListenerService() {
                             sendBroadcast(intent)
                             hasStartedSync = true
                             ignoreUntilStartOrEnd = false
+                            handler.removeCallbacks(timeoutRunnable)
+                            handler.postDelayed(timeoutRunnable, 10000)
                         }
 
                         if (backupChunk != null && !ignoreUntilStartOrEnd) {

@@ -25,7 +25,7 @@ fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, style: TextStyle = 
     }
 
     Text(
-        text = "${weightSetData.actualReps} @ ${weightText}kg",
+        text = "$weightText kg x ${weightSetData.actualReps}",
         style = style,
         color = color
     )

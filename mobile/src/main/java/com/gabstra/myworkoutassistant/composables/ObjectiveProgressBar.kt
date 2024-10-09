@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
+import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 @Composable
 fun CheckboxWithGreenCircle(modifier: Modifier = Modifier){
@@ -36,7 +37,7 @@ fun CheckboxWithGreenCircle(modifier: Modifier = Modifier){
         Icon(
             imageVector = Icons.Default.Check,
             contentDescription = "Checkbox",
-            tint = Color.White, // Icon color
+            tint = Color.Black, // Icon color
             modifier = Modifier.align(Alignment.Center) // Center the icon within the circle
         )
     }
@@ -57,15 +58,14 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
 
             .fillMaxWidth() // Make the progress bar fill the width of its parent
     ) {
-        LinearProgressIndicator(
-            progress = { progress },
+        SimpleProgressIndicator(
+            progress = progress,
             trackColor = Color.DarkGray,
-            color =  Color(0xFFff6700),
+            progressBarColor =  Color(0xFFff6700),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(16.dp)
                 .clip(roundedCornerShape) // Clip the progress bar to the rounded shape
-                .background(Color.White), // Background color inside the border
         )
     }
 }

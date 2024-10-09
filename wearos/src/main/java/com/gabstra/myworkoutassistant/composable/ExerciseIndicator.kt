@@ -37,7 +37,7 @@ fun ExerciseIndicator(
 
     // Calculate gaps and angles
     val baseGapAngle = 2f
-    val size= 20f
+    val size= 25f
 
     val availableAngle = 130f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
     var angleForCurrentExercise = availableAngle / exerciseSelection.size.coerceAtLeast(1)
@@ -60,7 +60,7 @@ fun ExerciseIndicator(
             )
 
             if(elementsToSkip > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 15f, circleColor = MaterialTheme.colors.primary, number = elementsToSkip, margin = -10f, transparency = 1f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = MaterialTheme.colors.primary, number = elementsToSkip, transparency = 1f)
             }
             accumulatedAngle += size + baseGapAngle
         }
@@ -73,7 +73,7 @@ fun ExerciseIndicator(
         if (areMoreElementsAvailable) {
 
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.DarkGray)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, MaterialTheme.colors.background)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize().alpha(1f),
                 strokeWidth = 4.dp,
@@ -84,7 +84,7 @@ fun ExerciseIndicator(
             )
 
             if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 15f, circleColor = Color.DarkGray, number = numberOfElementsLeft, margin = -10f, transparency = 1f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = MaterialTheme.colors.background, number = numberOfElementsLeft, transparency = 1f)
             }
         }
     }
@@ -113,7 +113,7 @@ fun SetIndicator(
     val baseGapAngle = 2f
     val parentGapAngle = 2f
 
-    val indicatorSize = 20f
+    val indicatorSize = 25f
 
     val availableAngle = maxAngle - (if (elementsToSkip > 1) indicatorSize + baseGapAngle else 0f) - (if (numberOfElementsLeft > 1) indicatorSize + baseGapAngle else 0f)
 
@@ -145,7 +145,7 @@ fun SetIndicator(
             )
 
             if(elementsToSkip > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 15f, circleColor = MyColors.Green, number = elementsToSkip, margin = -10f, transparency = 1f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = MyColors.Green, number = elementsToSkip, transparency = 1f)
             }
 
             accumulatedAngle += (if(elementsToSkip == 1) angleForSet else indicatorSize) + baseGapAngle
@@ -160,7 +160,7 @@ fun SetIndicator(
             }
             // Draw group segment
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White else (if(markAsCompleted)  MyColors.Green else Color.DarkGray))),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White else (if(markAsCompleted)  MyColors.Green else MaterialTheme.colors.background))),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -181,7 +181,7 @@ fun SetIndicator(
         // Indicator for more elements available
         if (numberOfElementsLeft > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.DarkGray)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, MaterialTheme.colors.background)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -192,7 +192,7 @@ fun SetIndicator(
             )
 
             if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 15f, circleColor = Color.DarkGray, number = numberOfElementsLeft, margin = -10f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = MaterialTheme.colors.background, number = numberOfElementsLeft)
             }
         }
     }

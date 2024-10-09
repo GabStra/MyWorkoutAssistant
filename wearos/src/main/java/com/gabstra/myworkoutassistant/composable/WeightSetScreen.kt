@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -89,7 +90,9 @@ fun WeightSetScreen (
 
     val volumeProgress = if (lastTotalVolume > 0) currentTotalVolume / lastTotalVolume else 0.0
 
-    val bestVolumeProgress = if (bestTotalVolume != null && bestTotalVolume!! > 0) currentTotalVolume / bestTotalVolume!! else 0.0
+    val bestVolumeProgress = remember(bestTotalVolume) {
+        if (bestTotalVolume != null && bestTotalVolume!! > 0) currentTotalVolume / bestTotalVolume!! else 0.0
+    }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
@@ -206,7 +209,7 @@ fun WeightSetScreen (
             ) {
                 Text(
                     text = "${currentSet.actualReps}",
-                    style = MaterialTheme.typography.display3,
+                    style = MaterialTheme.typography.title1,
                     textAlign = TextAlign.End
                 )
                 val label = if (currentSet.actualReps == 1) "rep" else "reps"
@@ -257,7 +260,7 @@ fun WeightSetScreen (
                     } else {
                         "${currentSet.actualWeight}"
                     },
-                    style = MaterialTheme.typography.display3,
+                    style = MaterialTheme.typography.title1,
                     textAlign = TextAlign.End
                 )
                 Spacer(modifier = Modifier.width(5.dp))
@@ -290,10 +293,16 @@ fun WeightSetScreen (
             }
 
             if(bestTotalVolume != null && bestTotalVolume!! > 0 && (currentTotalVolume >= lastTotalVolume || bestTotalVolume == lastTotalVolume) ) {
-                TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress)
+                TrendComponentProgressBar(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress)
             }else{
                 if(volumeProgress > 0) {
-                    TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Tot Vol:", volumeProgress)
+                    TrendComponentProgressBar(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 5.dp), "Tot Vol:", volumeProgress)
                 }
             }
 

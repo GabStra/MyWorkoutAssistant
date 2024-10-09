@@ -76,7 +76,7 @@ fun ExerciseRenderer(
                                     }
 
                                     Text(
-                                        text = "${weightText}kg x ${set.reps}",
+                                        text = "${weightText} kg x ${set.reps}",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                                     )

@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Alignment
 
 import androidx.compose.foundation.layout.Spacer
@@ -41,7 +40,6 @@ fun ControlButtonsVertical(
     content: @Composable () -> Unit
 ){
     val coroutineScope = rememberCoroutineScope()
-    val roundedCornerShape: Shape = RoundedCornerShape(10.dp)
 
     Column(
         modifier = modifier,
@@ -72,7 +70,7 @@ fun ControlButtonsVertical(
             }
         }
         Box(
-            modifier = Modifier.height(40.dp).fillMaxWidth().padding(vertical = 2.dp),
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 2.dp),
             contentAlignment = Alignment.Center
         ) {
             content()

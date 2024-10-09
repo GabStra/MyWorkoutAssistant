@@ -57,7 +57,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                             }
 
                             Text(
-                                text = "${weightText}kg x ${setData.actualReps}",
+                                text = "${weightText} kg x ${setData.actualReps}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .87f),
                             )

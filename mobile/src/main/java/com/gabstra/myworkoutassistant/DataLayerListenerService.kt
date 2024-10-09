@@ -5,6 +5,9 @@ import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateSetInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.SetHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
@@ -39,7 +42,17 @@ class DataLayerListenerService : WearableListenerService() {
 
     private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
 
-    private val db by lazy { AppDatabase.getDatabase(this) }
+    private lateinit var workoutHistoryDao: WorkoutHistoryDao
+    private lateinit var setHistoryDao: SetHistoryDao
+    private lateinit var exerciseInfoDao: ExerciseInfoDao
+
+    override fun onCreate() {
+        super.onCreate()
+        val db = AppDatabase.getDatabase(this)
+        setHistoryDao = db.setHistoryDao()
+        workoutHistoryDao = db.workoutHistoryDao()
+        exerciseInfoDao = db.exerciseInfoDao()
+    }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         val packageName = this.packageName
@@ -54,9 +67,6 @@ class DataLayerListenerService : WearableListenerService() {
                         scope.launch(Dispatchers.IO) {
                             try {
                                 val workoutHistoryStoreJson = decompressToString(compressedJson!!)
-
-                                val setHistoryDao = db.setHistoryDao()
-                                val workoutHistoryDao = db.workoutHistoryDao()
 
                                 val gson = GsonBuilder()
                                     .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
@@ -77,6 +87,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 val workout = workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
 
                                 if (workout != null && workoutHistoryStore.WorkoutHistory.isDone) {
+                                    exerciseInfoDao.insertAll(*workoutHistoryStore.ExerciseInfos.toTypedArray())
+
                                     val setHistoriesByExerciseId = workoutHistoryStore.ExerciseHistories
                                         .filter { it.exerciseId != null }
                                         .groupBy { it.exerciseId }
@@ -143,11 +155,10 @@ class DataLayerListenerService : WearableListenerService() {
                     }
 
                     OPEN_PAGE_PATH -> {
-                        val context = this
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val valueToPass =
                             dataMap.getString(PAGE) // Replace "key" with your actual key
-
+                        val context = this
                         scope.launch(Dispatchers.IO) {
                             // Start an activity and pass the extracted value
                             val intent = Intent(context, MainActivity::class.java).apply {

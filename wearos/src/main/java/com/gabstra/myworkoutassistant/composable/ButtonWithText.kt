@@ -20,7 +20,9 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.getContrastRatio
 
 @Composable
-fun ButtonWithText(text: String, enabled:Boolean = true, backgroundColor: Color = MaterialTheme.colors. primary, onClick: () -> Unit) {
+fun ButtonWithText(
+
+    text: String, enabled:Boolean = true, backgroundColor: Color = MaterialTheme.colors.background, onClick: () -> Unit) {
     val textColor = if (getContrastRatio(backgroundColor, Color.Black) > getContrastRatio(backgroundColor, Color.White)) {
         Color.Black
     } else {

@@ -11,6 +11,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import com.gabstra.myworkoutassistant.data.getContrastRatio
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -22,25 +23,27 @@ fun CircleWithNumber(
     circleRadius: Float, // Sets the radius of the circle
     circleColor: Color,
     number: Int, // The number to display inside the circle
-    margin: Float = 0f, // Sets the margin around the circle
     transparency: Float = 1f // Alpha value for transparency
 ) {
+    val textColor = if (getContrastRatio(circleColor, Color.Black) > getContrastRatio(circleColor, Color.White)) {
+        android.graphics.Color.BLACK
+    } else {
+        android.graphics.Color.WHITE
+    }
+
     Canvas(modifier = Modifier.fillMaxSize()) {
         val alphaInt = (transparency * 255).roundToInt().coerceIn(0, 255)
 
-        // Apply a margin to the canvas size
-        val width = size.width - 2 * margin
-        val height = size.height - 2 * margin
+        val center = Offset(size.width / 2, size.height / 2)
 
-        // Adjusted center points considering the margin
-        val centerX = width / 2 + margin
-        val centerY = height / 2 + margin
+        val radius = (minOf(size.width, size.height) / 2) +5f - circleRadius / 2
+
         val angleInRadians = Math.toRadians(baseAngleInDegrees.toDouble()).toFloat()
 
         // Position of the circle's center at the tip of the radius
         val circleCenter = Offset(
-            centerX + (centerX - circleRadius - margin) * cos(angleInRadians),
-            centerY + (centerX - circleRadius - margin) * sin(angleInRadians)
+            x = center.x + radius * cos(angleInRadians),
+            y = center.y + radius * sin(angleInRadians),
         )
 
         // Draw the circle with applied alpha
@@ -52,19 +55,19 @@ fun CircleWithNumber(
 
         // Calculate the maximum font size that fits within the circle
         val paint = Paint().apply {
-            color = android.graphics.Color.BLACK
+            color = textColor
             alpha = alphaInt // Apply alpha to the Paint object
             textAlign = Paint.Align.CENTER
-            typeface = Typeface.DEFAULT_BOLD
+            typeface = Typeface.MONOSPACE
         }
 
-        var fontSize = circleRadius * 1.6f
+        var fontSize = circleRadius * 2f
         val textBounds = android.graphics.Rect()
         paint.textSize = fontSize
         paint.getTextBounds(number.toString(), 0, number.toString().length, textBounds)
 
         // Decrease font size until the text fits within the circle
-        while (textBounds.width() > circleRadius * 1.2 || textBounds.height() > circleRadius * 1.2) {
+        while (textBounds.width() > circleRadius * 1.1 || textBounds.height() > circleRadius * 1.1) {
             fontSize -= 1
             paint.textSize = fontSize
             paint.getTextBounds(number.toString(), 0, number.toString().length, textBounds)

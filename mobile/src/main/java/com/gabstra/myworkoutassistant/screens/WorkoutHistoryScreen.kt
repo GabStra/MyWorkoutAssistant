@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -82,6 +83,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.zoneRanges
+import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -507,13 +509,14 @@ fun WorkoutHistoryScreen(
                                         )
                                     }
                                     Spacer(Modifier.height(5.dp))
-                                    LinearProgressIndicator(
-                                        progress = { progress },
+                                    SimpleProgressIndicator(
+                                        progress = progress,
+                                        trackColor = Color.DarkGray,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(16.dp)
                                             .clip(RoundedCornerShape(16.dp)),
-                                        color = colorsByZone[zone],
+                                        progressBarColor = colorsByZone[zone],
                                     )
                                 }
                             }

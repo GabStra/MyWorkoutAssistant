@@ -176,7 +176,7 @@ fun CustomDialogYesOnLongPress(
                                 closeDialogJob?.cancel()
                                 handleNoClick()
                             },
-                            colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.background)
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
@@ -199,10 +199,10 @@ fun CustomDialogYesOnLongPress(
                                 modifier = Modifier
                                     .size(35.dp)
                                     .clip(CircleShape)
-                                    .background(MaterialTheme.colors.primary),
+                                    .background(MaterialTheme.colors.background),
                                 contentAlignment = Alignment.Center
                             ){
-                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done",tint = Color.Black)
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
                             }
                         }
                     }
@@ -215,7 +215,7 @@ fun CustomDialogYesOnLongPress(
                     modifier = Modifier.fillMaxSize(),
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colors.primary,
-                    trackColor = Color.DarkGray
+                    trackColor = MaterialTheme.colors.background
                 )
             }
         }

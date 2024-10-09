@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composable
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -28,7 +29,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -48,7 +53,9 @@ import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 private fun getProgressIndicatorSegments() = listOf(
     ProgressIndicatorSegment(.166f, colorsByZone[0]),
@@ -97,10 +104,7 @@ fun HeartRateCircularChart(
         }
     }
 
-
-    val segments = remember { getProgressIndicatorSegments() }
-
-    HeartRateView(modifier, hr, isDataStale, mhrPercentage, segments)
+    HeartRateView(modifier, hr, isDataStale, mhrPercentage, colorsByZone)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -113,6 +117,54 @@ fun RowScope.combinedClickable(
     onLongClick = onLongClick
 )
 
+
+@Composable
+private fun RotatingCircle(rotationAngle: Float) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val center = Offset(size.width / 2, size.height / 2)
+
+        val borderRadius = 15f
+
+        val radius = (minOf(size.width, size.height) / 2) +2f - borderRadius / 2
+
+        val angleInRadians = Math.toRadians(rotationAngle.toDouble()).toFloat()
+
+        val borderCenter = Offset(
+            x = center.x + radius * cos(angleInRadians),
+            y = center.y + radius * sin(angleInRadians),
+        )
+
+        drawCircle(
+            color = Color.White,
+            radius = borderRadius,
+            center = borderCenter,
+            style = Fill
+        )
+        drawCircle(
+            color = Color.Black,
+            radius = borderRadius,
+            center = borderCenter,
+            style = Stroke(width = 6f)
+        )
+    }
+}
+
+private fun mapProgressToAngle(progress: Float, colorCount: Int): Float {
+    val baseAngle = 110f
+    val totalAngleRange = 120f
+    val gapAngle = 2f
+    val totalGapAngle = gapAngle * (colorCount - 1)
+    val effectiveAngleRange = totalAngleRange - totalGapAngle
+    val segmentAngleSize = effectiveAngleRange / colorCount
+
+    val segmentIndex = (progress * colorCount).toInt().coerceIn(0, colorCount - 1)
+    val segmentProgress = (progress * colorCount) % 1f
+
+    return baseAngle +
+            (segmentIndex * (segmentAngleSize + gapAngle)) +
+            (segmentProgress * segmentAngleSize)
+}
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HeartRateView(
@@ -120,7 +172,7 @@ private fun HeartRateView(
     hr: Int,
     isDataStale: Boolean,
     mhrPercentage: Float,
-    segments: List<ProgressIndicatorSegment>
+    colors: Array<Color>
 ) {
     val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
     val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
@@ -128,6 +180,10 @@ private fun HeartRateView(
     var isDisplayingHr by remember { mutableStateOf(true) }
     val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "Zone $zone"
     val context = LocalContext.current
+
+    val targetRotationAngle = remember(progress, colors.size) {
+        mapProgressToAngle(progress, colors.size)
+    }
 
     Box(
         modifier = modifier,
@@ -160,17 +216,28 @@ private fun HeartRateView(
             )
         }
 
-        // Progress indicator logic
-        SegmentedProgressIndicator(
-            trackSegments = segments,
-            progress = progress,
-            modifier = Modifier.fillMaxSize(),
-            strokeWidth = 4.dp,
-            paddingAngle = 2f,
-            startAngle = 110f,
-            endAngle = 240f,
-            trackColor = Color.DarkGray,
-        )
+        var accumulatedAngle = 110f
+        val baseGapAngle = 2f
+        val size = 120f / colors.size
+
+        colors.forEach { color ->
+            SegmentedProgressIndicator(
+                trackSegments = listOf(ProgressIndicatorSegment(1f,color)),
+                progress = 1f,
+                modifier = Modifier.fillMaxSize().alpha(1f),
+                strokeWidth = 4.dp,
+                paddingAngle = 2f,
+                startAngle = accumulatedAngle,
+                endAngle = accumulatedAngle + size,
+                trackColor = Color.White,
+            )
+
+            accumulatedAngle += size + baseGapAngle
+        }
+
+        if(hr != 0) {
+            RotatingCircle(targetRotationAngle)
+        }
     }
 }
 

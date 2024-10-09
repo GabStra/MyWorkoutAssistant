@@ -128,7 +128,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                     VibrateOnce(context)
                     permissionLauncherStart.launch(basePermissions.toTypedArray())
                 },
-                backgroundColor = MaterialTheme.colors.primary,
+                backgroundColor = MaterialTheme.colors.background,
                 enabled = hasExercises
             )
         }
@@ -141,7 +141,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                         VibrateOnce(context)
                         permissionLauncherResume.launch(basePermissions.toTypedArray())
                     },
-                    backgroundColor = Color.DarkGray,
+                    backgroundColor = MaterialTheme.colors.background,
                 )
             }
 
@@ -151,7 +151,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                     onClick = {
                         showDeleteDialog = true
                     },
-                    backgroundColor = Color.DarkGray,
+                    backgroundColor = MaterialTheme.colors.background,
                 )
             }
         }
@@ -167,7 +167,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                             Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT).show()
                     }
                 },
-                backgroundColor = Color.DarkGray,
+                backgroundColor = MaterialTheme.colors.background,
                 enabled = hasExercises
             )
         }

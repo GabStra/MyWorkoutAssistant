@@ -60,6 +60,7 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -228,7 +229,7 @@ fun PageCompleteOrSkip(
                     showGoBackDialog = true
                 },
                 enabled = !isHistoryEmpty,
-                backgroundColor = Color.DarkGray
+                backgroundColor = MaterialTheme.colors.background
             )
         }
     }
@@ -299,6 +300,10 @@ fun PageExerciseDetail(
                 is RestSet -> throw IllegalStateException("Rest set should not be here")
             }
         }
+    }
+
+    if(updatedState.set is RestSet || updatedState.currentSetData is RestSetData || updatedState.previousSetData is RestSetData){
+        throw IllegalStateException("Rest set should not be here")
     }
 
     ExerciseDetail(
@@ -381,7 +386,7 @@ fun PageNewSets(
                         viewModel.goToNextState()
                     }
                 },
-                backgroundColor = Color.DarkGray
+                backgroundColor = MaterialTheme.colors.background
             )
         }
         if(isMovementSet && isLastSet){
@@ -395,7 +400,7 @@ fun PageNewSets(
                             viewModel.goToNextState()
                         }
                     },
-                    backgroundColor = Color.DarkGray
+                    backgroundColor = MaterialTheme.colors.background
                 )
             }
         }
@@ -448,6 +453,7 @@ fun ExerciseScreen(
                 fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
             }, label = ""
         ) { updatedState ->
+
             val exercise = viewModel.exercisesById[updatedState.execiseId]!!
             Column(
                 modifier = Modifier

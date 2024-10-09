@@ -206,8 +206,8 @@ fun MyWorkoutAssistantNavHost(
     LaunchedEffect(Unit) {
         updateMobileFlow
             .filterNotNull()
-            .debounce(5000) // Adjust the delay (in milliseconds) as needed
-            .collect { updateMobile ->
+            .debounce(2000) // Adjust the delay (in milliseconds) as needed
+            .collect { _ ->
                 val latestWorkoutHistories = appViewModel.workouts
                     .filter { it.isActive && it.enabled }
                     .mapNotNull { workout ->
@@ -379,7 +379,8 @@ fun MyWorkoutAssistantNavHost(
                             sendWorkoutsToHealthConnect(
                                 healthConnectClient = healthConnectClient,
                                 workouts = appViewModel.workouts,
-                                workoutHistoryDao = workoutHistoryDao
+                                workoutHistoryDao = workoutHistoryDao,
+                                updateAll = true
                             )
                             Toast.makeText(context, "Synced to HealthConnect", Toast.LENGTH_SHORT).show()
                         }catch (e: Exception){

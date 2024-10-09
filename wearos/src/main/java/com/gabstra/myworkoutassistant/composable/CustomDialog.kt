@@ -120,9 +120,9 @@ fun CustomDialog(
                                 handleYesClick()
                             },
                             modifier = Modifier.size(35.dp),
-                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.background)
                         ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done",tint = Color.Black)
+                            Icon(imageVector = Icons.Default.Check, contentDescription = "Done")
                         }
                     }
                 }

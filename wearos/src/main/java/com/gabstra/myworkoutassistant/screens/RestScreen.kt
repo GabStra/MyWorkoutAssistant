@@ -80,9 +80,9 @@ fun NextExerciseInfo(
     val exerciseCount = viewModel.setsByExerciseId.keys.count()
 
     val exercise = viewModel.exercisesById[state.execiseId]!!
-    val exerciseSets = exercise.sets
+    val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-    val setIndex = exerciseSets.indexOfFirst { it === state.set }
+    val setIndex = exerciseSets.indexOf(state.set)
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
@@ -109,23 +109,14 @@ fun NextExerciseInfo(
         }
 
         if (exerciseSets.count() != 1) {
-            Row(
+            Text(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = "Exercise: ${exerciseIndex + 1}/${exerciseCount}",
-                    style = MaterialTheme.typography.caption2
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = "Set: ${setIndex + 1}/${exerciseSets.count()}",
-                    style = MaterialTheme.typography.caption2
-                )
-            }
+                text = "${exerciseIndex + 1}/${exerciseCount} - ${setIndex + 1}/${exerciseSets.count()}",
+                style = MaterialTheme.typography.body1,
+                textAlign = TextAlign.Center
+            )
         }
 
         when (state.set) {
@@ -396,7 +387,7 @@ fun RestScreen(
             endAngle = 70f,
             strokeWidth = 4.dp,
             indicatorColor = MaterialTheme.colors.primary,
-            trackColor = Color.DarkGray
+            trackColor = MaterialTheme.colors.background
         )
 
         hearthRateChart()

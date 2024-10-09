@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -26,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -330,11 +332,17 @@ class AppViewModel : ViewModel(){
 
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
 
+            val exerciseInfos = selectedWorkout.value.workoutComponents.filter { it is Exercise }.mapNotNull {
+                val exercise = it as Exercise
+                exerciseInfoDao.getExerciseInfoById(exercise.id)
+            }
+
             dataClient?.let {
                 sendWorkoutHistoryStore(
                     it,WorkoutHistoryStore(
                         WorkoutHistory = workoutHistory,
-                        ExerciseHistories =  setHistories
+                        ExerciseHistories =  setHistories,
+                        ExerciseInfos = exerciseInfos
                     ))
             }
 
@@ -462,6 +470,8 @@ class AppViewModel : ViewModel(){
 
             executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
 
+            val exerciseInfos = mutableListOf<ExerciseInfo>()
+
             if(isDone){
                 workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
                 workoutHistoryDao.insert(currentWorkoutHistory!!)
@@ -472,6 +482,7 @@ class AppViewModel : ViewModel(){
                 val exerciseHistories = executedSetsHistory.groupBy { it.exerciseId }
 
                 //get only the groups that have the histories with the proporty of set data of type body weight set data or weight set data
+
 
                 val filteredExerciseHistories = exerciseHistories.filter { it.value.any { it.setData is BodyWeightSetData || it.setData is WeightSetData } }
                   filteredExerciseHistories.forEach{
@@ -493,15 +504,19 @@ class AppViewModel : ViewModel(){
                     val exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
 
                     if(exerciseInfo == null){
-                        exerciseInfoDao.insert(com.gabstra.myworkoutassistant.shared.ExerciseInfo(
+                        val newExerciseInfo = ExerciseInfo(
                             id = it.key!!,
                             bestVolume = volume,
                             oneRepMax = 0.0
-                        ))
+                        )
+                        exerciseInfoDao.insert(newExerciseInfo)
+                        exerciseInfos.add(newExerciseInfo)
                     }else{
                         if(exerciseInfo.bestVolume < volume){
                             exerciseInfoDao.updateBestVolume(it.key!!,volume)
                         }
+
+                        exerciseInfos.add(exerciseInfo)
                     }
                 }
             }
@@ -519,7 +534,8 @@ class AppViewModel : ViewModel(){
                     dataClient!!,
                     WorkoutHistoryStore(
                         WorkoutHistory = currentWorkoutHistory!!,
-                        ExerciseHistories =  executedSetsHistory
+                        ExerciseHistories =  executedSetsHistory,
+                        ExerciseInfos = exerciseInfos
                     )
                 )
 
@@ -594,7 +610,7 @@ class AppViewModel : ViewModel(){
     }
 
     inline fun <reified T : SetData> getHistoricalSetsDataByExerciseId(exerciseId: UUID): List<T> {
-        return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) }.map{ latestSetHistoryMap[it.id]!!.setData as T }
+        return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) && latestSetHistoryMap[it.id]!!.setData !is RestSetData }.map{ latestSetHistoryMap[it.id]!!.setData as T }
     }
 
     private fun generateWorkoutStates() {

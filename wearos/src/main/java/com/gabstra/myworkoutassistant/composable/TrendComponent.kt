@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
+import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
+import kotlin.math.roundToInt
 
 
 @SuppressLint("DefaultLocale")
@@ -49,11 +51,11 @@ fun <T : Number> TrendComponent(
 
         if(ratio != 0.0){
             val displayText = when {
-                ratio >= 2 -> String.format("x%.2f", ratio)
-                ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).toInt())
-                ratio > 0 -> String.format("+%.1f%%", (ratio * 100))
-                ratio <= -0.1 -> String.format("%d%%", (ratio * 100).toInt())
-                else -> String.format("%.1f%%", (ratio * 100))
+                ratio >= 1 -> String.format("x%.2f", ratio+1).replace(',','.').replace(".00","")
+                ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).roundToInt())
+                ratio > 0 -> String.format("+%.1f%%", (ratio * 100)).replace(',','.')
+                ratio <= -0.1 -> String.format("%d%%", (ratio * 100).roundToInt())
+                else -> String.format("%.1f%%", (ratio * 100)).replace(',','.')
             }
 
             Text(
@@ -97,9 +99,9 @@ fun TrendComponentProgressBar(
 
         if(ratio != 0.0 && ratio>1){
             val displayText = when {
-                ratio >= 2 -> String.format("x%.2f", ratio)
-                ratio >= 1.1 -> String.format("+%d%%", ((ratio - 1) * 100).toInt())
-                else -> String.format("+%.1f%%", ((ratio - 1) * 100))
+                ratio >= 2 -> String.format("x%.2f", ratio).replace(',','.').replace(".00","")
+                ratio >= 1.1 -> String.format("+%d%%", ((ratio - 1) * 100).roundToInt())
+                else -> String.format("+%.1f%%", ((ratio - 1) * 100)).replace(',','.')
             }
             Text(
                 text = displayText,
@@ -119,10 +121,10 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
             .clip(roundedCornerShape)
             .fillMaxWidth()
     ) {
-        LinearProgressIndicator(
-            progress = { progress },
-            trackColor = Color.DarkGray,
-            color = if(progress>=1) MyColors.Green else Color(0xFFff6700),
+        SimpleProgressIndicator(
+            progress = progress,
+            trackColor = MaterialTheme.colors.background,
+            progressBarColor = if(progress>=1) MyColors.Green else Color(0xFFff6700),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(6.dp)

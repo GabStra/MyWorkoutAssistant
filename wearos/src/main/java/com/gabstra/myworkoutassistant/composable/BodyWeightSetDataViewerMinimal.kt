@@ -19,8 +19,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
 fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
+    val label = if (bodyWeightSetData.actualReps == 1) "rep" else "reps"
     Text(
-        text = "x${bodyWeightSetData.actualReps}",
+        text = "${bodyWeightSetData.actualReps} $label",
         style = style,
         color = color
     )
