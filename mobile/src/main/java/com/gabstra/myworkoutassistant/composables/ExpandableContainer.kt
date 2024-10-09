@@ -46,14 +46,14 @@ fun ExpandableContainer(
                 title(Modifier.weight(1f))
                 if(isExpandable){
                     IconButton(
-                        onClick = { if(isExpandable){
+                        onClick = {
                             openStatus = !openStatus
                             if(openStatus){
                                 onOpen()
                             }else{
                                 onClose()
                             }
-                        } }) {
+                        }) {
                         Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
                     }
                 }

@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.screens.ComponentRenderer
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -36,93 +37,111 @@ fun ExerciseRenderer(
     if(!showRest)
         sets = sets.filter { it !is RestSet }
 
-    ExpandableContainer(
-        isOpen = true,
-        modifier = modifier,
-        isExpandable = sets.isNotEmpty(),
-        title = { m ->
-            Text(
-                modifier = m.fillMaxWidth().padding(horizontal = 10.dp)
-                    .basicMarquee(iterations = Int.MAX_VALUE),
-                text = exercise.name,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-            )
-        },
-        content = {
-            Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                var index = 0
-                sets.forEach() { set ->
-                    if(set !is RestSet){
-                        index += 1
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Set ${index}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-                            )
-                            when (set) {
-                                is WeightSet -> {
-                                    val weightText = if (set.weight % 1 == 0f) {
-                                        "${set.weight.toInt()}"
-                                    } else {
-                                        "${set.weight}"
+    if(sets.isEmpty()){
+        DarkModeContainer(whiteOverlayAlpha = .1f) {
+            Row(
+                modifier = Modifier.padding(15.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ){
+                Text(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
+                        .basicMarquee(iterations = Int.MAX_VALUE),
+                    text = exercise.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                )
+            }
+        }
+    }else{
+        ExpandableContainer(
+            isOpen = true,
+            modifier = modifier,
+            isExpandable = true,
+            title = { m ->
+                Text(
+                    modifier = m.fillMaxWidth().padding(horizontal = 10.dp)
+                        .basicMarquee(iterations = Int.MAX_VALUE),
+                    text = exercise.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                )
+            },
+            content = {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    var index = 0
+                    sets.forEach() { set ->
+                        if(set !is RestSet){
+                            index += 1
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Set $index",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                )
+                                when (set) {
+                                    is WeightSet -> {
+                                        val weightText = if (set.weight % 1 == 0f) {
+                                            "${set.weight.toInt()}"
+                                        } else {
+                                            "${set.weight}"
+                                        }
+
+                                        Text(
+                                            text = "${weightText} kg x ${set.reps}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                        )
                                     }
 
-                                    Text(
-                                        text = "${weightText} kg x ${set.reps}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-                                    )
-                                }
+                                    is BodyWeightSet -> {
+                                        Text(
+                                            text = "${set.reps}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                        )
+                                    }
 
-                                is BodyWeightSet -> {
-                                    Text(
-                                        text = "${set.reps}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-                                    )
-                                }
+                                    is TimedDurationSet -> {
+                                        Text(
+                                            text= formatTime(set.timeInMillis / 1000),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                        )
+                                    }
 
-                                is TimedDurationSet -> {
-                                    Text(
-                                        text= formatTime(set.timeInMillis / 1000),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-                                    )
+                                    is EnduranceSet -> {
+                                        Text(
+                                            formatTime(set.timeInMillis / 1000),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                        )
+                                    }
+                                    else -> throw IllegalArgumentException("Unknown set type")
                                 }
-
-                                is EnduranceSet -> {
-                                    Text(
-                                        formatTime(set.timeInMillis / 1000),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-                                    )
-                                }
-                                else -> throw IllegalArgumentException("Unknown set type")
                             }
-                        }
-                    }else{
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "Rest for: "+formatTime(set.timeInSeconds),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-                            )
+                        }else{
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Rest for: "+formatTime(set.timeInSeconds),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
-    )
+        )
+    }
 }

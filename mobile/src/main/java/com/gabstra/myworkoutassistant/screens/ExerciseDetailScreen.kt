@@ -310,11 +310,8 @@ fun ExerciseDetailScreen(
                                             else -> throw IllegalArgumentException("Unknown type")
                                         }
                                         appViewModel.addSetToExercise(workout, exercise, newSet)
-                                        sets = sets + it
+                                        sets = sets + newSet
                                     }
-
-                                    selectedSets = emptyList()
-                                    isSelectionModeActive = false
                                 }) {
                                 val isEnabled = selectedSets.isNotEmpty()
                                 val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(

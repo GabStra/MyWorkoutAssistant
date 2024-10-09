@@ -305,8 +305,6 @@ fun WorkoutDetailScreen(
 
                                 appViewModel.addWorkoutComponent(workout, newWorkoutComponent)
                             }
-                            selectedWorkoutComponents = emptyList()
-                            isSelectionModeActive = false
                         }) {
                         val isEnabled = selectedWorkoutComponents.isNotEmpty()
                         val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
