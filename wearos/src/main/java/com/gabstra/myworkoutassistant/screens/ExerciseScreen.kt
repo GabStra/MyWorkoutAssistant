@@ -94,7 +94,8 @@ fun ExerciseDetail(
     onEditModeEnabled: () -> Unit,
     onTimerDisabled: () -> Unit,
     onTimerEnabled: () -> Unit,
-    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null
+    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
+    exerciseTitleComposable:  @Composable () -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -106,7 +107,8 @@ fun ExerciseDetail(
             forceStopEditMode = false,
             onEditModeDisabled = onEditModeDisabled,
             onEditModeEnabled = onEditModeEnabled,
-            extraInfo = extraInfo
+            extraInfo = extraInfo,
+            exerciseTitleComposable = exerciseTitleComposable
         )
         is BodyWeightSet -> BodyWeightSetScreen(
             viewModel = viewModel,
@@ -115,7 +117,8 @@ fun ExerciseDetail(
             forceStopEditMode = false,
             onEditModeDisabled = onEditModeDisabled,
             onEditModeEnabled = onEditModeEnabled,
-            extraInfo = extraInfo
+            extraInfo = extraInfo,
+            exerciseTitleComposable = exerciseTitleComposable
         )
         is TimedDurationSet -> TimedDurationSetScreen(
             viewModel = viewModel,
@@ -130,7 +133,8 @@ fun ExerciseDetail(
             },
             onTimerDisabled = onTimerDisabled,
             onTimerEnabled = onTimerEnabled,
-            extraInfo = extraInfo
+            extraInfo = extraInfo,
+            exerciseTitleComposable = exerciseTitleComposable
         )
         is EnduranceSet -> EnduranceSetScreen(
             viewModel = viewModel,
@@ -145,7 +149,8 @@ fun ExerciseDetail(
             },
             onTimerDisabled = onTimerDisabled,
             onTimerEnabled = onTimerEnabled,
-            extraInfo = extraInfo
+            extraInfo = extraInfo,
+            exerciseTitleComposable = exerciseTitleComposable
         )
         is RestSet -> throw IllegalStateException("Rest set should not be here")
     }
@@ -158,6 +163,7 @@ fun SimplifiedHorizontalPager(
     allowHorizontalScrolling: Boolean,
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel,
+    exerciseTitleComposable:  @Composable () -> Unit,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
     val exercise = viewModel.exercisesById[updatedState.execiseId]!!
@@ -171,7 +177,8 @@ fun SimplifiedHorizontalPager(
             0 -> PageExerciseDetail(
                 updatedState = updatedState,
                 viewModel = viewModel,
-                onScrollEnabledChange = { onScrollEnabledChange(it) }
+                onScrollEnabledChange = { onScrollEnabledChange(it) },
+                exerciseTitleComposable = exerciseTitleComposable
             )
             1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
             2 -> PageNewSets(pagerState,updatedState,viewModel)
@@ -284,7 +291,8 @@ fun PageCompleteOrSkip(
 fun PageExerciseDetail(
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel,
-    onScrollEnabledChange: (Boolean) -> Unit
+    onScrollEnabledChange: (Boolean) -> Unit,
+    exerciseTitleComposable:  @Composable () -> Unit,
 ) {
     val extraInfoComposable: @Composable (WorkoutState.Set) -> Unit = {state ->
         Row(
@@ -313,7 +321,8 @@ fun PageExerciseDetail(
         onEditModeEnabled = { onScrollEnabledChange(false) },
         onTimerDisabled = { onScrollEnabledChange(true) },
         onTimerEnabled = { onScrollEnabledChange(false) },
-        extraInfo = if(updatedState.hasNoHistory) null else extraInfoComposable
+        extraInfo = if(updatedState.hasNoHistory) null else extraInfoComposable,
+        exerciseTitleComposable = exerciseTitleComposable
     )
 }
 
@@ -440,6 +449,8 @@ fun ExerciseScreen(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
+
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -462,7 +473,7 @@ fun ExerciseScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
+                /*Text(
                     modifier = Modifier
                         .width(80.dp)
                         .padding(bottom = 5.dp)
@@ -479,7 +490,27 @@ fun ExerciseScreen(
                     style = MaterialTheme.typography.title3,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
-                )
+                )*/
+
+                val exerciseTitleComposable = @Composable{
+                    Text(
+                        modifier = Modifier
+                            .width(110.dp)
+                            .combinedClickable(
+                                onClick = { marqueeEnabled = !marqueeEnabled },
+                                onLongClick = {
+                                    showSkipDialog = true
+                                    VibrateOnce(context)
+                                }
+                            )
+                            .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                        text = exercise.name,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.title3,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 SimplifiedHorizontalPager(
                     modifier = Modifier.fillMaxSize(),
@@ -487,7 +518,8 @@ fun ExerciseScreen(
                     allowHorizontalScrolling = allowHorizontalScrolling,
                     updatedState = updatedState,
                     viewModel = viewModel,
-                    onScrollEnabledChange = { allowHorizontalScrolling = it }
+                    onScrollEnabledChange = { allowHorizontalScrolling = it },
+                    exerciseTitleComposable = exerciseTitleComposable
                 )
             }
         }

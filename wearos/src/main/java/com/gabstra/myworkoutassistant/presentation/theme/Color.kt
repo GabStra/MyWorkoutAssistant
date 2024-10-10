@@ -6,9 +6,9 @@ import androidx.wear.compose.material.Colors
 internal val wearColorPalette: Colors = Colors(
     primary = MyColors.Orange,
     primaryVariant =  Color(0xFFebebeb),
-    secondary = Color(0xFF10EF6A),
+    secondary = MyColors.Green,
     secondaryVariant = Color(0xFF3a6ea5),
-    error = Color.Red,
+    error = Color.hsl(9f, 0.88f, 0.45f),
     onPrimary = Color.White,
     onSecondary = Color.White,
     onError = Color.White,
@@ -18,7 +18,7 @@ internal val wearColorPalette: Colors = Colors(
 class MyColors {
     companion object {
         val Orange = Color(0xFFff6700)
-        val Green = Color(0xFF10EF6A)
-        val ComplementaryGreen = Color(0xFFEF1095)
+        val Green = Color.hsl(113f, 0.79f, 0.34f)
+        val ComplementaryGreen = Color.hsl(9f, 0.88f, 0.45f)
     }
 }

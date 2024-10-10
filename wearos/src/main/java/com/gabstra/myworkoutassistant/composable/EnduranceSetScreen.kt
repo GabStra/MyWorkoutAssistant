@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,7 +57,8 @@ fun EnduranceSetScreen (
     onTimerEnd: () -> Unit,
     onTimerEnabled : () -> Unit,
     onTimerDisabled: () -> Unit,
-    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null
+    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
+    exerciseTitleComposable:  @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -286,18 +288,26 @@ fun EnduranceSetScreen (
         }
         else
         {
-            if(extraInfo != null){
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ){
-                    SetScreen(customModifier = Modifier.weight(1f))
-                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    extraInfo(state)
+            Column(
+                modifier = Modifier.fillMaxSize().padding(top = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ){
+                exerciseTitleComposable()
+                HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                Box(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        SetScreen(customModifier = Modifier)
+                        if (extraInfo != null) {
+                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            extraInfo(state)
+                        }
+                    }
                 }
-            }else{
-                SetScreen(customModifier = Modifier.fillMaxSize())
             }
         }
     }

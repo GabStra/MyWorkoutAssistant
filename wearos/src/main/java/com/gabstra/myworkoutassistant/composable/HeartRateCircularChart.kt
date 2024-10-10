@@ -120,7 +120,7 @@ fun RowScope.combinedClickable(
 
 
 @Composable
-private fun RotatingCircle(rotationAngle: Float,fillColor: Color) {
+private fun RotatingCircle(rotationAngle: Float, fillColor: Color) {
     Canvas(modifier = Modifier.fillMaxSize()) {
         val center = Offset(size.width / 2, size.height / 2)
 
@@ -136,7 +136,7 @@ private fun RotatingCircle(rotationAngle: Float,fillColor: Color) {
         )
 
         drawCircle(
-            color = Color.White,
+            color = fillColor,
             radius = borderRadius,
             center = borderCenter,
             style = Fill

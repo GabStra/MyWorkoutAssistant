@@ -173,6 +173,8 @@ fun RestScreen(
         null
     }
 
+
+
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
@@ -305,7 +307,7 @@ fun RestScreen(
             .fillMaxSize()
             .padding(25.dp)
     ) {
-        if (isTimerInEditMode) {
+        if (isTimerInEditMode && nextWorkoutStateSet!=null) {
             ControlButtonsVertical(
                 modifier = Modifier
                     .wrapContentSize()
@@ -324,8 +326,8 @@ fun RestScreen(
                 }
             )
         } else {
-            textComposable()
             if (nextWorkoutStateSet != null) {
+                textComposable()
                 Spacer(modifier = Modifier.height(5.dp))
                 val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.execiseId]!!
                 CustomHorizontalPager(

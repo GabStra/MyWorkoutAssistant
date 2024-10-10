@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.data.getContrastRatio
 import kotlin.math.cos
@@ -74,6 +75,7 @@ fun CircleWithNumber(
                     text = number.toString(),
                     style = MaterialTheme.typography.body2,
                     color = textColor,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
