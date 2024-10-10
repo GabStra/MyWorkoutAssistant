@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.Calendar
 
 class DataLayerListenerService : WearableListenerService() {
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -132,10 +133,16 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 try{
+                                    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                                    val age =  currentYear - workoutStore.birthDateYear
+                                    val weight = workoutStore.weightKg
+
                                     sendWorkoutsToHealthConnect(
                                         healthConnectClient = healthConnectClient,
                                         workouts = workoutStore.workouts,
-                                        workoutHistoryDao = workoutHistoryDao
+                                        workoutHistoryDao = workoutHistoryDao,
+                                        age = age,
+                                        weightKg = weight
                                     )
                                 }catch (exception: Exception){
                                     Log.e("DataLayerListenerService", "Error sending workouts to HealthConnect", exception)

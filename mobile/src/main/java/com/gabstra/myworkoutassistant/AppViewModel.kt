@@ -103,7 +103,8 @@ class AppViewModel() : ViewModel() {
     var workoutStore by mutableStateOf(WorkoutStore(
         workouts = emptyList(),
         polarDeviceId = null,
-        birthDateYear = 0
+        birthDateYear = 0,
+        weightKg = 0f
     ))
         private set
 

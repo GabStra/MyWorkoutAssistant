@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +23,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import java.util.Calendar
-import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +36,7 @@ fun SettingsScreen(
 
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
+    val weightState = remember { mutableStateOf(workoutStore?.weightKg?.toString() ?: "") }
 
     Box(
         modifier = Modifier
@@ -73,6 +72,21 @@ fun SettingsScreen(
                     .padding(8.dp)
             )
 
+            OutlinedTextField(
+                value = weightState.value,
+                onValueChange = { input ->
+                    if (input.isEmpty() || (input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
+                        // Update the state only if the input is empty or all characters are digits
+                        weightState.value = input
+                    }
+                },
+                label = { Text("Weight (kg)") },
+                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
             Button(
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
@@ -87,7 +101,8 @@ fun SettingsScreen(
 
                     val newWorkoutStore = workoutStore.copy(
                         polarDeviceId = polarDeviceIdState.value,
-                        birthDateYear = birthDateYear
+                        birthDateYear = birthDateYear,
+                        weightKg = weightState.value.toFloatOrNull() ?: 0f
                     )
                     onSave(newWorkoutStore)
                 },

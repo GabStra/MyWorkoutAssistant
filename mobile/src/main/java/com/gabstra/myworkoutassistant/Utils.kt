@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant
 
 import android.content.ContentValues
 import android.content.Context
+import android.health.connect.datatypes.TotalCaloriesBurnedRecord
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -13,6 +14,9 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.metadata.Metadata
+import androidx.health.connect.client.units.Energy
+import androidx.health.connect.client.units.Mass
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -176,11 +180,33 @@ fun getOneRepMax(weight: Float, reps: Int): Float {
     return weight / (1.0278f - (0.0278f * reps))
 }
 
+fun calculateCaloriesBurned(
+    age: Int,
+    weightKg: Double,
+    averageHeartRate: Double,
+    durationMinutes: Double,
+    isMale: Boolean
+): Double {
+    if (age <= 0 || weightKg <= 0 || averageHeartRate <= 0 || durationMinutes <= 0) {
+        throw IllegalArgumentException("All input values must be positive")
+    }
+
+    val caloriesBurned = if (isMale) {
+        (age * 0.2017) + (weightKg * 0.199) + (averageHeartRate * 0.6309) - 55.0969
+    } else {
+        (age * 0.074) - (weightKg * 0.05741) + (averageHeartRate * 0.4472) - 20.4022
+    }
+
+    return caloriesBurned * durationMinutes / 4.184
+}
+
 suspend fun sendWorkoutsToHealthConnect(
     workouts: List<Workout>,
     healthConnectClient: HealthConnectClient,
     workoutHistoryDao: WorkoutHistoryDao,
-    updateAll: Boolean = false
+    updateAll: Boolean = false,
+    age: Int,
+    weightKg: Float
 ) {
     if (workouts.isEmpty()) return
 
@@ -252,7 +278,43 @@ suspend fun sendWorkoutsToHealthConnect(
             )
         }
 
-    healthConnectClient.insertRecords(exerciseSessionRecords + heartRateRecords)
+    val totalCaloriesBurnedRecords = workoutHistories
+    .filter { it.heartBeatRecords.isNotEmpty() }
+        .map { workout ->
+            val avgHeartRate = workout.heartBeatRecords.average()
+
+            val durationMinutes = workout.duration.toDouble() / 60
+            val caloriesBurned = calculateCaloriesBurned(
+                age = age,
+                weightKg = weightKg.toDouble(),
+                averageHeartRate = avgHeartRate,
+                durationMinutes = durationMinutes,
+                isMale = true
+            )
+
+            val startTime = workout.startTime.atZone(ZoneId.systemDefault()).toInstant()
+            val endTime = workout.startTime.plusSeconds(workout.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
+            val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
+
+            androidx.health.connect.client.records.TotalCaloriesBurnedRecord(
+                startTime= startTime,
+                startZoneOffset = zoneOffset,
+                endTime = endTime,
+                endZoneOffset = zoneOffset,
+                energy = Energy.calories(caloriesBurned),
+                metadata = Metadata(
+                    clientRecordId = workout.workoutId.toString()
+                )
+            )
+        }
+
+    val weightRecord = androidx.health.connect.client.records.WeightRecord(
+        time = Instant.now(),
+        zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+        weight = Mass.kilograms(weightKg.toDouble())
+    )
+
+    healthConnectClient.insertRecords(exerciseSessionRecords + heartRateRecords + totalCaloriesBurnedRecords + weightRecord)
 
     for (workoutHistory in workoutHistories) {
         workoutHistoryDao.updateHasBeenSentToHealth(workoutHistory.id, true)

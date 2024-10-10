@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.calculateCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
@@ -95,7 +97,9 @@ import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.delay
+import java.util.Calendar
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -162,6 +166,8 @@ fun WorkoutHistoryScreen(
     val selectedWorkout = workouts.find { it.id == workout.id }!!
 
     val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
+
+    var caloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
@@ -305,6 +311,20 @@ fun WorkoutHistoryScreen(
                 .filter { it.exerciseId != null }
                 .groupBy { it.exerciseId!! }
 
+            val avgHeartRate = selectedWorkoutHistory!!.heartBeatRecords.average()
+
+            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+            val age =  currentYear - appViewModel.workoutStore.birthDateYear
+            val weight = appViewModel.workoutStore.weightKg
+            val durationMinutes = selectedWorkoutHistory!!.duration.toDouble() / 60
+            caloriesBurned = calculateCaloriesBurned(
+                age = age,
+                weightKg = weight.toDouble(),
+                averageHeartRate = avgHeartRate,
+                durationMinutes = durationMinutes,
+                isMale = true
+            )
+
             isLoading = false
         }
     }
@@ -409,10 +429,39 @@ fun WorkoutHistoryScreen(
                 textAlign = TextAlign.Center,
                 color = Color.White.copy(alpha = .87f)
             )
+
+
+
             workoutSelector()
 
+            if(caloriesBurned != 0.0 || !caloriesBurned.isNaN()) {
+                DarkModeContainer(whiteOverlayAlpha = .1f) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth().padding(5.dp),
+                            text = "Calories Burned: ${caloriesBurned.toInt()}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = Color.White.copy(alpha = .87f)
+                        )
+                    }
+                }
+            }
+
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
+                HeartRateChart(
+                    modifier = Modifier.fillMaxWidth(),
+                    cartesianChartModel = heartRateEntryModel!!,
+                    title = "Heart Rate during Workout",
+                    entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
+                    userAge = userAge,
+                )
+
                 ExpandableContainer(
+                    isOpen = true,
                     modifier = Modifier.fillMaxWidth(),
                     isExpandable = zoneCounter != null,
                     title = { modifier ->
@@ -522,14 +571,6 @@ fun WorkoutHistoryScreen(
                             }
                         }
                     })
-
-                HeartRateChart(
-                    modifier = Modifier.fillMaxWidth(),
-                    cartesianChartModel = heartRateEntryModel!!,
-                    title = "Heart Rate during Workout",
-                    entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
-                    userAge = userAge,
-                )
             }
 
             Text(

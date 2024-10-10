@@ -24,8 +24,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
+import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import kotlinx.coroutines.Dispatchers
@@ -42,10 +45,12 @@ fun HealthConnectHandler(
     var hasAllPermissions by remember { mutableStateOf(false) }
 
     val requiredPermissions = setOf(
-        HealthPermission.getReadPermission(ExerciseSessionRecord::class),
         HealthPermission.getWritePermission(ExerciseSessionRecord::class),
+        HealthPermission.getWritePermission(HeartRateRecord::class),
+        HealthPermission.getReadPermission(ExerciseSessionRecord::class),
         HealthPermission.getReadPermission(HeartRateRecord::class),
-        HealthPermission.getWritePermission(HeartRateRecord::class)
+        HealthPermission.getWritePermission(TotalCaloriesBurnedRecord::class),
+        HealthPermission.getWritePermission(WeightRecord::class),
     )
 
     val permissionLauncher = rememberLauncherForActivityResult(

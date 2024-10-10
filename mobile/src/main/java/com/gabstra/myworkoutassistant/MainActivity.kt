@@ -77,6 +77,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -334,9 +335,18 @@ fun MyWorkoutAssistantNavHost(
                             val filename = "my_workout_history_$currentDate.json"
 
                             val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+
+                            val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
+                                workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
+                            }
+
+                            val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
+                                allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
+                            }
+
                             val setHistories = setHistoryDao.getAllSetHistories()
                             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories,exerciseInfos)
+                            val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories,exerciseInfos)
                             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                             writeJsonToDownloadsFolder(context, filename, jsonString)
                             Toast.makeText(
@@ -376,11 +386,17 @@ fun MyWorkoutAssistantNavHost(
                 onSyncToHealthConnectClick = {
                     scope.launch {
                         try{
+                            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                            val age =  currentYear - appViewModel.workoutStore.birthDateYear
+                            val weight = appViewModel.workoutStore.weightKg
+
                             sendWorkoutsToHealthConnect(
                                 healthConnectClient = healthConnectClient,
                                 workouts = appViewModel.workouts,
                                 workoutHistoryDao = workoutHistoryDao,
-                                updateAll = true
+                                updateAll = true,
+                                age = age,
+                                weightKg = weight
                             )
                             Toast.makeText(context, "Synced to HealthConnect", Toast.LENGTH_SHORT).show()
                         }catch (e: Exception){
