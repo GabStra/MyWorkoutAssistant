@@ -263,6 +263,7 @@ fun MyWorkoutAssistantNavHost(
                             val deleteAndInsertJob = launch {
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
+                                exerciseInfoDao.deleteAll()
 
                                 val validWorkoutHistories = appBackup.WorkoutHistories.filter { workoutHistory ->
                                     allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
@@ -275,6 +276,13 @@ fun MyWorkoutAssistantNavHost(
                                 }
 
                                 setHistoryDao.insertAll(*validSetHistories.toTypedArray())
+
+
+                                val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() }
+
+                                val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
+
+                                exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
                             }
 
                             // Wait for the delete and insert operations to complete
@@ -298,6 +306,12 @@ fun MyWorkoutAssistantNavHost(
             }
         }
 
+    try{
+
+    }catch (e: Exception){
+        Log.e("MainActivity", "Error showing workout detail", e)
+        Toast.makeText(context, "Error showing workout detail", Toast.LENGTH_SHORT).show()
+    }
     when (appViewModel.currentScreenData) {
         is ScreenData.Workouts -> {
             WorkoutsScreen(
@@ -475,6 +489,7 @@ fun MyWorkoutAssistantNavHost(
             ) {
                 appViewModel.goBack()
             }
+
         }
 
         is ScreenData.WorkoutHistory -> {

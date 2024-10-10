@@ -65,13 +65,11 @@ fun FormatTime(seconds: Int): String {
 fun VibrateOnce(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    runBlocking {
+    runBlocking(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
-        val vibrationJob = launch {
+        launch {
             vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
         }
-
-        joinAll(vibrationJob)
 
         val elapsedTime = System.currentTimeMillis() - startTime
         if (elapsedTime < 50) {
@@ -83,14 +81,12 @@ fun VibrateOnce(context: Context) {
 fun VibrateTwice(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    runBlocking {
+    runBlocking(Dispatchers.IO) {
         repeat(2) {
             val startTime = System.currentTimeMillis()
-            val vibrationJob = launch {
+            launch {
                 vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
             }
-
-            joinAll(vibrationJob)
 
             val elapsedTime = System.currentTimeMillis() - startTime
             if (elapsedTime < 150) {
@@ -104,14 +100,13 @@ fun VibrateTwice(context: Context) {
 fun VibrateShortImpulse(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    runBlocking {
+    runBlocking(Dispatchers.IO) {
         repeat(3) {
             val startTime = System.currentTimeMillis()
-            val vibrationJob = launch {
+            launch {
                 vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
             }
 
-            joinAll(vibrationJob)
 
             val elapsedTime = System.currentTimeMillis() - startTime
             if (elapsedTime < 150) {
@@ -125,17 +120,16 @@ fun VibrateAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    runBlocking {
+    runBlocking(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
-        val vibrationJob = launch {
+        launch {
             vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
         }
 
-        val beepJob = launch {
+        launch {
             toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50)
         }
 
-        joinAll(vibrationJob, beepJob)
 
         val elapsedTime = System.currentTimeMillis() - startTime
         if (elapsedTime < 50) {
@@ -148,18 +142,16 @@ fun VibrateTwiceAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    runBlocking {
+    runBlocking(Dispatchers.IO) {
         repeat(2) {
             val startTime = System.currentTimeMillis()
-            val vibrationJob = launch {
+            launch {
                 vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
             }
 
-            val beepJob = launch {
+            launch {
                 toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50) // Beep for 100ms
             }
-
-            joinAll(vibrationJob, beepJob)
 
             val elapsedTime = System.currentTimeMillis() - startTime
             if (elapsedTime < 150) {

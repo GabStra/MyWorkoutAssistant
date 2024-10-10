@@ -38,6 +38,8 @@ class DataLayerListenerService : WearableListenerService() {
 
     private var ignoreUntilStartOrEnd = false
 
+    private var transactionId : String? = null
+
     override fun onCreate() {
         super.onCreate()
         val db = AppDatabase.getDatabase(this)
@@ -52,6 +54,7 @@ class DataLayerListenerService : WearableListenerService() {
             putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
         }
         sendBroadcast(intent)
+        transactionId = null
         ignoreUntilStartOrEnd = true
     }
 
@@ -81,12 +84,22 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                         val backupChunk = dataMap.getByteArray("chunk")
 
-                        if(!ignoreUntilStartOrEnd && ((isStart && hasStartedSync) || (backupChunk != null && !hasStartedSync))) {
+                        val transactionId = dataMap.getString("transactionId")
+
+                        if(this.transactionId != null && this.transactionId != transactionId){
+                            return
+                        }
+                        
+                        val shouldStop = (isStart && hasStartedSync) || (backupChunk != null && !hasStartedSync)
+
+                        if(!ignoreUntilStartOrEnd && shouldStop) {
+                            handler.removeCallbacks(timeoutRunnable)
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
                             }
 
                             sendBroadcast(intent)
+                            this.transactionId = null
                             ignoreUntilStartOrEnd = true
                             return
                         }
@@ -100,6 +113,7 @@ class DataLayerListenerService : WearableListenerService() {
                             sendBroadcast(intent)
                             hasStartedSync = true
                             ignoreUntilStartOrEnd = false
+                            this.transactionId = transactionId
                             handler.removeCallbacks(timeoutRunnable)
                             handler.postDelayed(timeoutRunnable, 10000)
                         }
@@ -118,31 +132,34 @@ class DataLayerListenerService : WearableListenerService() {
                         }
 
                         if (isLastChunk) {
-                            handler.removeCallbacks(timeoutRunnable)
-                            val backupData = combineChunks(backupChunks)
-                            val jsonBackup = decompressToString(backupData)
+                            if(!ignoreUntilStartOrEnd){
+                                handler.removeCallbacks(timeoutRunnable)
+                                val backupData = combineChunks(backupChunks)
+                                val jsonBackup = decompressToString(backupData)
 
-                            val appBackup = fromJSONtoAppBackup(jsonBackup)
-                            workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
+                                val appBackup = fromJSONtoAppBackup(jsonBackup)
+                                workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
-                            scope.launch {
-                                workoutHistoryDao.deleteAll()
-                                setHistoryDao.deleteAll()
-                                workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
-                                setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
-                                exerciseInfoDao.deleteAll()
-                                exerciseInfoDao.insertAll(*appBackup.ExerciseInfos.toTypedArray())
+                                scope.launch {
+                                    workoutHistoryDao.deleteAll()
+                                    setHistoryDao.deleteAll()
+                                    workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
+                                    setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
+                                    exerciseInfoDao.deleteAll()
+                                    exerciseInfoDao.insertAll(*appBackup.ExerciseInfos.toTypedArray())
+                                }
+
+                                val intent = Intent(INTENT_ID).apply {
+                                    putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
+                                }
+                                sendBroadcast(intent)
                             }
-
-                            val intent = Intent(INTENT_ID).apply {
-                                putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
-                            }
-                            sendBroadcast(intent)
 
                             backupChunks.clear()
                             expectedChunks = 0
                             hasStartedSync = false
                             ignoreUntilStartOrEnd = false
+                            this.transactionId = null
                         }
                     }
                 }

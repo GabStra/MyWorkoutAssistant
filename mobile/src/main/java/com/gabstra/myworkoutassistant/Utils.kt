@@ -64,10 +64,13 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         val compressedData = compressString(jsonString)
         val chunks = compressedData.asList().chunked(chunkSize)
 
+        val transactionId = UUID.randomUUID().toString()
+
         val startRequest = PutDataMapRequest.create("/backupChunkPath").apply {
             dataMap.putBoolean("isStart", true)
             dataMap.putInt("chunksCount", chunks.size)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            dataMap.putString("transactionId", transactionId)
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(startRequest)
@@ -83,6 +86,7 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                     dataMap.putBoolean("isLastChunk", true)
                 }
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
+                dataMap.putString("transactionId", transactionId)
             }.asPutDataRequest().setUrgent()
 
             dataClient.putDataItem(request)
