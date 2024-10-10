@@ -48,6 +48,7 @@ import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
+import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -119,7 +120,7 @@ fun RowScope.combinedClickable(
 
 
 @Composable
-private fun RotatingCircle(rotationAngle: Float) {
+private fun RotatingCircle(rotationAngle: Float,fillColor: Color) {
     Canvas(modifier = Modifier.fillMaxSize()) {
         val center = Offset(size.width / 2, size.height / 2)
 
@@ -236,7 +237,8 @@ private fun HeartRateView(
         }
 
         if(hr != 0) {
-            RotatingCircle(targetRotationAngle)
+            val rangeIndex = zoneRanges.indexOfFirst { mhrPercentage >= it.first && mhrPercentage <= it.second }
+            RotatingCircle(targetRotationAngle, colors[rangeIndex])
         }
     }
 }

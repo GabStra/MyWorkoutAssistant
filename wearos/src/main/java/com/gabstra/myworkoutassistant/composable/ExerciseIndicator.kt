@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import CircleWithNumber
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -36,7 +37,7 @@ fun ExerciseIndicator(
     val numberOfElementsLeft = totalGroups - (elementsToSkip + exerciseSelection.size)
 
     // Calculate gaps and angles
-    val baseGapAngle = 2f
+    val baseGapAngle = 1f
     val size= 25f
 
     val availableAngle = 130f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
@@ -110,8 +111,8 @@ fun SetIndicator(
     val numberOfElementsLeft = totalGroups - (elementsToSkip + setsSelection.size)
 
     // Calculate gaps and angles
-    val baseGapAngle = 2f
-    val parentGapAngle = 2f
+    val baseGapAngle = 1f
+    val parentGapAngle = 1f
 
     val indicatorSize = 25f
 

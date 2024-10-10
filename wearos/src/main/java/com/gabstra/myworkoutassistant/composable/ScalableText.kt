@@ -30,6 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.Text
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.unit.TextUnit
+
 @Composable
 fun ScalableText(
     modifier: Modifier = Modifier,
@@ -37,35 +41,30 @@ fun ScalableText(
     color: Color = Color.Unspecified,
     style: TextStyle = LocalTextStyle.current,
     textAlign: TextAlign? = null,
+    minTextSize: TextUnit = 12.sp
 ) {
-    var textSize by remember { mutableStateOf(100.sp) } // Start with a large font size
-    var readyToScale by remember { mutableStateOf(false) } // Trigger recalculation
-    var initialRender by remember { mutableStateOf(true) } // Track the first render
+    var textSize by remember { mutableStateOf(100.sp) }
+    var isScaling by remember { mutableStateOf(true) }
+    var isTextVisible by remember { mutableStateOf(false) }
     val density = LocalDensity.current
-    val textMeasurer = rememberTextMeasurer() // Initialize the text measurer
+    val textMeasurer = rememberTextMeasurer()
 
+    val alphaValue by animateFloatAsState(
+        targetValue = if (isTextVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 300), label = ""
+    )
 
-    val minTextSize = 12.sp
-
-    var visibilityAmount by remember { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(readyToScale,initialRender) {
-        val shouldBeInvisible = initialRender || readyToScale
-        visibilityAmount = if(shouldBeInvisible) {
-            0f
-        } else {
-            1f
-        }
+    LaunchedEffect(isScaling) {
+        isTextVisible = !isScaling
     }
 
     BoxWithConstraints(
-        modifier = modifier.alpha(visibilityAmount),
+        modifier = modifier.alpha(alphaValue),
         contentAlignment = Alignment.Center,
     ) {
         val boxWidth = maxWidth
         val boxHeight = maxHeight
 
-        // Measure the text with the current font size
         val textLayoutResult = textMeasurer.measure(
             text = text,
             style = style.copy(fontSize = textSize)
@@ -77,23 +76,17 @@ fun ScalableText(
             maxLines = 1,
             color = color,
             textAlign = textAlign,
-            modifier = Modifier
-                .onGloballyPositioned { coordinates ->
-                    initialRender = false // Update the initial render flag
+            modifier = Modifier.onGloballyPositioned { _ ->
+                val textWidth = with(density) { textLayoutResult.size.width.toDp() }
+                val textHeight = with(density) { textLayoutResult.size.height.toDp() }
 
-                    val textWidth = with(density) { textLayoutResult.size.width.toDp() }
-                    val textHeight = with(density) { textLayoutResult.size.height.toDp() }
-
-                    // If the text exceeds the container's size, trigger scaling
-                    readyToScale = textWidth > boxWidth || textHeight > boxHeight
-                }
+                isScaling = textWidth > boxWidth || textHeight > boxHeight
+            }
         )
 
-        // Use LaunchedEffect to handle scaling in a loop
-        LaunchedEffect(readyToScale) {
-            while (readyToScale) {
-                textSize *= 0.9f // Keep reducing the text size until it fits
-                // Re-measure the text with the new font size
+        LaunchedEffect(isScaling) {
+            while (isScaling) {
+                textSize *= 0.9f
                 val newTextLayoutResult = textMeasurer.measure(
                     text = text,
                     style = style.copy(fontSize = textSize)
@@ -102,7 +95,7 @@ fun ScalableText(
                 val newTextHeight = with(density) { newTextLayoutResult.size.height.toDp() }
 
                 if ((newTextWidth <= boxWidth && newTextHeight <= boxHeight) || textSize <= minTextSize) {
-                    readyToScale = false // Stop scaling once it fits
+                    isScaling = false
                 }
             }
         }

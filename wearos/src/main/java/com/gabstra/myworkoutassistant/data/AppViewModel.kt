@@ -79,7 +79,8 @@ class AppViewModel : ViewModel(){
             WorkoutStore(
                 workouts = emptyList(),
                 polarDeviceId = null,
-                birthDateYear = 0
+                birthDateYear = 0,
+                weightKg = 0f
         )
     )
 
