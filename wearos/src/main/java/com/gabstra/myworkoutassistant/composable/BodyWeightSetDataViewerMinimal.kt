@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -20,9 +21,17 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 @Composable
 fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
     val label = if (bodyWeightSetData.actualReps == 1) "rep" else "reps"
-    Text(
-        text = "${bodyWeightSetData.actualReps} $label",
-        style = style,
-        color = color
-    )
+    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
+        Text(
+            text = "${bodyWeightSetData.actualReps}",
+            style = style,
+            color = color
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = label,
+            style = style.copy(fontSize = style.fontSize * 0.625f),
+            textAlign = TextAlign.Center
+        )
+    }
 }

@@ -32,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -56,7 +55,7 @@ import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -223,7 +222,7 @@ fun PageCompleteOrSkip(
             ButtonWithText(
                 text = "Next",
                 onClick = {
-                    VibrateOnce(context)
+                    VibrateGentle(context)
                     showConfirmDialog = true
                 },
             )
@@ -232,7 +231,7 @@ fun PageCompleteOrSkip(
             ButtonWithText(
                 text = "Back",
                 onClick = {
-                    VibrateOnce(context)
+                    VibrateGentle(context)
                     showGoBackDialog = true
                 },
                 enabled = !isHistoryEmpty,
@@ -246,7 +245,7 @@ fun PageCompleteOrSkip(
         title = "Complete exercise",
         message = "Do you want to save this data?",
         handleYesClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             viewModel.storeSetData()
             viewModel.pushAndStoreWorkoutData(false,context){
                 viewModel.upsertWorkoutRecord(updatedState.set.id)
@@ -257,7 +256,7 @@ fun PageCompleteOrSkip(
         },
         handleNoClick = {
             showConfirmDialog = false
-            VibrateOnce(context)
+            VibrateGentle(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
@@ -271,13 +270,13 @@ fun PageCompleteOrSkip(
         title = "Go to previous set",
         message = "Do you want to go back?",
         handleYesClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             viewModel.goToPreviousSet()
             showGoBackDialog = false
         },
         handleNoClick = {
             showGoBackDialog = false
-            VibrateOnce(context)
+            VibrateGentle(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
@@ -349,7 +348,7 @@ fun PageNotes(notes: String) {
                 text = notes.ifEmpty { "NOT AVAILABLE" },
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.body1,
-                textAlign = TextAlign.Start
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -389,10 +388,9 @@ fun PageNewSets(
             ButtonWithText(
                 text = "Add Set",
                 onClick = {
-                    VibrateOnce(context)
+                    VibrateGentle(context)
                     viewModel.pushAndStoreWorkoutData(false,context){
                         viewModel.addNewSetStandard()
-                        viewModel.goToNextState()
                     }
                 },
                 backgroundColor = MaterialTheme.colors.background
@@ -403,10 +401,9 @@ fun PageNewSets(
                 ButtonWithText(
                     text = "Add Rest-Pause Set",
                     onClick = {
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                         viewModel.pushAndStoreWorkoutData(false,context){
                             viewModel.addNewRestPauseSet()
-                            viewModel.goToNextState()
                         }
                     },
                     backgroundColor = MaterialTheme.colors.background
@@ -495,12 +492,12 @@ fun ExerciseScreen(
                 val exerciseTitleComposable = @Composable{
                     Text(
                         modifier = Modifier
-                            .width(110.dp)
+                            .width(100.dp)
                             .combinedClickable(
                                 onClick = { marqueeEnabled = !marqueeEnabled },
                                 onLongClick = {
                                     showSkipDialog = true
-                                    VibrateOnce(context)
+                                    VibrateGentle(context)
                                 }
                             )
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
@@ -545,13 +542,13 @@ fun ExerciseScreen(
         title = "Skip exercise",
         message = "Do you want to skip this exercise?",
         handleYesClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             viewModel.skipExercise()
             showSkipDialog = false
         },
         handleNoClick = {
             showSkipDialog = false
-            VibrateOnce(context)
+            VibrateGentle(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {

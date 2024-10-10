@@ -1,9 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.runtime.Composable
@@ -24,7 +21,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -39,7 +35,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import kotlinx.coroutines.delay
@@ -113,7 +109,7 @@ fun PreparingPolarScreen(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
                 Button(
                     onClick = {
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                         viewModel.goToNextState()
                         viewModel.setWorkoutStart()
                         onReady()

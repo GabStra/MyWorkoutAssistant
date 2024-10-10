@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -10,16 +9,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable;
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,7 +31,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,10 +49,9 @@ import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
-import com.gabstra.myworkoutassistant.data.VibrateAndBeep
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateTwice
-import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -86,13 +83,32 @@ fun NextExerciseInfo(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-
     Column(
         modifier = Modifier
-            .size(160.dp, 190.dp),
+            .fillMaxHeight()
+            .width(190.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        val text = if(exerciseSets.count() != 1) {
+            "${exerciseIndex + 1}/${exerciseCount} - ${setIndex + 1}/${exerciseSets.count()}"
+        } else {
+            "${exerciseIndex + 1}/${exerciseCount}"
+        }
+        Row( modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Text(
+                text = "Next",
+                style = MaterialTheme.typography.caption3,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.caption3,
+                textAlign = TextAlign.Center
+            )
+        }
+
         Box(modifier = Modifier
             .width(140.dp)
             .clickable { marqueeEnabled = !marqueeEnabled }
@@ -107,18 +123,6 @@ fun NextExerciseInfo(
                 overflow = TextOverflow.Ellipsis
             )
         }
-
-        if (exerciseSets.count() != 1) {
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 5.dp),
-                text = "${exerciseIndex + 1}/${exerciseCount} - ${setIndex + 1}/${exerciseSets.count()}",
-                style = MaterialTheme.typography.body1,
-                textAlign = TextAlign.Center
-            )
-        }
-
         when (state.set) {
             is WeightSet -> WeightSetDataViewerMinimal(
                 state.currentSetData as WeightSetData
@@ -205,7 +209,7 @@ fun RestScreen(
             val newTimerValue = currentSeconds - 5
             currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
             currentSeconds = newTimerValue
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
         updateInteractionTime()
     }
@@ -214,7 +218,7 @@ fun RestScreen(
         val newTimerValue = currentSeconds + 5
         currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
         currentSeconds = newTimerValue
-        VibrateOnce(context)
+        VibrateGentle(context)
         updateInteractionTime()
     }
 
@@ -230,14 +234,14 @@ fun RestScreen(
                 )
 
                 if (currentSeconds in 1..3) {
-                    VibrateAndBeep(context)
+                    VibrateHard(context)
                 }
             }
 
             state.currentSetData = currentSetData.copy(
                 endTimer = 0
             )
-            VibrateTwiceAndBeep(context)
+            VibrateTwice(context)
             onTimerEnd()
         }
 
@@ -284,7 +288,7 @@ fun RestScreen(
                         onLongClick = {
                             isTimerInEditMode = !isTimerInEditMode
                             updateInteractionTime()
-                            VibrateOnce(context)
+                            VibrateGentle(context)
                         },
                         onDoubleClick = {
                             if (timerJob?.isActive != true) return@combinedClickable
@@ -327,45 +331,51 @@ fun RestScreen(
             )
         } else {
             if (nextWorkoutStateSet != null) {
-                textComposable()
-                Spacer(modifier = Modifier.height(5.dp))
-                val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.execiseId]!!
-                CustomHorizontalPager(
-                    modifier = Modifier
-                        .fillMaxSize(),
-                    pagerState = pagerState,
-                    userScrollEnabled = true
-                ) { page ->
-                    when (page) {
-                        0 -> {
-                            NextExerciseInfo(viewModel, nextWorkoutStateSet)
-                        }
-                        1 -> {
-                            Box {
-                                Text(
-                                    modifier = Modifier.fillMaxSize(),
-                                    text = "Notes",
-                                    style = MaterialTheme.typography.body1,
-                                    textAlign = TextAlign.Center
-                                )
-                                val scrollState = rememberScrollState()
-                                val notes = nextExercise.notes
-                                Box(
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    Row {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(20.dp, 25.dp, 20.dp, 25.dp)
-                                                .verticalScroll(scrollState)
-                                        ) {
-                                            Text(
-                                                text = notes.ifEmpty { "NOT AVAILABLE" },
-                                                modifier = Modifier.fillMaxWidth(),
-                                                style = MaterialTheme.typography.body1,
-                                                textAlign = TextAlign.Start
-                                            )
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    textComposable()
+                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                    val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.execiseId]!!
+                    CustomHorizontalPager(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        pagerState = pagerState,
+                        userScrollEnabled = true
+                    ) { page ->
+                        when (page) {
+                            0 -> {
+                                NextExerciseInfo(viewModel, nextWorkoutStateSet)
+                            }
+                            1 -> {
+                                Box {
+                                    Text(
+                                        modifier = Modifier.fillMaxSize(),
+                                        text = "Notes",
+                                        style = MaterialTheme.typography.body1,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    val scrollState = rememberScrollState()
+                                    val notes = nextExercise.notes
+                                    Box(
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        Row {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(0.dp, 25.dp, 0.dp, 25.dp)
+                                                    .verticalScroll(scrollState)
+                                            ) {
+                                                Text(
+                                                    text = notes.ifEmpty { "NOT AVAILABLE" },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    style = MaterialTheme.typography.body1,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -400,7 +410,7 @@ fun RestScreen(
         title = "Skip rest",
         message = "Do you want to proceed?",
         handleYesClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             state.currentSetData = currentSetData.copy(
                 endTimer =  currentSeconds
             )
@@ -408,7 +418,7 @@ fun RestScreen(
             showSkipDialog = false
         },
         handleNoClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             showSkipDialog = false
             startTimerJob()
         },

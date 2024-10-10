@@ -1,11 +1,8 @@
 package com.gabstra.myworkoutassistant.composable
 
-import android.util.Log
 import android.widget.Toast
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,10 +19,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +37,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
@@ -55,7 +50,6 @@ import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.cos
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private fun getProgressIndicatorSegments() = listOf(
@@ -201,7 +195,7 @@ private fun HeartRateView(
                     onClick = { },
                     onLongClick = {
                         isDisplayingHr = !isDisplayingHr
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                     }
                 )
         ) {

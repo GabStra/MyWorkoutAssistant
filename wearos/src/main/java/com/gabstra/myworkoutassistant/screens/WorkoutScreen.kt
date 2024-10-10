@@ -1,60 +1,39 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.CurrentTime
-import com.gabstra.myworkoutassistant.composable.CustomDialog
 import com.gabstra.myworkoutassistant.composable.HeartRatePolar
 import com.gabstra.myworkoutassistant.composable.HeartRateStandard
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
-import com.gabstra.myworkoutassistant.data.VibrateOnce
-import com.gabstra.myworkoutassistant.data.findActivity
+import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
-import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
@@ -101,7 +80,7 @@ fun WorkoutScreen(
         show = showWorkoutInProgressDialog,
         title = "Workout in progress",
         handleYesClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             //viewModel.pushAndStoreWorkoutData(false,context)
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()
@@ -117,7 +96,7 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog = false
         },
         handleNoClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
         },

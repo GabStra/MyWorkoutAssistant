@@ -141,11 +141,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
                                 scope.launch {
-                                    workoutHistoryDao.deleteAll()
-                                    setHistoryDao.deleteAll()
                                     workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
                                     setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
-                                    exerciseInfoDao.deleteAll()
                                     exerciseInfoDao.insertAll(*appBackup.ExerciseInfos.toTypedArray())
                                 }
 

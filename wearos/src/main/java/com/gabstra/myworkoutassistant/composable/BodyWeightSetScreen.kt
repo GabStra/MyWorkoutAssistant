@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
@@ -137,7 +137,7 @@ fun BodyWeightSetScreen(
                 actualReps = currentSet.actualReps-1
             )
 
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
     }
 
@@ -148,7 +148,7 @@ fun BodyWeightSetScreen(
                 actualReps = currentSet.actualReps+1
             )
 
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
     }
 
@@ -165,7 +165,7 @@ fun BodyWeightSetScreen(
                             updateInteractionTime()
                         }
 
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                     },
                     onDoubleClick = {
                         if (isRepsInEditMode) {
@@ -189,7 +189,7 @@ fun BodyWeightSetScreen(
             val label = if (currentSet.actualReps == 1) "rep" else "reps"
             Text(
                 text = label,
-                style = MaterialTheme.typography.caption3,
+                style = MaterialTheme.typography.title1.copy(fontSize = MaterialTheme.typography.title1.fontSize * 0.39f),
                 modifier = Modifier.padding(bottom = 5.dp),
             )
         }
@@ -275,15 +275,18 @@ fun BodyWeightSetScreen(
             ){
                 exerciseTitleComposable()
                 HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Column(
+                Box(
                     modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    SetScreen(customModifier = Modifier)
-                    if (extraInfo != null) {
-                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                        extraInfo(state)
+                ){
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        SetScreen(customModifier = Modifier)
+                        if (extraInfo != null) {
+                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            extraInfo(state)
+                        }
                     }
                 }
             }

@@ -35,10 +35,9 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
-import com.gabstra.myworkoutassistant.data.VibrateAndBeep
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateTwice
-import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -115,7 +114,7 @@ fun TimedDurationSetScreen(
             val newTimerValue = currentSet.startTimer - 5000
             currentSet = currentSet.copy(startTimer = newTimerValue)
             currentMillis = newTimerValue
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
         updateInteractionTime()
     }
@@ -124,7 +123,7 @@ fun TimedDurationSetScreen(
         val newTimerValue = currentSet.startTimer + 5000
         currentSet = currentSet.copy(startTimer = newTimerValue)
         currentMillis = newTimerValue
-        VibrateOnce(context)
+        VibrateGentle(context)
         updateInteractionTime()
     }
 
@@ -141,14 +140,14 @@ fun TimedDurationSetScreen(
                 )
 
                 if (currentMillis in 1..3000) {
-                    VibrateAndBeep(context)
+                    VibrateHard(context)
                 }
             }
 
             state.currentSetData = currentSet.copy(
                 endTimer = 0
             )
-            VibrateTwiceAndBeep(context)
+            VibrateTwice(context)
             onTimerEnd()
         }
 
@@ -160,13 +159,13 @@ fun TimedDurationSetScreen(
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateAndBeep(context)
+            VibrateHard(context)
             delay(1000)
-            VibrateAndBeep(context)
+            VibrateHard(context)
             delay(1000)
-            VibrateAndBeep(context)
+            VibrateHard(context)
             delay(1000)
-            VibrateTwiceAndBeep(context)
+            VibrateTwice(context)
             delay(500)
             startTimerJob()
         }
@@ -204,7 +203,7 @@ fun TimedDurationSetScreen(
                             if (showStartButton) {
                                 isTimerInEditMode = !isTimerInEditMode
                                 updateInteractionTime()
-                                VibrateOnce(context)
+                                VibrateGentle(context)
                             }
                         },
                         onDoubleClick = {
@@ -234,7 +233,7 @@ fun TimedDurationSetScreen(
                 EnhancedButton(
                     boxModifier = Modifier.weight(1f),
                     onClick = {
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                         startTimerJob()
                         showStartButton=false
                     },
@@ -247,7 +246,7 @@ fun TimedDurationSetScreen(
                 EnhancedButton(
                     boxModifier = Modifier.weight(1f).alpha(if(timerJob?.isActive == true) 1f else 0f),
                     onClick = {
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                         timerJob?.cancel()
                         showStopDialog = true
                     },
@@ -292,15 +291,19 @@ fun TimedDurationSetScreen(
             ){
                 exerciseTitleComposable()
                 HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Column(
+                Box(
                     modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    SetScreen(customModifier = Modifier)
-                    if (extraInfo != null) {
-                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                        extraInfo(state)
+                    contentAlignment = Alignment.Center
+                ){
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        SetScreen(customModifier = Modifier)
+                        if (extraInfo != null) {
+                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            extraInfo(state)
+                        }
                     }
                 }
             }
@@ -312,7 +315,7 @@ fun TimedDurationSetScreen(
         title = "Stop exercise",
         message = "Do you want to stop this exercise?",
         handleYesClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             state.currentSetData = currentSet.copy(
                 endTimer =  currentMillis
             )
@@ -321,7 +324,7 @@ fun TimedDurationSetScreen(
             showStopDialog = false
         },
         handleNoClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             showStopDialog = false
             startTimerJob()
         },

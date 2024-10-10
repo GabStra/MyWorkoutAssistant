@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.media.AudioManager
 import android.media.ToneGenerator
-import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.widget.Toast
@@ -36,19 +35,18 @@ import com.google.android.horologist.data.AppHelperResultCode
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.concurrent.CancellationException
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 
@@ -62,100 +60,105 @@ fun FormatTime(seconds: Int): String {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
 }
-fun VibrateOnce(context: Context) {
+
+
+@OptIn(DelicateCoroutinesApi::class)
+fun VibrateHard(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    runBlocking(Dispatchers.IO) {
-        val startTime = System.currentTimeMillis()
-        launch {
-            vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
-        }
-
-        val elapsedTime = System.currentTimeMillis() - startTime
-        if (elapsedTime < 50) {
-            delay(50 - elapsedTime)
+    GlobalScope.launch(Dispatchers.IO) {
+        launch{
+            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 }
 
+@OptIn(DelicateCoroutinesApi::class)
+fun VibrateGentle(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+
+    GlobalScope.launch(Dispatchers.IO) {
+        launch{
+            vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+        }
+    }
+}
+
+@OptIn(DelicateCoroutinesApi::class)
 fun VibrateTwice(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    runBlocking(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.IO) {
         repeat(2) {
             val startTime = System.currentTimeMillis()
-            launch {
-                vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            launch{
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
-
             val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime < 150) {
-                delay(150 - elapsedTime)
+            if (elapsedTime < 200) {
+                delay(200 - elapsedTime)
             }
         }
     }
 }
 
 // Trigger vibration: two short impulses with a gap in between.
+@OptIn(DelicateCoroutinesApi::class)
 fun VibrateShortImpulse(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    runBlocking(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.IO) {
         repeat(3) {
             val startTime = System.currentTimeMillis()
-            launch {
-                vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            launch{
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
 
-
             val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime < 150) {
-                delay(150 - elapsedTime)
+            if (elapsedTime < 200) {
+                delay(200 - elapsedTime)
             }
         }
     }
 }
 
+@OptIn(DelicateCoroutinesApi::class)
 fun VibrateAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    runBlocking(Dispatchers.IO) {
-        val startTime = System.currentTimeMillis()
-        launch {
-            vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+    GlobalScope.launch(Dispatchers.IO) {
+        val vibratorJob = launch(start = CoroutineStart.LAZY){
+            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
         }
 
-        launch {
-            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50)
+        val toneJob= launch(start = CoroutineStart.LAZY){
+            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
         }
-
-
-        val elapsedTime = System.currentTimeMillis() - startTime
-        if (elapsedTime < 50) {
-            delay(50 - elapsedTime)
-        }
+        joinAll(toneJob,vibratorJob)
     }
 }
 
+@OptIn(DelicateCoroutinesApi::class)
 fun VibrateTwiceAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    runBlocking(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.IO) {
         repeat(2) {
             val startTime = System.currentTimeMillis()
-            launch {
-                vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            val vibratorJob = launch(start = CoroutineStart.LAZY){
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
 
-            launch {
-                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 50) // Beep for 100ms
+            val toneJob = launch(start = CoroutineStart.LAZY){
+                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
             }
+            joinAll(toneJob,vibratorJob)
 
             val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime < 150) {
-                delay(150 - elapsedTime)
+            if (elapsedTime < 200) {
+                delay(200 - elapsedTime)
             }
         }
     }

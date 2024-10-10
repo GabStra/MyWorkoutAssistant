@@ -36,10 +36,9 @@ import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 
 import com.gabstra.myworkoutassistant.data.FormatTime
-import com.gabstra.myworkoutassistant.data.VibrateAndBeep
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateTwice
-import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -112,14 +111,14 @@ fun EnduranceSetScreen (
     fun onMinusClick(){
         if (currentSet.startTimer > 5000){
             currentSet = currentSet.copy(startTimer = currentSet.startTimer - 5000)
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
         updateInteractionTime()
     }
 
     fun onPlusClick(){
         currentSet = currentSet.copy(startTimer = currentSet.startTimer + 5000)
-        VibrateOnce(context)
+        VibrateGentle(context)
         updateInteractionTime()
     }
 
@@ -139,7 +138,7 @@ fun EnduranceSetScreen (
                         if (showStartButton) {
                             isTimerInEditMode = !isTimerInEditMode
                             updateInteractionTime()
-                            VibrateOnce(context)
+                            VibrateGentle(context)
                         }
                     },
                     onDoubleClick = {
@@ -173,11 +172,11 @@ fun EnduranceSetScreen (
                 if(isOverLimit) continue
 
                 if (currentMillis >= (currentSet.startTimer-3000) && currentMillis < currentSet.startTimer) {
-                    VibrateAndBeep(context)
+                    VibrateHard(context)
                 }
 
                 if(currentMillis >= currentSet.startTimer){
-                    VibrateTwiceAndBeep(context)
+                    VibrateTwice(context)
                     if(set.autoStop) break
                     else isOverLimit = true
                 }
@@ -213,13 +212,13 @@ fun EnduranceSetScreen (
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateAndBeep(context)
+            VibrateHard(context)
             delay(1000)
-            VibrateAndBeep(context)
+            VibrateHard(context)
             delay(1000)
-            VibrateAndBeep(context)
+            VibrateHard(context)
             delay(1000)
-            VibrateTwiceAndBeep(context)
+            VibrateTwice(context)
             delay(500)
             startTimerJob()
         }
@@ -237,7 +236,7 @@ fun EnduranceSetScreen (
                 EnhancedButton(
                     boxModifier = Modifier.weight(1f),
                     onClick = {
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                         startTimerJob()
                         showStartButton = false
                     },
@@ -250,7 +249,7 @@ fun EnduranceSetScreen (
                 EnhancedButton(
                     boxModifier = Modifier.weight(1f).alpha(if(timerJob?.isActive == true) 1f else 0f),
                     onClick = {
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                         timerJob?.cancel()
                         showStopDialog = true
                     },
@@ -295,15 +294,19 @@ fun EnduranceSetScreen (
             ){
                 exerciseTitleComposable()
                 HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Column(
+                Box(
                     modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    SetScreen(customModifier = Modifier)
-                    if (extraInfo != null) {
-                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                        extraInfo(state)
+                    contentAlignment = Alignment.Center
+                ){
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        SetScreen(customModifier = Modifier)
+                        if (extraInfo != null) {
+                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            extraInfo(state)
+                        }
                     }
                 }
             }
@@ -315,7 +318,7 @@ fun EnduranceSetScreen (
         title = "Stop exercise",
         message = "Do you want to stop this exercise?",
         handleYesClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             state.currentSetData = currentSet.copy(
                 endTimer = currentMillis
             )
@@ -324,7 +327,7 @@ fun EnduranceSetScreen (
             showStopDialog = false
         },
         handleNoClick = {
-            VibrateOnce(context)
+            VibrateGentle(context)
             showStopDialog = false
             startTimerJob()
         },

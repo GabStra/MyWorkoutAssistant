@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -24,9 +25,31 @@ fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, style: TextStyle = 
         "${weightSetData.actualWeight}"
     }
 
-    Text(
-        text = "$weightText kg x ${weightSetData.actualReps}",
-        style = style,
-        color = color
-    )
+    val repLabel = if (weightSetData.actualReps == 1) "rep" else "reps"
+
+    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
+        Text(
+            text = weightText,
+            style = style,
+            color = color
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = "kg",
+            style = style.copy(fontSize = style.fontSize * 0.625f),
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = "${weightSetData.actualReps}",
+            style = style,
+            color = color
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = repLabel,
+            style = style.copy(fontSize = style.fontSize * 0.625f),
+            textAlign = TextAlign.Center
+        )
+    }
 }

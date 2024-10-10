@@ -371,40 +371,38 @@ class AppViewModel : ViewModel(){
     fun addNewSetStandard(){
         if (_workoutState.value !is WorkoutState.Set) return
         val currentState = _workoutState.value as WorkoutState.Set
-        val exercise = exercisesById[currentState.execiseId] ?: return
 
         val newRestSet = RestSet(UUID.randomUUID(),90)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercise, newRestSet, null))
+        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newRestSet, null))
         val newSet = getNewSet(currentState.set)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercise, newSet, null))
+        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newSet, null))
 
-        RefreshAndGoToLastState()
+        RefreshAndGoToNextState()
     }
 
     fun addNewRestPauseSet(){
         if (_workoutState.value !is WorkoutState.Set) return
         val currentState = _workoutState.value as WorkoutState.Set
         if (currentState.set !is BodyWeightSet && currentState.set !is WeightSet) return
-        val exercise = exercisesById[currentState.execiseId] ?: return
 
         val newRestSet = RestSet(UUID.randomUUID(),20)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercise, newRestSet, null))
-        var newSet = getNewSet(currentState.set)
-
-        if(newSet is WeightSet ){
-            newSet = newSet.copy(reps = 3)
+        _selectedWorkout.value = _selectedWorkout.value.copy(
+            workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newRestSet, null)
+        )
+        val newSet = when(val new = getNewSet(currentState.set)){
+            is BodyWeightSet ->  new.copy(reps = 3)
+            is WeightSet -> new.copy(reps = 3)
+            else -> throw IllegalArgumentException("Unknown set type")
         }
 
-        if(newSet is BodyWeightSet){
-            newSet = newSet.copy(reps = 3)
-        }
+        _selectedWorkout.value = _selectedWorkout.value.copy(
+            workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newSet, null)
+        )
 
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercise, newSet, null))
-
-        RefreshAndGoToLastState()
+        RefreshAndGoToNextState()
     }
 
-    fun RefreshAndGoToLastState(){
+    private fun RefreshAndGoToNextState(){
         viewModelScope.launch(Dispatchers.IO) {
             if(_isRefreshing.value || (_workoutState.value !is WorkoutState.Set && _workoutState.value !is WorkoutState.Rest)) return@launch
 
@@ -427,8 +425,6 @@ class AppViewModel : ViewModel(){
             _workoutState.value = workoutStateQueue.pollFirst()!!
 
             while (_workoutState.value !is WorkoutState.Finished) {
-                goToNextState()
-
                 val currentSetId = when(_workoutState.value){
                     is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
                     is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
@@ -438,7 +434,14 @@ class AppViewModel : ViewModel(){
                 if (currentSetId == targetSetId) {
                     break
                 }
+
+                goToNextState()
             }
+
+            if(_workoutState.value !is WorkoutState.Finished){
+                goToNextState()
+            }
+
             _isRefreshing.value = false
         }
     }

@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
 
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -28,19 +27,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.VibrateOnce
+import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.delay
@@ -163,14 +160,14 @@ fun WeightSetScreen (
                 actualReps = currentSet.actualReps-1
             )
 
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
         if (isWeightInEditMode && (currentSet.actualWeight > 0)){
             currentSet = currentSet.copy(
                 actualWeight = currentSet.actualWeight.minus(0.5F)
             )
 
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
 
     }
@@ -182,14 +179,14 @@ fun WeightSetScreen (
                 actualReps = currentSet.actualReps+1
             )
 
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
         if (isWeightInEditMode){
             currentSet = currentSet.copy(
                 actualWeight = currentSet.actualWeight.plus(0.5F)
             )
 
-            VibrateOnce(context)
+            VibrateGentle(context)
         }
     }
 
@@ -207,7 +204,7 @@ fun WeightSetScreen (
                             isWeightInEditMode = false
                         }
 
-                        VibrateOnce(context)
+                        VibrateGentle(context)
                     },
                     onDoubleClick = {
                         if (isRepsInEditMode) {
@@ -234,7 +231,7 @@ fun WeightSetScreen (
                 val label = if (currentSet.actualReps == 1) "rep" else "reps"
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.caption3,
+                    style = MaterialTheme.typography.title1.copy(fontSize = MaterialTheme.typography.title1.fontSize * 0.39f),
                     modifier = Modifier.padding(bottom = 5.dp),
                 )
             }
@@ -254,7 +251,7 @@ fun WeightSetScreen (
                                 updateInteractionTime()
                                 isRepsInEditMode = false
                             }
-                            VibrateOnce(context)
+                            VibrateGentle(context)
                         },
                         onDoubleClick = {
                             if (isWeightInEditMode) {
@@ -285,7 +282,7 @@ fun WeightSetScreen (
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "kg",
-                    style = MaterialTheme.typography.caption3,
+                    style = MaterialTheme.typography.title1.copy(fontSize = MaterialTheme.typography.title1.fontSize * 0.39f),
                     modifier = Modifier.padding(bottom = 5.dp),
                 )
             }
@@ -308,9 +305,9 @@ fun WeightSetScreen (
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    RepsRow(Modifier)
-                    Spacer(modifier = Modifier.width(5.dp))
                     WeightRow(Modifier)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    RepsRow(Modifier)
                 }
 
                 if(bestTotalVolume != null && bestTotalVolume!! > 0 && (currentTotalVolume >= lastTotalVolume || bestTotalVolume == lastTotalVolume) ) {
@@ -383,15 +380,18 @@ fun WeightSetScreen (
             ){
                 exerciseTitleComposable()
                 HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Column(
+                Box(
                     modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    SetScreen(customModifier = Modifier)
-                    if (extraInfo != null) {
-                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                        extraInfo(state)
+                ){
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        SetScreen(customModifier = Modifier)
+                        if (extraInfo != null) {
+                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            extraInfo(state)
+                        }
                     }
                 }
             }

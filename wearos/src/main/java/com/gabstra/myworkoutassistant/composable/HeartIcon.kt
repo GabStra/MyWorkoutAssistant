@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.wear.compose.material.Icon
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 @Composable
 fun HeartIcon(
@@ -14,7 +15,7 @@ fun HeartIcon(
     Icon(
         imageVector = Icons.Filled.Favorite,
         contentDescription = "Heart",
-        tint = Color.hsl(9f,0.88f,0.45f),
+        tint = MyColors.Red,
         modifier = modifier
     )
 }
