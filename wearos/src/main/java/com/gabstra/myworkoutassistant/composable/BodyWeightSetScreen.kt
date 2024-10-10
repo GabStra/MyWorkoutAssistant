@@ -72,10 +72,6 @@ fun BodyWeightSetScreen(
         totalHistoricalSetDataList.sumOf { it.actualReps }
     }
 
-    val averageVolume = remember(bestTotalVolume) { if (bestTotalVolume!=null) (bestTotalVolume!! / sets.size).toDouble() else{
-        if(lastTotalVolume > 0) (lastTotalVolume / totalHistoricalSetDataList.size).toDouble() else 0.0
-    } }
-
     val historicalSetDataList = remember {
         viewModel.getHistoricalSetsDataByExerciseIdAndLowerOrder<BodyWeightSetData>(state.execiseId, state.order+1)
     }
@@ -95,8 +91,6 @@ fun BodyWeightSetScreen(
     val currentVolume = currentSet.actualReps
 
     val currentTotalVolume = currentVolume + executedVolume
-
-    val volumeProgress = if (lastTotalVolume > 0) currentTotalVolume.toDouble() / lastTotalVolume.toDouble() else 0.0
 
     val bestVolumeProgress = if (bestTotalVolume != null && bestTotalVolume!! > 0) (currentTotalVolume / bestTotalVolume!!).toDouble() else 0.0
 
@@ -208,7 +202,7 @@ fun BodyWeightSetScreen(
             ) {
                 RepsRow(Modifier)
 
-                if(bestTotalVolume != null && bestTotalVolume!! > 0 && (currentTotalVolume >= lastTotalVolume || bestTotalVolume == lastTotalVolume) ) {
+                if(bestVolumeProgress > 0){
                     Spacer(modifier = Modifier.height(5.dp))
                     val progressColorBar = when {
                         currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
@@ -216,22 +210,13 @@ fun BodyWeightSetScreen(
                         else -> MyColors.Green
                     }
                     TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress, progressColorBar)
-                }else{
-                    if(volumeProgress > 0) {
-                        Spacer(modifier = Modifier.height(5.dp))
-                        val progressColorBar = when {
-                            currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
-                            currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
-                            else -> MyColors.Green
-                        }
-                        TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Tot Vol:", volumeProgress, progressColorBar)
-                    }
-                }
-
-                if(averageVolume > 0) {
-                    Spacer(modifier = Modifier.height(5.dp))
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        TrendComponent(Modifier, "Target:", currentVolume, averageVolume)
+                    if(currentTotalVolume>lastTotalVolume){
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Higher than last time",
+                            style = MaterialTheme.typography.caption3,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
