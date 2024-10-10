@@ -292,17 +292,15 @@ fun TimedDurationSetScreen(
             ){
                 exerciseTitleComposable()
                 HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Box(modifier = Modifier.weight(1f)) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        SetScreen(customModifier = Modifier)
-                        if (extraInfo != null) {
-                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                            extraInfo(state)
-                        }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    SetScreen(customModifier = Modifier)
+                    if (extraInfo != null) {
+                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
                     }
                 }
             }

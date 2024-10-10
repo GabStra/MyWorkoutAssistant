@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -37,7 +39,10 @@ import com.gabstra.myworkoutassistant.data.VibrateOnce
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.calculateVolume
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -59,17 +64,31 @@ fun WeightSetScreen (
 
     var bestTotalVolume by remember { mutableStateOf<Double?>(null) }
 
+    val exercise = viewModel.exercisesById[state.execiseId]!!
+    val sets = exercise.sets.filter { it !is RestSet }
+
     LaunchedEffect(state.execiseId) {
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)
     }
 
-    val historicalSetDataList = remember {
+    val totalHistoricalSetDataList = remember {
         viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
     }
 
-    // Calculate the historical volume
     val lastTotalVolume = remember {
-        historicalSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
+        totalHistoricalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
+    }
+
+    val averageVolume = remember(bestTotalVolume) { if (bestTotalVolume!=null) (bestTotalVolume!! / sets.size).toDouble() else{
+        if(lastTotalVolume > 0) (lastTotalVolume / totalHistoricalSetDataList.size).toDouble() else 0.0
+    } }
+
+    val historicalSetDataList = remember {
+        viewModel.getHistoricalSetsDataByExerciseIdAndLowerOrder<WeightSetData>(state.execiseId, state.order+1)
+    }
+
+    val previousVolumeUpToNow = remember {
+        historicalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
     }
 
     // Store the executed set data list
@@ -81,8 +100,6 @@ fun WeightSetScreen (
         executedSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
     }
 
-    val averageVolume = remember { if (historicalSetDataList.isNotEmpty()) lastTotalVolume / historicalSetDataList.size else 0.0 }
-
     val currentVolume = calculateVolume(
         currentSet.actualWeight,
         currentSet.actualReps,
@@ -90,7 +107,7 @@ fun WeightSetScreen (
 
     val currentTotalVolume = currentVolume + executedVolume
 
-    val volumeProgress = if (lastTotalVolume > 0) currentTotalVolume / lastTotalVolume else 0.0
+    val volumeProgress = if (previousVolumeUpToNow > 0) currentTotalVolume / previousVolumeUpToNow else 0.0
 
     val bestVolumeProgress = remember(bestTotalVolume) {
         if (bestTotalVolume != null && bestTotalVolume!! > 0) currentTotalVolume / bestTotalVolume!! else 0.0
@@ -277,49 +294,51 @@ fun WeightSetScreen (
 
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        Column(
-            modifier = customModifier.padding(10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(2f)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.Center
+        Box(
+            modifier = customModifier,
+            contentAlignment = Alignment.Center
+        ){
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                RepsRow(Modifier)
-                Spacer(modifier = Modifier.width(5.dp))
-                WeightRow(Modifier)
-            }
-
-            if(bestTotalVolume != null && bestTotalVolume!! > 0 && (currentTotalVolume >= lastTotalVolume || bestTotalVolume == lastTotalVolume) ) {
-                TrendComponentProgressBar(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress)
-            }else{
-                if(volumeProgress > 0) {
-                    TrendComponentProgressBar(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 5.dp), "Tot Vol:", volumeProgress)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    RepsRow(Modifier)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    WeightRow(Modifier)
                 }
-            }
 
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center)
-            {
+                if(bestTotalVolume != null && bestTotalVolume!! > 0 && (currentTotalVolume >= lastTotalVolume || bestTotalVolume == lastTotalVolume) ) {
+                    Spacer(modifier = Modifier.height(5.dp))
+                    val progressColorBar = when {
+                        currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
+                        currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
+                        else -> MyColors.Green
+                    }
+                    TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress, progressColorBar)
+                }else{
+                    if(volumeProgress > 0) {
+                        Spacer(modifier = Modifier.height(5.dp))
+                        val progressColorBar = when {
+                            currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
+                            currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
+                            else -> MyColors.Green
+                        }
+                        TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Tot Vol:", volumeProgress, progressColorBar)
+                    }
+                }
+
                 if(averageVolume > 0) {
-                    TrendComponent(Modifier, "Target:", currentVolume, averageVolume)
+                    Spacer(modifier = Modifier.height(5.dp))
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        TrendComponent(Modifier, "Target:", currentVolume, averageVolume)
+                    }
                 }
-                //Spacer(modifier = Modifier.width(5.dp))
-                //TrendComponent(Modifier,"1RM:",current1RM, max1RM)
             }
         }
     }
@@ -364,17 +383,15 @@ fun WeightSetScreen (
             ){
                 exerciseTitleComposable()
                 HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Box(modifier = Modifier.weight(1f)) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        SetScreen(customModifier = Modifier)
-                        if (extraInfo != null) {
-                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                            extraInfo(state)
-                        }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    SetScreen(customModifier = Modifier)
+                    if (extraInfo != null) {
+                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
                     }
                 }
             }

@@ -44,7 +44,7 @@ fun ControlButtonsVertical(
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+        verticalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
@@ -70,7 +70,7 @@ fun ControlButtonsVertical(
             }
         }
         Box(
-            modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 2.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
             contentAlignment = Alignment.Center
         ) {
             content()

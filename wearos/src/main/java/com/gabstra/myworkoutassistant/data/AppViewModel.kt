@@ -562,6 +562,11 @@ class AppViewModel : ViewModel(){
         val currentState = _workoutState.value
         if (!(currentState is WorkoutState.Set || currentState is WorkoutState.Rest)) return
 
+        if(currentState is WorkoutState.Set){
+            val exercise = exercisesById[currentState.execiseId]!!
+            if(exercise.doNotStoreHistory) return
+        }
+
         val newSetHistory = when(currentState){
             is WorkoutState.Set ->SetHistory(
                 id = UUID.randomUUID(),
@@ -611,7 +616,13 @@ class AppViewModel : ViewModel(){
     }
 
     inline fun <reified T : SetData> getHistoricalSetsDataByExerciseId(exerciseId: UUID): List<T> {
+        if(exercisesById[exerciseId]!!.doNotStoreHistory) return emptyList()
         return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) && latestSetHistoryMap[it.id]!!.setData !is RestSetData }.map{ latestSetHistoryMap[it.id]!!.setData as T }
+    }
+
+    inline fun <reified T : SetData> getHistoricalSetsDataByExerciseIdAndLowerOrder(exerciseId: UUID, order: Int): List<T> {
+        if(exercisesById[exerciseId]!!.doNotStoreHistory) return emptyList()
+        return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) && latestSetHistoryMap[it.id]!!.setData !is RestSetData }.filter { latestSetHistoryMap[it.id]!!.order < order }.map{ latestSetHistoryMap[it.id]!!.setData as T }
     }
 
     private fun generateWorkoutStates() {
