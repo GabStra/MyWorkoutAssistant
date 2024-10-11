@@ -162,6 +162,50 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
     }
 }
 
+fun getNewSetFromSetData(setData: SetData): Set {
+    when (setData) {
+        is WeightSetData -> {
+            return WeightSet(
+                id = UUID.randomUUID(),
+                reps = setData.actualReps,
+                weight = setData.actualWeight
+            )
+        }
+
+        is BodyWeightSetData -> {
+            return BodyWeightSet(
+                id = UUID.randomUUID(),
+                reps = setData.actualReps,
+            )
+        }
+
+        is TimedDurationSetData -> {
+            return TimedDurationSet(
+                id = UUID.randomUUID(),
+                timeInMillis = setData.startTimer,
+                autoStart = false,
+                autoStop = false
+            )
+        }
+
+        is EnduranceSetData -> {
+            return EnduranceSet(
+                id = UUID.randomUUID(),
+                timeInMillis = setData.startTimer,
+                autoStart = false,
+                autoStop = false
+            )
+        }
+
+        is RestSetData -> {
+            return RestSet(
+                id = UUID.randomUUID(),
+                timeInSeconds = setData.startTimer,
+            )
+        }
+    }
+}
+
 fun getNewSetFromSetData(set: Set, setData: SetData): Set? {
     when (set) {
         is WeightSet -> {

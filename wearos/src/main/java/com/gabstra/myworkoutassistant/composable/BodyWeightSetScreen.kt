@@ -18,6 +18,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,7 +36,6 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -55,13 +55,10 @@ fun BodyWeightSetScreen(
     val previousSet = state.previousSetData as BodyWeightSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
-    var bestTotalVolume by remember { mutableStateOf<Int?>(null) }
-
-    val exercise = viewModel.exercisesById[state.execiseId]!!
-    val sets = exercise.sets.filter { it !is RestSet }
+    var bestTotalVolume by remember { mutableDoubleStateOf(0.0) }
 
     LaunchedEffect(state.execiseId) {
-        bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)?.toInt()
+        bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)
     }
 
     val totalHistoricalSetDataList = remember {
@@ -69,11 +66,11 @@ fun BodyWeightSetScreen(
     }
 
     val lastTotalVolume = remember {
-        totalHistoricalSetDataList.sumOf { it.actualReps }
+        totalHistoricalSetDataList.sumOf { it.actualReps }.toDouble()
     }
 
     val historicalSetDataList = remember {
-        viewModel.getHistoricalSetsDataByExerciseIdAndLowerOrder<BodyWeightSetData>(state.execiseId, state.order+1)
+        viewModel.getHistoricalSetsDataByExerciseIdAndLowerOrder<BodyWeightSetData>(state.execiseId, state.order + 1)
     }
 
     val previousVolumeUpToNow = remember {
@@ -92,7 +89,9 @@ fun BodyWeightSetScreen(
 
     val currentTotalVolume = currentVolume + executedVolume
 
-    val bestVolumeProgress = if (bestTotalVolume != null && bestTotalVolume!! > 0) (currentTotalVolume / bestTotalVolume!!).toDouble() else 0.0
+    val bestVolumeProgress = remember(bestTotalVolume) {
+        if (bestTotalVolume != 0.0) currentTotalVolume.toDouble() / bestTotalVolume else 0.0
+    }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
 
@@ -209,14 +208,39 @@ fun BodyWeightSetScreen(
                         currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
                         else -> MyColors.Green
                     }
-                    TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress, progressColorBar)
-                    if(currentTotalVolume>lastTotalVolume){
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = "Higher than last time",
-                            style = MaterialTheme.typography.caption3,
-                            textAlign = TextAlign.Center
+
+                    if(bestTotalVolume != lastTotalVolume){
+                        val markerRatio = lastTotalVolume / bestTotalVolume
+
+                        TrendComponentProgressBarWithMarker(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                            label = "Tot:",
+                            ratio = bestVolumeProgress,
+                            markerRatio = markerRatio,
+                            markerText = "Last",
+                            progressBarColor = progressColorBar,
                         )
+                    }else{
+                        TrendComponentProgressBar(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                            label = "Tot:",
+                            ratio = bestVolumeProgress,
+                            progressBarColor = progressColorBar,
+                        )
+                    }
+
+                    if(bestTotalVolume != 0.0 || lastTotalVolume != 0.0){
+                        Spacer(modifier = Modifier.height(5.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                if(lastTotalVolume != 0.0){
+                                    TrendComponent(label = "Last:", currentValue = currentTotalVolume, previousValue = lastTotalVolume)
+                                }
+                                if(bestTotalVolume != 0.0){
+                                    TrendComponent(label = "Best:", currentValue = currentTotalVolume, previousValue = bestTotalVolume)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -254,7 +278,9 @@ fun BodyWeightSetScreen(
 
         }else{
             Column(
-                modifier = Modifier.fillMaxSize().padding(top = 10.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ){

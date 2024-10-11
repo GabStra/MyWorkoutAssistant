@@ -342,7 +342,7 @@ class AppViewModel : ViewModel(){
                 sendWorkoutHistoryStore(
                     it,WorkoutHistoryStore(
                         WorkoutHistory = workoutHistory,
-                        ExerciseHistories =  setHistories,
+                        SetHistories =  setHistories,
                         ExerciseInfos = exerciseInfos
                     ))
             }
@@ -372,10 +372,13 @@ class AppViewModel : ViewModel(){
         if (_workoutState.value !is WorkoutState.Set) return
         val currentState = _workoutState.value as WorkoutState.Set
 
+        val currentSetIndex = exercisesById[currentState.execiseId]!!.sets.indexOf(currentState.set)
+
         val newRestSet = RestSet(UUID.randomUUID(),90)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newRestSet, null))
+        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newRestSet, currentSetIndex))
+
         val newSet = getNewSet(currentState.set)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newSet, null))
+        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newSet, currentSetIndex + 1))
 
         RefreshAndGoToNextState()
     }
@@ -538,7 +541,7 @@ class AppViewModel : ViewModel(){
                     dataClient!!,
                     WorkoutHistoryStore(
                         WorkoutHistory = currentWorkoutHistory!!,
-                        ExerciseHistories =  executedSetsHistory,
+                        SetHistories =  executedSetsHistory,
                         ExerciseInfos = exerciseInfos
                     )
                 )
@@ -557,8 +560,8 @@ class AppViewModel : ViewModel(){
         }
     }
 
-    suspend fun getBestVolumeByExerciseId(exerciseId: UUID): Double?{
-        return exerciseInfoDao.getExerciseInfoById(exerciseId)?.bestVolume
+    suspend fun getBestVolumeByExerciseId(exerciseId: UUID): Double{
+        return exerciseInfoDao.getExerciseInfoById(exerciseId)?.bestVolume ?: 0.0
     }
 
     fun storeSetData() {

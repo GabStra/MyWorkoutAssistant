@@ -21,6 +21,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,7 +40,6 @@ import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -59,10 +59,7 @@ fun WeightSetScreen (
     val previousSet = state.previousSetData as WeightSetData
     var currentSet by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
-    var bestTotalVolume by remember { mutableStateOf<Double?>(null) }
-
-    val exercise = viewModel.exercisesById[state.execiseId]!!
-    val sets = exercise.sets.filter { it !is RestSet }
+    var bestTotalVolume by remember { mutableDoubleStateOf(0.0) }
 
     LaunchedEffect(state.execiseId) {
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)
@@ -304,21 +301,46 @@ fun WeightSetScreen (
                     RepsRow(Modifier)
                 }
 
-                if(bestVolumeProgress > 0) {
+                if(bestVolumeProgress > 0){
                     Spacer(modifier = Modifier.height(5.dp))
                     val progressColorBar = when {
                         currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
                         currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
                         else -> MyColors.Green
                     }
-                    TrendComponentProgressBar(Modifier.fillMaxWidth().padding(horizontal = 5.dp), "Best Vol:", bestVolumeProgress, progressColorBar)
-                    if(currentTotalVolume>lastTotalVolume){
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = "Higher than last time",
-                            style = MaterialTheme.typography.caption3,
-                            textAlign = TextAlign.Center
+
+                    if(bestTotalVolume != lastTotalVolume){
+                        val markerRatio = lastTotalVolume / bestTotalVolume
+
+                        TrendComponentProgressBarWithMarker(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                            label = "Tot:",
+                            ratio = bestVolumeProgress,
+                            markerRatio = markerRatio,
+                            markerText = "Last",
+                            progressBarColor = progressColorBar,
                         )
+                    }else{
+                        TrendComponentProgressBar(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                            label = "Tot:",
+                            ratio = bestVolumeProgress,
+                            progressBarColor = progressColorBar,
+                        )
+                    }
+
+                    if(bestTotalVolume != 0.0 || lastTotalVolume != 0.0){
+                        Spacer(modifier = Modifier.height(5.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                if(lastTotalVolume != 0.0){
+                                    TrendComponent(label = "Last:", currentValue = currentTotalVolume, previousValue = lastTotalVolume)
+                                }
+                                if(bestTotalVolume != 0.0){
+                                    TrendComponent(label = "Best:", currentValue = currentTotalVolume, previousValue = bestTotalVolume)
+                                }
+                            }
+                        }
                     }
                 }
             }

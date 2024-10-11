@@ -120,7 +120,7 @@ class WorkoutManager {
             return components.map { component ->
                 if (component == parentExercise) {
                     val exercise = component as Exercise
-                    val mutableSets= component.sets.toMutableList()
+                    val mutableSets = component.sets.toMutableList()
                     if (index != null && index in mutableSets.indices) {
                         mutableSets.add(index, newSet)
                     } else {

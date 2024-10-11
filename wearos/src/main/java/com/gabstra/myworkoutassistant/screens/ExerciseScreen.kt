@@ -162,7 +162,7 @@ fun SimplifiedHorizontalPager(
     allowHorizontalScrolling: Boolean,
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel,
-    exerciseTitleComposable:  @Composable () -> Unit,
+    exerciseTitleComposable: @Composable () -> Unit,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
     val exercise = viewModel.exercisesById[updatedState.execiseId]!!
@@ -446,8 +446,6 @@ fun ExerciseScreen(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -470,25 +468,6 @@ fun ExerciseScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                /*Text(
-                    modifier = Modifier
-                        .width(80.dp)
-                        .padding(bottom = 5.dp)
-                        .combinedClickable(
-                            onClick = { marqueeEnabled = !marqueeEnabled },
-                            onLongClick = {
-                                showSkipDialog = true
-                                VibrateOnce(context)
-                            }
-                        )
-                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    text = exercise.name,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.title3,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )*/
-
                 val exerciseTitleComposable = @Composable{
                     Text(
                         modifier = Modifier

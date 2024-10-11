@@ -109,7 +109,6 @@ fun MissingAgeSettingMessage(
 ) {
     val context = LocalContext.current
 
-
     val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize(),contentAlignment = Alignment.Center){
@@ -198,7 +197,7 @@ fun WorkoutSelectionScreen(
         }
     ) {
         ScalingLazyColumn(
-            modifier = Modifier.padding(10.dp, vertical = 0.dp),
+            modifier = Modifier.padding(horizontal = 10.dp),
             state = scalingLazyListState,
         ) {
             item {
