@@ -54,11 +54,14 @@ import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -277,8 +280,48 @@ fun MyWorkoutAssistantNavHost(
 
                                 setHistoryDao.insertAll(*validSetHistories.toTypedArray())
 
+                                val setHistoriesByExerciseId = validSetHistories
+                                    .filter { setHistory ->  setHistory.exerciseId != null }
+                                    .groupBy { setHistory ->  setHistory.exerciseId }
 
                                 val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() }
+
+                                allExercises.forEach { exercise ->
+                                    if(exercise.doNotStoreHistory) return@forEach
+                                    val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
+
+                                    if(exerciseInfo != null) return@forEach
+                                    if(setHistoriesByExerciseId[exercise.id] == null) return@forEach
+                                    val setHistories = setHistoriesByExerciseId[exercise.id]!!
+
+                                    val validVolumeSetHistories = setHistories.filter { setHistory ->
+                                        setHistory.setData is BodyWeightSetData || setHistory.setData is WeightSetData
+                                    }
+
+                                    if(validVolumeSetHistories.isEmpty()) return@forEach
+
+                                    val firstSetData = validVolumeSetHistories.first().setData
+
+                                    val volume = when(firstSetData){
+                                        is BodyWeightSetData -> {
+                                            validVolumeSetHistories.sumOf {item -> (item.setData as BodyWeightSetData).actualReps }.toDouble()
+                                        }
+                                        is WeightSetData -> {
+                                            validVolumeSetHistories.sumOf { item ->
+                                                val weightSetData = item.setData as WeightSetData
+                                                calculateVolume(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
+                                            }
+                                        }
+                                        else -> throw IllegalArgumentException("Unknown set type")
+                                    }
+
+                                    val newExerciseInfo = ExerciseInfo(
+                                        id = exercise.id,
+                                        bestVolume = volume,
+                                        oneRepMax = 0.0
+                                    )
+                                    exerciseInfoDao.insert(newExerciseInfo)
+                                }
 
                                 val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
 

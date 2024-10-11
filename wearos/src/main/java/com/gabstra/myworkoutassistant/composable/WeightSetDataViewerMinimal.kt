@@ -31,25 +31,27 @@ fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, style: TextStyle = 
         Text(
             text = weightText,
             style = style,
-            color = color
+            color = color,
+            textAlign = TextAlign.End
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = "kg",
             style = style.copy(fontSize = style.fontSize * 0.625f),
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Start
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = "${weightSetData.actualReps}",
             style = style,
-            color = color
+            color = color,
+            textAlign = TextAlign.End
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = repLabel,
             style = style.copy(fontSize = style.fontSize * 0.625f),
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Start
         )
     }
 }

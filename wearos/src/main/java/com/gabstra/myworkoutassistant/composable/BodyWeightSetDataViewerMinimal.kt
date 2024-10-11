@@ -25,13 +25,14 @@ fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, style: 
         Text(
             text = "${bodyWeightSetData.actualReps}",
             style = style,
-            color = color
+            color = color,
+            textAlign = TextAlign.End
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = label,
             style = style.copy(fontSize = style.fontSize * 0.625f),
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Start
         )
     }
 }

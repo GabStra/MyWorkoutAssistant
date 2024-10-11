@@ -150,6 +150,14 @@ fun LinearProgressBarWithRounderBorders(
     }
 }
 
+
+data class MarkerData(
+    val ratio: Double,
+    val text: String,
+    val color:Color = MyColors.Orange
+)
+
+
 @SuppressLint("DefaultLocale")
 @Composable
 fun TrendComponentProgressBarWithMarker(
@@ -157,9 +165,7 @@ fun TrendComponentProgressBarWithMarker(
     label: String,
     ratio: Double,
     progressBarColor: Color? = null,
-    markerRatio: Double,
-    markerText: String,
-    markerColor: Color = MyColors.Orange
+    markers: List<MarkerData> = emptyList()
 ) {
 
     Row(modifier = modifier){
@@ -172,11 +178,9 @@ fun TrendComponentProgressBarWithMarker(
 
         LinearProgressBarWithRounderBordersAndMarker(
             progress = ratio.toFloat(),
-            modifier = Modifier.fillMaxWidth(1f).padding(top = 4.dp),
+            modifier = Modifier.weight(1f).padding(top = 4.dp),
             progressBarColor = progressBarColor?.takeIf { ratio < 1 } ?: if (ratio >= 1) MyColors.Green else MyColors.Orange,
-            markerRatio = markerRatio,
-            markerText = markerText,
-            markerColor = markerColor
+            markers = markers,
         )
 
         if(ratio != 0.0 && ratio>1){
@@ -198,14 +202,12 @@ fun TrendComponentProgressBarWithMarker(
 fun LinearProgressBarWithRounderBordersAndMarker(
     modifier: Modifier = Modifier,
     progress: Float,
-    markerRatio: Double,
-    markerText: String,
     progressBarColor: Color = Color(0xFFff6700),
-    markerColor: Color = Color.Black
+    markers: List<MarkerData> = emptyList()
 ) {
     val cornerRadius = 6.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
-    val markerWidth = 20.dp
+    val markerWidth = 10.dp
 
     BoxWithConstraints(
         modifier = modifier.height(20.dp),
@@ -216,10 +218,6 @@ fun LinearProgressBarWithRounderBordersAndMarker(
 
         // Calculate the effective width considering the rounded corners
         val effectiveWidth = progressBarWidth
-
-        // Adjust the marker offset calculation
-        val adjustedMarkerPercentage = markerRatio.coerceIn(0.0, 1.0)
-        val markerOffset = effectiveWidth * adjustedMarkerPercentage.toFloat()
 
         // Progress box
         Box(
@@ -239,46 +237,51 @@ fun LinearProgressBarWithRounderBordersAndMarker(
             )
         }
 
-        // Marker box
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .align(Alignment.Center)
-                .background(Color.Transparent)
-                .absoluteOffset(
-                    x = markerOffset,
-                ),
-        ) {
-            Column(
+        markers.forEach { marker ->
+            val adjustedMarkerPercentage = marker.ratio.coerceIn(0.0, 1.0)
+            val markerOffset = effectiveWidth * adjustedMarkerPercentage.toFloat()
+
+            // Marker box
+            Box(
                 modifier = Modifier
-                    .width(markerWidth)
-                    .background(Color.Transparent),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ){
-                Canvas(
+                    .fillMaxSize()
+                    .align(Alignment.Center)
+                    .background(Color.Transparent)
+                    .absoluteOffset(
+                        x = markerOffset,
+                    ),
+            ) {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .background(Color.Transparent)
-                ) {
-                    val xPosition = size.width /2
-                    drawLine(
-                        color = markerColor,
-                        start = Offset(xPosition, 0f),
-                        end = Offset(xPosition, size.height),  // Leave space for text
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f, 3f), 0f),
+                        .width(markerWidth)
+                        .background(Color.Transparent),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ){
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .background(Color.Transparent)
+                    ) {
+                        val xPosition = size.width /2
+                        drawLine(
+                            color = marker.color,
+                            start = Offset(xPosition, 0f),
+                            end = Offset(xPosition, size.height),  // Leave space for text
+                            strokeWidth = 2.dp.toPx(),
+                        )
+                    }
+                    ScalableText(
+                        modifier = Modifier
+                            .fillMaxHeight(1f)
+                            .fillMaxWidth(),
+                        text = marker.text,
+                        style = MaterialTheme.typography.body2,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        minTextSize = 6.sp
                     )
                 }
-                ScalableText(
-                    modifier = Modifier
-                        .fillMaxHeight(1f)
-                        .fillMaxWidth(),
-                    text = markerText,
-                    style = MaterialTheme.typography.body2,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    minTextSize = 6.sp
-                )
             }
         }
     }

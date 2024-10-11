@@ -28,9 +28,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -69,6 +71,12 @@ fun WeightSetScreen (
         viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
     }
 
+    val cumulativePastVolumePerSet = remember {
+        totalHistoricalSetDataList.runningFold(0.0) { acc, setData ->
+            acc + calculateVolume(setData.actualWeight,setData.actualReps)
+        }
+    }
+
     val lastTotalVolume = remember {
         totalHistoricalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
     }
@@ -97,8 +105,8 @@ fun WeightSetScreen (
 
     val currentTotalVolume = currentVolume + executedVolume
 
-    val bestVolumeProgress = remember(bestTotalVolume) {
-        if (bestTotalVolume != null && bestTotalVolume!! > 0) currentTotalVolume / bestTotalVolume!! else 0.0
+    val bestVolumeProgress = remember(bestTotalVolume, currentTotalVolume) {
+        if (bestTotalVolume > 0) currentTotalVolume / bestTotalVolume else 0.0
     }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
@@ -212,18 +220,20 @@ fun WeightSetScreen (
         ) {
             Row(
                 verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                horizontalArrangement = Arrangement.Center
             ) {
+                val style = MaterialTheme.typography.body1.copy(fontSize = 24.sp)
                 Text(
                     text = "${currentSet.actualReps}",
-                    style = MaterialTheme.typography.title1,
+                    style = style,
                     textAlign = TextAlign.End
                 )
+                Spacer(modifier = Modifier.width(5.dp))
                 val label = if (currentSet.actualReps == 1) "rep" else "reps"
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.title1.copy(fontSize = MaterialTheme.typography.title1.fontSize * 0.39f),
-                    modifier = Modifier.padding(bottom = 5.dp),
+                    style = style.copy(fontSize = style.fontSize * 0.39f),
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
         }
@@ -259,22 +269,23 @@ fun WeightSetScreen (
         ) {
             Row(
                 verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.Center
             ) {
+                val style = MaterialTheme.typography.body1.copy(fontSize = 24.sp)
                 Text(
                     text = if (currentSet.actualWeight % 1 == 0f) {
                         "${currentSet.actualWeight.toInt()}"
                     } else {
                         "${currentSet.actualWeight}"
                     },
-                    style = MaterialTheme.typography.title1,
+                    style = style,
                     textAlign = TextAlign.End
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "kg",
-                    style = MaterialTheme.typography.title1.copy(fontSize = MaterialTheme.typography.title1.fontSize * 0.39f),
-                    modifier = Modifier.padding(bottom = 5.dp),
+                    style = style.copy(fontSize = style.fontSize * 0.39f),
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
         }
@@ -309,39 +320,31 @@ fun WeightSetScreen (
                         else -> MyColors.Green
                     }
 
-                    if(bestTotalVolume != lastTotalVolume){
-                        val markerRatio = lastTotalVolume / bestTotalVolume
-
-                        TrendComponentProgressBarWithMarker(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                            label = "Tot:",
-                            ratio = bestVolumeProgress,
-                            markerRatio = markerRatio,
-                            markerText = "Last",
-                            progressBarColor = progressColorBar,
-                        )
-                    }else{
-                        TrendComponentProgressBar(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                            label = "Tot:",
-                            ratio = bestVolumeProgress,
-                            progressBarColor = progressColorBar,
-                        )
-                    }
-
-                    if(bestTotalVolume != 0.0 || lastTotalVolume != 0.0){
-                        Spacer(modifier = Modifier.height(5.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                if(lastTotalVolume != 0.0){
-                                    TrendComponent(label = "Last:", currentValue = currentTotalVolume, previousValue = lastTotalVolume)
-                                }
-                                if(bestTotalVolume != 0.0){
-                                    TrendComponent(label = "Best:", currentValue = currentTotalVolume, previousValue = bestTotalVolume)
-                                }
-                            }
+                    var markers = cumulativePastVolumePerSet.dropLast(1)
+                        .filter { it != 0.0 }
+                        .mapIndexed { index, it ->
+                            MarkerData(
+                                ratio = it / bestTotalVolume,
+                                text = "${index + 1}",
+                                color = Color.Black
+                            )
                         }
+
+                    if(bestTotalVolume != lastTotalVolume){
+                        markers = markers + MarkerData(
+                            ratio = lastTotalVolume / bestTotalVolume,
+                            text = "${cumulativePastVolumePerSet.size}",
+                            color = Color.Black
+                        )
                     }
+
+                    TrendComponentProgressBarWithMarker(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                        label = "Vol:",
+                        ratio = bestVolumeProgress,
+                        progressBarColor = progressColorBar,
+                        markers = markers
+                    )
                 }
             }
         }

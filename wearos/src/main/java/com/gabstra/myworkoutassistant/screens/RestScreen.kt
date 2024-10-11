@@ -123,6 +123,7 @@ fun NextExerciseInfo(
                 overflow = TextOverflow.Ellipsis
             )
         }
+        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
         when (state.set) {
             is WeightSet -> WeightSetDataViewerMinimal(
                 state.currentSetData as WeightSetData
