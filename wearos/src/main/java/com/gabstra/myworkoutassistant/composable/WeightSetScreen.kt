@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composable
 
-
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -67,34 +66,34 @@ fun WeightSetScreen (
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)
     }
 
-    val totalHistoricalSetDataList = remember {
+    val totalHistoricalSetDataList = remember(state.execiseId) {
         viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
     }
 
-    val cumulativePastVolumePerSet = remember {
+    val cumulativePastVolumePerSet = remember(totalHistoricalSetDataList) {
         totalHistoricalSetDataList.runningFold(0.0) { acc, setData ->
             acc + calculateVolume(setData.actualWeight,setData.actualReps)
-        }
+        }.drop(1)
     }
 
-    val lastTotalVolume = remember {
+    val lastTotalVolume = remember(totalHistoricalSetDataList) {
         totalHistoricalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
     }
 
-    val historicalSetDataList = remember {
-        viewModel.getHistoricalSetsDataByExerciseIdAndLowerOrder<WeightSetData>(state.execiseId, state.order+1)
+    val historicalSetDataList = remember(state.execiseId,state.set.id) {
+        viewModel.getHistoricalSetsDataByExerciseIdAndTakeUntilSetId<WeightSetData>(state.execiseId, state.set.id)
     }
 
-    val previousVolumeUpToNow = remember {
+    val previousVolumeUpToNow = remember(historicalSetDataList) {
         historicalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
     }
 
     // Store the executed set data list
-    val executedSetDataList = remember {
-        viewModel.getExecutedSetsDataByExerciseIdAndLowerOrder<WeightSetData>(state.execiseId, state.order)
+    val executedSetDataList = remember(state.execiseId,state.set.id) {
+        viewModel.getExecutedSetsDataByExerciseIdAndTakeUntilSetId<WeightSetData>(state.execiseId, state.set.id)
     }
 
-    val executedVolume = remember {
+    val executedVolume = remember(executedSetDataList) {
         executedSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
     }
 
@@ -298,12 +297,12 @@ fun WeightSetScreen (
             contentAlignment = Alignment.Center
         ){
             Column(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -312,7 +311,7 @@ fun WeightSetScreen (
                     RepsRow(Modifier)
                 }
 
-                if(bestVolumeProgress > 0){
+                if(bestVolumeProgress > 0 && lastTotalVolume > 0){
                     Spacer(modifier = Modifier.height(5.dp))
                     val progressColorBar = when {
                         currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
@@ -339,7 +338,7 @@ fun WeightSetScreen (
                     }
 
                     TrendComponentProgressBarWithMarker(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         label = "Vol:",
                         ratio = bestVolumeProgress,
                         progressBarColor = progressColorBar,
@@ -353,7 +352,7 @@ fun WeightSetScreen (
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = modifier
+        modifier = modifier.padding(horizontal = 15.dp)
     ){
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
@@ -384,24 +383,22 @@ fun WeightSetScreen (
         else
         {
             Column(
-                modifier = Modifier.fillMaxSize().padding(top = 10.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                verticalArrangement = Arrangement.Center
             ){
-                exerciseTitleComposable()
-                HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Box(
-                    modifier = Modifier.weight(1f),
-                ){
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        SetScreen(customModifier = Modifier)
-                        if (extraInfo != null) {
-                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                            extraInfo(state)
-                        }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    exerciseTitleComposable()
+                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                    SetScreen(customModifier = Modifier)
+                    if (extraInfo != null) {
+                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
                     }
                 }
             }

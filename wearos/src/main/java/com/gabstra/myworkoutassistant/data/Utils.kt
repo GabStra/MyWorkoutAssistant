@@ -68,7 +68,7 @@ fun VibrateHard(context: Context) {
 
     GlobalScope.launch(Dispatchers.IO) {
         launch{
-            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            vibrator?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 }
@@ -90,14 +90,11 @@ fun VibrateTwice(context: Context) {
 
     GlobalScope.launch(Dispatchers.IO) {
         repeat(2) {
-            val startTime = System.currentTimeMillis()
-            launch{
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            val vibratorJob = launch(start = CoroutineStart.LAZY){
+                vibrator?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
             }
-            val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime < 200) {
-                delay(200 - elapsedTime)
-            }
+            vibratorJob.join()
+            delay(200)
         }
     }
 }
@@ -109,15 +106,11 @@ fun VibrateShortImpulse(context: Context) {
 
     GlobalScope.launch(Dispatchers.IO) {
         repeat(3) {
-            val startTime = System.currentTimeMillis()
-            launch{
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            val vibratorJob = launch(start = CoroutineStart.LAZY){
+                vibrator?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
             }
-
-            val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime < 200) {
-                delay(200 - elapsedTime)
-            }
+            vibratorJob.join()
+            delay(200)
         }
     }
 }

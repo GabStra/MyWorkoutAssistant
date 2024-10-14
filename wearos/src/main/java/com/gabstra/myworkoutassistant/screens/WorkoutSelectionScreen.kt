@@ -38,6 +38,7 @@ import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.google.android.gms.wearable.DataClient
@@ -170,6 +171,17 @@ fun WorkoutSelectionScreen(
                                 context,
                                 "Build version code: $versionName",
                                 Toast.LENGTH_LONG
+                            )
+                            .show()
+                    },
+                    onDoubleClick = {
+                        VibrateHard(context)
+                        viewModel.resetAll()
+                        Toast
+                            .makeText(
+                                context,
+                                "Data reset",
+                                Toast.LENGTH_SHORT
                             )
                             .show()
                     }

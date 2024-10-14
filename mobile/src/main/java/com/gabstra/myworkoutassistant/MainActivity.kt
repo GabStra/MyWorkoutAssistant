@@ -284,48 +284,55 @@ fun MyWorkoutAssistantNavHost(
                                     .filter { setHistory ->  setHistory.exerciseId != null }
                                     .groupBy { setHistory ->  setHistory.exerciseId }
 
+
+
                                 val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() }
+
+                                val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
+                                exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
 
                                 allExercises.forEach { exercise ->
                                     if(exercise.doNotStoreHistory) return@forEach
-                                    val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
-                                    if(exerciseInfo != null) return@forEach
                                     if(setHistoriesByExerciseId[exercise.id] == null) return@forEach
                                     val setHistories = setHistoriesByExerciseId[exercise.id]!!
 
-                                    val validVolumeSetHistories = setHistories.filter { setHistory ->
+                                    val validVolumeSetHistoriesGroups = setHistories.filter { setHistory ->
                                         setHistory.setData is BodyWeightSetData || setHistory.setData is WeightSetData
+                                    }.groupBy { setHistory -> setHistory.workoutHistoryId }.filter { (_, setHistories) ->
+                                        setHistories.isNotEmpty()
                                     }
 
-                                    if(validVolumeSetHistories.isEmpty()) return@forEach
-
-                                    val firstSetData = validVolumeSetHistories.first().setData
-
-                                    val volume = when(firstSetData){
-                                        is BodyWeightSetData -> {
-                                            validVolumeSetHistories.sumOf {item -> (item.setData as BodyWeightSetData).actualReps }.toDouble()
+                                    validVolumeSetHistoriesGroups.forEach { (_, validVolumeSetHistories) ->
+                                        val firstSetData = validVolumeSetHistories.first().setData
+                                        val volume = when(firstSetData){
+                                            is BodyWeightSetData -> {
+                                                validVolumeSetHistories.sumOf {item -> (item.setData as BodyWeightSetData).actualReps }.toDouble()
+                                            }
+                                            is WeightSetData -> {
+                                                validVolumeSetHistories.sumOf { item ->
+                                                    val weightSetData = item.setData as WeightSetData
+                                                    calculateVolume(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
+                                                }
+                                            }
+                                            else -> throw IllegalArgumentException("Unknown set type")
                                         }
-                                        is WeightSetData -> {
-                                            validVolumeSetHistories.sumOf { item ->
-                                                val weightSetData = item.setData as WeightSetData
-                                                calculateVolume(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
+
+                                        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
+                                        if(exerciseInfo == null){
+                                            val newExerciseInfo = ExerciseInfo(
+                                                id = exercise.id,
+                                                bestVolume = volume,
+                                                oneRepMax = 0.0
+                                            )
+                                            exerciseInfoDao.insert(newExerciseInfo)
+                                        }else{
+                                            if(exerciseInfo.bestVolume < volume){
+                                                exerciseInfoDao.updateBestVolume(exercise.id,volume)
                                             }
                                         }
-                                        else -> throw IllegalArgumentException("Unknown set type")
                                     }
-
-                                    val newExerciseInfo = ExerciseInfo(
-                                        id = exercise.id,
-                                        bestVolume = volume,
-                                        oneRepMax = 0.0
-                                    )
-                                    exerciseInfoDao.insert(newExerciseInfo)
                                 }
-
-                                val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
-
-                                exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
                             }
 
                             // Wait for the delete and insert operations to complete

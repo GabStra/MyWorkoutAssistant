@@ -49,7 +49,7 @@ class WorkoutManager {
             return updateWorkoutOld(workouts, parentWorkout, updatedWorkout)
         }
 
-        private fun updateWorkoutComponentsRecursively(workoutComponents: List<WorkoutComponent>, oldComponent: WorkoutComponent, updatedComponent: WorkoutComponent): List<WorkoutComponent> {
+        fun updateWorkoutComponentsRecursively(workoutComponents: List<WorkoutComponent>, oldComponent: WorkoutComponent, updatedComponent: WorkoutComponent): List<WorkoutComponent> {
             return workoutComponents.map { component ->
                 if (component == oldComponent) {
                     updatedComponent

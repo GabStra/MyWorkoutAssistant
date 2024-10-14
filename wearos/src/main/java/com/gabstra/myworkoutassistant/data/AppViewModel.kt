@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -217,6 +218,16 @@ class AppViewModel : ViewModel(){
         getWorkoutRecord(workout)
     }
 
+    fun resetAll(){
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                workoutHistoryDao.deleteAll()
+                setHistoryDao.deleteAll()
+                exerciseInfoDao.deleteAll()
+            }
+        }
+    }
+
     private fun getWorkoutRecord(workout: Workout){
         viewModelScope.launch {
             withContext(Dispatchers.IO){
@@ -373,12 +384,17 @@ class AppViewModel : ViewModel(){
         val currentState = _workoutState.value as WorkoutState.Set
 
         val currentSetIndex = exercisesById[currentState.execiseId]!!.sets.indexOf(currentState.set)
+        val currentExercise =  exercisesById[currentState.execiseId]!!
 
+        val newSets = currentExercise.sets.toMutableList()
         val newRestSet = RestSet(UUID.randomUUID(),90)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newRestSet, currentSetIndex))
-
+        newSets.add(currentSetIndex + 1,newRestSet)
         val newSet = getNewSet(currentState.set)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newSet, currentSetIndex + 1))
+        newSets.add(currentSetIndex + 2,newSet)
+
+        val updatedExercise = currentExercise.copy(sets = newSets)
+        val updatedComponents = updateWorkoutComponentsRecursively(_selectedWorkout.value.workoutComponents, currentExercise, updatedExercise)
+        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
 
         RefreshAndGoToNextState()
     }
@@ -388,19 +404,22 @@ class AppViewModel : ViewModel(){
         val currentState = _workoutState.value as WorkoutState.Set
         if (currentState.set !is BodyWeightSet && currentState.set !is WeightSet) return
 
+        val currentSetIndex = exercisesById[currentState.execiseId]!!.sets.indexOf(currentState.set)
+        val currentExercise = exercisesById[currentState.execiseId]!!
+
+        val newSets = currentExercise.sets.toMutableList()
         val newRestSet = RestSet(UUID.randomUUID(),20)
-        _selectedWorkout.value = _selectedWorkout.value.copy(
-            workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newRestSet, null)
-        )
+        newSets.add(currentSetIndex + 1,newRestSet)
         val newSet = when(val new = getNewSet(currentState.set)){
             is BodyWeightSet ->  new.copy(reps = 3)
             is WeightSet -> new.copy(reps = 3)
             else -> throw IllegalArgumentException("Unknown set type")
         }
+        newSets.add(currentSetIndex + 2,newSet)
 
-        _selectedWorkout.value = _selectedWorkout.value.copy(
-            workoutComponents = addSetToExerciseRecursively(_selectedWorkout.value.workoutComponents, exercisesById[currentState.execiseId]!!, newSet, null)
-        )
+        val updatedExercise = currentExercise.copy(sets = newSets)
+        val updatedComponents = updateWorkoutComponentsRecursively(_selectedWorkout.value.workoutComponents, currentExercise, updatedExercise)
+        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
 
         RefreshAndGoToNextState()
     }
@@ -614,21 +633,28 @@ class AppViewModel : ViewModel(){
             .mapNotNull { it.setData as? T }
     }
 
-    inline fun <reified T : SetData> getExecutedSetsDataByExerciseIdAndLowerOrder(exerciseId: UUID, order: Int): List<T> {
+    inline fun <reified T : SetData> getExecutedSetsDataByExerciseIdAndTakeUntilSetId(exerciseId: UUID, setId: UUID): List<T> {
         return executedSetsHistory
             .filter { it.exerciseId == exerciseId }
-            .filter { it.order < order }
+            .takeWhile { it.setId != setId }
+            .plus(executedSetsHistory.filter{  it.exerciseId == exerciseId && it.id == setId })
             .mapNotNull { it.setData as? T }
     }
 
     inline fun <reified T : SetData> getHistoricalSetsDataByExerciseId(exerciseId: UUID): List<T> {
         if(exercisesById[exerciseId]!!.doNotStoreHistory) return emptyList()
-        return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) && latestSetHistoryMap[it.id]!!.setData !is RestSetData }.map{ latestSetHistoryMap[it.id]!!.setData as T }
+        return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) && latestSetHistoryMap[it.id]!!.setData is T }.map{ latestSetHistoryMap[it.id]!!.setData as T }
     }
 
-    inline fun <reified T : SetData> getHistoricalSetsDataByExerciseIdAndLowerOrder(exerciseId: UUID, order: Int): List<T> {
+    inline fun <reified T : SetData> getHistoricalSetsDataByExerciseIdAndTakeUntilSetId(exerciseId: UUID, setId: UUID): List<T> {
         if(exercisesById[exerciseId]!!.doNotStoreHistory) return emptyList()
-        return exercisesById[exerciseId]!!.sets.filter { latestSetHistoryMap.contains(it.id) && latestSetHistoryMap[it.id]!!.setData !is RestSetData }.filter { latestSetHistoryMap[it.id]!!.order < order }.map{ latestSetHistoryMap[it.id]!!.setData as T }
+        return exercisesById[exerciseId]!!.sets
+            .filter { it !is RestSet }
+            .takeWhile { it.id != setId }
+            .plus(exercisesById[exerciseId]!!.sets.filter { it !is RestSet && it.id == setId })
+            .filter { latestSetHistoryMap.contains(it.id) }
+            .map { latestSetHistoryMap[it.id]!!.setData as T }
+
     }
 
     private fun generateWorkoutStates() {

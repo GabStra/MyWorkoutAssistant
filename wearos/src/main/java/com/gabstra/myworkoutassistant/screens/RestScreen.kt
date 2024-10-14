@@ -95,19 +95,13 @@ fun NextExerciseInfo(
         } else {
             "${exerciseIndex + 1}/${exerciseCount}"
         }
-        Row( modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Text(
-                text = "Next",
-                style = MaterialTheme.typography.caption3,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.width(5.dp))
-            Text(
-                text = text,
-                style = MaterialTheme.typography.caption3,
-                textAlign = TextAlign.Center
-            )
-        }
+
+        Text(
+            modifier = Modifier.fillMaxWidth(),
+            text = "Next: $text",
+            style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
+            textAlign = TextAlign.Center
+        )
 
         Box(modifier = Modifier
             .width(140.dp)

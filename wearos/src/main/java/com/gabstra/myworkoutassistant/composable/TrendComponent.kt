@@ -170,7 +170,6 @@ fun TrendComponentProgressBarWithMarker(
 
     Row(modifier = modifier){
         Text(
-            modifier = Modifier,
             text = label,
             style = MaterialTheme.typography.caption3,
             textAlign = TextAlign.End
@@ -200,7 +199,7 @@ fun TrendComponentProgressBarWithMarker(
 
 @Composable
 fun LinearProgressBarWithRounderBordersAndMarker(
-    modifier: Modifier = Modifier,
+    modifier: Modifier,
     progress: Float,
     progressBarColor: Color = Color(0xFFff6700),
     markers: List<MarkerData> = emptyList()
@@ -268,13 +267,14 @@ fun LinearProgressBarWithRounderBordersAndMarker(
                             color = marker.color,
                             start = Offset(xPosition, 0f),
                             end = Offset(xPosition, size.height),  // Leave space for text
-                            strokeWidth = 2.dp.toPx(),
+                            strokeWidth = 1.dp.toPx(),
                         )
                     }
                     ScalableText(
                         modifier = Modifier
                             .fillMaxHeight(1f)
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
+                            .background(Color.Transparent),
                         text = marker.text,
                         style = MaterialTheme.typography.body2,
                         color = Color.White,

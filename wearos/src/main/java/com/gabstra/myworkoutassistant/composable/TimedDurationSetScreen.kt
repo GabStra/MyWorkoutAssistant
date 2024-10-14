@@ -163,8 +163,6 @@ fun TimedDurationSetScreen(
             delay(1000)
             VibrateHard(context)
             delay(1000)
-            VibrateHard(context)
-            delay(1000)
             VibrateTwice(context)
             delay(500)
             startTimerJob()

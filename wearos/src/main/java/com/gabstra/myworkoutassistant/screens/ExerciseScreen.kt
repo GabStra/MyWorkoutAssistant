@@ -389,6 +389,7 @@ fun PageNewSets(
                 text = "Add Set",
                 onClick = {
                     VibrateGentle(context)
+                    viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false,context){
                         viewModel.addNewSetStandard()
                     }
@@ -402,6 +403,7 @@ fun PageNewSets(
                     text = "Add Rest-Pause Set",
                     onClick = {
                         VibrateGentle(context)
+                        viewModel.storeSetData()
                         viewModel.pushAndStoreWorkoutData(false,context){
                             viewModel.addNewRestPauseSet()
                         }

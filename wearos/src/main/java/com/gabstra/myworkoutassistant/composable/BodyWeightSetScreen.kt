@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -38,6 +39,8 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -63,33 +66,33 @@ fun BodyWeightSetScreen(
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)
     }
 
-    val totalHistoricalSetDataList = remember {
+    val totalHistoricalSetDataList = remember(state.execiseId) {
         viewModel.getHistoricalSetsDataByExerciseId<BodyWeightSetData>(state.execiseId)
     }
 
-    val cumulativePastVolumePerSet = remember {
+    val cumulativePastVolumePerSet = remember(totalHistoricalSetDataList) {
         totalHistoricalSetDataList.runningFold(0.0) { acc, setData ->
             acc + setData.actualReps.toDouble()
-        }
+        }.drop(1)
     }
 
-    val lastTotalVolume = remember {
+    val lastTotalVolume = remember(totalHistoricalSetDataList) {
         totalHistoricalSetDataList.sumOf { it.actualReps }.toDouble()
     }
 
-    val historicalSetDataList = remember {
-        viewModel.getHistoricalSetsDataByExerciseIdAndLowerOrder<BodyWeightSetData>(state.execiseId, state.order + 1)
+    val historicalSetDataList = remember(state.execiseId,state.set.id) {
+        viewModel.getHistoricalSetsDataByExerciseIdAndTakeUntilSetId<BodyWeightSetData>(state.execiseId, state.set.id)
     }
 
-    val previousVolumeUpToNow = remember {
+    val previousVolumeUpToNow = remember(historicalSetDataList) {
         historicalSetDataList.sumOf { it.actualReps }
     }
 
-    val executedSetDataList = remember {
-        viewModel.getExecutedSetsDataByExerciseIdAndLowerOrder<BodyWeightSetData>(state.execiseId, state.order)
+    val executedSetDataList = remember(state.execiseId,state.set.id) {
+        viewModel.getExecutedSetsDataByExerciseIdAndTakeUntilSetId<BodyWeightSetData>(state.execiseId, state.set.id)
     }
 
-    val executedVolume = remember {
+    val executedVolume = remember(executedSetDataList) {
         executedSetDataList.sumOf { it.actualReps }
     }
 
@@ -205,12 +208,13 @@ fun BodyWeightSetScreen(
             contentAlignment = Alignment.Center
         ){
             Column(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 RepsRow(Modifier)
 
-                if(bestVolumeProgress > 0){
+                if(bestVolumeProgress > 0 && lastTotalVolume > 0){
                     Spacer(modifier = Modifier.height(5.dp))
                     val progressColorBar = when {
                         currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
@@ -237,7 +241,7 @@ fun BodyWeightSetScreen(
                     }
 
                     TrendComponentProgressBarWithMarker(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         label = "Vol:",
                         ratio = bestVolumeProgress,
                         progressBarColor = progressColorBar,
@@ -283,22 +287,18 @@ fun BodyWeightSetScreen(
                     .fillMaxSize()
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                verticalArrangement = Arrangement.Center
             ){
-                exerciseTitleComposable()
-                HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                Box(
-                    modifier = Modifier.weight(1f),
-                ){
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        SetScreen(customModifier = Modifier)
-                        if (extraInfo != null) {
-                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                            extraInfo(state)
-                        }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    exerciseTitleComposable()
+                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                    SetScreen(customModifier = Modifier)
+                    if (extraInfo != null) {
+                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
                     }
                 }
             }
