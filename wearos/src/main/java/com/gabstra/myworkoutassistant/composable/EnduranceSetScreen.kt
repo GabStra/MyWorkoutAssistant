@@ -171,10 +171,6 @@ fun EnduranceSetScreen (
 
                 if(isOverLimit) continue
 
-                if (currentMillis >= (currentSet.startTimer-3000) && currentMillis < currentSet.startTimer) {
-                    VibrateHard(context)
-                }
-
                 if(currentMillis >= currentSet.startTimer){
                     VibrateTwice(context)
                     if(set.autoStop) break
@@ -212,12 +208,7 @@ fun EnduranceSetScreen (
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateHard(context)
-            delay(1000)
-            VibrateHard(context)
-            delay(1000)
             VibrateTwice(context)
-            delay(500)
             startTimerJob()
         }
     }

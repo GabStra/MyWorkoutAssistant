@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,6 +37,7 @@ import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import  androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
+import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateGentle
@@ -159,6 +162,8 @@ fun WorkoutSelectionScreen(
     val context = LocalContext.current
     val versionName = getVersionName(context);
 
+    var showClearData by remember { mutableStateOf(false) }
+
     val titleComposable = @Composable {
         Text(
             modifier = Modifier
@@ -166,6 +171,7 @@ fun WorkoutSelectionScreen(
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
+                        VibrateHard(context)
                         Toast
                             .makeText(
                                 context,
@@ -175,15 +181,8 @@ fun WorkoutSelectionScreen(
                             .show()
                     },
                     onDoubleClick = {
+                        showClearData = true
                         VibrateHard(context)
-                        viewModel.resetAll()
-                        Toast
-                            .makeText(
-                                context,
-                                "Data reset",
-                                Toast.LENGTH_SHORT
-                            )
-                            .show()
                     }
                 ),
             text = "My Workout Assistant",
@@ -228,6 +227,7 @@ fun WorkoutSelectionScreen(
             } else {
                 items(sortedWorkouts) { workout ->
                     WorkoutListItem(workout) {
+                        VibrateGentle(context)
                         navController.navigate(Screen.WorkoutDetail.route)
                         viewModel.setWorkout(workout)
                     }
@@ -235,4 +235,31 @@ fun WorkoutSelectionScreen(
             }
         }
     }
+
+    CustomDialogYesOnLongPress(
+        show = showClearData,
+        title = "Clear Data",
+        message = "Do you want to proceed?",
+        handleYesClick = {
+            VibrateGentle(context)
+            viewModel.resetAll()
+            Toast
+                .makeText(
+                    context,
+                    "Data reset",
+                    Toast.LENGTH_SHORT
+                )
+                .show()
+            showClearData = false
+        },
+        handleNoClick = {
+            showClearData = false
+            VibrateGentle(context)
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showClearData = false
+        },
+        holdTimeInMillis = 1000
+    )
 }

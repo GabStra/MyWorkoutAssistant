@@ -2,10 +2,8 @@ package com.gabstra.myworkoutassistant
 
 import android.content.ContentValues
 import android.content.Context
-import android.health.connect.datatypes.TotalCaloriesBurnedRecord
 import android.os.Environment
 import android.provider.MediaStore
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
@@ -184,7 +182,7 @@ fun getOneRepMax(weight: Float, reps: Int): Float {
     return weight / (1.0278f - (0.0278f * reps))
 }
 
-fun calculateCaloriesBurned(
+fun calculateKiloCaloriesBurned(
     age: Int,
     weightKg: Double,
     averageHeartRate: Double,
@@ -228,17 +226,32 @@ suspend fun sendWorkoutsToHealthConnect(
         throw IllegalStateException("Missing required permissions: $missingPermissions")
     }
 
+    val workoutsById = workouts.associateBy { it.id }
+
     val workoutHistories = if(updateAll){
         workoutHistoryDao.getAllWorkoutHistoriesByIsDone()
     }else {
         workoutHistoryDao.getWorkoutHistoriesByHasBeenSentToHealth(false)
-    }
+    }.filter { workoutsById.containsKey(it.workoutId) }
 
     if (workoutHistories.isEmpty()) return
 
-    val workoutsById = workouts.associateBy { it.id }
 
-    val exerciseSessionRecords = workoutHistories.filter { workoutsById.containsKey(it.workoutId) }.map {
+
+    healthConnectClient.deleteRecords(
+        ExerciseSessionRecord::class,
+        clientRecordIdsList = workoutHistories.map { it.id.toString() },
+        recordIdsList = emptyList()
+    )
+
+    healthConnectClient.deleteRecords(
+        HeartRateRecord::class,
+        clientRecordIdsList = workoutHistories.map { it.id.toString() },
+        recordIdsList = emptyList()
+    )
+
+    val exerciseSessionRecords = workoutHistories
+        .map {
         ExerciseSessionRecord(
             startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
             endTime = it.startTime.plusSeconds(it.duration.toLong())
@@ -248,16 +261,16 @@ suspend fun sendWorkoutsToHealthConnect(
             title = workoutsById[it.workoutId]!!.name,
             exerciseType = workoutsById[it.workoutId]!!.type,
             metadata = androidx.health.connect.client.records.metadata.Metadata(
-                clientRecordId = it.workoutId.toString()
+                clientRecordId = it.id.toString()
             )
         )
     }
 
     val heartRateRecords = workoutHistories
         .filter { it.heartBeatRecords.isNotEmpty() }
-        .map { workout ->
-            val startTime = workout.startTime.atZone(ZoneId.systemDefault()).toInstant()
-            val endTime = workout.startTime.plusSeconds(workout.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
+        .map { workoutHistory ->
+            val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
+            val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
             val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
 
             HeartRateRecord(
@@ -265,7 +278,7 @@ suspend fun sendWorkoutsToHealthConnect(
                 endTime = endTime,
                 startZoneOffset = zoneOffset,
                 endZoneOffset = zoneOffset,
-                samples = workout.heartBeatRecords.mapIndexedNotNull { index, bpm ->
+                samples = workoutHistory.heartBeatRecords.mapIndexedNotNull { index, bpm ->
                     val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 500))
                     if (sampleTime.isAfter(endTime)) {
                         null
@@ -277,18 +290,18 @@ suspend fun sendWorkoutsToHealthConnect(
                     }
                 },
                 metadata = androidx.health.connect.client.records.metadata.Metadata(
-                    clientRecordId = workout.workoutId.toString()
+                    clientRecordId = workoutHistory.id.toString()
                 )
             )
         }
 
     val totalCaloriesBurnedRecords = workoutHistories
-    .filter { it.heartBeatRecords.isNotEmpty() }
-        .map { workout ->
-            val avgHeartRate = workout.heartBeatRecords.average()
+        .filter { it.heartBeatRecords.isNotEmpty() }
+        .map { workoutHistory ->
+            val avgHeartRate = workoutHistory.heartBeatRecords.average()
 
-            val durationMinutes = workout.duration.toDouble() / 60
-            val caloriesBurned = calculateCaloriesBurned(
+            val durationMinutes = workoutHistory.duration.toDouble() / 60
+            val kiloCaloriesBurned = calculateKiloCaloriesBurned(
                 age = age,
                 weightKg = weightKg.toDouble(),
                 averageHeartRate = avgHeartRate,
@@ -296,8 +309,8 @@ suspend fun sendWorkoutsToHealthConnect(
                 isMale = true
             )
 
-            val startTime = workout.startTime.atZone(ZoneId.systemDefault()).toInstant()
-            val endTime = workout.startTime.plusSeconds(workout.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
+            val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
+            val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
             val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
 
             androidx.health.connect.client.records.TotalCaloriesBurnedRecord(
@@ -305,9 +318,9 @@ suspend fun sendWorkoutsToHealthConnect(
                 startZoneOffset = zoneOffset,
                 endTime = endTime,
                 endZoneOffset = zoneOffset,
-                energy = Energy.calories(caloriesBurned),
+                energy = Energy.kilocalories(kiloCaloriesBurned),
                 metadata = Metadata(
-                    clientRecordId = workout.workoutId.toString()
+                    clientRecordId = workoutHistory.id.toString()
                 )
             )
         }

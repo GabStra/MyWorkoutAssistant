@@ -138,10 +138,6 @@ fun TimedDurationSetScreen(
                 currentSet = currentSet.copy(
                     endTimer = currentMillis
                 )
-
-                if (currentMillis in 1..3000) {
-                    VibrateHard(context)
-                }
             }
 
             state.currentSetData = currentSet.copy(
@@ -159,12 +155,7 @@ fun TimedDurationSetScreen(
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateHard(context)
-            delay(1000)
-            VibrateHard(context)
-            delay(1000)
             VibrateTwice(context)
-            delay(500)
             startTimerJob()
         }
     }

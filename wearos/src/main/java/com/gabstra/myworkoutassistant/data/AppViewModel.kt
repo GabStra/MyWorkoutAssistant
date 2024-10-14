@@ -365,12 +365,24 @@ class AppViewModel : ViewModel(){
     }
 
     private suspend fun loadWorkoutHistory(){
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
-        latestSetHistoryMap.clear()
-        if(workoutHistory !=null){
-            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-            for(setHistory in setHistories){
-                latestSetHistoryMap[setHistory.setId] = setHistory
+        val workoutHistories = workoutHistoryDao
+            .getAllWorkoutHistories()
+            .filter { it.workoutId == selectedWorkout.value.id }
+            .sortedByDescending { it.date }
+
+        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+        exercises.forEach {
+            var workoutHistoryIndex = 0;
+            while(workoutHistoryIndex < workoutHistories.size){
+                val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(workoutHistories[workoutHistoryIndex].id,it.id)
+                if(setHistories.isNotEmpty()){
+                    for(setHistory in setHistories) {
+                        latestSetHistoryMap[setHistory.setId] = setHistory
+                    }
+                    break
+                }else{
+                    workoutHistoryIndex++
+                }
             }
         }
     }
@@ -499,7 +511,6 @@ class AppViewModel : ViewModel(){
             val exerciseInfos = mutableListOf<ExerciseInfo>()
 
             if(isDone){
-                workoutHistoryDao.deleteAllByWorkoutId(selectedWorkout.value.id)
                 workoutHistoryDao.insert(currentWorkoutHistory!!)
                 setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
 

@@ -31,9 +31,7 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -60,20 +58,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.calculateCaloriesBurned
+import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
-import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
-import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
@@ -83,7 +79,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
@@ -99,7 +94,6 @@ import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.delay
 import java.util.Calendar
 import kotlin.math.floor
-import kotlin.math.roundToInt
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -167,7 +161,7 @@ fun WorkoutHistoryScreen(
 
     val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
 
-    var caloriesBurned by remember { mutableDoubleStateOf(0.0) }
+    var kiloCaloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
@@ -317,7 +311,7 @@ fun WorkoutHistoryScreen(
             val age =  currentYear - appViewModel.workoutStore.birthDateYear
             val weight = appViewModel.workoutStore.weightKg
             val durationMinutes = selectedWorkoutHistory!!.duration.toDouble() / 60
-            caloriesBurned = calculateCaloriesBurned(
+            kiloCaloriesBurned = calculateKiloCaloriesBurned(
                 age = age,
                 weightKg = weight.toDouble(),
                 averageHeartRate = avgHeartRate,
@@ -430,11 +424,9 @@ fun WorkoutHistoryScreen(
                 color = Color.White.copy(alpha = .87f)
             )
 
-
-
             workoutSelector()
 
-            if(caloriesBurned != 0.0 || !caloriesBurned.isNaN()) {
+            if(kiloCaloriesBurned != 0.0 || !kiloCaloriesBurned.isNaN()) {
                 DarkModeContainer(whiteOverlayAlpha = .1f) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -442,7 +434,7 @@ fun WorkoutHistoryScreen(
                     ) {
                         Text(
                             modifier = Modifier.fillMaxWidth().padding(5.dp),
-                            text = "Calories Burned: ${caloriesBurned.toInt()}",
+                            text = "kcal: ${kiloCaloriesBurned.toInt()}",
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                             color = Color.White.copy(alpha = .87f)

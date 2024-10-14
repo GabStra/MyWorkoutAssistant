@@ -68,7 +68,7 @@ fun VibrateHard(context: Context) {
 
     GlobalScope.launch(Dispatchers.IO) {
         launch{
-            vibrator?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 }
@@ -91,10 +91,10 @@ fun VibrateTwice(context: Context) {
     GlobalScope.launch(Dispatchers.IO) {
         repeat(2) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
-                vibrator?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
             vibratorJob.join()
-            delay(200)
+            delay(100)
         }
     }
 }
@@ -107,10 +107,10 @@ fun VibrateShortImpulse(context: Context) {
     GlobalScope.launch(Dispatchers.IO) {
         repeat(3) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
-                vibrator?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
             vibratorJob.join()
-            delay(200)
+            delay(100)
         }
     }
 }

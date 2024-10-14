@@ -227,10 +227,6 @@ fun RestScreen(
                 currentSetData = currentSetData.copy(
                     endTimer = currentSeconds
                 )
-
-                if (currentSeconds in 1..3) {
-                    VibrateHard(context)
-                }
             }
 
             state.currentSetData = currentSetData.copy(

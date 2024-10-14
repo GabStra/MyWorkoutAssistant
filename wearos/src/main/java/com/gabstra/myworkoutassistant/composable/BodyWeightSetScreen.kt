@@ -242,7 +242,7 @@ fun BodyWeightSetScreen(
 
                     TrendComponentProgressBarWithMarker(
                         modifier = Modifier.fillMaxWidth(),
-                        label = "Vol:",
+                        label = "Best:",
                         ratio = bestVolumeProgress,
                         progressBarColor = progressColorBar,
                         markers = markers

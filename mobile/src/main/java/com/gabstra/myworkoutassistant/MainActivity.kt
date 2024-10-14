@@ -212,23 +212,15 @@ fun MyWorkoutAssistantNavHost(
             .filterNotNull()
             .debounce(2000) // Adjust the delay (in milliseconds) as needed
             .collect { _ ->
-                val latestWorkoutHistories = appViewModel.workouts
-                    .filter { it.isActive && it.enabled }
-                    .mapNotNull { workout ->
-                        workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
-                    }
-
-                val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
-                    setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-                }
+                val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+                val setHistories = setHistoryDao.getAllSetHistories()
+                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
 
                 val workoutStore = appViewModel.workoutStore.copy(
                     workouts = appViewModel.workouts.filter { it.isActive && it.enabled }
                 )
 
-                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-
-                val filteredAppBackup = AppBackup(workoutStore, latestWorkoutHistories, setHistories, exerciseInfos)
+                val filteredAppBackup = AppBackup(workoutStore, workoutHistories, setHistories, exerciseInfos)
 
                 sendAppBackup(dataClient, filteredAppBackup)
             }
@@ -372,17 +364,10 @@ fun MyWorkoutAssistantNavHost(
                 onSyncClick = {
                     scope.launch {
                         withContext(Dispatchers.IO){
-                            val latestWorkoutHistories = appViewModel.workouts.mapNotNull { workout ->
-                                workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id)
-                            }
-
-                            val setHistories = latestWorkoutHistories.flatMap { workoutHistory ->
-                                setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-                            }
-
+                            val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+                            val setHistories = setHistoryDao.getAllSetHistories()
                             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-
-                            val appBackup = AppBackup(appViewModel.workoutStore, latestWorkoutHistories, setHistories,exerciseInfos)
+                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories,exerciseInfos)
                             sendAppBackup(dataClient, appBackup)
                         }
                         Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()

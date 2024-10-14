@@ -25,6 +25,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,7 +57,7 @@ fun <T : Number> TrendComponent(
     ){
         Text(
             text = label,
-            style = MaterialTheme.typography.caption3,
+            style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
             textAlign = TextAlign.End
         )
 
@@ -71,13 +72,13 @@ fun <T : Number> TrendComponent(
 
             Text(
                 text = displayText,
-                style = MaterialTheme.typography.caption3,
+                style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
                 color = if (ratio > 0) MyColors.Green else MyColors.Red
             )
         }else{
             Text(
                 text = "-",
-                style = MaterialTheme.typography.caption3,
+                style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
             )
         }
     }
@@ -95,7 +96,6 @@ fun TrendComponentProgressBar(
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically
     ){
         Text(
             text = label,
@@ -168,16 +168,16 @@ fun TrendComponentProgressBarWithMarker(
     markers: List<MarkerData> = emptyList()
 ) {
 
-    Row(modifier = modifier){
+    Row(modifier = modifier) {
         Text(
             text = label,
-            style = MaterialTheme.typography.caption3,
+            style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
             textAlign = TextAlign.End
         )
 
         LinearProgressBarWithRounderBordersAndMarker(
             progress = ratio.toFloat(),
-            modifier = Modifier.weight(1f).padding(top = 4.dp),
+            modifier = Modifier.weight(1f),
             progressBarColor = progressBarColor?.takeIf { ratio < 1 } ?: if (ratio >= 1) MyColors.Green else MyColors.Orange,
             markers = markers,
         )
@@ -190,7 +190,7 @@ fun TrendComponentProgressBarWithMarker(
             }
             Text(
                 text = displayText,
-                style = MaterialTheme.typography.caption3,
+                style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
                 color = MyColors.Green
             )
         }
@@ -206,7 +206,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
 ) {
     val cornerRadius = 6.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
-    val markerWidth = 10.dp
+    val markerWidth = 15.dp
 
     BoxWithConstraints(
         modifier = modifier.height(20.dp),
@@ -276,7 +276,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
                             .fillMaxWidth()
                             .background(Color.Transparent),
                         text = marker.text,
-                        style = MaterialTheme.typography.body2,
+                        style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
                         color = Color.White,
                         textAlign = TextAlign.Center,
                         minTextSize = 6.sp
