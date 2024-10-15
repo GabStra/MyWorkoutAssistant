@@ -4,10 +4,14 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import java.util.UUID
 
 @Dao
 interface SetHistoryDao {
+    @Query("SELECT * FROM set_history WHERE id = :id")
+    suspend fun getSetHistoryById(id: UUID): SetHistory?
+
     @Query("SELECT * FROM set_history")
     suspend fun getAllSetHistories(): List<SetHistory>
 
@@ -38,5 +42,18 @@ interface SetHistoryDao {
 
     @Query("DELETE FROM set_history")
     suspend fun deleteAll()
+
+    @Query("UPDATE set_history SET version = version + 1 WHERE id = :id")
+    suspend fun raiseVersionById(id: UUID)
+
+    @Transaction
+    suspend fun insertAllWithVersionCheck(vararg setHistories: SetHistory) {
+        setHistories.forEach { setHistory ->
+            val existingSetHistory= getSetHistoryById(setHistory.id)
+            if (existingSetHistory == null || setHistory.version >= existingSetHistory.version) {
+                insert(setHistory)
+            }
+        }
+    }
 }
 

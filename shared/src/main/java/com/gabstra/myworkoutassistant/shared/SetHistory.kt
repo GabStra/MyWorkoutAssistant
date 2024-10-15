@@ -24,10 +24,11 @@ import java.util.UUID
 data class SetHistory(
     @PrimaryKey(autoGenerate = false)
     val id: UUID,
-    var workoutHistoryId: UUID? = null,
+    val workoutHistoryId: UUID? = null,
     val exerciseId : UUID? = null,
     val setId: UUID,
-    val order: Int,
+    val order: UInt,
     val setData: SetData,
-    val skipped: Boolean
+    val skipped: Boolean,
+    val version: UInt = 0u
 )

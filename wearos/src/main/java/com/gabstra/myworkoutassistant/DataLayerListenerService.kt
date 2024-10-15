@@ -6,7 +6,6 @@ import android.os.Looper
 import android.util.Log
 import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.AppInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -33,7 +32,6 @@ class DataLayerListenerService : WearableListenerService() {
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao
-    private lateinit var appInfoDao: AppInfoDao
 
     private var backupChunks = mutableListOf<ByteArray>()
 
@@ -51,7 +49,6 @@ class DataLayerListenerService : WearableListenerService() {
         setHistoryDao = db.setHistoryDao()
         workoutHistoryDao = db.workoutHistoryDao()
         exerciseInfoDao = db.exerciseInfoDao()
-        appInfoDao = db.appInfoDao()
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -78,23 +75,6 @@ class DataLayerListenerService : WearableListenerService() {
                             putExtra(WORKOUT_STORE_JSON, workoutStoreJson)
                         }
                         sendBroadcast(intent)
-                    }
-                    ACK_ENTITY_PATH ->{
-                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val compressedJson = dataMap.getByteArray("compressedJson")
-                        val uuidListJson = decompressToString(compressedJson!!)
-
-                        val gson = GsonBuilder()
-                            .registerTypeAdapter(UUID::class.java, UUIDAdapter())
-                            .create()
-
-                        val uuidList = gson.fromJson(uuidListJson, Array<UUID>::class.java).toList()
-
-                        uuidList.forEach {
-                            scope.launch {
-                                appInfoDao.removeEntityToSync(it)
-                            }
-                        }
                     }
                     BACKUP_CHUNK_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
@@ -164,9 +144,9 @@ class DataLayerListenerService : WearableListenerService() {
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
                                 scope.launch {
-                                    workoutHistoryDao.insertAll(*appBackup.WorkoutHistories.toTypedArray())
-                                    setHistoryDao.insertAll(*appBackup.SetHistories.toTypedArray())
-                                    exerciseInfoDao.insertAll(*appBackup.ExerciseInfos.toTypedArray())
+                                    workoutHistoryDao.insertAllWithVersionCheck(*appBackup.WorkoutHistories.toTypedArray())
+                                    setHistoryDao.insertAllWithVersionCheck(*appBackup.SetHistories.toTypedArray())
+                                    exerciseInfoDao.insertAllWithVersionCheck(*appBackup.ExerciseInfos.toTypedArray())
                                 }
 
                                 val intent = Intent(INTENT_ID).apply {
@@ -208,7 +188,6 @@ class DataLayerListenerService : WearableListenerService() {
     companion object {
         private const val WORKOUT_STORE_PATH = "/workoutStore"
         private const val BACKUP_CHUNK_PATH = "/backupChunkPath"
-        private const val ACK_ENTITY_PATH = "/ackEntityPath"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"
         const val WORKOUT_STORE_JSON = "workoutStoreJson"
         const val APP_BACKUP_START_JSON = "appBackupStartJson"

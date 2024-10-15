@@ -106,7 +106,7 @@ class WorkoutManager {
             }
         }*/
 
-        fun addSetToExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, newSet: Set, index: Int? = null): List<Workout> {
+        fun addSetToExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, newSet: Set, index: UInt? = null): List<Workout> {
             return workouts.map { currentWorkout ->
                 if (currentWorkout == workout) {
                     currentWorkout.copy(workoutComponents = addSetToExerciseRecursively(currentWorkout.workoutComponents, exercise, newSet, index))
@@ -116,13 +116,13 @@ class WorkoutManager {
             }
         }
 
-        fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: Set, index: Int? = null): List<WorkoutComponent> {
+        fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: Set, index: UInt? = null): List<WorkoutComponent> {
             return components.map { component ->
                 if (component == parentExercise) {
                     val exercise = component as Exercise
                     val mutableSets = component.sets.toMutableList()
-                    if (index != null && index in mutableSets.indices) {
-                        mutableSets.add(index, newSet)
+                    if (index != null && index.toInt() in mutableSets.indices) {
+                        mutableSets.add(index.toInt(), newSet)
                     } else {
                         mutableSets.add(newSet) // Add at the end if index is null or out of bounds
                     }

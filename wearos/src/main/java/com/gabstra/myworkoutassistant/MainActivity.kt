@@ -205,6 +205,10 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             appViewModel.phoneNode = nodes.firstOrNull()
         }
 
+        LaunchedEffect(Unit) {
+            appViewModel.sendAll(localContext)
+        }
+
         NavHost(
 			navController, 
 			startDestination = Screen.WorkoutSelection.route,

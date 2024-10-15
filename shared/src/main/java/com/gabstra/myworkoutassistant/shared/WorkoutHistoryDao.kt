@@ -5,6 +5,7 @@ import androidx.room.Dao;
 import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
+import androidx.room.Transaction
 import java.time.LocalDate
 import java.time.LocalTime
 import java.util.UUID
@@ -70,4 +71,25 @@ interface WorkoutHistoryDao {
     //add one to update every thing
     @Query("UPDATE workout_history SET workoutId = :workoutId, date = :date, time = :time, duration = :duration, heartBeatRecords = :heartBeatRecords, isDone = :isDone WHERE id = :id")
     suspend fun updateWorkoutHistory(id: UUID, workoutId: UUID, date: LocalDate, time: LocalTime, duration: Int, heartBeatRecords: List<Int>, isDone: Boolean)
+
+    @Query("UPDATE workout_history SET version = version + 1 WHERE id = :id")
+    suspend fun raiseVersionById(id: UUID)
+
+    @Transaction
+    suspend fun insertWithVersionCheck(workoutHistory: WorkoutHistory) {
+        val existingWorkoutHistory = getWorkoutHistoryById(workoutHistory.id)
+        if (existingWorkoutHistory == null || workoutHistory.version >= existingWorkoutHistory.version) {
+            insert(workoutHistory)
+        }
+    }
+
+    @Transaction
+    suspend fun insertAllWithVersionCheck(vararg workoutHistories: WorkoutHistory) {
+        workoutHistories.forEach { workoutHistory ->
+            val existingWorkoutHistory = getWorkoutHistoryById(workoutHistory.id)
+            if (existingWorkoutHistory == null || workoutHistory.version >= existingWorkoutHistory.version) {
+                insert(workoutHistory)
+            }
+        }
+    }
 }

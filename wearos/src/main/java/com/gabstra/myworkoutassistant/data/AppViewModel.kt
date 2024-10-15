@@ -42,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.forEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
@@ -61,7 +62,7 @@ sealed class WorkoutState {
     data class Set(
         val execiseId: UUID,
         var set: com.gabstra.myworkoutassistant.shared.sets.Set,
-        val order: Int,
+        val order: UInt,
         val previousSetData: SetData?,
         var currentSetData:  SetData,
         val hasNoHistory: Boolean,
@@ -69,7 +70,7 @@ sealed class WorkoutState {
     ) : WorkoutState()
     data class Rest(
         var set: com.gabstra.myworkoutassistant.shared.sets.Set,
-        val order: Int,
+        val order: UInt,
         var currentSetData:  SetData,
     ) : WorkoutState()
     data class Finished(val startWorkoutTime:LocalDateTime) : WorkoutState()
@@ -224,6 +225,45 @@ class AppViewModel : ViewModel(){
                 workoutHistoryDao.deleteAll()
                 setHistoryDao.deleteAll()
                 exerciseInfoDao.deleteAll()
+            }
+        }
+    }
+
+    fun sendAll(context: Context){
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val statuses = mutableListOf<Boolean>()
+                val workouts = workoutStore.workouts.filter { it.enabled && it.isActive }
+
+                if(workouts.isEmpty()) return@withContext
+
+                workouts.forEach {
+                    val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(it.id) ?: return@forEach
+                    val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+                    val exercises= it.workoutComponents.filterIsInstance<Exercise>()
+                    val exerciseInfos = exercises.mapNotNull { exercise -> exerciseInfoDao.getExerciseInfoById(exercise.id) }
+
+                    val result = sendWorkoutHistoryStore(
+                        dataClient!!,
+                        WorkoutHistoryStore(
+                            WorkoutHistory = workoutHistory,
+                            SetHistories = setHistories,
+                            ExerciseInfos = exerciseInfos
+                        )
+                    )
+                    statuses.add(result)
+                }
+
+                if(statuses.contains(false)){
+                    withContext(Dispatchers.Main){
+                        Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                    }
+                }else{
+                    withContext(Dispatchers.Main){
+                        Toast.makeText(context, "Data sent to phone", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
             }
         }
     }
@@ -502,13 +542,19 @@ class AppViewModel : ViewModel(){
                     heartBeatRecords = heartBeatHistory.toList(),
                     time = LocalTime.now(),
                     isDone = isDone,
-                    hasBeenSentToHealth = false
+                    hasBeenSentToHealth = false,
+                    version = currentWorkoutHistory!!.version.inc()
                 )
             }
 
-            executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
-            workoutHistoryDao.insert(currentWorkoutHistory!!)
-            setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
+            val newExecutedSetsHistory = executedSetsHistory.map {
+                it.copy(workoutHistoryId = currentWorkoutHistory!!.id)
+            }
+            executedSetsHistory.clear()
+            executedSetsHistory.addAll(newExecutedSetsHistory)
+
+            workoutHistoryDao.insertWithVersionCheck(currentWorkoutHistory!!)
+            setHistoryDao.insertAllWithVersionCheck(*executedSetsHistory.toTypedArray())
 
             val exerciseInfos = mutableListOf<ExerciseInfo>()
 
@@ -574,7 +620,6 @@ class AppViewModel : ViewModel(){
                     withContext(Dispatchers.Main){
                         Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
                     }
-                    Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
                 }
 
                 withContext(Dispatchers.Main){
@@ -622,10 +667,8 @@ class AppViewModel : ViewModel(){
             is WorkoutState.Rest ->  executedSetsHistory.indexOfFirst { it.setId == currentState.set.id && it.order == currentState.order }
             else -> return
         }
-
         if (existingIndex != -1) {
-            // If found, replace the existing entry
-            executedSetsHistory[existingIndex] = newSetHistory
+            executedSetsHistory[existingIndex] = newSetHistory.copy(id = executedSetsHistory[existingIndex].id, version = executedSetsHistory[existingIndex].version.inc())
         } else {
             // If not found, add the new entry
             executedSetsHistory.add(newSetHistory)
@@ -672,7 +715,7 @@ class AppViewModel : ViewModel(){
 
                     val restState = WorkoutState.Rest(
                         set = restSet,
-                        order = index,
+                        order = index.toUInt(),
                         currentSetData = initializeSetData(RestSet(workoutComponent.id,workoutComponent.timeInSeconds))
                     )
                     workoutStateQueue.addLast(restState)
@@ -690,7 +733,7 @@ class AppViewModel : ViewModel(){
 
                 val restState = WorkoutState.Rest(
                     set = restSet,
-                    order = index,
+                    order = index.toUInt(),
                     currentSetData = initializeSetData(RestSet(set.id,set.timeInSeconds))
                 )
                 workoutStateQueue.addLast(restState)
@@ -707,7 +750,7 @@ class AppViewModel : ViewModel(){
                 }
 
                 val previousSet = copySetData(currentSet)
-                val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index,previousSet, currentSet,historySet == null,false)
+                val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index.toUInt(),previousSet, currentSet,historySet == null,false)
                 workoutStateQueue.addLast(setState)
                 setStates.addLast(setState)
             }

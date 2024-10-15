@@ -5,6 +5,10 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+ksp {
+    arg("room.generateKotlin", "true")
+}
+
 android {
     namespace = "com.gabstra.myworkoutassistant.shared"
     compileSdk = 34

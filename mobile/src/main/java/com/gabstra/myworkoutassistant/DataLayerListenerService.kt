@@ -90,37 +90,14 @@ class DataLayerListenerService : WearableListenerService() {
                                     WorkoutHistoryStore::class.java
                                 )
 
-                                workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
-                                setHistoryDao.insertAll(*workoutHistoryStore.SetHistories.toTypedArray())
-
-                                /*
-                                try {
-                                    val uuidList = workoutHistoryStore.SetHistories.map { it.id } + workoutHistoryStore.WorkoutHistory.id
-                                    val gson = GsonBuilder()
-                                        .registerTypeAdapter(UUID::class.java, UUIDAdapter())
-                                        .create()
-
-                                    val json = gson.toJson(uuidList)
-                                    val compressedData = compressString(json)
-                                    val request = PutDataMapRequest.create("/workoutStore").apply {
-                                        dataMap.putByteArray("compressedJson",compressedData)
-                                        dataMap.putString("timestamp",System.currentTimeMillis().toString())
-                                    }.asPutDataRequest().setUrgent()
-
-                                    dataClient.putDataItem(request)
-                                } catch (cancellationException: CancellationException) {
-                                    cancellationException.printStackTrace()
-                                } catch (exception: Exception) {
-                                    exception.printStackTrace()
-                                }
-                                */
-
+                                workoutHistoryDao.insertWithVersionCheck(workoutHistoryStore.WorkoutHistory)
+                                setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
 
                                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                                 val workout = workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
 
                                 if (workout != null && workoutHistoryStore.WorkoutHistory.isDone) {
-                                    exerciseInfoDao.insertAll(*workoutHistoryStore.ExerciseInfos.toTypedArray())
+                                    exerciseInfoDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseInfos.toTypedArray())
 
                                     val setHistoriesByExerciseId = workoutHistoryStore.SetHistories
                                         .filter { it.exerciseId != null }
@@ -179,7 +156,7 @@ class DataLayerListenerService : WearableListenerService() {
                                         Log.e("DataLayerListenerService", "Error sending workouts to HealthConnect", exception)
                                     }
                                 }
-                                
+
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
                                 }
