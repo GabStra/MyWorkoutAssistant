@@ -58,6 +58,8 @@
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/backupChunkPath"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/ackEntityPath"/>
             </intent-filter>
         </service>
 

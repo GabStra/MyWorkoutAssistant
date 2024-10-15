@@ -207,25 +207,6 @@ fun MyWorkoutAssistantNavHost(
 
     val updateMobileFlow = appViewModel.updateMobileFlow
 
-    LaunchedEffect(Unit) {
-        updateMobileFlow
-            .filterNotNull()
-            .debounce(2000) // Adjust the delay (in milliseconds) as needed
-            .collect { _ ->
-                val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-                val setHistories = setHistoryDao.getAllSetHistories()
-                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-
-                val workoutStore = appViewModel.workoutStore.copy(
-                    workouts = appViewModel.workouts.filter { it.isActive && it.enabled }
-                )
-
-                val filteredAppBackup = AppBackup(workoutStore, workoutHistories, setHistories, exerciseInfos)
-
-                sendAppBackup(dataClient, filteredAppBackup)
-            }
-    }
-
     LaunchedEffect(appViewModel.workouts) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
     }
@@ -275,7 +256,6 @@ fun MyWorkoutAssistantNavHost(
                                 val setHistoriesByExerciseId = validSetHistories
                                     .filter { setHistory ->  setHistory.exerciseId != null }
                                     .groupBy { setHistory ->  setHistory.exerciseId }
-
 
 
                                 val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() }
@@ -365,7 +345,19 @@ fun MyWorkoutAssistantNavHost(
                     scope.launch {
                         withContext(Dispatchers.IO){
                             val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-                            val setHistories = setHistoryDao.getAllSetHistories()
+
+                            val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
+                                workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
+                            }
+
+                            val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
+                                allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && workoutHistory.isDone
+                            }
+
+                            val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
+                                validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
+                            }
+                            
                             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
                             val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories,exerciseInfos)
                             sendAppBackup(dataClient, appBackup)
@@ -393,8 +385,11 @@ fun MyWorkoutAssistantNavHost(
                                 allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
                             }
 
-                            val setHistories = setHistoryDao.getAllSetHistories()
+                            val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
+                                validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
+                            }
                             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+
                             val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories,exerciseInfos)
                             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                             writeJsonToDownloadsFolder(context, filename, jsonString)

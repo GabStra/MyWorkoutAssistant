@@ -507,19 +507,13 @@ class AppViewModel : ViewModel(){
             }
 
             executedSetsHistory.forEach { it.workoutHistoryId = currentWorkoutHistory!!.id }
+            workoutHistoryDao.insert(currentWorkoutHistory!!)
+            setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
 
             val exerciseInfos = mutableListOf<ExerciseInfo>()
 
             if(isDone){
-                workoutHistoryDao.insert(currentWorkoutHistory!!)
-                setHistoryDao.insertAll(*executedSetsHistory.toTypedArray())
-
-                //group executedSetsHistory by exerciseId
-
                 val exerciseHistories = executedSetsHistory.groupBy { it.exerciseId }
-
-                //get only the groups that have the histories with the proporty of set data of type body weight set data or weight set data
-
 
                 val filteredExerciseHistories = exerciseHistories.filter { it.value.any { it.setData is BodyWeightSetData || it.setData is WeightSetData } }
                   filteredExerciseHistories.forEach{

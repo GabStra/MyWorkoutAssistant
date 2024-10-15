@@ -17,13 +17,18 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.UUIDAdapter
+import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.decompressToString
+import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
@@ -35,8 +40,12 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.Calendar
+import java.util.UUID
+import java.util.concurrent.CancellationException
 
 class DataLayerListenerService : WearableListenerService() {
+    private val dataClient by lazy { Wearable.getDataClient(this) }
+
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -84,6 +93,29 @@ class DataLayerListenerService : WearableListenerService() {
                                 workoutHistoryDao.insert(workoutHistoryStore.WorkoutHistory)
                                 setHistoryDao.insertAll(*workoutHistoryStore.SetHistories.toTypedArray())
 
+                                /*
+                                try {
+                                    val uuidList = workoutHistoryStore.SetHistories.map { it.id } + workoutHistoryStore.WorkoutHistory.id
+                                    val gson = GsonBuilder()
+                                        .registerTypeAdapter(UUID::class.java, UUIDAdapter())
+                                        .create()
+
+                                    val json = gson.toJson(uuidList)
+                                    val compressedData = compressString(json)
+                                    val request = PutDataMapRequest.create("/workoutStore").apply {
+                                        dataMap.putByteArray("compressedJson",compressedData)
+                                        dataMap.putString("timestamp",System.currentTimeMillis().toString())
+                                    }.asPutDataRequest().setUrgent()
+
+                                    dataClient.putDataItem(request)
+                                } catch (cancellationException: CancellationException) {
+                                    cancellationException.printStackTrace()
+                                } catch (exception: Exception) {
+                                    exception.printStackTrace()
+                                }
+                                */
+
+
                                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                                 val workout = workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
 
@@ -130,24 +162,24 @@ class DataLayerListenerService : WearableListenerService() {
                                         )
                                     )
                                     workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+
+                                    try{
+                                        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                                        val age =  currentYear - workoutStore.birthDateYear
+                                        val weight = workoutStore.weightKg
+
+                                        sendWorkoutsToHealthConnect(
+                                            healthConnectClient = healthConnectClient,
+                                            workouts = workoutStore.workouts,
+                                            workoutHistoryDao = workoutHistoryDao,
+                                            age = age,
+                                            weightKg = weight
+                                        )
+                                    }catch (exception: Exception){
+                                        Log.e("DataLayerListenerService", "Error sending workouts to HealthConnect", exception)
+                                    }
                                 }
-
-                                try{
-                                    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                                    val age =  currentYear - workoutStore.birthDateYear
-                                    val weight = workoutStore.weightKg
-
-                                    sendWorkoutsToHealthConnect(
-                                        healthConnectClient = healthConnectClient,
-                                        workouts = workoutStore.workouts,
-                                        workoutHistoryDao = workoutHistoryDao,
-                                        age = age,
-                                        weightKg = weight
-                                    )
-                                }catch (exception: Exception){
-                                    Log.e("DataLayerListenerService", "Error sending workouts to HealthConnect", exception)
-                                }
-
+                                
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
                                 }
