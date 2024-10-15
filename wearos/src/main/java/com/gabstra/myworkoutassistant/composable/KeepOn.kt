@@ -55,18 +55,29 @@ fun KeepOn(
     LifecycleObserver(
         onStarted = {
             applyKeepScreenOnFlag()
+            if(!isDimmed && enableDimming) resetDimming()
         },
         onResumed = {
             applyKeepScreenOnFlag()
+            if(!isDimmed && enableDimming) resetDimming()
+        },
+        onPaused = {
+            isDimmed = false
+        },
+        onStopped = {
+            isDimmed = false
         }
     )
 
-    DisposableEffect(Unit) {
+    val keepScreenOnKey = remember { Any() }
+
+    DisposableEffect(keepScreenOnKey) {
         applyKeepScreenOnFlag()
 
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            isDimmed = false
         }
     }
 
@@ -74,9 +85,10 @@ fun KeepOn(
         if (isDimmed && !enableDimming) {
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
-        } else {
-            resetDimming()
+            return@LaunchedEffect
         }
+
+        if(!isDimmed && enableDimming) resetDimming()
     }
 
     Box(
