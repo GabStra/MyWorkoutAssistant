@@ -58,7 +58,7 @@ fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
 suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
     try {
         val jsonString = fromAppBackupToJSON(appBackup)
-        val chunkSize = 1000 // Adjust the chunk size as needed
+        val chunkSize = 50000 // Adjust the chunk size as needed
         val compressedData = compressString(jsonString)
         val chunks = compressedData.asList().chunked(chunkSize)
 
