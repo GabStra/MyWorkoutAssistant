@@ -49,7 +49,7 @@ interface SetHistoryDao {
     @Transaction
     suspend fun insertAllWithVersionCheck(vararg setHistories: SetHistory) {
         setHistories.forEach { setHistory ->
-            val existingSetHistory= getSetHistoryById(setHistory.id)
+            val existingSetHistory = getSetHistoryById(setHistory.id)
             if (existingSetHistory == null || setHistory.version >= existingSetHistory.version) {
                 insert(setHistory)
             }

@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
 import androidx.wear.compose.foundation.lazy.ScalingLazyListState
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material.Chip
@@ -151,7 +152,7 @@ fun WorkoutSelectionScreen(
     viewModel: AppViewModel,
     appHelper: WearDataLayerAppHelper
 ) {
-    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState(initialCenterItemIndex = 1)
     val workouts by viewModel.workouts.collectAsState()
 
     val sortedWorkouts = workouts.sortedBy { it.order }

@@ -261,7 +261,7 @@ fun WorkoutDetailScreen(
 
                                 val updatedWorkout =
                                     workout.copy(workoutComponents = updatedWorkoutComponents)
-                                appViewModel.updateWorkout(workout, updatedWorkout)
+                                appViewModel.updateWorkoutOld(workout, updatedWorkout)
 
                                 selectedWorkoutComponents = emptyList()
                                 isSelectionModeActive = false
@@ -288,7 +288,7 @@ fun WorkoutDetailScreen(
 
                                 val updatedWorkout =
                                     workout.copy(workoutComponents = updatedWorkoutComponents)
-                                appViewModel.updateWorkout(workout, updatedWorkout)
+                                appViewModel.updateWorkoutOld(workout, updatedWorkout)
                                 selectedWorkoutComponents = emptyList()
                                 isSelectionModeActive = false
                             }) {

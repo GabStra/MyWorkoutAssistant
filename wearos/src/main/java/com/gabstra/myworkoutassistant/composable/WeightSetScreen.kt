@@ -1,11 +1,13 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 
 
 import androidx.compose.foundation.layout.Row
@@ -16,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,7 +36,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
+import androidx.wear.compose.foundation.lazy.ScalingLazyListState
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
@@ -42,6 +52,7 @@ import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -162,7 +173,7 @@ fun WeightSetScreen (
         }
         if (isWeightInEditMode && (currentSet.actualWeight > 0)){
             currentSet = currentSet.copy(
-                actualWeight = currentSet.actualWeight.minus(0.5F)
+                actualWeight = currentSet.actualWeight.minus(0.25F)
             )
 
             VibrateGentle(context)
@@ -181,7 +192,7 @@ fun WeightSetScreen (
         }
         if (isWeightInEditMode){
             currentSet = currentSet.copy(
-                actualWeight = currentSet.actualWeight.plus(0.5F)
+                actualWeight = currentSet.actualWeight.plus(0.25F)
             )
 
             VibrateGentle(context)
@@ -329,6 +340,27 @@ fun WeightSetScreen (
                             )
                         }
 
+                    val ratio = if (previousVolumeUpToNow != 0.0) {
+                        (currentTotalVolume - previousVolumeUpToNow) / previousVolumeUpToNow
+                    } else {
+                        0.0
+                    }
+
+                    val displayText = when {
+                        ratio >= 1 -> String.format("x%.2f", ratio+1).replace(',','.').replace(".00","")
+                        ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).roundToInt())
+                        ratio > 0 -> String.format("+%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
+                        ratio <= -0.1 -> String.format("%d%%", (ratio * 100).roundToInt())
+                        else -> String.format("%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
+                    }
+
+                    val indicatorMarker = if(ratio == 0.0) null else MarkerData(
+                        ratio = bestVolumeProgress,
+                        text = displayText,
+                        color = Color.White,
+                        textColor = if(ratio > 0) MyColors.Green else MyColors.Red
+                    )
+
                     if(bestTotalVolume != lastTotalVolume){
                         markers = markers + MarkerData(
                             ratio = lastTotalVolume / bestTotalVolume,
@@ -342,7 +374,8 @@ fun WeightSetScreen (
                         label = "Best:",
                         ratio = bestVolumeProgress,
                         progressBarColor = progressColorBar,
-                        markers = markers
+                        markers = markers,
+                        indicatorMarker = indicatorMarker
                     )
                 }
             }

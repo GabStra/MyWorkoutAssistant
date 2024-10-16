@@ -154,7 +154,8 @@ fun LinearProgressBarWithRounderBorders(
 data class MarkerData(
     val ratio: Double,
     val text: String,
-    val color:Color = MyColors.Orange
+    val color:Color = MyColors.Orange,
+    val textColor:Color = Color.White
 )
 
 
@@ -165,10 +166,11 @@ fun TrendComponentProgressBarWithMarker(
     label: String,
     ratio: Double,
     progressBarColor: Color? = null,
-    markers: List<MarkerData> = emptyList()
+    markers: List<MarkerData> = emptyList(),
+    indicatorMarker: MarkerData? = null
 ) {
 
-    Row(modifier = modifier) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = label,
             style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
@@ -180,6 +182,7 @@ fun TrendComponentProgressBarWithMarker(
             modifier = Modifier.weight(1f),
             progressBarColor = progressBarColor?.takeIf { ratio < 1 } ?: if (ratio >= 1) MyColors.Green else MyColors.Orange,
             markers = markers,
+            indicatorMarker = indicatorMarker
         )
 
         if(ratio != 0.0 && ratio>1){
@@ -202,14 +205,15 @@ fun LinearProgressBarWithRounderBordersAndMarker(
     modifier: Modifier,
     progress: Float,
     progressBarColor: Color = Color(0xFFff6700),
-    markers: List<MarkerData> = emptyList()
+    markers: List<MarkerData> = emptyList(),
+    indicatorMarker: MarkerData? = null
 ) {
     val cornerRadius = 6.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
-    val markerWidth = 15.dp
+    val markerWidth = 20.dp
 
     BoxWithConstraints(
-        modifier = modifier.height(20.dp),
+        modifier = modifier.height(35.dp),
     ) {
 
         val totalWidth = maxWidth
@@ -222,6 +226,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(top=15.dp)
                 .align(Alignment.Center)
         ) {
             SimpleProgressIndicator(
@@ -236,6 +241,40 @@ fun LinearProgressBarWithRounderBordersAndMarker(
             )
         }
 
+        if(indicatorMarker!=null){
+            val adjustedMarkerPercentage = indicatorMarker.ratio.coerceIn(0.0, 1.0)
+            val markerOffset = effectiveWidth * adjustedMarkerPercentage.toFloat()
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .align(Alignment.Center)
+                    .background(Color.Transparent)
+                    .absoluteOffset(
+                        x = markerOffset,
+                    ),
+            ){
+                Column(
+                    modifier = Modifier
+                        .width(markerWidth)
+                        .background(Color.Transparent),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    ScalableText(
+                        modifier = Modifier
+                            .height(15.dp)
+                            .fillMaxWidth()
+                            .background(Color.Transparent),
+                        text = indicatorMarker.text,
+                        style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
+                        color = indicatorMarker.textColor,
+                        textAlign = TextAlign.Center,
+                        minTextSize = 6.sp
+                    )
+                }
+            }
+        }
+
         markers.forEach { marker ->
             val adjustedMarkerPercentage = marker.ratio.coerceIn(0.0, 1.0)
             val markerOffset = effectiveWidth * adjustedMarkerPercentage.toFloat()
@@ -244,6 +283,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .padding(top=15.dp)
                     .align(Alignment.Center)
                     .background(Color.Transparent)
                     .absoluteOffset(
@@ -277,7 +317,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
                             .background(Color.Transparent),
                         text = marker.text,
                         style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
-                        color = Color.White,
+                        color = marker.textColor,
                         textAlign = TextAlign.Center,
                         minTextSize = 6.sp
                     )

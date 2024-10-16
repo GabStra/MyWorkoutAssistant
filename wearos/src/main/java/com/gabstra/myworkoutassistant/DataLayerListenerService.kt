@@ -5,25 +5,25 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.gabstra.myworkoutassistant.data.combineChunks
+import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.adapters.UUIDAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
-import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import java.util.UUID
+import kotlinx.coroutines.runBlocking
 
 class DataLayerListenerService : WearableListenerService() {
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -41,7 +41,7 @@ class DataLayerListenerService : WearableListenerService() {
 
     private var ignoreUntilStartOrEnd = false
 
-    private var transactionId : String? = null
+    private var currentTransactionId : String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -57,7 +57,7 @@ class DataLayerListenerService : WearableListenerService() {
             putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
         }
         sendBroadcast(intent)
-        transactionId = null
+        currentTransactionId = null
         ignoreUntilStartOrEnd = true
     }
 
@@ -89,7 +89,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                         val transactionId = dataMap.getString("transactionId")
 
-                        if(this.transactionId != null && this.transactionId != transactionId){
+                        if(currentTransactionId != null && currentTransactionId != transactionId){
                             return
                         }
                         
@@ -102,7 +102,7 @@ class DataLayerListenerService : WearableListenerService() {
                             }
 
                             sendBroadcast(intent)
-                            this.transactionId = null
+                            currentTransactionId = null
                             ignoreUntilStartOrEnd = true
                             return
                         }
@@ -116,7 +116,7 @@ class DataLayerListenerService : WearableListenerService() {
                             sendBroadcast(intent)
                             hasStartedSync = true
                             ignoreUntilStartOrEnd = false
-                            this.transactionId = transactionId
+                            currentTransactionId = transactionId
                             handler.removeCallbacks(timeoutRunnable)
                             handler.postDelayed(timeoutRunnable, 10000)
                         }
@@ -143,23 +143,41 @@ class DataLayerListenerService : WearableListenerService() {
                                 val appBackup = fromJSONtoAppBackup(jsonBackup)
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
-                                scope.launch {
-                                    workoutHistoryDao.insertAllWithVersionCheck(*appBackup.WorkoutHistories.toTypedArray())
-                                    setHistoryDao.insertAllWithVersionCheck(*appBackup.SetHistories.toTypedArray())
-                                    exerciseInfoDao.insertAllWithVersionCheck(*appBackup.ExerciseInfos.toTypedArray())
-                                }
+                                runBlocking {
+                                    val insertWorkoutHistoriesJob = scope.launch(start = CoroutineStart.LAZY) {
+                                        workoutHistoryDao.insertAllWithVersionCheck(*appBackup.WorkoutHistories.toTypedArray())
+                                    }
 
-                                val intent = Intent(INTENT_ID).apply {
-                                    putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
+                                    val insertSetHistoriesJob = scope.launch(start = CoroutineStart.LAZY) {
+                                        setHistoryDao.insertAllWithVersionCheck(*appBackup.SetHistories.toTypedArray())
+                                    }
+
+                                    val insertExerciseInfosJob = scope.launch(start = CoroutineStart.LAZY) {
+                                        exerciseInfoDao.insertAllWithVersionCheck(*appBackup.ExerciseInfos.toTypedArray())
+                                    }
+
+                                    joinAll(insertWorkoutHistoriesJob, insertSetHistoriesJob, insertExerciseInfosJob)
+
+                                    val intent = Intent(INTENT_ID).apply {
+                                        putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
+                                    }
+                                    intent.apply { setPackage(packageName) }
+                                    sendBroadcast(intent)
+
+                                    backupChunks.clear()
+                                    expectedChunks = 0
+                                    hasStartedSync = false
+                                    ignoreUntilStartOrEnd = false
+                                    currentTransactionId = null
                                 }
-                                sendBroadcast(intent)
+                                return
                             }
 
                             backupChunks.clear()
                             expectedChunks = 0
                             hasStartedSync = false
                             ignoreUntilStartOrEnd = false
-                            this.transactionId = null
+                            currentTransactionId = null
                         }
                     }
                 }

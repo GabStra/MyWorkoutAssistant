@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -407,14 +408,16 @@ class AppViewModel : ViewModel(){
     private suspend fun loadWorkoutHistory(){
         val workoutHistories = workoutHistoryDao
             .getAllWorkoutHistories()
-            .filter { it.workoutId == selectedWorkout.value.id }
+            .filter { it.workoutId == selectedWorkout.value.id && it.isDone }
             .sortedByDescending { it.date }
 
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
-        exercises.forEach {
+        exercises.forEach { exercise ->
+            if(exercise.doNotStoreHistory) return@forEach
             var workoutHistoryIndex = 0;
+
             while(workoutHistoryIndex < workoutHistories.size){
-                val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(workoutHistories[workoutHistoryIndex].id,it.id)
+                val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(workoutHistories[workoutHistoryIndex].id,exercise.id)
                 if(setHistories.isNotEmpty()){
                     for(setHistory in setHistories) {
                         latestSetHistoryMap[setHistory.setId] = setHistory

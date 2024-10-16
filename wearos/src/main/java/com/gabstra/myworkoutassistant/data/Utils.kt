@@ -93,8 +93,11 @@ fun VibrateTwice(context: Context) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
                 vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
+            val startTime = System.currentTimeMillis()
             vibratorJob.join()
-            delay(100)
+            if(System.currentTimeMillis() - startTime < 200){
+                delay(200 - (System.currentTimeMillis() - startTime))
+            }
         }
     }
 }
@@ -109,8 +112,11 @@ fun VibrateShortImpulse(context: Context) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
                 vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             }
+            val startTime = System.currentTimeMillis()
             vibratorJob.join()
-            delay(100)
+            if(System.currentTimeMillis() - startTime < 200){
+                delay(200 - (System.currentTimeMillis() - startTime))
+            }
         }
     }
 }

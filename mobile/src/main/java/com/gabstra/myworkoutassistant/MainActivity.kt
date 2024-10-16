@@ -253,8 +253,11 @@ fun MyWorkoutAssistantNavHost(
 
                                 setHistoryDao.insertAll(*validSetHistories.toTypedArray())
 
+                                val completedWorkoutHistories = validWorkoutHistories.filter { it.isDone }
+
                                 val setHistoriesByExerciseId = validSetHistories
                                     .filter { setHistory ->  setHistory.exerciseId != null }
+                                    .filter { setHistory -> completedWorkoutHistories.any { wh -> wh.id == setHistory.workoutHistoryId } }
                                     .groupBy { setHistory ->  setHistory.exerciseId }
 
 
