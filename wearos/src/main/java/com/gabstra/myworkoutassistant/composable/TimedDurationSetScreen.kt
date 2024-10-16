@@ -9,7 +9,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -28,7 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material.Button
 
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
@@ -178,7 +183,9 @@ fun TimedDurationSetScreen(
 
     val textComposable = @Composable {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -215,31 +222,29 @@ fun TimedDurationSetScreen(
         Column(
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             textComposable()
             if (showStartButton) {
-                EnhancedButton(
-                    boxModifier = Modifier.weight(1f),
+                Button(
+                    modifier = Modifier.size(35.dp),
                     onClick = {
                         VibrateGentle(context)
                         startTimerJob()
                         showStartButton=false
                     },
-                    buttonSize = 35.dp,
-                    colors = ButtonDefaults.buttonColors(backgroundColor =MyColors.Green)
+                    colors = ButtonDefaults.buttonColors(backgroundColor = MyColors.Green)
                 ) {
                     Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
                 }
             }else{
-                EnhancedButton(
-                    boxModifier = Modifier.weight(1f).alpha(if(timerJob?.isActive == true) 1f else 0f),
+                Button(
+                    modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
                     onClick = {
                         VibrateGentle(context)
                         timerJob?.cancel()
                         showStopDialog = true
                     },
-                    buttonSize = 35.dp,
                     colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
                 ) {
                     Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
@@ -288,7 +293,7 @@ fun TimedDurationSetScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        SetScreen(customModifier = Modifier)
+                        SetScreen(customModifier = Modifier.weight(1f))
                         if (extraInfo != null) {
                             HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                             extraInfo(state)

@@ -3,17 +3,22 @@ package com.gabstra.myworkoutassistant.composable
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -30,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -115,32 +121,38 @@ fun RowScope.combinedClickable(
 
 @Composable
 private fun RotatingCircle(rotationAngle: Float, fillColor: Color) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val center = Offset(size.width / 2, size.height / 2)
+    val density = LocalDensity.current.density
+    val circleRadius = 20f
 
-        val borderRadius = 15f
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        val boxWidth = (constraints.maxWidth/density).dp
+        val boxHeight = (constraints.maxHeight/density).dp
 
-        val radius = (minOf(size.width, size.height) / 2) +2f - borderRadius / 2
 
-        val angleInRadians = Math.toRadians(rotationAngle.toDouble()).toFloat()
+        val angleInRadians = Math.toRadians(rotationAngle.toDouble())
 
-        val borderCenter = Offset(
-            x = center.x + radius * cos(angleInRadians),
-            y = center.y + radius * sin(angleInRadians),
-        )
+        val widthOffset = (constraints.maxWidth/2) - 5
+        val heightOffset = (constraints.maxHeight/2) - 5
 
-        drawCircle(
-            color = fillColor,
-            radius = borderRadius,
-            center = borderCenter,
-            style = Fill
-        )
-        drawCircle(
-            color = Color.Black,
-            radius = borderRadius,
-            center = borderCenter,
-            style = Stroke(width = 6f)
-        )
+        val xRadius = ((widthOffset * cos(angleInRadians)) / density).dp
+        val yRadius = ((heightOffset * sin(angleInRadians)) / density).dp
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .absoluteOffset(
+                    x = (boxWidth/2) - (circleRadius / density).dp + xRadius,
+                    y = (boxHeight/2) - (circleRadius / density).dp + yRadius,
+                ),
+        ) {
+            Box(modifier = Modifier
+                .size((circleRadius * 2 / density).dp)
+                .background(fillColor, CircleShape)
+                .border(3.dp, Color.Black, CircleShape)
+            )
+        }
     }
 }
 

@@ -7,12 +7,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
@@ -196,92 +198,93 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.Center
         ) {
-            val style = MaterialTheme.typography.body1.copy(fontSize = 24.sp)
-            Text(
-                text = "${currentSet.actualReps}",
-                style = style,
-                textAlign = TextAlign.End
-            )
-            Spacer(modifier = Modifier.width(5.dp))
-            val label = if (currentSet.actualReps == 1) "rep" else "reps"
-            Text(
-                text = label,
-                style = style.copy(fontSize = style.fontSize * 0.39f),
-                modifier = Modifier.padding(bottom = 2.dp)
-            )
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                val style = MaterialTheme.typography.body1.copy(fontSize = 24.sp)
+                Text(
+                    text = "${currentSet.actualReps}",
+                    style = style,
+                    textAlign = TextAlign.End
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                val label = if (currentSet.actualReps == 1) "rep" else "reps"
+                Text(
+                    text = label,
+                    style = style.copy(fontSize = style.fontSize * 0.39f),
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+            }
         }
     }
 
 
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        Box(
+        Column(
             modifier = customModifier,
-            contentAlignment = Alignment.Center
-        ){
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                RepsRow(Modifier)
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val modifierToUse =  if(bestVolumeProgress > 0 && lastTotalVolume > 0) Modifier.weight(1f) else Modifier
 
-                if(bestVolumeProgress > 0 && lastTotalVolume > 0){
-                    Spacer(modifier = Modifier.height(5.dp))
-                    val progressColorBar = when {
-                        currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
-                        currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
-                        else -> MyColors.Green
-                    }
+            RepsRow(modifierToUse)
 
-                    var markers = cumulativePastVolumePerSet.dropLast(1)
-                        .filter { it != 0.0 }
-                        .mapIndexed { index, it ->
-                            MarkerData(
-                                ratio = it / bestTotalVolume,
-                                text = "${index + 1}",
-                                color = Color.Black
-                            )
-                        }
+            if(bestVolumeProgress > 0 && lastTotalVolume > 0){
+                Spacer(modifier = Modifier.height(5.dp))
+                val progressColorBar = when {
+                    currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
+                    currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
+                    else -> MyColors.Green
+                }
 
-                    val ratio = if (previousVolumeUpToNow.toDouble() != 0.0) {
-                        (currentTotalVolume.toDouble() - previousVolumeUpToNow.toDouble()) / previousVolumeUpToNow.toDouble()
-                    } else {
-                        0.0
-                    }
-
-                    val displayText = when {
-                        ratio >= 1 -> String.format("x%.2f", ratio+1).replace(',','.').replace(".00","")
-                        ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).roundToInt())
-                        ratio > 0 -> String.format("+%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
-                        ratio <= -0.1 -> String.format("%d%%", (ratio * 100).roundToInt())
-                        else -> String.format("%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
-                    }
-
-                    val indicatorMarker = if(ratio == 0.0) null else MarkerData(
-                        ratio = bestVolumeProgress,
-                        text = displayText,
-                        color = Color.White,
-                        textColor = if(ratio > 0) MyColors.Green else MyColors.Red
-                    )
-
-                    if(bestTotalVolume != lastTotalVolume){
-                        markers = markers + MarkerData(
-                            ratio = lastTotalVolume / bestTotalVolume,
-                            text = "${cumulativePastVolumePerSet.size}",
+                var markers = cumulativePastVolumePerSet.dropLast(1)
+                    .filter { it != 0.0 }
+                    .mapIndexed { index, it ->
+                        MarkerData(
+                            ratio = it / bestTotalVolume,
+                            text = "${index + 1}",
                             color = Color.Black
                         )
                     }
 
-                    TrendComponentProgressBarWithMarker(
-                        modifier = Modifier.fillMaxWidth(),
-                        label = "Best:",
-                        ratio = bestVolumeProgress,
-                        progressBarColor = progressColorBar,
-                        markers = markers,
-                        indicatorMarker = indicatorMarker
+                val ratio = if (previousVolumeUpToNow.toDouble() != 0.0) {
+                    (currentTotalVolume.toDouble() - previousVolumeUpToNow.toDouble()) / previousVolumeUpToNow.toDouble()
+                } else {
+                    0.0
+                }
+
+                val displayText = when {
+                    ratio >= 1 -> String.format("x%.2f", ratio+1).replace(',','.')
+                    ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).roundToInt())
+                    ratio > 0 -> String.format("+%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
+                    ratio <= -0.1 -> String.format("%d%%", (ratio * 100).roundToInt())
+                    else -> String.format("%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
+                }
+
+                val indicatorMarker = if(ratio == 0.0) null else MarkerData(
+                    ratio = bestVolumeProgress,
+                    text = displayText,
+                    color = Color.White,
+                    textColor = if(ratio > 0) MyColors.Green else MyColors.Red
+                )
+
+                if(bestTotalVolume != lastTotalVolume){
+                    markers = markers + MarkerData(
+                        ratio = lastTotalVolume / bestTotalVolume,
+                        text = "${cumulativePastVolumePerSet.size}",
+                        color = Color.Black
                     )
                 }
+
+                TrendComponentProgressBarWithMarker(
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "Best:",
+                    ratio = bestVolumeProgress,
+                    progressBarColor = progressColorBar,
+                    markers = markers,
+                    indicatorMarker = indicatorMarker
+                )
             }
         }
     }
@@ -294,7 +297,7 @@ fun BodyWeightSetScreen(
         if (isRepsInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier
-                    .wrapContentSize()
+                    .fillMaxSize()
                     .clickable(
                         interactionSource = null,
                         indication = null
@@ -307,11 +310,13 @@ fun BodyWeightSetScreen(
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     Row(
+                        modifier = Modifier.height(40.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        RepsRow(Modifier)
+                        RepsRow(Modifier.fillMaxHeight())
                     }
+
                 }
             )
 
@@ -329,7 +334,7 @@ fun BodyWeightSetScreen(
                 ) {
                     exerciseTitleComposable()
                     HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    SetScreen(customModifier = Modifier)
+                    SetScreen(customModifier = Modifier.weight(1f))
                     if (extraInfo != null) {
                         HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)

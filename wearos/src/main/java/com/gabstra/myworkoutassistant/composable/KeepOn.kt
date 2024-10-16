@@ -55,11 +55,11 @@ fun KeepOn(
     LifecycleObserver(
         onStarted = {
             applyKeepScreenOnFlag()
-            if(!isDimmed && enableDimming) resetDimming()
+            if(!isDimmed) resetDimming()
         },
         onResumed = {
             applyKeepScreenOnFlag()
-            if(!isDimmed && enableDimming) resetDimming()
+            if(!isDimmed) resetDimming()
         },
         onPaused = {
             isDimmed = false
@@ -88,7 +88,7 @@ fun KeepOn(
             return@LaunchedEffect
         }
 
-        if(!isDimmed && enableDimming) resetDimming()
+        if(!isDimmed) resetDimming()
     }
 
     Box(

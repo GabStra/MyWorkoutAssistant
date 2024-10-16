@@ -41,7 +41,8 @@ fun ScalableText(
     color: Color = Color.Unspecified,
     style: TextStyle = LocalTextStyle.current,
     textAlign: TextAlign? = null,
-    minTextSize: TextUnit = 12.sp
+    minTextSize: TextUnit = 12.sp,
+    contentAlignment: Alignment = Alignment.Center
 ) {
     var textSize by remember { mutableStateOf(100.sp) }
     var isScaling by remember { mutableStateOf(true) }
@@ -60,7 +61,7 @@ fun ScalableText(
 
     BoxWithConstraints(
         modifier = modifier.alpha(alphaValue),
-        contentAlignment = Alignment.Center,
+        contentAlignment = contentAlignment
     ) {
         val boxWidth = maxWidth
         val boxHeight = maxHeight
