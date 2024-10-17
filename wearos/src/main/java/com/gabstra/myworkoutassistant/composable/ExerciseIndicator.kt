@@ -40,7 +40,7 @@ fun ExerciseIndicator(
     val baseGapAngle = 1f
     val size= 25f
 
-    val availableAngle = 130f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
+    val availableAngle = 125f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
     var angleForCurrentExercise = availableAngle / exerciseSelection.size.coerceAtLeast(1)
 
 

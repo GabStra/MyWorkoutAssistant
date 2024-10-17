@@ -308,11 +308,8 @@ fun WeightSetScreen (
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-
-            val modifierToUse =  if(bestVolumeProgress > 0 && lastTotalVolume > 0) Modifier.weight(1f) else Modifier.fillMaxWidth()
-
             Row(
-                modifier = modifierToUse,
+                modifier =  Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
@@ -329,7 +326,7 @@ fun WeightSetScreen (
                     else -> MyColors.Green
                 }
 
-                var markers = cumulativePastVolumePerSet.dropLast(1)
+               /* var markers = cumulativePastVolumePerSet.dropLast(1)
                     .filter { it != 0.0 }
                     .mapIndexed { index, it ->
                         MarkerData(
@@ -337,7 +334,7 @@ fun WeightSetScreen (
                             text = "${index + 1}",
                             color = Color.Black
                         )
-                    }
+                    }*/
 
                 val ratio = if (previousVolumeUpToNow != 0.0) {
                     (currentTotalVolume - previousVolumeUpToNow) / previousVolumeUpToNow
@@ -353,27 +350,26 @@ fun WeightSetScreen (
                     else -> String.format("%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
                 }
 
-                val indicatorMarker = if(ratio == 0.0) null else MarkerData(
+                val indicatorMarker = if(ratio == 0.0 || bestVolumeProgress > 1) null else MarkerData(
                     ratio = bestVolumeProgress,
                     text = displayText,
                     color = Color.White,
                     textColor = if(ratio > 0) MyColors.Green else MyColors.Red
                 )
 
-                if(bestTotalVolume != lastTotalVolume){
+                /*if(bestTotalVolume != lastTotalVolume){
                     markers = markers + MarkerData(
                         ratio = lastTotalVolume / bestTotalVolume,
                         text = "${cumulativePastVolumePerSet.size}",
                         color = Color.Black
                     )
-                }
+                }*/
 
                 TrendComponentProgressBarWithMarker(
                     modifier = Modifier.fillMaxWidth(),
                     label = "Best:",
                     ratio = bestVolumeProgress,
                     progressBarColor = progressColorBar,
-                    markers = markers,
                     indicatorMarker = indicatorMarker
                 )
             }

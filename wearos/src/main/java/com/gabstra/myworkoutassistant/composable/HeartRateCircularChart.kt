@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.getContrastRatio
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
@@ -224,7 +225,7 @@ private fun HeartRateView(
     val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "Zone $zone"
     val context = LocalContext.current
 
-    val startAngle = 110f
+    val startAngle = 115f
     val endAngle = 240f
 
     val targetRotationAngle = remember(progress) {
@@ -250,20 +251,23 @@ private fun HeartRateView(
                     }
                 )
         ) {
-           /* if(isDisplayingHr){
-                HeartIcon(modifier = Modifier.size(15.dp))
+            if(isDisplayingHr){
+                HeartIcon(
+                    modifier = Modifier.size(15.dp),
+                    tint = if (isDataStale || hr == 0) Color.DarkGray else MyColors.Red
+                )
                 Spacer(modifier = Modifier.width(5.dp))
-            }*/
+            }
             Text(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption1,
-                color = if (isDataStale) Color.Gray else Color.White
+                color = if (isDataStale || hr == 0) Color.DarkGray else Color.White
             )
         }
 
         SegmentedProgressIndicator(
-            trackSegments = listOf(ProgressIndicatorSegment(1f, colorsByZone[zone])),
+            trackSegments = segments,
             progress = progress,
             modifier = Modifier.fillMaxSize(),
             strokeWidth = 4.dp,

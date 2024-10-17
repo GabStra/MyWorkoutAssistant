@@ -170,7 +170,7 @@ fun TrendComponentProgressBarWithMarker(
     indicatorMarker: MarkerData? = null
 ) {
 
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = modifier, verticalAlignment = Alignment.Bottom) {
         Text(
             text = label,
             style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
@@ -179,7 +179,7 @@ fun TrendComponentProgressBarWithMarker(
 
         LinearProgressBarWithRounderBordersAndMarker(
             progress = ratio.toFloat(),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).padding(bottom = 2.dp),
             progressBarColor = progressBarColor?.takeIf { ratio < 1 } ?: if (ratio >= 1) MyColors.Green else MyColors.Orange,
             markers = markers,
             indicatorMarker = indicatorMarker
@@ -213,7 +213,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
     val markerWidth = 20.dp
 
     BoxWithConstraints(
-        modifier = modifier.height(35.dp),
+        modifier = modifier.height(21.dp),
     ) {
 
         val totalWidth = maxWidth
@@ -266,7 +266,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
                             .fillMaxWidth()
                             .background(Color.Transparent),
                         text = indicatorMarker.text,
-                        style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
+                        style = MaterialTheme.typography.title3,
                         color = indicatorMarker.textColor,
                         textAlign = TextAlign.Center,
                         minTextSize = 6.sp

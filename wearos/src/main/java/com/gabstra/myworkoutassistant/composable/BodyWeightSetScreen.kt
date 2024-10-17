@@ -226,11 +226,8 @@ fun BodyWeightSetScreen(
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val modifierToUse =  if(bestVolumeProgress > 0 && lastTotalVolume > 0) Modifier.weight(1f) else Modifier
-
-            RepsRow(modifierToUse)
-
-            if(bestVolumeProgress > 0 && lastTotalVolume > 0){
+            RepsRow(Modifier)
+            if (bestVolumeProgress > 0 && lastTotalVolume > 0) {
                 Spacer(modifier = Modifier.height(5.dp))
                 val progressColorBar = when {
                     currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
@@ -238,7 +235,7 @@ fun BodyWeightSetScreen(
                     else -> MyColors.Green
                 }
 
-                var markers = cumulativePastVolumePerSet.dropLast(1)
+               /* var markers = cumulativePastVolumePerSet.dropLast(1)
                     .filter { it != 0.0 }
                     .mapIndexed { index, it ->
                         MarkerData(
@@ -246,7 +243,7 @@ fun BodyWeightSetScreen(
                             text = "${index + 1}",
                             color = Color.Black
                         )
-                    }
+                    }*/
 
                 val ratio = if (previousVolumeUpToNow.toDouble() != 0.0) {
                     (currentTotalVolume.toDouble() - previousVolumeUpToNow.toDouble()) / previousVolumeUpToNow.toDouble()
@@ -255,34 +252,37 @@ fun BodyWeightSetScreen(
                 }
 
                 val displayText = when {
-                    ratio >= 1 -> String.format("x%.2f", ratio+1).replace(',','.')
+                    ratio >= 1 -> String.format("x%.2f", ratio + 1).replace(',', '.')
                     ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).roundToInt())
-                    ratio > 0 -> String.format("+%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
+                    ratio > 0 -> String.format("+%.1f%%", (ratio * 100)).replace(',', '.')
+                        .replace(".0", "")
+
                     ratio <= -0.1 -> String.format("%d%%", (ratio * 100).roundToInt())
-                    else -> String.format("%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
+                    else -> String.format("%.1f%%", (ratio * 100)).replace(',', '.')
+                        .replace(".0", "")
                 }
 
-                val indicatorMarker = if(ratio == 0.0) null else MarkerData(
-                    ratio = bestVolumeProgress,
-                    text = displayText,
-                    color = Color.White,
-                    textColor = if(ratio > 0) MyColors.Green else MyColors.Red
-                )
+                val indicatorMarker =
+                    if (ratio == 0.0 || bestVolumeProgress > 1) null else MarkerData(
+                        ratio = bestVolumeProgress,
+                        text = displayText,
+                        color = Color.White,
+                        textColor = if (ratio > 0) MyColors.Green else MyColors.Red
+                    )
 
-                if(bestTotalVolume != lastTotalVolume){
+               /* if (bestTotalVolume != lastTotalVolume) {
                     markers = markers + MarkerData(
                         ratio = lastTotalVolume / bestTotalVolume,
                         text = "${cumulativePastVolumePerSet.size}",
                         color = Color.Black
                     )
-                }
+                }*/
 
                 TrendComponentProgressBarWithMarker(
                     modifier = Modifier.fillMaxWidth(),
                     label = "Best:",
                     ratio = bestVolumeProgress,
                     progressBarColor = progressColorBar,
-                    markers = markers,
                     indicatorMarker = indicatorMarker
                 )
             }

@@ -10,12 +10,13 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 @Composable
 fun HeartIcon(
-    modifier: Modifier
+    modifier: Modifier,
+    tint: Color
 ){
     Icon(
         imageVector = Icons.Filled.Favorite,
         contentDescription = "Heart",
-        tint = MyColors.Red,
+        tint = tint,
         modifier = modifier
     )
 }

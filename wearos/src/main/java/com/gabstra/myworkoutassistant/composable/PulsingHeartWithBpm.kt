@@ -13,7 +13,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 @Composable
 fun PulsingHeartWithBpm(
@@ -38,5 +40,7 @@ fun PulsingHeartWithBpm(
 
     HeartIcon(modifier = Modifier
         .size(15.dp)
-        .scale(if (beatDuration != 0) scale else 1f))
+        .scale(if (beatDuration != 0) scale else 1f),
+        tint = MyColors.Red
+    )
 }

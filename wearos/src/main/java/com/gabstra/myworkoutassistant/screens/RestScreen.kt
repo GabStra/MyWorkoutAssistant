@@ -387,7 +387,7 @@ fun RestScreen(
             progress = progress,
             modifier = Modifier.fillMaxSize(),
             startAngle = -60f,
-            endAngle = 70f,
+            endAngle = 65f,
             strokeWidth = 4.dp,
             indicatorColor = MaterialTheme.colors.primary,
             trackColor = MaterialTheme.colors.background

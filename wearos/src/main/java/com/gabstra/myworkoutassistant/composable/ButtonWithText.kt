@@ -46,7 +46,7 @@ fun ButtonWithText(
                 text = text,
                 textAlign = TextAlign.Center,
                 color = textColor,
-                style = MaterialTheme.typography.body2
+                style = MaterialTheme.typography.title3
             )
         }
 
