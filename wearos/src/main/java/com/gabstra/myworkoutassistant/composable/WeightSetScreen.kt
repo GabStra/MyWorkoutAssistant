@@ -401,12 +401,11 @@ fun WeightSetScreen (
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     Row(
-                        modifier = Modifier.height(40.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        if (isRepsInEditMode) RepsRow(Modifier.fillMaxHeight())
-                        if (isWeightInEditMode) WeightRow(Modifier.fillMaxHeight())
+                        if (isRepsInEditMode) RepsRow(Modifier)
+                        if (isWeightInEditMode) WeightRow(Modifier)
                     }
                 }
             )

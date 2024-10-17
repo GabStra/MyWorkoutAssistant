@@ -41,10 +41,10 @@ fun ScalableText(
     color: Color = Color.Unspecified,
     style: TextStyle = LocalTextStyle.current,
     textAlign: TextAlign? = null,
-    minTextSize: TextUnit = 12.sp,
+    minTextSize: TextUnit = 6.sp,
     contentAlignment: Alignment = Alignment.Center
 ) {
-    var textSize by remember { mutableStateOf(100.sp) }
+    var textSize by remember { mutableStateOf(style.fontSize) }
     var isScaling by remember { mutableStateOf(true) }
     var isTextVisible by remember { mutableStateOf(false) }
     val density = LocalDensity.current

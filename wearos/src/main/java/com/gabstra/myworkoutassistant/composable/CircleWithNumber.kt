@@ -84,7 +84,6 @@ fun CircleWithNumber(
                 .alpha(transparency)
                 //.background(circleColor, CircleShape),
             ){
-
                 ScalableText(
                     modifier = Modifier
                         .fillMaxSize()

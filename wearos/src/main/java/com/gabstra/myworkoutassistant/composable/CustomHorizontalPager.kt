@@ -76,7 +76,7 @@ fun CustomHorizontalPager(
 ) {
     val pageIndicatorState = remember(pagerState) { PageScreenIndicatorState(pagerState) }
 
-    Box(modifier = modifier, contentAlignment = Alignment.TopCenter){
+    Box(modifier = modifier, contentAlignment = Alignment.Center){
         HorizontalPager(
             modifier = Modifier.fillMaxSize(),
             state = pagerState,

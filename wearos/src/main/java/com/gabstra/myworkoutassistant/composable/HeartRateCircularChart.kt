@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -45,6 +46,7 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
+import com.gabstra.myworkoutassistant.data.getContrastRatio
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
@@ -120,9 +122,15 @@ fun RowScope.combinedClickable(
 
 
 @Composable
-private fun RotatingCircle(rotationAngle: Float, fillColor: Color) {
+private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) {
     val density = LocalDensity.current.density
     val circleRadius = 20f
+
+    val textColor = if (getContrastRatio(fillColor, Color.Black) > getContrastRatio(fillColor, Color.White)) {
+        Color.Black
+    } else {
+        Color.White
+    }
 
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize()
@@ -160,6 +168,19 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color) {
                     style = Stroke(width = 3.dp.toPx())
                 )
             }
+            Box(modifier = Modifier
+                .size((circleRadius * 2 / density).dp)
+            ){
+                ScalableText(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(3.dp),
+                    text = number.toString(),
+                    style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
+                    color = textColor,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 }
@@ -180,6 +201,10 @@ private fun mapProgressToAngle(progress: Float, colorCount: Int): Float {
             (segmentProgress * segmentAngleSize)
 }
 
+fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Float {
+    return startAngle + (endAngle - startAngle) * percentage
+}
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HeartRateView(
@@ -187,7 +212,7 @@ private fun HeartRateView(
     hr: Int,
     isDataStale: Boolean,
     mhrPercentage: Float,
-    colors: Array<Color>
+    colorsByZone: Array<Color>
 ) {
 
     val segments = remember { getProgressIndicatorSegments() }
@@ -199,8 +224,11 @@ private fun HeartRateView(
     val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "Zone $zone"
     val context = LocalContext.current
 
-    val targetRotationAngle = remember(progress, colors.size) {
-        mapProgressToAngle(progress, colors.size)
+    val startAngle = 110f
+    val endAngle = 240f
+
+    val targetRotationAngle = remember(progress) {
+        getValueInRange(startAngle, endAngle, progress)
     }
 
     Box(
@@ -222,10 +250,10 @@ private fun HeartRateView(
                     }
                 )
         ) {
-            if(isDisplayingHr){
+           /* if(isDisplayingHr){
                 HeartIcon(modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(5.dp))
-            }
+            }*/
             Text(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
@@ -235,19 +263,18 @@ private fun HeartRateView(
         }
 
         SegmentedProgressIndicator(
-            trackSegments = segments,
+            trackSegments = listOf(ProgressIndicatorSegment(1f, colorsByZone[zone])),
             progress = progress,
             modifier = Modifier.fillMaxSize(),
             strokeWidth = 4.dp,
             paddingAngle = 2f,
-            startAngle = 110f,
-            endAngle = 240f,
+            startAngle = startAngle,
+            endAngle = endAngle,
             trackColor = Color.DarkGray,
         )
 
         if(hr != 0) {
-            val rangeIndex = zoneRanges.indexOfFirst { mhrPercentage >= it.first && mhrPercentage <= it.second }
-            RotatingCircle(targetRotationAngle, colors[rangeIndex])
+            RotatingCircle(targetRotationAngle, colorsByZone[zone],zone)
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -214,10 +215,8 @@ fun PageCompleteOrSkip(
     ScalingLazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(10.dp),
-        state = listState,
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(top = 10.dp, start = 20.dp, end = 20.dp),
+        state = listState
     ) {
         item{
             ButtonWithText(
@@ -297,14 +296,13 @@ fun PageExerciseDetail(
     val extraInfoComposable: @Composable (WorkoutState.Set) -> Unit = {state ->
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ){
             when (val set = state.set) {
                 is WeightSet -> WeightSetDataViewerMinimal(state.previousSetData as WeightSetData,MaterialTheme.typography.caption3)
-                is BodyWeightSet -> BodyWeightSetDataViewerMinimal(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption3)
-                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption3,historyMode = true)
-                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption3,historyMode = true)
+                is BodyWeightSet -> BodyWeightSetDataViewerMinimal(state.previousSetData as BodyWeightSetData,MaterialTheme.typography.caption2)
+                is TimedDurationSet -> TimedDurationSetDataViewerMinimal(state.previousSetData as TimedDurationSetData,MaterialTheme.typography.caption2,historyMode = true)
+                is EnduranceSet -> EnduranceSetDataViewerMinimal(state.previousSetData as EnduranceSetData,MaterialTheme.typography.caption2,historyMode = true)
                 is RestSet -> throw IllegalStateException("Rest set should not be here")
             }
         }
@@ -330,7 +328,7 @@ fun PageExerciseDetail(
 fun PageNotes(notes: String) {
     val scrollState = rememberScrollState()
     Box(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize().padding(top=10.dp)
     ) {
         Text(
             modifier = Modifier.fillMaxSize(),
@@ -380,10 +378,8 @@ fun PageNewSets(
     ScalingLazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(10.dp),
-        state = listState,
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(top = 10.dp, start = 20.dp, end = 20.dp),
+        state = listState
     ) {
         item{
             ButtonWithText(
@@ -433,16 +429,14 @@ fun ExerciseScreen(
         4
     })
 
-    LaunchedEffect(state) {
+    LaunchedEffect(state.set.id) {
         pagerState.scrollToPage(0)
         showSkipDialog = false
-        allowHorizontalScrolling = false
-        delay(2000)
         allowHorizontalScrolling = true
     }
 
     LaunchedEffect(allowHorizontalScrolling) {
-        if (!allowHorizontalScrolling) {
+        if (!allowHorizontalScrolling && pagerState.currentPage != 0) {
             pagerState.scrollToPage(0)
         }
     }
@@ -467,13 +461,13 @@ fun ExerciseScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(0.dp, 5.dp, 0.dp, 10.dp),
+                    .padding(0.dp, 10.dp, 0.dp, 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 val exerciseTitleComposable = @Composable{
                     Text(
                         modifier = Modifier
-                            .width(100.dp)
+                            .width(90.dp)
                             .combinedClickable(
                                 onClick = { marqueeEnabled = !marqueeEnabled },
                                 onLongClick = {
@@ -496,7 +490,9 @@ fun ExerciseScreen(
                     allowHorizontalScrolling = allowHorizontalScrolling,
                     updatedState = updatedState,
                     viewModel = viewModel,
-                    onScrollEnabledChange = { allowHorizontalScrolling = it },
+                    onScrollEnabledChange = {
+                        allowHorizontalScrolling = it
+                    },
                     exerciseTitleComposable = exerciseTitleComposable
                 )
             }

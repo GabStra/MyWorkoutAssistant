@@ -310,11 +310,10 @@ fun BodyWeightSetScreen(
                 onPlusLongPress = { onPlusClick() },
                 content = {
                     Row(
-                        modifier = Modifier.height(40.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        RepsRow(Modifier.fillMaxHeight())
+                        RepsRow(Modifier)
                     }
 
                 }

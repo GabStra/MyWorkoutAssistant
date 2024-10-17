@@ -81,7 +81,6 @@ fun EnduranceSetScreen (
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
-    val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
 
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -100,14 +99,6 @@ fun EnduranceSetScreen (
 
     LaunchedEffect(currentSet) {
         state.currentSetData = currentSet
-    }
-
-    LaunchedEffect(stopScrolling) {
-        if (stopScrolling) {
-            onTimerEnabled()
-        } else {
-            onTimerDisabled()
-        }
     }
 
     var currentMillis by remember(set.id) { mutableIntStateOf(0) }
@@ -168,6 +159,7 @@ fun EnduranceSetScreen (
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
+            onTimerEnabled()
             while (true) {
                 delay(1000) // Update every sec.
                 currentMillis += 1000
@@ -188,6 +180,7 @@ fun EnduranceSetScreen (
             state.currentSetData = currentSet.copy(
                 endTimer = currentSet.startTimer
             )
+            onTimerDisabled()
             onTimerEnd()
         }
 
@@ -317,6 +310,7 @@ fun EnduranceSetScreen (
                 endTimer = currentMillis
             )
 
+            onTimerDisabled()
             onTimerEnd()
             showStopDialog = false
         },

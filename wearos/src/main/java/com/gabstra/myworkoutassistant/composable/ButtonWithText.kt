@@ -32,21 +32,21 @@ fun ButtonWithText(
     Button(
         onClick,
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(5.dp),
+            .fillMaxWidth(),
         colors = ButtonDefaults.buttonColors(backgroundColor),
         enabled = enabled
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(vertical = 5.dp, horizontal = 10.dp),
+            modifier = Modifier.fillMaxSize().padding(5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Text(
+            ScalableText(
+                modifier = Modifier.fillMaxSize(),
                 text = text,
                 textAlign = TextAlign.Center,
                 color = textColor,
-                style = MaterialTheme.typography.title3
+                style = MaterialTheme.typography.body2
             )
         }
 

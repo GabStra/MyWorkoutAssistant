@@ -78,9 +78,6 @@ fun TimedDurationSetScreen(
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
-    val stopScrolling = isTimerInEditMode || timerJob?.isActive == true
-    var timerEnabledCalled by remember { mutableStateOf(false) }
-
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     val updateInteractionTime = {
@@ -98,17 +95,6 @@ fun TimedDurationSetScreen(
 
     LaunchedEffect(currentSet) {
         state.currentSetData = currentSet
-    }
-
-    LaunchedEffect(stopScrolling) {
-        if (stopScrolling) {
-            onTimerEnabled()
-            timerEnabledCalled = true
-        }  else {
-            if (timerEnabledCalled) {
-                onTimerDisabled()
-            }
-        }
     }
 
     var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
@@ -135,7 +121,7 @@ fun TimedDurationSetScreen(
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-
+            onTimerEnabled()
             while (currentMillis > 0) {
                 delay(1000) // Update every sec.
                 currentMillis -= 1000
@@ -149,6 +135,7 @@ fun TimedDurationSetScreen(
                 endTimer = 0
             )
             VibrateTwice(context)
+            onTimerDisabled()
             onTimerEnd()
         }
 
@@ -314,6 +301,7 @@ fun TimedDurationSetScreen(
                 endTimer =  currentMillis
             )
 
+            onTimerDisabled()
             onTimerEnd()
             showStopDialog = false
         },
