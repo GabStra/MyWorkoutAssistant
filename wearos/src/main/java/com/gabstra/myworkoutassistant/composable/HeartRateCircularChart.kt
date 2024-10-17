@@ -147,11 +147,19 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color) {
                     y = (boxHeight/2) - (circleRadius / density).dp + yRadius,
                 ),
         ) {
-            Box(modifier = Modifier
-                .size((circleRadius * 2 / density).dp)
-                .background(fillColor, CircleShape)
-                .border(3.dp, Color.Black, CircleShape)
-            )
+            Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {
+                drawCircle(
+                    color = fillColor,
+                    radius = (circleRadius / density).dp.toPx(),
+                    center = center
+                )
+                drawCircle(
+                    color = Color.Black,
+                    radius = (circleRadius / density).dp.toPx(),
+                    center = center,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+            }
         }
     }
 }
@@ -181,6 +189,9 @@ private fun HeartRateView(
     mhrPercentage: Float,
     colors: Array<Color>
 ) {
+
+    val segments = remember { getProgressIndicatorSegments() }
+
     val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
     val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
 
@@ -223,24 +234,16 @@ private fun HeartRateView(
             )
         }
 
-        var accumulatedAngle = 110f
-        val baseGapAngle = 2f
-        val size = 120f / colors.size
-
-        colors.forEach { color ->
-            SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f,color)),
-                progress = 1f,
-                modifier = Modifier.fillMaxSize().alpha(1f),
-                strokeWidth = 4.dp,
-                paddingAngle = 2f,
-                startAngle = accumulatedAngle,
-                endAngle = accumulatedAngle + size,
-                trackColor = Color.White,
-            )
-
-            accumulatedAngle += size + baseGapAngle
-        }
+        SegmentedProgressIndicator(
+            trackSegments = segments,
+            progress = progress,
+            modifier = Modifier.fillMaxSize(),
+            strokeWidth = 4.dp,
+            paddingAngle = 2f,
+            startAngle = 110f,
+            endAngle = 240f,
+            trackColor = Color.DarkGray,
+        )
 
         if(hr != 0) {
             val rangeIndex = zoneRanges.indexOfFirst { mhrPercentage >= it.first && mhrPercentage <= it.second }

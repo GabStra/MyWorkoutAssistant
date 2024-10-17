@@ -1,3 +1,4 @@
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -13,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -64,11 +66,25 @@ fun CircleWithNumber(
                     y = (boxHeight/2) - (circleRadius / density).dp + yRadius,
                 ),
         ) {
+            Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {
+                drawCircle(
+                    color = circleColor,
+                    radius = (circleRadius / density).dp.toPx(),
+                    center = center
+                )
+                drawCircle(
+                    color = Color.Black,
+                    radius = (circleRadius / density).dp.toPx(),
+                    center = center,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+            }
             Box(modifier = Modifier
                 .size((circleRadius * 2 / density).dp)
                 .alpha(transparency)
-                .background(circleColor, CircleShape),
+                //.background(circleColor, CircleShape),
             ){
+
                 ScalableText(
                     modifier = Modifier
                         .fillMaxSize()
