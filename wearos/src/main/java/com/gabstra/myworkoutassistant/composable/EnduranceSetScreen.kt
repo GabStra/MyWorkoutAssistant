@@ -44,6 +44,7 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateTwice
+import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -208,7 +209,7 @@ fun EnduranceSetScreen (
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateTwice(context)
+            VibrateTwiceAndBeep(context)
             startTimerJob()
         }
     }

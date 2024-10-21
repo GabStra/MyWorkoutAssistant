@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -149,15 +150,14 @@ fun WorkoutScreen(
         ) { updatedWorkoutState ->
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
+                    LaunchedEffect(Unit) {
+                        showWorkoutInProgressNotification(context)
+                    }
                     val state = updatedWorkoutState as WorkoutState.Preparing
                     if(!selectedWorkout.usePolarDevice)
-                        PreparingStandardScreen(viewModel,hrViewModel,state,onReady = {
-                            showWorkoutInProgressNotification(context)
-                        })
+                        PreparingStandardScreen(viewModel,hrViewModel,state)
                     else
-                        PreparingPolarScreen(viewModel,navController,polarViewModel,state,onReady = {
-                            showWorkoutInProgressNotification(context)
-                        })
+                        PreparingPolarScreen(viewModel,navController,polarViewModel,state)
                 }
                 is WorkoutState.Set -> {
                     val state = updatedWorkoutState as WorkoutState.Set

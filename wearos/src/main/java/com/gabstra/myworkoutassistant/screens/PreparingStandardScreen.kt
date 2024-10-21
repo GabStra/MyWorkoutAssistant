@@ -45,7 +45,7 @@ fun PreparingStandardScreen(
     viewModel: AppViewModel,
     hrViewModel: SensorDataViewModel,
     state: WorkoutState.Preparing,
-    onReady: () -> Unit
+    onReady: () -> Unit = {}
 ){
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

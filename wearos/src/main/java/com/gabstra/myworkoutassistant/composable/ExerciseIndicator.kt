@@ -74,7 +74,7 @@ fun ExerciseIndicator(
         if (areMoreElementsAvailable) {
 
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, MaterialTheme.colors.background)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.DarkGray)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize().alpha(1f),
                 strokeWidth = 4.dp,
@@ -85,7 +85,7 @@ fun ExerciseIndicator(
             )
 
             if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = MaterialTheme.colors.background, number = numberOfElementsLeft, transparency = 1f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = Color.DarkGray, number = numberOfElementsLeft, transparency = 1f)
             }
         }
     }
@@ -161,7 +161,7 @@ fun SetIndicator(
             }
             // Draw group segment
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White else (if(markAsCompleted)  MyColors.Green else MaterialTheme.colors.background))),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White else (if(markAsCompleted)  MyColors.Green else Color.DarkGray))),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -182,7 +182,7 @@ fun SetIndicator(
         // Indicator for more elements available
         if (numberOfElementsLeft > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, MaterialTheme.colors.background)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.DarkGray)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -193,7 +193,7 @@ fun SetIndicator(
             )
 
             if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = MaterialTheme.colors.background, number = numberOfElementsLeft)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = Color.DarkGray, number = numberOfElementsLeft)
             }
         }
     }

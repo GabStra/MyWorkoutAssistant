@@ -46,7 +46,7 @@ fun PreparingPolarScreen(
     navController: NavController,
     polarViewModel: PolarViewModel,
     state: WorkoutState.Preparing,
-    onReady: () -> Unit
+    onReady: () -> Unit  = {}
 ){
     val deviceConnectionInfo by polarViewModel.deviceConnectionState.collectAsState()
 
