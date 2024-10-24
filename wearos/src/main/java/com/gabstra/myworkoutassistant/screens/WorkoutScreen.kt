@@ -150,9 +150,6 @@ fun WorkoutScreen(
         ) { updatedWorkoutState ->
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
-                    LaunchedEffect(Unit) {
-                        showWorkoutInProgressNotification(context)
-                    }
                     val state = updatedWorkoutState as WorkoutState.Preparing
                     if(!selectedWorkout.usePolarDevice)
                         PreparingStandardScreen(viewModel,hrViewModel,state)

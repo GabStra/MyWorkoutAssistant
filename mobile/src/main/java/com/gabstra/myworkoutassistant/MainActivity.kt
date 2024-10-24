@@ -362,7 +362,7 @@ fun MyWorkoutAssistantNavHost(
                             }
                             
                             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-                            val appBackup = AppBackup(appViewModel.workoutStore, workoutHistories, setHistories,exerciseInfos)
+                            val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos)
                             sendAppBackup(dataClient, appBackup)
                         }
                         Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()

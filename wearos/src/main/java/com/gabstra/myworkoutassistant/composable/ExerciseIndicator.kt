@@ -24,7 +24,7 @@ fun ExerciseIndicator(
     viewModel: AppViewModel,
     set: WorkoutState.Set,
 ){
-    val parentIndex = viewModel.setsByExerciseId.keys.indexOf(set.execiseId)
+    val parentIndex = viewModel.setsByExerciseId.keys.indexOf(set.exerciseId)
     val totalGroups = viewModel.setsByExerciseId.keys.count()
     val maxCount = 1
 
@@ -66,7 +66,7 @@ fun ExerciseIndicator(
             accumulatedAngle += size + baseGapAngle
         }
 
-        val allSets = viewModel.setsByExerciseId[set.execiseId] ?: listOf()
+        val allSets = viewModel.setsByExerciseId[set.exerciseId] ?: listOf()
         val filteredSets = allSets.filter { it.set !is RestSet }
         SetIndicator(accumulatedAngle+ baseGapAngle,angleForCurrentExercise -  (baseGapAngle*2), set, filteredSets, Modifier.fillMaxSize())
         accumulatedAngle += angleForCurrentExercise + baseGapAngle

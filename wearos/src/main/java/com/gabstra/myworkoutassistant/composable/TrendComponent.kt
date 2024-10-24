@@ -185,9 +185,9 @@ fun TrendComponentProgressBarWithMarker(
             indicatorMarker = indicatorMarker
         )
 
-        if(ratio != 0.0 && ratio>1){
+       if(ratio != 0.0 && ratio>1){
             val displayText = when {
-                ratio >= 2 -> String.format("x%.2f", ratio).replace(',','.').replace(".00","")
+                ratio >= 2 -> String.format("x%.1f", ratio).replace(',','.').replace(".0","")
                 ratio >= 1.1 -> String.format("+%d%%", ((ratio - 1) * 100).roundToInt())
                 else -> String.format("+%.1f%%", ((ratio - 1) * 100)).replace(',','.').replace(".0","")
             }
@@ -210,10 +210,10 @@ fun LinearProgressBarWithRounderBordersAndMarker(
 ) {
     val cornerRadius = 6.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
-    val markerWidth = 20.dp
+    val markerWidth = 30.dp
 
     BoxWithConstraints(
-        modifier = modifier.height(21.dp),
+        modifier = modifier.height(26.dp),
     ) {
 
         val totalWidth = maxWidth
@@ -226,7 +226,7 @@ fun LinearProgressBarWithRounderBordersAndMarker(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top=15.dp)
+                .padding(top=20.dp)
                 .align(Alignment.Center)
         ) {
             SimpleProgressIndicator(
@@ -256,17 +256,17 @@ fun LinearProgressBarWithRounderBordersAndMarker(
             ){
                 Column(
                     modifier = Modifier
+                        .height(20.dp)
                         .width(markerWidth)
                         .background(Color.Transparent),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    //verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     ScalableText(
                         modifier = Modifier
-                            .height(15.dp)
-                            .fillMaxWidth()
+                            .fillMaxSize()
                             .background(Color.Transparent),
                         text = indicatorMarker.text,
-                        style = MaterialTheme.typography.title3,
+                        style = MaterialTheme.typography.title1,
                         color = indicatorMarker.textColor,
                         textAlign = TextAlign.Center,
                         minTextSize = 6.sp

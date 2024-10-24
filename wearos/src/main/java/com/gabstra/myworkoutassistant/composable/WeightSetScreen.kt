@@ -1,26 +1,19 @@
 package com.gabstra.myworkoutassistant.composable
 
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,13 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
-import androidx.wear.compose.foundation.lazy.ScalingLazyListState
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.PositionIndicator
-import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
@@ -74,12 +61,12 @@ fun WeightSetScreen (
 
     var bestTotalVolume by remember { mutableDoubleStateOf(0.0) }
 
-    LaunchedEffect(state.execiseId) {
-        bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.execiseId)
+    LaunchedEffect(state.exerciseId) {
+        bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.exerciseId)
     }
 
-    val totalHistoricalSetDataList = remember(state.execiseId) {
-        viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.execiseId)
+    val totalHistoricalSetDataList = remember(state.exerciseId) {
+        viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.exerciseId)
     }
 
     val cumulativePastVolumePerSet = remember(totalHistoricalSetDataList) {
@@ -92,8 +79,8 @@ fun WeightSetScreen (
         totalHistoricalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
     }
 
-    val historicalSetDataList = remember(state.execiseId,state.set.id) {
-        viewModel.getHistoricalSetsDataByExerciseIdAndTakeUntilSetId<WeightSetData>(state.execiseId, state.set.id)
+    val historicalSetDataList = remember(state.exerciseId,state.set.id) {
+        viewModel.getHistoricalSetsDataByExerciseIdAndTakeUntilSetId<WeightSetData>(state.exerciseId, state.set.id)
     }
 
     val previousVolumeUpToNow = remember(historicalSetDataList) {
@@ -101,8 +88,8 @@ fun WeightSetScreen (
     }
 
     // Store the executed set data list
-    val executedSetDataList = remember(state.execiseId,state.set.id) {
-        viewModel.getExecutedSetsDataByExerciseIdAndTakeUntilSetId<WeightSetData>(state.execiseId, state.set.id)
+    val executedSetDataList = remember(state.exerciseId,state.set.id) {
+        viewModel.getExecutedSetsDataByExerciseIdAndTakeUntilSetId<WeightSetData>(state.exerciseId, state.set.id)
     }
 
     val executedVolume = remember(executedSetDataList) {
@@ -318,7 +305,7 @@ fun WeightSetScreen (
                 RepsRow(Modifier)
             }
 
-            if(bestVolumeProgress > 0 && lastTotalVolume > 0){
+            if(bestVolumeProgress > 0){
                 Spacer(modifier = Modifier.height(5.dp))
                 val progressColorBar = when {
                     currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
@@ -350,7 +337,7 @@ fun WeightSetScreen (
                     else -> String.format("%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
                 }
 
-                val indicatorMarker = if(ratio == 0.0 || bestVolumeProgress > 1) null else MarkerData(
+                val indicatorMarker = if(ratio == 0.0) null else MarkerData(
                     ratio = bestVolumeProgress,
                     text = displayText,
                     color = Color.White,

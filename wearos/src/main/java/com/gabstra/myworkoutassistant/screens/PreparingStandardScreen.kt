@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -54,6 +55,11 @@ fun PreparingStandardScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
+    val staticKey = remember { Any() }
+    LaunchedEffect(staticKey){
+        showWorkoutInProgressNotification(context)
+    }
+
     LaunchedEffect(Unit){
         scope.launch {
             while (true) {
@@ -61,6 +67,7 @@ fun PreparingStandardScreen(
                 currentMillis += 1000
                 if(currentMillis >= 5000){
                     canSkip = true
+                    break
                 }
             }
         }
@@ -71,7 +78,7 @@ fun PreparingStandardScreen(
             return@LaunchedEffect
         }
 
-        val isReady = state.dataLoaded && currentMillis >=2000
+        val isReady = state.dataLoaded && currentMillis >=3000
         if (isReady) {
             hasTriggeredNextState = true
             

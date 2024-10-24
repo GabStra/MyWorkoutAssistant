@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -32,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
@@ -69,7 +67,6 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import kotlinx.coroutines.delay
 
 
 fun Modifier.circleMask() = this.drawWithContent {
@@ -167,7 +164,7 @@ fun SimplifiedHorizontalPager(
     exerciseTitleComposable: @Composable () -> Unit,
     onScrollEnabledChange: (Boolean) -> Unit
 ) {
-    val exercise = viewModel.exercisesById[updatedState.execiseId]!!
+    val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
 
     CustomHorizontalPager(
         modifier = modifier,
@@ -367,7 +364,7 @@ fun PageNewSets(
         listState.scrollToItem(0);
     }
 
-    val exercise = viewModel.exercisesById[updatedState.execiseId]!!
+    val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
     val exerciseSets = exercise.sets
 
     val setIndex =  exerciseSets.indexOfFirst { it === updatedState.set }
@@ -457,7 +454,7 @@ fun ExerciseScreen(
             }, label = ""
         ) { updatedState ->
 
-            val exercise = viewModel.exercisesById[updatedState.execiseId]!!
+            val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
             Column(
                 modifier = Modifier
                     .fillMaxSize()

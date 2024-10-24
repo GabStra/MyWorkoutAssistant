@@ -254,7 +254,7 @@ private fun HeartRateView(
             if(isDisplayingHr){
                 HeartIcon(
                     modifier = Modifier.size(15.dp),
-                    tint =  if (hr == 0) Color.DarkGray else if(isDataStale) Color.LightGray else MyColors.Red
+                    tint =  if (hr == 0) Color.DarkGray else MyColors.Red
                 )
                 Spacer(modifier = Modifier.width(5.dp))
             }
@@ -262,7 +262,7 @@ private fun HeartRateView(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption1,
-                color = if (hr == 0) Color.DarkGray else if(isDataStale) Color.LightGray else Color.White
+                color = if (hr == 0) Color.DarkGray else Color.White
             )
         }
 

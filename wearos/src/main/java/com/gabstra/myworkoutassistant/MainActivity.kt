@@ -143,6 +143,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+        appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
     }
 
     override fun onDestroy() {

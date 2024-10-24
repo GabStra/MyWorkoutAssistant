@@ -19,5 +19,6 @@ data class WorkoutHistory(
     val heartBeatRecords: List<Int>,
     val isDone : Boolean,
     val hasBeenSentToHealth: Boolean,
+    val globalId: UUID,
     val version: UInt = 0u
 )

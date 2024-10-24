@@ -6,7 +6,6 @@ import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateSetInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
-import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -17,17 +16,13 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.UUIDAdapter
-import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.decompressToString
-import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.shared.getNewSetFromSetData
+import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
-import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import com.google.gson.GsonBuilder
@@ -40,8 +35,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.Calendar
-import java.util.UUID
-import java.util.concurrent.CancellationException
 
 class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
@@ -108,8 +101,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                                     for (exercise in exercises) {
                                         val setById = exercise.sets.associateBy { it.id }
-                                        val setHistories =
-                                            setHistoriesByExerciseId[exercise.id] ?: continue
+                                        val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
 
                                         for (setHistory in setHistories) {
                                             val isExistingSet = setById.containsKey(setHistory.setId)
@@ -120,10 +112,10 @@ class DataLayerListenerService : WearableListenerService() {
                                                 if (isExistingSet) {
                                                     val oldSet = setById[setHistory.setId]!!
                                                     if (!isSetDataValid(oldSet,setHistory.setData)) continue
-                                                    val newSet = getNewSetFromSetData(oldSet,setHistory.setData) ?: continue
+                                                    val newSet = getNewSetFromSetHistory(oldSet,setHistory.setData) ?: continue
                                                     updateSetInExerciseRecursively(workoutComponents,exercise,oldSet,newSet)
                                                 } else {
-                                                    val newSet = getNewSetFromSetData(setHistory.setData)
+                                                    val newSet = getNewSetFromSetHistory(setHistory)
                                                     addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                                                 }
                                         }

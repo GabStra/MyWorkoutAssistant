@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,7 +49,6 @@ import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinim
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
-import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -73,10 +71,10 @@ fun NextExerciseInfo(
     viewModel: AppViewModel,
     state: WorkoutState.Set,
 ) {
-    val exerciseIndex = viewModel.setsByExerciseId.keys.indexOf(state.execiseId)
+    val exerciseIndex = viewModel.setsByExerciseId.keys.indexOf(state.exerciseId)
     val exerciseCount = viewModel.setsByExerciseId.keys.count()
 
-    val exercise = viewModel.exercisesById[state.execiseId]!!
+    val exercise = viewModel.exercisesById[state.exerciseId]!!
     val exerciseSets = exercise.sets.filter { it !is RestSet }
 
     val setIndex = exerciseSets.indexOf(state.set)
@@ -171,9 +169,7 @@ fun RestScreen(
     } else {
         null
     }
-
-
-
+    
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
@@ -329,7 +325,7 @@ fun RestScreen(
                 ) {
                     textComposable()
                     HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.execiseId]!!
+                    val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
                     CustomHorizontalPager(
                         modifier = Modifier
                             .fillMaxSize(),

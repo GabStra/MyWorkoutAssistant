@@ -38,6 +38,7 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 @Composable
@@ -57,6 +58,11 @@ fun PreparingPolarScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
+    val staticKey = remember { Any() }
+    LaunchedEffect(staticKey){
+        showWorkoutInProgressNotification(context)
+    }
+
     LaunchedEffect(Unit){
         if(viewModel.polarDeviceId.isEmpty()){
             Toast.makeText(context, "No polar device id set", Toast.LENGTH_SHORT).show()
@@ -74,6 +80,7 @@ fun PreparingPolarScreen(
                 currentMillis += 1000
                 if(currentMillis >= 5000){
                     canSkip = true
+                    break
                 }
             }
         }
@@ -84,7 +91,7 @@ fun PreparingPolarScreen(
             return@LaunchedEffect
         }
 
-        val isReady = (deviceConnectionInfo != null) && state.dataLoaded && currentMillis >=2000
+        val isReady = (deviceConnectionInfo != null) && state.dataLoaded && currentMillis >=3000
         if (isReady) {
             hasTriggeredNextState = true
 

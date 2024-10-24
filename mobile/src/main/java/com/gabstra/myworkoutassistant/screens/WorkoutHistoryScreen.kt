@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,6 +30,9 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,12 +53,14 @@ import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -92,8 +99,42 @@ import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import kotlin.math.floor
+
+@Composable
+fun Menu(
+    modifier: Modifier,
+    onDeleteHistory: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = modifier.wrapContentSize(Alignment.TopEnd)
+    ) {
+        IconButton(onClick = { expanded = !expanded }) {
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = "More"
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+        ) {
+            DropdownMenuItem(
+                text = { Text("Delete Selected History") },
+                onClick = {
+                    onDeleteHistory()
+                    expanded = false
+                }
+            )
+        }
+    }
+}
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -106,8 +147,11 @@ fun WorkoutHistoryScreen(
     workout: Workout,
     onGoBack: () -> Unit
 ) {
-    val currentLocale = Locale.getDefault()
 
+    val context = LocalContext.current
+
+    val currentLocale = Locale.getDefault()
+    val scope = rememberCoroutineScope()
     val userAge by appViewModel.userAge
 
     val exerciseById = remember(workout) {
@@ -139,9 +183,12 @@ fun WorkoutHistoryScreen(
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
 
-    val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
-        val currentWorkoutHistory = workoutHistories[value.toInt()]
-        currentWorkoutHistory.date.format(dateFormatter)
+    val horizontalAxisValueFormatter = remember(workoutHistories) {
+        CartesianValueFormatter { value, _, _ ->
+            if(value.toInt() < 0 || value.toInt() >= workoutHistories.size) return@CartesianValueFormatter "-"
+            val currentWorkoutHistory = workoutHistories[value.toInt()]
+            currentWorkoutHistory.date.format(dateFormatter)
+        }
     }
 
     val durationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
@@ -163,6 +210,80 @@ fun WorkoutHistoryScreen(
 
     var kiloCaloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
+    suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
+        val volumes = mutableListOf<Pair<Int, Float>>()
+        val durations = mutableListOf<Pair<Int, Float>>()
+        val workoutDurations = mutableListOf<Pair<Int, Float>>()
+        for (workoutHistory in workoutHistories) {
+            val setHistories =
+                setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+
+            var volume = 0f
+            var duration = 0f
+            for (setHistory in setHistories) {
+                if (setHistory.setData is WeightSetData) {
+                    val setData = setHistory.setData as WeightSetData
+                    volume += setData.actualReps * setData.actualWeight
+                }
+
+                if (setHistory.setData is BodyWeightSetData) {
+                    val setData = setHistory.setData as BodyWeightSetData
+                    volume += setData.actualReps
+                }
+
+                if (setHistory.setData is TimedDurationSetData) {
+                    val setData = setHistory.setData as TimedDurationSetData
+                    duration += setData.startTimer - setData.endTimer
+                }
+
+                if (setHistory.setData is EnduranceSetData) {
+                    val setData = setHistory.setData as EnduranceSetData
+                    duration += setData.endTimer
+                }
+            }
+            volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
+            durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
+            workoutDurations.add(
+                Pair(
+                    workoutHistories.indexOf(workoutHistory),
+                    workoutHistory.duration.toFloat()
+                )
+            )
+        }
+
+        //check if volumes are not all 0
+        if (volumes.any { it.second != 0f }) {
+            if (volumes.count() == 1) {
+                volumeMarkerTarget = volumes.last()
+            } else if (volumes.count() > 1) {
+                volumeMarkerTarget = volumes.maxBy { it.second }
+            }
+
+            volumeEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map { it.second }).toTypedArray()) })
+        }
+
+        if (durations.any { it.second != 0f }) {
+            if (durations.count() == 1) {
+                durationMarkerTarget = durations.last()
+            } else if (volumes.count() > 1) {
+                durationMarkerTarget = durations.maxBy { it.second }
+            }
+
+            durationEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
+        }
+
+        if (workoutDurations.count() == 1) {
+            workoutDurationMarkerTarget = workoutDurations.last()
+        } else if (workoutDurations.count() > 1) {
+            workoutDurationMarkerTarget = workoutDurations.maxBy { it.second }
+        }
+
+        workoutDurationEntryModel =
+            CartesianChartModel(LineCartesianLayerModel.build { series(*(workoutDurations.map { it.second }).toTypedArray()) })
+    }
+
     LaunchedEffect(workout) {
         withContext(Dispatchers.IO) {
 
@@ -180,77 +301,8 @@ fun WorkoutHistoryScreen(
                 return@withContext
             }
 
-            val volumes = mutableListOf<Pair<Int, Float>>()
-            val durations = mutableListOf<Pair<Int, Float>>()
-            val workoutDurations = mutableListOf<Pair<Int, Float>>()
-            for (workoutHistory in workoutHistories) {
-                val setHistories =
-                    setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+            setCharts(workoutHistories)
 
-                var volume = 0f
-                var duration = 0f
-                for (setHistory in setHistories) {
-                    if (setHistory.setData is WeightSetData) {
-                        val setData = setHistory.setData as WeightSetData
-                        volume += setData.actualReps * setData.actualWeight
-                    }
-
-                    if (setHistory.setData is BodyWeightSetData) {
-                        val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.actualReps
-                    }
-
-                    if (setHistory.setData is TimedDurationSetData) {
-                        val setData = setHistory.setData as TimedDurationSetData
-                        duration += setData.startTimer - setData.endTimer
-                    }
-
-                    if (setHistory.setData is EnduranceSetData) {
-                        val setData = setHistory.setData as EnduranceSetData
-                        duration += setData.endTimer
-                    }
-                }
-                volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
-                durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
-                workoutDurations.add(
-                    Pair(
-                        workoutHistories.indexOf(workoutHistory),
-                        workoutHistory.duration.toFloat()
-                    )
-                )
-            }
-
-            //check if volumes are not all 0
-            if (volumes.any { it.second != 0f }) {
-                if (volumes.count() == 1) {
-                    volumeMarkerTarget = volumes.last()
-                } else if (volumes.count() > 1) {
-                    volumeMarkerTarget = volumes.maxBy { it.second }
-                }
-
-                volumeEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map { it.second }).toTypedArray()) })
-            }
-
-            if (durations.any { it.second != 0f }) {
-                if (durations.count() == 1) {
-                    durationMarkerTarget = durations.last()
-                } else if (volumes.count() > 1) {
-                    durationMarkerTarget = durations.maxBy { it.second }
-                }
-
-                durationEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
-            }
-
-            if (workoutDurations.count() == 1) {
-                workoutDurationMarkerTarget = workoutDurations.last()
-            } else if (workoutDurations.count() > 1) {
-                workoutDurationMarkerTarget = workoutDurations.maxBy { it.second }
-            }
-
-            workoutDurationEntryModel =
-                CartesianChartModel(LineCartesianLayerModel.build { series(*(workoutDurations.map { it.second }).toTypedArray()) })
             selectedWorkoutHistory =
                 if (workoutHistoryId != null) workoutHistories.find { it.id == workoutHistoryId } else workoutHistories.lastOrNull()
 
@@ -433,7 +485,9 @@ fun WorkoutHistoryScreen(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            modifier = Modifier.fillMaxWidth().padding(5.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(5.dp),
                             text = "kcal: ${kiloCaloriesBurned.toInt()}",
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
@@ -584,7 +638,9 @@ fun WorkoutHistoryScreen(
                     isExpandable = setHistories.isNotEmpty(),
                     title = { m ->
                         Text(
-                            modifier = m.fillMaxWidth().padding(horizontal = 10.dp)
+                            modifier = m
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp)
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             text = exercise.name,
                             style = MaterialTheme.typography.bodyMedium,
@@ -676,12 +732,33 @@ fun WorkoutHistoryScreen(
                         }
                     },
                     actions = {
-                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
+                        val modifier = if(selectedWorkoutHistory == null || workoutHistories.isEmpty() || selectedMode == 0) Modifier.alpha(0f) else Modifier
+                        Menu(
+                            modifier = modifier,
+                            onDeleteHistory = {
+                                scope.launch {
+                                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                                    workoutHistoryDao.deleteById(selectedWorkoutHistory!!.id)
+
+                                    if (workoutHistories.size > 1) {
+                                        selectedWorkoutHistory = if (index == workoutHistories.size - 1) {
+                                            workoutHistories[index - 1]
+                                        }else {
+                                            workoutHistories[index + 1]
+                                        }
+                                    }
+
+                                    workoutHistories = workoutHistories.toMutableList().apply { removeAt(index) }
+
+                                    setCharts(workoutHistories)
+
+                                    Toast.makeText(context, "History Deleted", Toast.LENGTH_SHORT).show()
+                                    if(workoutHistories.isEmpty()) {
+                                        onGoBack()
+                                    }
+                                }
+                            }
+                        )
                     }
                 )
             }
