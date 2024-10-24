@@ -9,6 +9,6 @@ data class ExerciseInfo(
     @PrimaryKey(autoGenerate = false)
     val id: UUID,
     val bestVolume: Double,
-    val oneRepMax: Double,
+    val avgOneRepMax: Double,
     val version: UInt = 0u
 )

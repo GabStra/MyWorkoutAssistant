@@ -61,6 +61,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -279,18 +280,29 @@ fun MyWorkoutAssistantNavHost(
                                     }
 
                                     validVolumeSetHistoriesGroups.forEach { (_, validVolumeSetHistories) ->
-                                        val firstSetData = validVolumeSetHistories.first().setData
+                                        val setDataList = validVolumeSetHistories.filter { setHistory -> setHistory.setData !is RestSetData }.map { setHistory -> setHistory.setData }
+
+                                        val firstSetData = setDataList.first()
                                         val volume = when(firstSetData){
                                             is BodyWeightSetData -> {
-                                                validVolumeSetHistories.sumOf {item -> (item.setData as BodyWeightSetData).actualReps }.toDouble()
+                                                setDataList.sumOf {item -> (item as BodyWeightSetData).actualReps }.toDouble()
                                             }
                                             is WeightSetData -> {
-                                                validVolumeSetHistories.sumOf { item ->
-                                                    val weightSetData = item.setData as WeightSetData
+                                                setDataList.sumOf { item ->
+                                                    val weightSetData = item as WeightSetData
                                                     calculateVolume(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
                                                 }
                                             }
                                             else -> throw IllegalArgumentException("Unknown set type")
+                                        }
+
+                                        val avgOneRepMax = if(firstSetData is WeightSetData){
+                                            setDataList.sumOf { item ->
+                                                val weightSetData = item as WeightSetData
+                                                calculateOneRepMax(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
+                                            } / setDataList.size
+                                        }else{
+                                            0.0
                                         }
 
                                         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
@@ -298,12 +310,16 @@ fun MyWorkoutAssistantNavHost(
                                             val newExerciseInfo = ExerciseInfo(
                                                 id = exercise.id,
                                                 bestVolume = volume,
-                                                oneRepMax = 0.0
+                                                avgOneRepMax = avgOneRepMax
                                             )
                                             exerciseInfoDao.insert(newExerciseInfo)
                                         }else{
                                             if(exerciseInfo.bestVolume < volume){
                                                 exerciseInfoDao.updateBestVolume(exercise.id,volume)
+                                            }
+
+                                            if(exerciseInfo.avgOneRepMax < avgOneRepMax){
+                                                exerciseInfoDao.updateAvgOneRepMax(exercise.id,avgOneRepMax)
                                             }
                                         }
                                     }

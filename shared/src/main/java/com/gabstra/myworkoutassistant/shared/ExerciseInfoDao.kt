@@ -28,8 +28,8 @@ interface ExerciseInfoDao {
     @Query("UPDATE exercise_info SET bestVolume = :bestVolume, version = version + 1 WHERE id = :id")
     suspend fun updateBestVolume(id: UUID, bestVolume: Double)
 
-    @Query("UPDATE exercise_info SET oneRepMax = :oneRepMax WHERE id = :id")
-    suspend fun updateOneRepMax(id: UUID, oneRepMax: Double)
+    @Query("UPDATE exercise_info SET avgOneRepMax = :avgOneRepMax, version = version + 1 WHERE id = :id")
+    suspend fun updateAvgOneRepMax(id: UUID, avgOneRepMax: Double)
 
     @Query("SELECT id FROM exercise_info")
     suspend fun getAllExerciseInfoIds(): List<UUID>

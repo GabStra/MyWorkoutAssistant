@@ -29,6 +29,7 @@ import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -452,20 +453,7 @@ class AppViewModel : ViewModel(){
         if(heartBeat > 0) heartBeatHistory.add(heartBeat)
     }
 
-    fun addNewSetStandard(){
-        if (_workoutState.value !is WorkoutState.Set) return
-        val currentState = _workoutState.value as WorkoutState.Set
-
-        val currentSetIndex = exercisesById[currentState.exerciseId]!!.sets.indexOf(currentState.set)
-        val currentExercise =  exercisesById[currentState.exerciseId]!!
-
-        val newSets = currentExercise.sets.toMutableList()
-        val newRestSet = RestSet(UUID.randomUUID(),90)
-        newSets.add(currentSetIndex + 1,newRestSet)
-        val newSet = getNewSet(currentState.set)
-        newSets.add(currentSetIndex + 2,newSet)
-
-        val updatedExercise = currentExercise.copy(sets = newSets)
+    private fun updateWorkout(currentExercise: Exercise,updatedExercise: Exercise){
         val updatedComponents = updateWorkoutComponentsRecursively(_selectedWorkout.value.workoutComponents, currentExercise, updatedExercise)
         _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
 
@@ -480,6 +468,40 @@ class AppViewModel : ViewModel(){
 
         workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
         updateWorkoutStore(newWorkoutStore)
+    }
+
+    fun addNewSetStandard(){
+        if (_workoutState.value !is WorkoutState.Set) return
+        val currentState = _workoutState.value as WorkoutState.Set
+
+        val currentSetIndex = exercisesById[currentState.exerciseId]!!.sets.indexOf(currentState.set)
+        val currentExercise =  exercisesById[currentState.exerciseId]!!
+
+        val newSets = currentExercise.sets.toMutableList()
+        val newRestSet = RestSet(UUID.randomUUID(),90)
+        newSets.add(currentSetIndex + 1,newRestSet)
+        val newSet = getNewSet(currentState.set)
+        newSets.add(currentSetIndex + 2,newSet)
+
+        val updatedExercise = currentExercise.copy(sets = newSets)
+        updateWorkout(currentExercise,updatedExercise)
+
+        RefreshAndGoToNextState()
+    }
+
+    fun addNewRest(){
+        if (_workoutState.value !is WorkoutState.Set) return
+        val currentState = _workoutState.value as WorkoutState.Set
+
+        val currentSetIndex = exercisesById[currentState.exerciseId]!!.sets.indexOf(currentState.set)
+        val currentExercise =  exercisesById[currentState.exerciseId]!!
+
+        val newSets = currentExercise.sets.toMutableList()
+        val newRestSet = RestSet(UUID.randomUUID(),90)
+        newSets.add(currentSetIndex + 1,newRestSet)
+
+        val updatedExercise = currentExercise.copy(sets = newSets)
+        updateWorkout(currentExercise,updatedExercise)
 
         RefreshAndGoToNextState()
     }
@@ -503,20 +525,7 @@ class AppViewModel : ViewModel(){
         newSets.add(currentSetIndex + 2,newSet)
 
         val updatedExercise = currentExercise.copy(sets = newSets)
-        val updatedComponents = updateWorkoutComponentsRecursively(_selectedWorkout.value.workoutComponents, currentExercise, updatedExercise)
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
-
-        val currentWorkoutStore = workoutStoreRepository.getWorkoutStore()
-        val newWorkoutStore = currentWorkoutStore.copy(workouts = currentWorkoutStore.workouts.map {
-            if(it.id == _selectedWorkout.value.id){
-                it.copy(workoutComponents = updatedComponents)
-            }else{
-                it
-            }
-        })
-
-        workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
-        updateWorkoutStore(newWorkoutStore)
+        updateWorkout(currentExercise,updatedExercise)
 
         RefreshAndGoToNextState()
     }
@@ -608,20 +617,31 @@ class AppViewModel : ViewModel(){
                 val exerciseHistories = executedSetsHistory.groupBy { it.exerciseId }
 
                 val filteredExerciseHistories = exerciseHistories.filter { it.value.any { it.setData is BodyWeightSetData || it.setData is WeightSetData } }
-                  filteredExerciseHistories.forEach{
-                    val firstSetData = it.value.first().setData
+
+                filteredExerciseHistories.forEach{
+                    val setDataList = it.value.filter { setHistory -> setHistory.setData !is RestSetData }.map { setHistory -> setHistory.setData }
+                    val firstSetData = setDataList.first()
 
                     val volume = when(firstSetData){
                         is BodyWeightSetData -> {
-                            it.value.sumOf {item -> (item.setData as BodyWeightSetData).actualReps }.toDouble()
+                            setDataList.sumOf {item -> (item as BodyWeightSetData).actualReps }.toDouble()
                         }
                         is WeightSetData -> {
-                            it.value.sumOf { item ->
-                                val weightSetData = item.setData as WeightSetData
+                            setDataList.sumOf { item ->
+                                val weightSetData = item as WeightSetData
                                 calculateVolume(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
                             }
                         }
                         else -> throw IllegalArgumentException("Unknown set type")
+                    }
+
+                    val avgOneRepMax = if(firstSetData is WeightSetData){
+                        setDataList.sumOf { item ->
+                            val weightSetData = item as WeightSetData
+                            calculateOneRepMax(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
+                        } / setDataList.size
+                    }else{
+                        0.0
                     }
 
                     val exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
@@ -630,13 +650,17 @@ class AppViewModel : ViewModel(){
                         val newExerciseInfo = ExerciseInfo(
                             id = it.key!!,
                             bestVolume = volume,
-                            oneRepMax = 0.0
+                            avgOneRepMax = avgOneRepMax
                         )
                         exerciseInfoDao.insert(newExerciseInfo)
                         exerciseInfos.add(newExerciseInfo)
                     }else{
                         if(exerciseInfo.bestVolume < volume){
                             exerciseInfoDao.updateBestVolume(it.key!!,volume)
+                        }
+
+                        if(exerciseInfo.avgOneRepMax < avgOneRepMax){
+                            exerciseInfoDao.updateAvgOneRepMax(it.key!!,avgOneRepMax)
                         }
 
                         exerciseInfos.add(exerciseInfo)

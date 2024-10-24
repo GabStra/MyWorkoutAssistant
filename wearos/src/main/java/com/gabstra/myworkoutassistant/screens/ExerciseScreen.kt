@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 
@@ -197,45 +200,66 @@ fun PageCompleteOrSkip(
 
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
+    var showSkipDialog by remember { mutableStateOf(false) }
 
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
     LaunchedEffect(updatedState) {
         showConfirmDialog = false
         showGoBackDialog = false
+        showSkipDialog = false
     }
 
     LaunchedEffect(pagerState.currentPage) {
         listState.scrollToItem(0)
     }
 
-    ScalingLazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 10.dp, start = 20.dp, end = 20.dp),
-        state = listState
-    ) {
-        item{
-            ButtonWithText(
-                text = "Next",
-                onClick = {
-                    VibrateGentle(context)
-                    showConfirmDialog = true
-                },
+    Scaffold(
+        positionIndicator = {
+            PositionIndicator(
+                scalingLazyListState = listState
             )
         }
-        item{
-            ButtonWithText(
-                text = "Back",
-                onClick = {
-                    VibrateGentle(context)
-                    showGoBackDialog = true
-                },
-                enabled = !isHistoryEmpty,
-                backgroundColor = MaterialTheme.colors.background
-            )
+    ) {
+        ScalingLazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 10.dp, start = 20.dp, end = 20.dp),
+            state = listState
+        ) {
+            item{
+                ButtonWithText(
+                    text = "Next",
+                    onClick = {
+                        VibrateGentle(context)
+                        showConfirmDialog = true
+                    },
+                )
+            }
+            item{
+                ButtonWithText(
+                    text = "Skip",
+                    onClick = {
+                        VibrateGentle(context)
+                        showSkipDialog = true
+                    },
+                )
+            }
+            item{
+                ButtonWithText(
+                    text = "Back",
+                    onClick = {
+                        VibrateGentle(context)
+                        showGoBackDialog = true
+                    },
+                    enabled = !isHistoryEmpty,
+                    backgroundColor = MaterialTheme.colors.background
+                )
+            }
         }
     }
+
+
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
@@ -258,6 +282,26 @@ fun PageCompleteOrSkip(
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showConfirmDialog = false
+        },
+        holdTimeInMillis = 1000
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showSkipDialog,
+        title = "Skip exercise",
+        message = "Do you want to skip this exercise?",
+        handleYesClick = {
+            VibrateGentle(context)
+            viewModel.skipExercise()
+            showSkipDialog = false
+        },
+        handleNoClick = {
+            showSkipDialog = false
+            VibrateGentle(context)
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showSkipDialog = false
         },
         holdTimeInMillis = 1000
     )
@@ -371,6 +415,7 @@ fun PageNewSets(
     val isLastSet = setIndex == exerciseSets.size - 1
 
     val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
+    val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
 
     ScalingLazyColumn(
         modifier = Modifier
@@ -391,6 +436,22 @@ fun PageNewSets(
                 backgroundColor = MaterialTheme.colors.background
             )
         }
+        if(nextWorkoutState !is WorkoutState.Rest){
+            item{
+                ButtonWithText(
+                    text = "Add Rest",
+                    onClick = {
+                        VibrateGentle(context)
+                        viewModel.storeSetData()
+                        viewModel.pushAndStoreWorkoutData(false,context){
+                            viewModel.addNewRest()
+                        }
+                    },
+                    backgroundColor = MaterialTheme.colors.background
+                )
+            }
+        }
+
         if(isMovementSet && isLastSet){
             item{
                 ButtonWithText(
@@ -417,7 +478,7 @@ fun ExerciseScreen(
     hearthRateChart: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    var showSkipDialog by remember { mutableStateOf(false) }
+
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
 
     val pagerState = rememberPagerState(
@@ -428,7 +489,6 @@ fun ExerciseScreen(
 
     LaunchedEffect(state.set.id) {
         pagerState.scrollToPage(0)
-        showSkipDialog = false
         allowHorizontalScrolling = true
     }
 
@@ -465,13 +525,7 @@ fun ExerciseScreen(
                     Text(
                         modifier = Modifier
                             .width(90.dp)
-                            .combinedClickable(
-                                onClick = { marqueeEnabled = !marqueeEnabled },
-                                onLongClick = {
-                                    showSkipDialog = true
-                                    VibrateGentle(context)
-                                }
-                            )
+                            .clickable { marqueeEnabled = !marqueeEnabled }
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = exercise.name,
                         textAlign = TextAlign.Center,
@@ -509,25 +563,4 @@ fun ExerciseScreen(
 
         hearthRateChart()
     }
-
-
-    CustomDialogYesOnLongPress(
-        show = showSkipDialog,
-        title = "Skip exercise",
-        message = "Do you want to skip this exercise?",
-        handleYesClick = {
-            VibrateGentle(context)
-            viewModel.skipExercise()
-            showSkipDialog = false
-        },
-        handleNoClick = {
-            showSkipDialog = false
-            VibrateGentle(context)
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showSkipDialog = false
-        },
-        holdTimeInMillis = 1000
-    )
 }

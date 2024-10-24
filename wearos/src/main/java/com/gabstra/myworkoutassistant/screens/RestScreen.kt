@@ -38,6 +38,7 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
+import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
@@ -50,6 +51,7 @@ import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
+import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -173,7 +175,7 @@ fun RestScreen(
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
-            2
+            3
         })
 
     val updateInteractionTime = {
@@ -228,7 +230,7 @@ fun RestScreen(
             state.currentSetData = currentSetData.copy(
                 endTimer = 0
             )
-            VibrateTwice(context)
+            VibrateTwiceAndBeep(context)
             onTimerEnd()
         }
 
@@ -277,13 +279,7 @@ fun RestScreen(
                             updateInteractionTime()
                             VibrateGentle(context)
                         },
-                        onDoubleClick = {
-                            if (timerJob?.isActive != true) return@combinedClickable
-
-                            VibrateTwice(context)
-                            timerJob?.cancel()
-                            showSkipDialog = true
-                        }
+                        onDoubleClick = {}
                     ),
                 text = FormatTime(currentSeconds),
                 style = MaterialTheme.typography.display2,
@@ -367,6 +363,21 @@ fun RestScreen(
                                     }
                                 }
                             }
+                            2 ->
+                                Box(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    ButtonWithText(
+                                        text = "Skip",
+                                        onClick = {
+                                            if (timerJob?.isActive != true) return@ButtonWithText
+
+                                            VibrateGentle(context)
+                                            timerJob?.cancel()
+                                            showSkipDialog = true
+                                        },
+                                    )
+                                }
                         }
                     }
                 }

@@ -301,12 +301,12 @@ fun combineChunks(chunks: List<ByteArray>): ByteArray {
     return combinedArray
 }
 
-fun getOneRepMax(weight: Float, reps: Int): Float {
-    return weight / (1.0278f - (0.0278f * reps))
-}
-
 fun calculateIntensity(weight: Float, oneRepMax: Float): Float {
     return weight / oneRepMax
+}
+
+fun calculateOneRepMax(weight: Float, reps: Int): Float {
+    return weight / (1.0278f - (0.0278f * reps))
 }
 
 fun calculateVolume(weight: Float, reps: Int): Float {

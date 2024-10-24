@@ -40,6 +40,7 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -61,6 +62,18 @@ fun BodyWeightSetScreen(
     var currentSet by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
     var bestTotalVolume by remember { mutableDoubleStateOf(0.0) }
+
+    val exercise = remember(state.exerciseId) {
+        viewModel.exercisesById[state.exerciseId]!!
+    }
+
+    val sets = remember(exercise) {
+        exercise.sets.filter { it !is RestSet }
+    }
+
+    val setIndex = remember(state.set.id) {
+        sets.indexOfFirst { it.id == state.set.id }
+    }
 
     LaunchedEffect(state.exerciseId) {
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.exerciseId)
@@ -112,8 +125,6 @@ fun BodyWeightSetScreen(
         lastInteractionTime = System.currentTimeMillis()
     }
 
-    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState(initialCenterItemIndex = 2)
-    
     LaunchedEffect(currentSet) {
         state.currentSetData = currentSet
     }
@@ -223,15 +234,19 @@ fun BodyWeightSetScreen(
                     else -> MyColors.Green
                 }
 
-               /* var markers = cumulativePastVolumePerSet.dropLast(1)
-                    .filter { it != 0.0 }
-                    .mapIndexed { index, it ->
-                        MarkerData(
-                            ratio = it / bestTotalVolume,
-                            text = "${index + 1}",
-                            color = Color.Black
-                        )
-                    }*/
+
+                val markers = mutableListOf<MarkerData>()
+
+                val marker = cumulativePastVolumePerSet.getOrNull(setIndex)?.let {
+                    MarkerData(
+                        ratio = it / bestTotalVolume,
+                        text = "${setIndex + 1}",
+                        color = Color.Black
+                    )
+                }
+                if(marker != null && marker.ratio < 1){
+                    markers.add(marker)
+                }
 
                 val ratio = if (previousVolumeUpToNow.toDouble() != 0.0) {
                     (currentTotalVolume.toDouble() - previousVolumeUpToNow.toDouble()) / previousVolumeUpToNow.toDouble()
@@ -268,10 +283,11 @@ fun BodyWeightSetScreen(
 
                 TrendComponentProgressBarWithMarker(
                     modifier = Modifier.fillMaxWidth(),
-                    label = "Best:",
+                    label = "Vol:",
                     ratio = bestVolumeProgress,
                     progressBarColor = progressColorBar,
-                    indicatorMarker = indicatorMarker
+                    indicatorMarker = indicatorMarker,
+                    markers = markers
                 )
             }
         }

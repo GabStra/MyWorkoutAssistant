@@ -342,3 +342,7 @@ fun calculateVolume(weight: Float, reps: Int): Float {
     if(weight == 0f) return reps.toFloat()
     return weight * reps
 }
+
+fun calculateOneRepMax(weight: Float, reps: Int): Float {
+    return weight / (1.0278f - (0.0278f * reps))
+}
