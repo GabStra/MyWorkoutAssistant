@@ -1,15 +1,10 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import kotlinx.coroutines.*
 import kotlin.math.ceil
 import kotlin.math.ln
 
-/**
- * Helper class that contains all the logic for suggesting progression options
- * in a strength training program based on exercise parameters.
- */
 object ProgressionHelper {
-
-    // Enum for Exercise Types
     enum class ExerciseCategory {
         STRENGTH,
         HYPERTROPHY,
@@ -22,52 +17,207 @@ object ProgressionHelper {
         }
     }
 
-    // Enum for Actions
-    enum class Action {
-        INCREASE_REPETITIONS,
-        INCREASE_WEIGHT,
-        ADJUST_WEIGHT_AND_REPETITIONS
-    }
-
     data class ExerciseParameters(
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
         val setsRange: IntRange,
         val fatigueFactor: Double
     )
+}
 
-    data class FatigueResult(
+object VolumeDistributionHelper {
+    data class ExerciseSet(
+        val weight: Double,
+        val reps: Int,
         val fatigue: Double,
         val volume: Double,
         val percentLoad: Double
     )
 
-    data class ProgressionOption(
-        val action: Action,
-        val weight: Double,
-        val reps: Int,
-        val fatigue: Double,
-        val percentLoad: Double
+    data class DistributedWorkout(
+        val sets: List<ExerciseSet>,
+        val totalVolume: Double,
+        val totalFatigue: Double,
+        val usedOneRepMax: Double,
+        val maxRepsUsed: Int
     )
 
-    /**
-     * Retrieves the exercise parameters based on the exercise type.
-     */
-    private fun getParametersByExerciseType(exerciseCategory: ExerciseCategory): ExerciseParameters {
+    data class WorkoutParameters(
+        val numberOfSets: Int,
+        val targetTotalVolume: Double,
+        val oneRepMax: Double,
+        val weightIncrement: Double,
+        val percentLoadRange: Pair<Double, Double>,
+        val repsRange: IntRange,
+        val fatigueFactor: Double
+    )
+
+    suspend fun distributeVolume(
+        numberOfSets: Int,
+        targetTotalVolume: Double,
+        oneRepMax: Double,
+        exerciseCategory: ProgressionHelper.ExerciseCategory,
+        weightIncrement: Double
+    ): DistributedWorkout {
+        val params = getParametersByExerciseType(exerciseCategory)
+
+        // Create base parameters
+        val baseParams = WorkoutParameters(
+            numberOfSets = numberOfSets,
+            targetTotalVolume = targetTotalVolume,
+            oneRepMax = oneRepMax,
+            weightIncrement = weightIncrement,
+            percentLoadRange = params.percentLoadRange,
+            repsRange = params.repsRange,
+            fatigueFactor = params.fatigueFactor
+        )
+
+        // Try with original parameters first
+        findSolution(baseParams)?.let { return it }
+
+        // If no solution found, try with increased reps only
+        val increasedRepsSolution = findSolutionWithIncreasedReps(baseParams)
+        return increasedRepsSolution ?: throw IllegalStateException("No solution found with any parameter adjustment")
+    }
+
+    private suspend fun findSolutionWithIncreasedReps(baseParams: WorkoutParameters): DistributedWorkout? {
+        var currentMaxReps = baseParams.repsRange.last + 1
+        val maxPossibleReps = 30 // Upper limit for reps
+
+        while (currentMaxReps <= maxPossibleReps) {
+            val newRepsRange = baseParams.repsRange.first..currentMaxReps
+            findSolution(baseParams.copy(repsRange = newRepsRange))?.let { return it }
+            currentMaxReps++
+        }
+        return null
+    }
+
+    private suspend fun findSolution(params: WorkoutParameters): DistributedWorkout? {
+        val possibleSets = generatePossibleSets(params)
+        if (possibleSets.isEmpty()) return null
+
+        // Find valid combination of sets
+        val validSets = findValidSetCombination(
+            possibleSets = possibleSets,
+            remainingSets = params.numberOfSets,
+            remainingVolume = params.targetTotalVolume,
+            currentSets = emptyList(),
+            maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
+        ) ?: return null
+
+        return DistributedWorkout(
+            sets = validSets,
+            totalVolume = validSets.sumOf { it.volume },
+            totalFatigue = validSets.sumOf { it.fatigue },
+            usedOneRepMax = params.oneRepMax,
+            maxRepsUsed = validSets.maxOf { it.reps }
+        )
+    }
+
+    private suspend fun generatePossibleSets(params: WorkoutParameters): List<ExerciseSet> = coroutineScope {
+        val minWeight = ceil((params.oneRepMax * (params.percentLoadRange.first / 100)) / params.weightIncrement) * params.weightIncrement
+        val maxWeight = (params.oneRepMax * (params.percentLoadRange.second / 100)) / params.weightIncrement * params.weightIncrement
+
+        val weightRange = generateSequence(minWeight) { it + params.weightIncrement }
+            .takeWhile { it <= maxWeight }
+            .toList()
+
+        val setsDeferred = weightRange.map { weight ->
+            async(Dispatchers.Default) {
+                params.repsRange.map { reps ->
+                    createSet(
+                        weight = weight,
+                        reps = reps,
+                        oneRepMax = params.oneRepMax,
+                        fatigueFactor = params.fatigueFactor
+                    )
+                }
+            }
+        }
+
+        val sets = setsDeferred.awaitAll().flatten()
+
+        // Filter out sets that exceed the percentage load range
+        val filteredSets = sets.filter {
+            it.percentLoad >= params.percentLoadRange.first &&
+                    it.percentLoad <= params.percentLoadRange.second
+        }
+
+        // Sort sets by weight and then by fatigue
+        filteredSets.sortedWith(compareBy<ExerciseSet> { it.weight }.thenBy { it.fatigue })
+    }
+
+    private fun findValidSetCombination(
+        possibleSets: List<ExerciseSet>,
+        remainingSets: Int,
+        remainingVolume: Double,
+        currentSets: List<ExerciseSet>,
+        previousFatigue: Double = Double.MAX_VALUE,
+        maxWeight: Double
+    ): List<ExerciseSet>? {
+        if (remainingSets == 0) {
+            return if (currentSets.sumOf { it.volume } >= remainingVolume) currentSets else null
+        }
+
+        val targetVolumePerSet = remainingVolume / remainingSets
+
+        for (set in possibleSets) {
+            if (set.weight <= maxWeight &&
+                set.volume >= targetVolumePerSet * 0.95 &&
+                set.fatigue <= previousFatigue) {
+
+                val result = findValidSetCombination(
+                    possibleSets = possibleSets,
+                    remainingSets = remainingSets - 1,
+                    remainingVolume = remainingVolume - set.volume,
+                    currentSets = currentSets + set,
+                    previousFatigue = set.fatigue,
+                    maxWeight = set.weight  // Ensure next sets use equal or lower weight
+                )
+                if (result != null) {
+                    return result
+                }
+            }
+        }
+        return null
+    }
+
+    private fun createSet(
+        weight: Double,
+        reps: Int,
+        oneRepMax: Double,
+        fatigueFactor: Double
+    ): ExerciseSet {
+        val volume = weight * reps
+        val percentLoad = (weight / oneRepMax) * 100
+        val fatigue = volume * (1 + fatigueFactor * ln(1 + (percentLoad * reps / 100)))
+
+        return ExerciseSet(
+            weight = weight,
+            reps = reps,
+            fatigue = fatigue,
+            volume = volume,
+            percentLoad = percentLoad
+        )
+    }
+
+    private fun getParametersByExerciseType(
+        exerciseCategory: ProgressionHelper.ExerciseCategory
+    ): ProgressionHelper.ExerciseParameters {
         return when (exerciseCategory) {
-            ExerciseCategory.STRENGTH -> ExerciseParameters(
+            ProgressionHelper.ExerciseCategory.STRENGTH -> ProgressionHelper.ExerciseParameters(
                 percentLoadRange = 85.0 to 100.0,
                 repsRange = 1..5,
                 setsRange = 3..6,
                 fatigueFactor = 0.2
             )
-            ExerciseCategory.HYPERTROPHY -> ExerciseParameters(
+            ProgressionHelper.ExerciseCategory.HYPERTROPHY -> ProgressionHelper.ExerciseParameters(
                 percentLoadRange = 65.0 to 85.0,
                 repsRange = 6..12,
                 setsRange = 3..5,
                 fatigueFactor = 0.1
             )
-            ExerciseCategory.ENDURANCE -> ExerciseParameters(
+            ProgressionHelper.ExerciseCategory.ENDURANCE -> ProgressionHelper.ExerciseParameters(
                 percentLoadRange = 50.0 to 65.0,
                 repsRange = 12..20,
                 setsRange = 2..4,
@@ -76,127 +226,54 @@ object ProgressionHelper {
         }
     }
 
-    /**
-     * Calculates the fatigue based on weight, repetitions, one-rep max, and fatigue factor.
-     */
-    private fun calculateFatigue(weight: Double, reps: Int, oneRepMax: Double, fatigueFactor: Double): FatigueResult {
-        val volume = weight * reps
-        val percentLoad = (weight / oneRepMax) * 100
-        val fatigue = volume * (1 + fatigueFactor * ln(1 + (percentLoad * reps / 100)))
-        return FatigueResult(fatigue, volume, percentLoad)
-    }
-
-    /**
-     * Suggests the best progression option based on the current performance and exercise parameters.
-     */
-    fun suggestProgression(
-        currentWeight: Double,
-        currentReps: Int,
+    suspend fun distributeVolumeWithMinimumIncrease(
+        numberOfSets: Int,
+        targetTotalVolume: Double,
         oneRepMax: Double,
+        exerciseCategory: ProgressionHelper.ExerciseCategory,
         weightIncrement: Double,
-        exerciseCategory: ExerciseCategory
-    ): ProgressionOption? {
-        val params = getParametersByExerciseType(exerciseCategory)
-        val (percentLoadRange, repsRange, _, fatigueFactor) = params
+        percentageIncrease: Double
+    ): DistributedWorkout? {
+        if(percentageIncrease < 0) {
+            throw IllegalArgumentException("Percentage increase must be positive")
+        }
 
-        // Calculate current fatigue and volume
-        val currentFatigueResult = calculateFatigue(currentWeight, currentReps, oneRepMax, fatigueFactor)
-        val currentVolume = currentFatigueResult.volume
+        val minimumRequiredVolume = targetTotalVolume * (1 + (percentageIncrease/100))
+        var currentTargetVolume = targetTotalVolume
+        var bestSolution: DistributedWorkout? = null
+        var smallestIncrease = Double.MAX_VALUE
 
-        // Attempt to increase repetitions
-        val increasedReps = currentReps + 1
-        if (increasedReps in repsRange) {
-            val fatigueResult = calculateFatigue(currentWeight, increasedReps, oneRepMax, fatigueFactor)
-
-            val (minLoad, maxLoad) = percentLoadRange
-            if (fatigueResult.volume > currentVolume && fatigueResult.percentLoad in minLoad..maxLoad) {
-                return ProgressionOption(
-                    action = Action.INCREASE_REPETITIONS,
-                    weight = currentWeight,
-                    reps = increasedReps,
-                    fatigue = fatigueResult.fatigue,
-                    percentLoad = fatigueResult.percentLoad
+        // Try solutions with smaller incremental steps
+        while (currentTargetVolume <= minimumRequiredVolume * 1.05) { // Limit to 5% above minimum
+            try {
+                val solution = distributeVolume(
+                    numberOfSets = numberOfSets,
+                    targetTotalVolume = currentTargetVolume,
+                    oneRepMax = oneRepMax,
+                    exerciseCategory = exerciseCategory,
+                    weightIncrement = weightIncrement
                 )
-            }
-        }
 
-        // If increasing repetitions is invalid, adjust weight and repetitions
-        if (increasedReps > repsRange.last) {
-            val adjustedOption = adjustWeightAndReps(
-                currentVolume,
-                oneRepMax,
-                weightIncrement,
-                repsRange,
-                fatigueFactor,
-                percentLoadRange
-            )
-            if (adjustedOption != null) {
-                return adjustedOption
-            } else {
-                // Suggest increasing weight anyway
-                val increasedWeight = currentWeight + weightIncrement
-                val fatigueResult = calculateFatigue(increasedWeight, currentReps, oneRepMax, fatigueFactor)
-                if (fatigueResult.volume > currentVolume) {
-                    return ProgressionOption(
-                        action = Action.INCREASE_WEIGHT,
-                        weight = increasedWeight,
-                        reps = currentReps,
-                        fatigue = fatigueResult.fatigue,
-                        percentLoad = fatigueResult.percentLoad
-                    )
+                if (solution.totalVolume >= minimumRequiredVolume) {
+                    val increase = (solution.totalVolume / targetTotalVolume) - 1
+                    // Keep the solution closest to 2% increase
+                    if (increase < smallestIncrease) {
+                        smallestIncrease = increase
+                        bestSolution = solution
+                        // If we're very close to target increase (within 0.5%), we can stop
+                        if (increase <= 0.025) { // 2.5%
+                            break
+                        }
+                    }
                 }
+            } catch (e: IllegalStateException) {
+                // Continue if no solution found for current target volume
             }
+
+            // Use smaller increments (0.5% instead of 1%)
+            currentTargetVolume *= 1.005
         }
 
-        // Attempt to increase weight
-        val increasedWeight = currentWeight + weightIncrement
-        val fatigueResult = calculateFatigue(increasedWeight, currentReps, oneRepMax, fatigueFactor)
-        if (fatigueResult.volume > currentVolume) {
-            return ProgressionOption(
-                action = Action.INCREASE_WEIGHT,
-                weight = increasedWeight,
-                reps = currentReps,
-                fatigue = fatigueResult.fatigue,
-                percentLoad = fatigueResult.percentLoad
-            )
-        }
-
-        // If all else fails, return null
-        return null
-    }
-
-    /**
-     * Adjusts both weight and repetitions to find a progression that increases volume
-     * while staying within recommended ranges.
-     */
-    private fun adjustWeightAndReps(
-        currentVolume: Double,
-        oneRepMax: Double,
-        weightIncrement: Double,
-        repsRange: IntRange,
-        fatigueFactor: Double,
-        percentLoadRange: Pair<Double, Double>
-    ): ProgressionOption? {
-        for (reps in repsRange) {
-            val minimalWeight = ceil((currentVolume + weightIncrement) / reps / weightIncrement) * weightIncrement
-            if (minimalWeight <= 0) continue
-
-            val percentLoad = (minimalWeight / oneRepMax) * 100
-            val (minLoad, maxLoad) = percentLoadRange
-            if (percentLoad in minLoad..maxLoad) {
-                val fatigueResult = calculateFatigue(minimalWeight, reps, oneRepMax, fatigueFactor)
-                if (fatigueResult.volume > currentVolume) {
-                    return ProgressionOption(
-                        action = Action.ADJUST_WEIGHT_AND_REPETITIONS,
-                        weight = minimalWeight,
-                        reps = reps,
-                        fatigue = fatigueResult.fatigue,
-                        percentLoad = percentLoad
-                    )
-                }
-            }
-        }
-        // No suitable option found
-        return null
+        return bestSolution
     }
 }

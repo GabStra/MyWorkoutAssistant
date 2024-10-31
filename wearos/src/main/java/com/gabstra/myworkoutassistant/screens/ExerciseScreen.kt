@@ -182,10 +182,9 @@ fun SimplifiedHorizontalPager(
                 onScrollEnabledChange = { onScrollEnabledChange(it) },
                 exerciseTitleComposable = exerciseTitleComposable
             )
-            1 -> PageProgressiveOverload(pagerState,updatedState,viewModel)
-            2 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
-            3 -> PageNewSets(pagerState,updatedState,viewModel)
-            4 -> PageNotes(exercise.notes)
+            1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
+            2 -> PageNewSets(pagerState,updatedState,viewModel)
+            3 -> PageNotes(exercise.notes)
         }
     }
 }
@@ -472,84 +471,6 @@ fun PageNewSets(
     }
 }
 
-@Composable
-fun PageProgressiveOverload(
-    pagerState: PagerState,
-    updatedState:  WorkoutState.Set,
-    viewModel: AppViewModel
-) {
-    val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
-    var suggestedProgression by remember { mutableStateOf<ProgressionHelper.ProgressionOption?>(null) }
-
-    LaunchedEffect(updatedState) {
-        suggestedProgression = null
-        if(exercise.exerciseCategory == null || updatedState.set !is WeightSet) return@LaunchedEffect
-
-        val avg1RM = viewModel.getAverageOneRepMaxByExerciseId(updatedState.exerciseId)
-
-        if(avg1RM == 0.0) return@LaunchedEffect
-
-        val previousSetData = updatedState.previousSetData as WeightSetData
-        suggestedProgression = ProgressionHelper.suggestProgression(
-            currentWeight = previousSetData.actualWeight.toDouble(),
-            currentReps = previousSetData.actualReps,
-            oneRepMax = avg1RM,
-            weightIncrement = 0.5,
-            exerciseCategory = exercise.exerciseCategory!!
-        )
-    }
-
-    Box(
-        modifier = Modifier.fillMaxSize().padding(top=10.dp)
-    ) {
-        Text(
-            modifier = Modifier.fillMaxSize(),
-            text = "Progression",
-            style = MaterialTheme.typography.body1,
-            textAlign = TextAlign.Center
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp, 25.dp, 20.dp, 25.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            if(suggestedProgression == null){
-                Text(
-                    text = "NOT AVAILABLE" ,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center
-                )
-            }else{
-                if(suggestedProgression!!.action == ProgressionHelper.Action.INCREASE_REPETITIONS ||
-                    suggestedProgression!!.action == ProgressionHelper.Action.ADJUST_WEIGHT_AND_REPETITIONS )
-                {
-                    Text(
-                        text = "Increase reps to ${suggestedProgression!!.reps}",
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.body1,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
-                if(suggestedProgression!!.action == ProgressionHelper.Action.INCREASE_WEIGHT ||
-                    suggestedProgression!!.action == ProgressionHelper.Action.ADJUST_WEIGHT_AND_REPETITIONS )
-                {
-                    Text(
-                        text = "Increase weight to ${suggestedProgression!!.weight} kg",
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.body1,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        }
-    }
-}
-
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExerciseScreen(
@@ -564,7 +485,7 @@ fun ExerciseScreen(
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
-        5
+        4
     })
 
     LaunchedEffect(state.set.id) {
