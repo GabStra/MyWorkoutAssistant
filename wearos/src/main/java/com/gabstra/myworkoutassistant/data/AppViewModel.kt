@@ -703,6 +703,10 @@ class AppViewModel : ViewModel(){
         return exerciseInfoDao.getExerciseInfoById(exerciseId)?.bestVolume ?: 0.0
     }
 
+    suspend fun getAverageOneRepMaxByExerciseId(exerciseId: UUID): Double{
+        return exerciseInfoDao.getExerciseInfoById(exerciseId)?.avgOneRepMax ?: 0.0
+    }
+
     fun storeSetData() {
         val currentState = _workoutState.value
         if (!(currentState is WorkoutState.Set || currentState is WorkoutState.Rest)) return

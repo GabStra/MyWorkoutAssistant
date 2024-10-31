@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.adapters
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -36,7 +37,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
                 jsonObject.addProperty("notes", src.notes)
                 jsonObject.add("sets", context.serialize(src.sets))
                 jsonObject.addProperty("exerciseType", src.exerciseType.name)
-
+                if (src.exerciseCategory != null) {
+                    jsonObject.addProperty("exerciseCategory", src.exerciseCategory.name)
+                }
             }
             is Rest -> {
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
@@ -80,7 +83,16 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
                 } else {
                     ""
                 }
-                Exercise(id,enabled, name, doNotStoreHistory,notes, sets, exerciseType)
+
+                val exerciseCategory = if (jsonObject.has("exerciseCategory")) {
+                    ProgressionHelper.ExerciseCategory.fromString(jsonObject.get("exerciseCategory").asString)
+                } else if( exerciseType == ExerciseType.WEIGHT){
+                    ProgressionHelper.ExerciseCategory.HYPERTROPHY
+                }else{
+                    null
+                }
+
+                Exercise(id,enabled, name, doNotStoreHistory,notes, sets, exerciseType,exerciseCategory)
             }
             "Rest" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt

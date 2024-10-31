@@ -15,9 +15,14 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 fun ExerciseType.toReadableString(): String {
+    return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
+}
+
+fun ProgressionHelper.ExerciseCategory.toReadableString(): String {
     return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
 }
 
@@ -25,12 +30,23 @@ fun getExerciseTypeDescriptions(): List<String> {
     return ExerciseType.values().map { it.toReadableString() }
 }
 
+
+
 fun stringToExerciseType(value: String): ExerciseType? {
     return ExerciseType.values().firstOrNull {
         it.name.equals(value.replace(' ', '_').toUpperCase(), ignoreCase = true)
     }
 }
 
+fun getExerciseCategoryDescriptions(): List<String> {
+    return ProgressionHelper.ExerciseCategory.values().map { it.toReadableString() }
+}
+
+fun stringToExerciseCategory(value: String): ProgressionHelper.ExerciseCategory? {
+    return ProgressionHelper.ExerciseCategory.values().firstOrNull {
+        it.name.equals(value.replace(' ', '_').toUpperCase(), ignoreCase = true)
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,8 +63,12 @@ fun ExerciseForm(
 
     val exerciseTypeDescriptions = getExerciseTypeDescriptions()
     val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
-    val expanded = remember { mutableStateOf(false) }
 
+    val exerciseCategoryDescriptions = getExerciseCategoryDescriptions()
+    val selectedExerciseCategory = remember { mutableStateOf(exercise?.exerciseCategory) }
+
+    val expandedType = remember { mutableStateOf(false) }
+    val expandedCategory = remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -78,19 +98,19 @@ fun ExerciseForm(
                         text = selectedExerciseType.value.name.replace('_', ' ').capitalize(),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { expanded.value = true }
+                            .clickable { expandedType.value = true }
                             .padding(8.dp)
                     )
                     DropdownMenu(
-                        expanded = expanded.value,
-                        onDismissRequest = { expanded.value = false },
+                        expanded = expandedType.value,
+                        onDismissRequest = { expandedType.value = false },
                         modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     ) {
                         exerciseTypeDescriptions.forEach { ExerciseDescription ->
                             DropdownMenuItem(
                                 onClick = {
                                     selectedExerciseType.value = stringToExerciseType(ExerciseDescription)!!
-                                    expanded.value = false
+                                    expandedType.value = false
                                 },
                                 text = {
                                     Text(text = ExerciseDescription)
@@ -100,6 +120,43 @@ fun ExerciseForm(
                     }
                 }
             }
+            if(selectedExerciseType.value == ExerciseType.WEIGHT || selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                ) {
+                    Text(text = "Exercise Category:")
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = selectedExerciseCategory.value?.name?.replace('_', ' ')?.capitalize() ?: "-",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { expandedCategory.value = true }
+                                .padding(8.dp)
+                        )
+                        DropdownMenu(
+                            expanded = expandedCategory.value,
+                            onDismissRequest = { expandedCategory.value = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            exerciseCategoryDescriptions.forEach { ExerciseDescription ->
+                                DropdownMenuItem(
+                                    onClick = {
+                                        selectedExerciseCategory.value = stringToExerciseCategory(ExerciseDescription)!!
+                                        expandedCategory.value = false
+                                    },
+                                    text = {
+                                        Text(text = ExerciseDescription)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
         }
 
@@ -148,6 +205,7 @@ fun ExerciseForm(
                     sets = exercise?.sets ?: listOf(),
 
                     exerciseType = selectedExerciseType.value,
+                    exerciseCategory = selectedExerciseCategory.value,
                     notes = notesState.value.trim(),
                 )
 
