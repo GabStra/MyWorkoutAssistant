@@ -86,7 +86,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
 
                 val exerciseCategory = if (jsonObject.has("exerciseCategory")) {
                     ProgressionHelper.ExerciseCategory.fromString(jsonObject.get("exerciseCategory").asString)
-                } else if( exerciseType == ExerciseType.WEIGHT){
+                } else if( exerciseType == ExerciseType.WEIGHT || exerciseType == ExerciseType.BODY_WEIGHT){
                     ProgressionHelper.ExerciseCategory.HYPERTROPHY
                 }else{
                     null
