@@ -134,12 +134,12 @@ class DataLayerListenerService : WearableListenerService() {
 
                                     try{
                                         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                                        val age =  currentYear - workoutStore.birthDateYear
-                                        val weight = workoutStore.weightKg
+                                        val age =  currentYear - updatedWorkoutStore.birthDateYear
+                                        val weight = updatedWorkoutStore.weightKg
 
                                         sendWorkoutsToHealthConnect(
                                             healthConnectClient = healthConnectClient,
-                                            workouts = workoutStore.workouts,
+                                            workouts = updatedWorkoutStore.workouts,
                                             workoutHistoryDao = workoutHistoryDao,
                                             age = age,
                                             weightKg = weight

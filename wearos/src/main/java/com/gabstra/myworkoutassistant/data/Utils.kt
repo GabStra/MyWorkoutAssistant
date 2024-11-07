@@ -39,14 +39,17 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 import kotlin.math.min
 
@@ -66,7 +69,7 @@ fun FormatTime(seconds: Int): String {
 fun VibrateHard(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    GlobalScope.launch(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.Main) {
         launch{
             vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
         }
@@ -77,7 +80,7 @@ fun VibrateHard(context: Context) {
 fun VibrateGentle(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    GlobalScope.launch(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.Main) {
         launch{
             vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
         }
@@ -88,7 +91,7 @@ fun VibrateGentle(context: Context) {
 fun VibrateTwice(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    GlobalScope.launch(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.Main) {
         repeat(2) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
                 vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
@@ -106,16 +109,38 @@ fun VibrateTwice(context: Context) {
 @OptIn(DelicateCoroutinesApi::class)
 fun VibrateShortImpulse(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    GlobalScope.launch(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.Main) {
         repeat(3) {
-            val vibratorJob = launch(start = CoroutineStart.LAZY){
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-            }
             val startTime = System.currentTimeMillis()
-            vibratorJob.join()
-            if(System.currentTimeMillis() - startTime < 200){
-                delay(200 - (System.currentTimeMillis() - startTime))
+            coroutineScope {
+                // Create a countdown latch
+                val readyCount = AtomicInteger(2)
+
+                // Prepare both effects
+                val job1 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                }
+
+                val job2 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                }
+
+                joinAll(job1, job2)
+            }
+
+            val elapsedTime = System.currentTimeMillis() - startTime
+            if (elapsedTime < 200) {
+                delay(200 - elapsedTime)
             }
         }
     }
@@ -126,7 +151,7 @@ fun VibrateAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    GlobalScope.launch(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.Main) {
         val vibratorJob = launch(start = CoroutineStart.LAZY){
             vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
         }
@@ -143,17 +168,32 @@ fun VibrateTwiceAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    GlobalScope.launch(Dispatchers.IO) {
+    GlobalScope.launch(Dispatchers.Main) {
         repeat(2) {
             val startTime = System.currentTimeMillis()
-            val vibratorJob = launch(start = CoroutineStart.LAZY){
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-            }
+            coroutineScope {
+                // Create a countdown latch
+                val readyCount = AtomicInteger(2)
 
-            val toneJob = launch(start = CoroutineStart.LAZY){
-                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                // Prepare both effects
+                val job1 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                }
+
+                val job2 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                }
+
+                joinAll(job1, job2)
             }
-            joinAll(toneJob,vibratorJob)
 
             val elapsedTime = System.currentTimeMillis() - startTime
             if (elapsedTime < 200) {

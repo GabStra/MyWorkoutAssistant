@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
+import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper.getParametersByExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -40,6 +41,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
                 if (src.exerciseCategory != null) {
                     jsonObject.addProperty("exerciseCategory", src.exerciseCategory.name)
                 }
+                jsonObject.addProperty("minLoadPercent", src.minLoadPercent)
+                jsonObject.addProperty("maxLoadPercent", src.maxLoadPercent)
+                jsonObject.addProperty("minReps", src.minReps)
+                jsonObject.addProperty("maxReps", src.maxReps)
+                jsonObject.addProperty("fatigueFactor", src.fatigueFactor)
+                jsonObject.addProperty("volumeIncreasePercent", src.volumeIncreasePercent)
             }
             is Rest -> {
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
@@ -92,7 +99,43 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
                     null
                 }
 
-                Exercise(id,enabled, name, doNotStoreHistory,notes, sets, exerciseType,exerciseCategory)
+                val minLoadPercent = if (jsonObject.has("minLoadPercent")) {
+                    jsonObject.get("minLoadPercent").asDouble
+                } else {
+                    if(exerciseCategory != null) getParametersByExerciseType(exerciseCategory).percentLoadRange.first else 0.0
+                }
+
+                val maxLoadPercent = if (jsonObject.has("maxLoadPercent")) {
+                    jsonObject.get("maxLoadPercent").asDouble
+                } else {
+                    if(exerciseCategory != null) getParametersByExerciseType(exerciseCategory).percentLoadRange.second else 0.0
+                }
+
+                val minReps = if (jsonObject.has("minReps")) {
+                    jsonObject.get("minReps").asInt
+                } else {
+                    if(exerciseCategory != null) getParametersByExerciseType(exerciseCategory).repsRange.first else 0
+                }
+
+                val maxReps = if (jsonObject.has("maxReps")) {
+                    jsonObject.get("maxReps").asInt
+                } else {
+                    if(exerciseCategory != null) getParametersByExerciseType(exerciseCategory).repsRange.last else 0
+                }
+
+                val fatigueFactor = if (jsonObject.has("fatigueFactor")) {
+                    jsonObject.get("fatigueFactor").asFloat
+                } else {
+                    if(exerciseCategory != null) getParametersByExerciseType(exerciseCategory).fatigueFactor.toFloat() else 0.0f
+                }
+
+                val volumeIncreasePercent = if (jsonObject.has("volumeIncreasePercent")) {
+                    jsonObject.get("volumeIncreasePercent").asFloat
+                } else {
+                    if(exerciseCategory != null) 5f else 0.0f
+                }
+
+                Exercise(id,enabled, name, doNotStoreHistory,notes, sets, exerciseType,exerciseCategory, minLoadPercent, maxLoadPercent, minReps, maxReps, fatigueFactor, volumeIncreasePercent)
             }
             "Rest" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt

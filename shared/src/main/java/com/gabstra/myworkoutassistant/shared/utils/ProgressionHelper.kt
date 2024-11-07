@@ -20,9 +20,30 @@ object ProgressionHelper {
     data class ExerciseParameters(
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
-        val setsRange: IntRange,
         val fatigueFactor: Double
     )
+
+    fun getParametersByExerciseType(
+        exerciseCategory: ProgressionHelper.ExerciseCategory
+    ): ProgressionHelper.ExerciseParameters {
+        return when (exerciseCategory) {
+            ProgressionHelper.ExerciseCategory.STRENGTH -> ProgressionHelper.ExerciseParameters(
+                percentLoadRange = 85.0 to 100.0,
+                repsRange = 1..5,
+                fatigueFactor = 0.2
+            )
+            ProgressionHelper.ExerciseCategory.HYPERTROPHY -> ProgressionHelper.ExerciseParameters(
+                percentLoadRange = 65.0 to 85.0,
+                repsRange = 6..12,
+                fatigueFactor = 0.1
+            )
+            ProgressionHelper.ExerciseCategory.ENDURANCE -> ProgressionHelper.ExerciseParameters(
+                percentLoadRange = 50.0 to 65.0,
+                repsRange = 12..20,
+                fatigueFactor = 0.05
+            )
+        }
+    }
 }
 
 object VolumeDistributionHelper {
@@ -49,24 +70,25 @@ object VolumeDistributionHelper {
         val weightIncrement: Double,
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
-        val fatigueFactor: Double
+        val fatigueFactor: Float
     )
 
     data class BodyWeightExerciseParameters(
         val numberOfSets: Int,
         val targetTotalVolume: Double,
         val repsRange: IntRange,
-        val fatigueFactor: Double
+        val fatigueFactor: Float
     )
 
     suspend fun distributeVolume(
         numberOfSets: Int,
         targetTotalVolume: Double,
         oneRepMax: Double,
-        exerciseCategory: ProgressionHelper.ExerciseCategory,
-        weightIncrement: Double
+        weightIncrement: Double,
+        percentLoadRange: Pair<Double, Double>,
+        repsRange: IntRange,
+        fatigueFactor: Float
     ): DistributedWorkout? {
-        val params = getParametersByExerciseType(exerciseCategory)
 
         // Create base parameters
         val baseParams = WeightExerciseParameters(
@@ -74,9 +96,9 @@ object VolumeDistributionHelper {
             targetTotalVolume = targetTotalVolume,
             oneRepMax = oneRepMax,
             weightIncrement = weightIncrement,
-            percentLoadRange = params.percentLoadRange,
-            repsRange = params.repsRange,
-            fatigueFactor = params.fatigueFactor
+            percentLoadRange = percentLoadRange,
+            repsRange = repsRange,
+            fatigueFactor = fatigueFactor
         )
 
         // Try with original parameters first
@@ -212,7 +234,7 @@ object VolumeDistributionHelper {
         weight: Double,
         reps: Int,
         oneRepMax: Double,
-        fatigueFactor: Double
+        fatigueFactor: Float
     ): ExerciseSet {
         val volume = weight * reps
         val percentLoad = (weight / oneRepMax) * 100
@@ -227,38 +249,15 @@ object VolumeDistributionHelper {
         )
     }
 
-    private fun getParametersByExerciseType(
-        exerciseCategory: ProgressionHelper.ExerciseCategory
-    ): ProgressionHelper.ExerciseParameters {
-        return when (exerciseCategory) {
-            ProgressionHelper.ExerciseCategory.STRENGTH -> ProgressionHelper.ExerciseParameters(
-                percentLoadRange = 85.0 to 100.0,
-                repsRange = 1..5,
-                setsRange = 3..6,
-                fatigueFactor = 0.2
-            )
-            ProgressionHelper.ExerciseCategory.HYPERTROPHY -> ProgressionHelper.ExerciseParameters(
-                percentLoadRange = 65.0 to 85.0,
-                repsRange = 6..12,
-                setsRange = 3..5,
-                fatigueFactor = 0.1
-            )
-            ProgressionHelper.ExerciseCategory.ENDURANCE -> ProgressionHelper.ExerciseParameters(
-                percentLoadRange = 50.0 to 65.0,
-                repsRange = 12..20,
-                setsRange = 2..4,
-                fatigueFactor = 0.05
-            )
-        }
-    }
-
     suspend fun distributeVolumeWithMinimumIncrease(
         numberOfSets: Int,
         targetTotalVolume: Double,
         oneRepMax: Double,
-        exerciseCategory: ProgressionHelper.ExerciseCategory,
         weightIncrement: Double,
-        percentageIncrease: Double
+        percentageIncrease: Float,
+        percentLoadRange: Pair<Double, Double>,
+        repsRange: IntRange,
+        fatigueFactor: Float
     ): DistributedWorkout? {
         if(percentageIncrease < 0) {
             throw IllegalArgumentException("Percentage increase must be positive")
@@ -274,8 +273,10 @@ object VolumeDistributionHelper {
                     numberOfSets = numberOfSets,
                     targetTotalVolume = currentTargetVolume,
                     oneRepMax = oneRepMax,
-                    exerciseCategory = exerciseCategory,
-                    weightIncrement = weightIncrement
+                    weightIncrement = weightIncrement,
+                    percentLoadRange = percentLoadRange,
+                    repsRange = repsRange,
+                    fatigueFactor = fatigueFactor
                 )
 
                 if(solution == null) {
@@ -303,8 +304,10 @@ object VolumeDistributionHelper {
                     numberOfSets = numberOfSets,
                     targetTotalVolume = currentTargetVolume,
                     oneRepMax = oneRepMax,
-                    exerciseCategory = exerciseCategory,
-                    weightIncrement = weightIncrement
+                    weightIncrement = weightIncrement,
+                    percentLoadRange = percentLoadRange,
+                    repsRange = repsRange,
+                    fatigueFactor = fatigueFactor
                 )
 
                 if(solution == null) {
@@ -328,7 +331,7 @@ object VolumeDistributionHelper {
 
     private fun createBodyWeightSet(
         reps: Int,
-        fatigueFactor: Double
+        fatigueFactor: Float
     ): ExerciseSet {
         val volume = reps.toDouble()
         // For bodyweight exercises, we use a simplified fatigue calculation
@@ -442,14 +445,14 @@ object VolumeDistributionHelper {
     suspend fun distributeBodyWeightVolumeWithMinimumIncrease(
         numberOfSets: Int,
         targetTotalVolume: Double,
-        exerciseCategory: ProgressionHelper.ExerciseCategory,
-        percentageIncrease: Double
+        percentageIncrease: Float,
+        repsRange: IntRange,
+        fatigueFactor: Float
     ): DistributedWorkout? {
         if(percentageIncrease < 0) {
             throw IllegalArgumentException("Percentage increase must be positive")
         }
 
-        val params = getParametersByExerciseType(exerciseCategory)
         val minimumRequiredVolume = targetTotalVolume * (1 + (percentageIncrease/100))
         var currentTargetVolume = targetTotalVolume
 
@@ -459,8 +462,8 @@ object VolumeDistributionHelper {
                 val baseParams = BodyWeightExerciseParameters(
                     numberOfSets = numberOfSets,
                     targetTotalVolume = currentTargetVolume,
-                    repsRange = params.repsRange,
-                    fatigueFactor = params.fatigueFactor
+                    repsRange = repsRange,
+                    fatigueFactor = fatigueFactor
                 )
 
                 val solution = findBodyWeightSolution(baseParams)
@@ -488,8 +491,8 @@ object VolumeDistributionHelper {
                 val baseParams = BodyWeightExerciseParameters(
                     numberOfSets = numberOfSets + 1,
                     targetTotalVolume = currentTargetVolume,
-                    repsRange = params.repsRange,
-                    fatigueFactor = params.fatigueFactor
+                    repsRange = repsRange,
+                    fatigueFactor = fatigueFactor
                 )
 
                 val solution = findBodyWeightSolution(baseParams)

@@ -24,8 +24,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,8 +58,10 @@ import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -79,10 +83,11 @@ fun HeartRateCircularChart(
 ) {
     val context = LocalContext.current
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
+    val scope = rememberCoroutineScope()
+    var alertJob by remember { mutableStateOf<Job?>(null) }
 
     var isDataStale by remember { mutableStateOf(false) }
 
-    // Simplified data stale counter using LaunchedEffect for automatic cancellation
     LaunchedEffect(hr) {
         if (hr > 0) {
             isDataStale = false
@@ -91,8 +96,6 @@ fun HeartRateCircularChart(
         }
     }
 
-    // Collect the heart rate value from the StateFlow and call registerHeartBeat at 500 ms intervals
-    // Simplified version without explicitly using a ticker channel
     LaunchedEffect(hr) {
         while (isActive) {
             appViewModel.registerHeartBeat(hr)
@@ -100,26 +103,34 @@ fun HeartRateCircularChart(
         }
     }
 
-    // Handle heart rate over limit scenario
-    if (mhrPercentage > 100) {
-        SideEffect {
-            Toast.makeText(context, "Heart rate over limit", Toast.LENGTH_SHORT).show()
-            VibrateShortImpulse(context)
+    var lastAlertTime by remember { mutableLongStateOf(0L) }
+    val alertCooldown = 5000L //5 seconds in milliseconds
+
+    fun startAlertJob() {
+        alertJob = scope.launch {
+            while (isActive) {
+                val currentTime = System.currentTimeMillis()
+                if (lastAlertTime == 0L || (currentTime - lastAlertTime >= alertCooldown)) {
+                    Toast.makeText(context, "Heart rate over limit", Toast.LENGTH_LONG).show()
+                    VibrateShortImpulse(context)
+                    lastAlertTime = currentTime
+                    delay(alertCooldown)
+                } else {
+                    delay(alertCooldown - (currentTime - lastAlertTime))
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(mhrPercentage) {
+        alertJob?.cancel()
+        if (mhrPercentage >= 100) {
+            startAlertJob()
         }
     }
 
     HeartRateView(modifier, hr, isDataStale, mhrPercentage, colorsByZone)
 }
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun RowScope.combinedClickable(
-    onClick: () -> Unit,
-    onLongClick: () -> Unit
-): Modifier = Modifier.combinedClickable(
-    onClick = onClick,
-    onLongClick = onLongClick
-)
 
 
 @Composable
@@ -184,22 +195,6 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) 
             }
         }
     }
-}
-
-private fun mapProgressToAngle(progress: Float, colorCount: Int): Float {
-    val baseAngle = 110f
-    val totalAngleRange = 120f
-    val gapAngle = 2f
-    val totalGapAngle = gapAngle * (colorCount - 1)
-    val effectiveAngleRange = totalAngleRange - totalGapAngle
-    val segmentAngleSize = effectiveAngleRange / colorCount
-
-    val segmentIndex = (progress * colorCount).toInt().coerceIn(0, colorCount - 1)
-    val segmentProgress = (progress * colorCount) % 1f
-
-    return baseAngle +
-            (segmentIndex * (segmentAngleSize + gapAngle)) +
-            (segmentProgress * segmentAngleSize)
 }
 
 fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Float {

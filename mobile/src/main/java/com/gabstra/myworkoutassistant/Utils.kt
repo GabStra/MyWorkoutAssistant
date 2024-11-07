@@ -208,7 +208,7 @@ suspend fun sendWorkoutsToHealthConnect(
     workoutHistoryDao: WorkoutHistoryDao,
     updateAll: Boolean = false,
     age: Int,
-    weightKg: Float
+    weightKg: Float,
 ) {
     if (workouts.isEmpty()) return
 
@@ -324,6 +324,7 @@ suspend fun sendWorkoutsToHealthConnect(
                 )
             )
         }
+
 
     val weightRecord = androidx.health.connect.client.records.WeightRecord(
         time = Instant.now(),

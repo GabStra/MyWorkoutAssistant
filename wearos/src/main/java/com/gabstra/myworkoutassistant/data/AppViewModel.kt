@@ -381,8 +381,23 @@ class AppViewModel : ViewModel(){
             }
 
             distributedWorkout = when(exercise.exerciseType){
-                ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(exerciseSets.size,lastTotalVolume,avg1RM,exercise.exerciseCategory?: ProgressionHelper.ExerciseCategory.HYPERTROPHY,0.5,5.0)
-                ExerciseType.BODY_WEIGHT -> VolumeDistributionHelper.distributeBodyWeightVolumeWithMinimumIncrease(exerciseSets.size,lastTotalVolume,exercise.exerciseCategory ?: ProgressionHelper.ExerciseCategory.HYPERTROPHY,5.0)
+                ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
+                    exerciseSets.size,
+                    lastTotalVolume,
+                    avg1RM,
+                    0.5,
+                    exercise.volumeIncreasePercent,
+                    Pair(exercise.minLoadPercent,exercise.maxLoadPercent),
+                    IntRange(exercise.minReps,exercise.maxReps),
+                    exercise.fatigueFactor
+                )
+                ExerciseType.BODY_WEIGHT -> VolumeDistributionHelper.distributeBodyWeightVolumeWithMinimumIncrease(
+                    exerciseSets.size,
+                    lastTotalVolume,
+                    exercise.volumeIncreasePercent,
+                    IntRange(exercise.minReps,exercise.maxReps),
+                    exercise.fatigueFactor
+                )
                 else -> null
             }
             

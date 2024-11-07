@@ -14,4 +14,10 @@ data class Exercise (
     val sets: List<Set>,
     val exerciseType: ExerciseType,
     val exerciseCategory: ProgressionHelper.ExerciseCategory?,
+    val minLoadPercent : Double,
+    val maxLoadPercent : Double,
+    val minReps : Int,
+    val maxReps : Int,
+    val fatigueFactor: Float,
+    val volumeIncreasePercent: Float,
 ): WorkoutComponent(id,enabled)
