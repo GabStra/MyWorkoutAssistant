@@ -303,7 +303,8 @@ fun mapPercentageToZone(percentage: Float): Int {
         0.166f + ((percentage - 50) / 10) * 0.166f
     }
 
-    return (mappedValue / 0.166f).toInt()
+    val zone = (mappedValue / 0.166f).toInt()
+    return if (zone > 5) 5 else zone
 }
 
 fun getVersionName(context: Context): String {

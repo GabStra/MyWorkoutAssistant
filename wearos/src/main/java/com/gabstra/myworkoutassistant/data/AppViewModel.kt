@@ -38,11 +38,15 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper
+import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.DistributedWorkout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -344,69 +348,87 @@ class AppViewModel : ViewModel(){
         }
     }
 
-    private suspend fun generateProgressions(){
+    private suspend fun generateProgressions() = coroutineScope {
         distributedWorkoutByExerciseIdMap.clear()
 
-        val exerciseWithWeightSets = selectedWorkout.value.workoutComponents.filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }.filterIsInstance<Exercise>()
+        val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
+            .filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }
+            .filterIsInstance<Exercise>()
 
-        for(exercise in exerciseWithWeightSets){
-            val exerciseSets = exercise.sets.filter { it !is RestSet }
-
-            val restSetCount = exerciseSets
-                .zipWithNext()
-                .count { (previous, current) -> previous is RestSet && previous.isRestPause && current !is RestSet }
-
-            var distributedWorkout : Pair<VolumeDistributionHelper.DistributedWorkout?,Boolean>? = null
-            val totalHistoricalSetDataList = when(exercise.exerciseType){
-                ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
-                ExerciseType.BODY_WEIGHT -> getHistoricalSetsDataByExerciseId<BodyWeightSetData>(exercise.id)
-                else -> emptyList()
+        // Launch parallel processing for each exercise
+        val deferredResults = exerciseWithWeightSets.map { exercise ->
+            async {
+                processExercise(exercise)
             }
-
-            if(totalHistoricalSetDataList.isEmpty()) continue
-
-            val lastTotalVolume =  totalHistoricalSetDataList.sumOf {
-                when(it){
-                    is BodyWeightSetData -> it.actualReps.toDouble()
-                    is WeightSetData -> calculateVolume(it.actualWeight,it.actualReps).toDouble()
-                    else -> 0.0
-                }
-            }
-            val avg1RM = getAverageOneRepMaxByExerciseId(exercise.id)
-
-            when(exercise.exerciseType){
-                ExerciseType.WEIGHT -> {
-                    if(lastTotalVolume == 0.0 || avg1RM == 0.0) continue
-                }
-                ExerciseType.BODY_WEIGHT -> {
-                    if(lastTotalVolume == 0.0) continue
-                }
-                else -> continue
-            }
-
-            distributedWorkout = when(exercise.exerciseType){
-                ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
-                    exerciseSets.size - restSetCount,
-                    lastTotalVolume,
-                    avg1RM,
-                    0.5,
-                    exercise.volumeIncreasePercent,
-                    Pair(exercise.minLoadPercent,exercise.maxLoadPercent),
-                    IntRange(exercise.minReps,exercise.maxReps),
-                    exercise.fatigueFactor
-                )
-                ExerciseType.BODY_WEIGHT -> VolumeDistributionHelper.distributeBodyWeightVolumeWithMinimumIncrease(
-                    exerciseSets.size - restSetCount,
-                    lastTotalVolume,
-                    exercise.volumeIncreasePercent,
-                    IntRange(exercise.minReps,exercise.maxReps),
-                    exercise.fatigueFactor
-                )
-                else -> null
-            }
-            
-            distributedWorkoutByExerciseIdMap[exercise.id] = distributedWorkout
         }
+
+        // Await all results and collect them into the map
+        deferredResults.awaitAll().forEach { result ->
+            result?.let { (exerciseId, distribution) ->
+                distributedWorkoutByExerciseIdMap[exerciseId] = distribution
+            }
+        }
+    }
+
+    // Helper function to process a single exercise
+    private suspend fun processExercise(exercise: Exercise): Pair<UUID,Pair<DistributedWorkout?,Boolean>>? {
+        val exerciseSets = exercise.sets.filter { it !is RestSet }
+        val restSetCount = exerciseSets
+            .zipWithNext()
+            .count { (previous, current) ->
+                previous is RestSet && previous.isRestPause && current !is RestSet
+            }
+
+        val totalHistoricalSetDataList = when(exercise.exerciseType) {
+            ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
+            ExerciseType.BODY_WEIGHT -> getHistoricalSetsDataByExerciseId<BodyWeightSetData>(exercise.id)
+            else -> emptyList()
+        }
+
+        if (totalHistoricalSetDataList.isEmpty()) return null
+
+        val lastTotalVolume = totalHistoricalSetDataList.sumOf {
+            when(it) {
+                is BodyWeightSetData -> it.actualReps.toDouble()
+                is WeightSetData -> calculateVolume(it.actualWeight, it.actualReps).toDouble()
+                else -> 0.0
+            }
+        }
+
+        val avg1RM = getAverageOneRepMaxByExerciseId(exercise.id)
+
+        when(exercise.exerciseType) {
+            ExerciseType.WEIGHT -> {
+                if(lastTotalVolume == 0.0 || avg1RM == 0.0) return null
+            }
+            ExerciseType.BODY_WEIGHT -> {
+                if(lastTotalVolume == 0.0) return null
+            }
+            else -> throw IllegalArgumentException("Unknown exercise type")
+        }
+
+        val distributedWorkout = when(exercise.exerciseType) {
+            ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
+                exerciseSets.size - restSetCount,
+                lastTotalVolume,
+                avg1RM,
+                0.5,
+                exercise.volumeIncreasePercent,
+                Pair(exercise.minLoadPercent, exercise.maxLoadPercent),
+                IntRange(exercise.minReps, exercise.maxReps),
+                exercise.fatigueFactor
+            )
+            ExerciseType.BODY_WEIGHT -> VolumeDistributionHelper.distributeBodyWeightVolumeWithMinimumIncrease(
+                exerciseSets.size - restSetCount,
+                lastTotalVolume,
+                exercise.volumeIncreasePercent,
+                IntRange(exercise.minReps, exercise.maxReps),
+                exercise.fatigueFactor
+            )
+            else -> throw IllegalArgumentException("Unknown exercise type")
+        }
+
+        return exercise.id to distributedWorkout
     }
 
     fun resumeLastState(){
@@ -949,7 +971,16 @@ class AppViewModel : ViewModel(){
                     }
                 }else if(distributedWorkout != null && distributedWorkout.first != null){
                     val distributedSet = distributedWorkout.first!!.sets[exerciseIndex]
-                    currentSetData = WeightSetData(distributedSet.reps,distributedSet.weight.toFloat())
+                    currentSetData = when(currentExercise.exerciseType){
+                        ExerciseType.BODY_WEIGHT -> BodyWeightSetData(
+                            actualReps = distributedSet.reps,
+                        )
+                        ExerciseType.WEIGHT -> WeightSetData(
+                            actualReps = distributedSet.reps,
+                            actualWeight = distributedSet.weight.toFloat(),
+                        )
+                        else -> throw IllegalArgumentException("Unknown exercise type")
+                    }
                 }
 
                 val previousSetData = copySetData(currentSetData)
