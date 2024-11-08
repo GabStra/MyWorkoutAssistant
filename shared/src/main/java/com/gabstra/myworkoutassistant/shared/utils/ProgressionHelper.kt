@@ -258,7 +258,7 @@ object VolumeDistributionHelper {
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
         fatigueFactor: Float
-    ): DistributedWorkout? {
+    ): Pair<DistributedWorkout?,Boolean> {
         if(percentageIncrease < 0) {
             throw IllegalArgumentException("Percentage increase must be positive")
         }
@@ -285,7 +285,7 @@ object VolumeDistributionHelper {
                 }
 
                 if (solution.totalVolume >= minimumRequiredVolume) {
-                    return solution
+                    return Pair(solution,false)
                 }
             } catch (e: IllegalStateException) {
                 // Continue if no solution found for current target volume
@@ -316,7 +316,7 @@ object VolumeDistributionHelper {
                 }
 
                 if (solution.totalVolume >= minimumRequiredVolume) {
-                    return solution
+                    return Pair(solution,false)
                 }
             } catch (e: IllegalStateException) {
                 // Continue if no solution found for current target volume
@@ -326,7 +326,7 @@ object VolumeDistributionHelper {
             currentTargetVolume *= 1.005
         }
 
-        return null
+        return Pair(null,true)
     }
 
     private fun createBodyWeightSet(
@@ -448,7 +448,7 @@ object VolumeDistributionHelper {
         percentageIncrease: Float,
         repsRange: IntRange,
         fatigueFactor: Float
-    ): DistributedWorkout? {
+    ): Pair<DistributedWorkout?,Boolean> {
         if(percentageIncrease < 0) {
             throw IllegalArgumentException("Percentage increase must be positive")
         }
@@ -474,7 +474,7 @@ object VolumeDistributionHelper {
                 }
 
                 if (solution.totalVolume >= minimumRequiredVolume) {
-                    return solution
+                    return Pair(solution,false)
                 }
             } catch (e: IllegalStateException) {
                 // Continue if no solution found for current target volume
@@ -503,7 +503,7 @@ object VolumeDistributionHelper {
                 }
 
                 if (solution.totalVolume >= minimumRequiredVolume) {
-                    return solution
+                    return Pair(solution,false)
                 }
             } catch (e: IllegalStateException) {
                 // Continue if no solution found for current target volume
@@ -513,6 +513,6 @@ object VolumeDistributionHelper {
             currentTargetVolume *= 1.005
         }
 
-        return null
+        return Pair(null,true)
     }
 }

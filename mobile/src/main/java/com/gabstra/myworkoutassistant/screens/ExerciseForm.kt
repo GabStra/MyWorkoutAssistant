@@ -74,12 +74,12 @@ fun ExerciseForm(
     val expandedCategory = remember { mutableStateOf(false) }
 
     // Progressive overload state
-    val minLoadPercent = remember { mutableStateOf(65f) }
-    val maxLoadPercent = remember { mutableStateOf(85f) }
-    val minReps = remember { mutableStateOf(6f) }
-    val maxReps = remember { mutableStateOf(12f) }
-    val fatigueFactor = remember { mutableStateOf(0.1f) }
-    val volumeIncreasePercent = remember { mutableStateOf(5f) } // Default 5% increase
+    val minLoadPercent = remember { mutableStateOf(exercise?.minLoadPercent?.toFloat()?:65f) }
+    val maxLoadPercent = remember { mutableStateOf(exercise?.maxLoadPercent?.toFloat()?:85f) }
+    val minReps = remember { mutableStateOf(exercise?.minReps?.toFloat()?:6f) }
+    val maxReps = remember { mutableStateOf(exercise?.maxReps?.toFloat()?:12f) }
+    val fatigueFactor = remember { mutableStateOf(exercise?.fatigueFactor?:0.1f) }
+    val volumeIncreasePercent = remember { mutableStateOf(exercise?.volumeIncreasePercent?:5f) } // Default 5% increase
 
     // Update parameters when category changes
     fun updateProgressiveOverloadParameters(category: ProgressionHelper.ExerciseCategory?) {
