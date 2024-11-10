@@ -348,22 +348,16 @@ class AppViewModel : ViewModel(){
         }
     }
 
-    private suspend fun generateProgressions() = coroutineScope {
+    private suspend fun generateProgressions() {
         distributedWorkoutByExerciseIdMap.clear()
 
         val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
             .filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }
             .filterIsInstance<Exercise>()
 
-        // Launch parallel processing for each exercise
-        val deferredResults = exerciseWithWeightSets.map { exercise ->
-            async {
-                processExercise(exercise)
-            }
-        }
-
-        // Await all results and collect them into the map
-        deferredResults.awaitAll().forEach { result ->
+        // Process exercises sequentially
+        exerciseWithWeightSets.forEach { exercise ->
+            val result = processExercise(exercise)
             result?.let { (exerciseId, distribution) ->
                 distributedWorkoutByExerciseIdMap[exerciseId] = distribution
             }
@@ -407,6 +401,11 @@ class AppViewModel : ViewModel(){
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
 
+        Log.d(
+            "WorkoutViewModel",
+            "${exercise.name} - volume $lastTotalVolume - avg 1RM ${String.format("%.2f",avg1RM)}"
+        )
+
         val distributedWorkout = when(exercise.exerciseType) {
             ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
                 exerciseSets.size - restSetCount,
@@ -426,6 +425,24 @@ class AppViewModel : ViewModel(){
                 exercise.fatigueFactor
             )
             else -> throw IllegalArgumentException("Unknown exercise type")
+        }
+
+        if (distributedWorkout.first != null) {
+            distributedWorkout.first!!.sets.forEachIndexed { index, set ->
+                Log.d(
+                    "WorkoutViewModel",
+                    "Set ${index+1}: ${set.reps} reps, ${set.weight} kg"
+                )
+            }
+            Log.d(
+                "WorkoutViewModel",
+                "volume $lastTotalVolume to ${distributedWorkout.first!!.totalVolume} +${String.format("%.2f", ((distributedWorkout.first!!.totalVolume - lastTotalVolume) / lastTotalVolume) * 100)}%"
+            )
+        }else if(distributedWorkout.second){
+            Log.d(
+                "WorkoutViewModel",
+                "Add rest pause set"
+            )
         }
 
         return exercise.id to distributedWorkout
@@ -924,8 +941,9 @@ class AppViewModel : ViewModel(){
                     }
 
                     newSets.add(newSet)
-                    currentExercise = currentExercise.copy(sets = newSets)
-                    updateWorkout(currentExercise,currentExercise)
+                    val newExercise = currentExercise.copy(sets = newSets)
+                    updateWorkout(currentExercise,newExercise)
+                    currentExercise = newExercise
                 }
             }
 
@@ -941,8 +959,9 @@ class AppViewModel : ViewModel(){
                 }
 
                 newSets.add(newSet)
-                currentExercise = currentExercise.copy(sets = newSets)
-                updateWorkout(currentExercise,currentExercise)
+                val newExercise = currentExercise.copy(sets = newSets)
+                updateWorkout(currentExercise,newExercise)
+                currentExercise = newExercise
             }
         }
 
