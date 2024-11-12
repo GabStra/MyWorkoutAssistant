@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -79,9 +80,11 @@ fun PreparingStandardScreen(
         }
 
         val isReady = state.dataLoaded && currentMillis >=3000
+
+
         if (isReady) {
             hasTriggeredNextState = true
-            
+            Log.d("WorkoutViewModel","hasWorkoutRecord $hasWorkoutRecord")
             if(hasWorkoutRecord){
                 viewModel.resumeLastState()
             }else{

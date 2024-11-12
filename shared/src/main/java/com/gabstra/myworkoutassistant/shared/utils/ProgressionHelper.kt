@@ -56,7 +56,7 @@ object VolumeDistributionHelper {
         val reps: Int,
         val fatigue: Double,
         val volume: Double,
-        val percentLoad: Double
+        val percentLoad: Double,
     )
 
     data class DistributedWorkout(
@@ -164,8 +164,7 @@ object VolumeDistributionHelper {
                     it.percentLoad <= params.percentLoadRange.second
         }
 
-        // Sort sets by weight and then by fatigue
-        filteredSets.sortedWith(compareBy<ExerciseSet> { it.weight }.thenBy { it.fatigue })
+        filteredSets
     }
 
     data class SetCombination(
@@ -175,53 +174,52 @@ object VolumeDistributionHelper {
     )
 
     private fun findAllValidSetCombinations(
-        possibleSets: List<ExerciseSet>,
-        targetSets: Int,
-        targetVolume: Double,
-        maxWeight: Double,
-        maxResults: Int = 10
-    ): List<SetCombination> {
-         val validSets = possibleSets
-            .filter { it.weight <= maxWeight }
-            .sortedWith(compareBy({ it.weight }, { it.volume }))
+    possibleSets: List<ExerciseSet>,
+    targetSets: Int,
+    targetVolume: Double,
+    maxWeight: Double,
+    maxResults: Int = 10
+): List<SetCombination> {
+    val validSets = possibleSets.filter { it.weight <= maxWeight }
 
-        if (validSets.isEmpty()) return emptyList()
+    if (validSets.isEmpty()) return emptyList()
 
-        val result = mutableListOf<SetCombination>()
+    val result = mutableListOf<SetCombination>()
+    val uniqueCombinations = mutableSetOf<List<ExerciseSet>>()
 
-        fun getValidSetsForRemaining(
-            remainingSets: Int,
-            remainingVolume: Double,
-            currentMaxWeight: Double,
-            lastFatigue: Double?
-        ): List<ExerciseSet> {
-            val targetVolumePerSet = remainingVolume / remainingSets
-            // Increased tolerance range for volume per set
-            val minVolumePerSet = targetVolumePerSet * 0.7  // More lenient minimum
-            val maxVolumePerSet = targetVolumePerSet * 1.3  // More lenient maximum
+    fun getValidSetsForRemaining(
+        remainingSets: Int,
+        remainingVolume: Double,
+        currentMaxWeight: Double,
+        lastFatigue: Double?
+    ): List<ExerciseSet> {
+        val targetVolumePerSet = remainingVolume / remainingSets
+        val minVolumePerSet = targetVolumePerSet * 0.7
+        val maxVolumePerSet = targetVolumePerSet * 1.3
 
-            val filteredSets = validSets.filter { set ->
-                set.weight <= currentMaxWeight &&
-                        set.volume >= minVolumePerSet &&
-                        set.volume <= maxVolumePerSet &&
-                        (lastFatigue == null || set.fatigue <= lastFatigue)
-            }.sortedWith(compareBy({ it.weight }, { it.volume }))
-
-            return filteredSets
+        val filteredSets = validSets.filter { set ->
+            set.weight <= currentMaxWeight &&
+                    set.volume >= minVolumePerSet &&
+                    set.volume <= maxVolumePerSet &&
+                    (lastFatigue == null || set.fatigue <= lastFatigue)
         }
 
-        fun search(
-            remainingSets: Int,
-            currentMaxWeight: Double,
-            remainingVolume: Double,
-            currentSets: List<ExerciseSet>,
-            currentFatigue: Double
-        ): Boolean {
-            if (result.size >= maxResults) return true
+        return filteredSets.sortedWith(compareBy({ kotlin.math.abs(it.volume - targetVolumePerSet) }, { it.fatigue }))
+    }
 
-            if (currentSets.size == targetSets) {
-                val totalVolume = currentSets.sumOf { it.volume }
-                if (totalVolume >= targetVolume && totalVolume <= targetVolume * 1.1) {
+    fun search(
+        remainingSets: Int,
+        currentMaxWeight: Double,
+        remainingVolume: Double,
+        currentSets: List<ExerciseSet>,
+        currentFatigue: Double
+    ): Boolean {
+        if (result.size >= maxResults) return true
+
+        if (currentSets.size == targetSets) {
+            val totalVolume = currentSets.sumOf { it.volume }
+            if (totalVolume >= targetVolume && totalVolume <= targetVolume * 1.1) {
+                if (uniqueCombinations.add(currentSets)) {
                     result.add(
                         SetCombination(
                             sets = currentSets,
@@ -229,47 +227,47 @@ object VolumeDistributionHelper {
                             totalVolume = totalVolume
                         )
                     )
-                    return result.size >= maxResults
                 }
-                return false
+                return result.size >= maxResults
             }
-
-            val lastFatigue = currentSets.lastOrNull()?.fatigue
-            val validSetsForRemaining = getValidSetsForRemaining(
-                remainingSets = remainingSets,
-                remainingVolume = remainingVolume,
-                currentMaxWeight = currentMaxWeight,
-                lastFatigue = lastFatigue
-            )
-
-            for (set in validSetsForRemaining) {
-                val newRemainingVolume = remainingVolume - set.volume
-
-                // Removed overly restrictive volume check
-                val shouldStop = search(
-                    remainingSets = remainingSets - 1,
-                    currentMaxWeight = set.weight,
-                    remainingVolume = newRemainingVolume,
-                    currentSets = currentSets + set,
-                    currentFatigue = currentFatigue + set.fatigue
-                )
-
-                if (shouldStop) return true
-            }
-
             return false
         }
 
-        search(
-            remainingSets = targetSets,
-            currentMaxWeight = maxWeight,
-            remainingVolume = targetVolume,
-            currentSets = emptyList(),
-            currentFatigue = 0.0
+        val lastFatigue = currentSets.lastOrNull()?.fatigue
+        val validSetsForRemaining = getValidSetsForRemaining(
+            remainingSets = remainingSets,
+            remainingVolume = remainingVolume,
+            currentMaxWeight = currentMaxWeight,
+            lastFatigue = lastFatigue
         )
 
-        return result
+        for (set in validSetsForRemaining) {
+            val newRemainingVolume = remainingVolume - set.volume
+
+            val shouldStop = search(
+                remainingSets = remainingSets - 1,
+                currentMaxWeight = set.weight,
+                remainingVolume = newRemainingVolume,
+                currentSets = currentSets + set,
+                currentFatigue = currentFatigue + set.fatigue
+            )
+
+            if (shouldStop) return true
+        }
+
+        return false
     }
+
+    search(
+        remainingSets = targetSets,
+        currentMaxWeight = maxWeight,
+        remainingVolume = targetVolume,
+        currentSets = emptyList(),
+        currentFatigue = 0.0
+    )
+
+    return result
+}
 
     private fun createSet(
         weight: Double,
@@ -286,7 +284,7 @@ object VolumeDistributionHelper {
             reps = reps,
             fatigue = fatigue,
             volume = volume,
-            percentLoad = percentLoad
+            percentLoad = percentLoad,
         )
     }
 
@@ -353,12 +351,13 @@ object VolumeDistributionHelper {
             reps = reps,
             fatigue = fatigue,
             volume = volume,
-            percentLoad = 100.0 // Constant since it's always bodyweight
+            percentLoad = 100.0, // Constant since it's always bodyweight
         )
     }
 
     private suspend fun findBodyWeightSolution(params: BodyWeightExerciseParameters): DistributedWorkout? {
-        val possibleSets = generatePossibleBodyWeightSets(params)
+        var possibleSets = generatePossibleBodyWeightSets(params)
+
         if (possibleSets.isEmpty()) return null
 
         // Find valid combination of sets
@@ -387,7 +386,7 @@ object VolumeDistributionHelper {
                 reps = reps,
                 fatigueFactor = params.fatigueFactor
             )
-        }.sortedWith(compareBy<ExerciseSet> { it.reps }.thenBy { it.fatigue })
+        }
     }
 
     private fun findAllValidBodyWeightSetCombinations(
@@ -396,9 +395,11 @@ object VolumeDistributionHelper {
         targetVolume: Double,
         maxResults: Int = 10
     ): List<SetCombination> {
-        val validSets = possibleSets.sortedBy { it.fatigue }
+        val validSets = possibleSets
 
         if (validSets.isEmpty()) return emptyList()
+
+
 
         fun getValidSetsForRemaining(
             remainingSets: Int,
@@ -409,14 +410,16 @@ object VolumeDistributionHelper {
             val minVolumePerSet = targetVolumePerSet * 0.8
             val maxVolumePerSet = targetVolumePerSet * 1.2
 
-            return validSets.filter { set ->
-                set.fatigue <= previousFatigue &&
-                        set.volume >= minVolumePerSet &&
-                        set.volume <= maxVolumePerSet
+            val filteredSets = validSets.filter {
+                it.volume in minVolumePerSet..maxVolumePerSet &&
+                        it.fatigue <= previousFatigue
             }
+
+            return filteredSets.sortedWith(compareBy({ kotlin.math.abs(it.volume - targetVolumePerSet) }, { it.fatigue }))
         }
 
         val results = mutableListOf<SetCombination>()
+        val uniqueCombinations = mutableSetOf<List<ExerciseSet>>()
 
         fun search(
             remainingSets: Int,
@@ -430,13 +433,15 @@ object VolumeDistributionHelper {
             if (currentSets.size == targetSets) {
                 val totalVolume = targetVolume - remainingVolume
                 if (totalVolume >= targetVolume && totalVolume <= targetVolume * 1.1) {
-                    results.add(
-                        SetCombination(
-                            sets = currentSets,
-                            totalFatigue = currentFatigue,
-                            totalVolume = totalVolume
+                    if (uniqueCombinations.add(currentSets)) {
+                        results.add(
+                            SetCombination(
+                                sets = currentSets,
+                                totalFatigue = currentFatigue,
+                                totalVolume = totalVolume
+                            )
                         )
-                    )
+                    }
                     return results.size >= maxResults
                 }
                 return false

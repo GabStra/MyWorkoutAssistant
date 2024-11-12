@@ -332,17 +332,18 @@ class AppViewModel : ViewModel(){
                 workoutStateHistory.clear()
                 _isHistoryEmpty.value = workoutStateHistory.isEmpty()
                 setStates.clear()
-                executedSetsHistory.clear()
-                currentWorkoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(_workoutRecord!!.workoutHistoryId,false)
+
+                currentWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
                 startWorkoutTime = currentWorkoutHistory!!.startTime
+                
+                restoreExecutedSets()
                 loadWorkoutHistory()
                 generateProgressions()
                 generateWorkoutStates()
                 workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
-
-                _workoutRecord = null
+                Log.d("WorkoutViewModel","Resumed workout")
                 onEnd()
             }
         }
@@ -451,10 +452,15 @@ class AppViewModel : ViewModel(){
     fun resumeLastState(){
         if(_workoutRecord == null) return
 
+        Log.d("WorkoutViewModel","Resume last set")
+
+
         val targetSetId = _workoutRecord!!.setId
         if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
+            Log.d("WorkoutViewModel","Found set")
             return
         }
+
 
         viewModelScope.launch(Dispatchers.IO) {
             _isResuming.value = true
@@ -462,6 +468,7 @@ class AppViewModel : ViewModel(){
                 goToNextState()
 
                 if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
+                    Log.d("WorkoutViewModel","Found last Set")
                     break
                 }
             }
@@ -519,6 +526,21 @@ class AppViewModel : ViewModel(){
             withContext(Dispatchers.Main){
                 onEnd(true)
             }
+        }
+    }
+
+    private suspend fun restoreExecutedSets(){
+        if(_workoutRecord == null) return;
+        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+
+        executedSetsHistory.clear()
+        exercises.filter { !it.doNotStoreHistory }.forEach { exercise ->
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+                _workoutRecord!!.workoutHistoryId,
+                exercise.id
+            )
+
+            executedSetsHistory.addAll(setHistories);
         }
     }
 
@@ -988,7 +1010,7 @@ class AppViewModel : ViewModel(){
                     if(isSetDataValid(set,historySetData)){
                         currentSetData = historySet.setData
                     }
-                }else if(distributedWorkout != null && distributedWorkout.first != null){
+                }else if(distributedWorkout != null && distributedWorkout.first != null && exerciseIndex < distributedWorkout.first!!.sets.size){
                     val distributedSet = distributedWorkout.first!!.sets[exerciseIndex]
                     currentSetData = when(currentExercise.exerciseType){
                         ExerciseType.BODY_WEIGHT -> BodyWeightSetData(
