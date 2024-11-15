@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -48,6 +49,7 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
+import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.getContrastRatio
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.colorsByZone
@@ -79,7 +81,8 @@ fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
     hr: Int,
-    age: Int = 28
+    age: Int = 28,
+    targetZone: Int? = null
 ) {
     val context = LocalContext.current
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
@@ -122,10 +125,69 @@ fun HeartRateCircularChart(
         }
     }
 
+    if(targetZone != null) {
+        val currentZone = remember(mhrPercentage) {
+            mapPercentageToZone(mhrPercentage)
+        }
+
+        //val (lowerBound, upperBound) = remember(targetZone) { zoneRanges[targetZone] }
+        //val averageTargetPercentage = remember(lowerBound, upperBound) { (lowerBound + upperBound) / 2 }
+
+        var isInTargetZoneForTenSeconds by remember { mutableStateOf(false) }
+        var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
+
+        var alarmJob by remember { mutableStateOf<Job?>(null) }
+
+        LaunchedEffect(currentZone) {
+            zoneTrackingJob?.cancel()
+
+
+            if(currentZone == targetZone) {
+                if(isInTargetZoneForTenSeconds) {
+                    alarmJob?.cancel()
+                    return@LaunchedEffect
+                }
+
+                zoneTrackingJob = scope.launch {
+                    val startTime = System.currentTimeMillis()
+                    while(isActive) {
+                        val timeInZone = System.currentTimeMillis() - startTime
+                        if(timeInZone >= 10000) { // 10 seconds
+                            isInTargetZoneForTenSeconds = true
+                            break
+                        }
+                        delay(100) // Check every 100ms
+                    }
+                }
+            } else if(isInTargetZoneForTenSeconds) {
+                alarmJob = scope.launch {
+                    delay(5000)
+                    while (isActive) {
+                        VibrateTwiceAndBeep(context)
+                        delay(2000)
+                    }
+                }
+            }
+        }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                zoneTrackingJob?.cancel()
+            }
+        }
+    }
+
+
     LaunchedEffect(mhrPercentage) {
         alertJob?.cancel()
         if (mhrPercentage >= 100) {
             startAlertJob()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            alertJob?.cancel()
         }
     }
 
@@ -163,8 +225,8 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) 
             modifier = Modifier
                 .fillMaxSize()
                 .absoluteOffset(
-                    x = (boxWidth/2) - (circleRadius / density).dp + xRadius,
-                    y = (boxHeight/2) - (circleRadius / density).dp + yRadius,
+                    x = (boxWidth / 2) - (circleRadius / density).dp + xRadius,
+                    y = (boxHeight / 2) - (circleRadius / density).dp + yRadius,
                 ),
         ) {
             Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {

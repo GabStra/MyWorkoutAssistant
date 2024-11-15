@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -105,26 +107,29 @@ fun PreparingPolarScreen(
         }
     }
 
-    Column(modifier = Modifier .fillMaxSize().padding(20.dp,60.dp,20.dp,0.dp)){
-        Text(modifier = Modifier.fillMaxWidth(),text = "Preparing\nPolar Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
-        Spacer(modifier = Modifier.height(15.dp))
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)){
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ){
+        Column(horizontalAlignment = Alignment.CenterHorizontally){
+            Text(modifier = Modifier.fillMaxWidth(),text = "Preparing\nPolar Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.height(15.dp))
             LoadingText(baseText =  if(deviceConnectionInfo == null) "Connecting" else "Please Wait")
-        }
-        if(canSkip && deviceConnectionInfo == null){
-            Spacer(modifier = Modifier.height(25.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
-                Button(
-                    onClick = {
-                        VibrateGentle(context)
-                        viewModel.goToNextState()
-                        viewModel.setWorkoutStart()
-                        onReady()
-                    },
-                    modifier = Modifier.size(35.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
-                ) {
-                    Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
+            if(canSkip && deviceConnectionInfo == null){
+                Spacer(modifier = Modifier.height(25.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
+                    Button(
+                        onClick = {
+                            VibrateGentle(context)
+                            viewModel.goToNextState()
+                            viewModel.setWorkoutStart()
+                            onReady()
+                        },
+                        modifier = Modifier.size(35.dp),
+                        colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+                    ) {
+                        Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
+                    }
                 }
             }
         }

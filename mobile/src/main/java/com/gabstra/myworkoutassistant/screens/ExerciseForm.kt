@@ -12,8 +12,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.CustomTimePicker
-import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper.getParametersByExerciseType
@@ -275,6 +273,49 @@ fun ExerciseForm(
             }
         }
 
+        val heartRateZones = listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5")
+        val selectedTargetZone = remember { mutableStateOf(exercise?.targetZone) }
+        val expandedHeartRateZone = remember { mutableStateOf(false) }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Text(text = "Target Heart Rate Zone:")
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = when(selectedTargetZone.value) {
+                        null -> "None"
+                        else -> heartRateZones[selectedTargetZone.value!!]
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { expandedHeartRateZone.value = true }
+                        .padding(8.dp)
+                )
+                DropdownMenu(
+                    expanded = expandedHeartRateZone.value,
+                    onDismissRequest = { expandedHeartRateZone.value = false },
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                ) {
+                    heartRateZones.forEachIndexed { index, zone ->
+                        DropdownMenuItem(
+                            onClick = {
+                                selectedTargetZone.value = if(index == 0) null else index
+                                expandedHeartRateZone.value = false
+                            },
+                            text = {
+                                Text(text = zone)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -317,7 +358,6 @@ fun ExerciseForm(
                     doNotStoreHistory = doNotStoreHistory.value,
                     enabled = exercise?.enabled ?: true,
                     sets = exercise?.sets ?: listOf(),
-
                     exerciseType = selectedExerciseType.value,
                     exerciseCategory = selectedExerciseCategory.value,
                     minLoadPercent = minLoadPercent.value.toDouble(),
@@ -327,6 +367,7 @@ fun ExerciseForm(
                     fatigueFactor = fatigueFactor.value,
                     volumeIncreasePercent = volumeIncreasePercent.value,
                     notes = notesState.value.trim(),
+                    targetZone = selectedTargetZone.value
                 )
 
                 onExerciseUpsert(newExercise)

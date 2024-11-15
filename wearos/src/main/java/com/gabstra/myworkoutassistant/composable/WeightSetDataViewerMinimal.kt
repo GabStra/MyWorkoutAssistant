@@ -25,33 +25,36 @@ fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, style: TextStyle = 
         "${weightSetData.actualWeight}"
     }
 
-    val repLabel = if (weightSetData.actualReps == 1) "rep" else "reps"
 
-    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
-        Text(
-            text = weightText,
-            style = style,
-            color = color,
-            textAlign = TextAlign.End
-        )
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center){
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
+            Text(
+                text = weightText,
+                style = style,
+                color = color,
+                textAlign = TextAlign.End
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = "kg",
+                style = style.copy(fontSize = style.fontSize * 0.625f),
+                textAlign = TextAlign.Start
+            )
+        }
         Spacer(modifier = Modifier.width(5.dp))
         Text(
-            text = "kg",
+            text = "x",
             style = style.copy(fontSize = style.fontSize * 0.625f),
-            textAlign = TextAlign.Start
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.width(5.dp))
-        Text(
-            text = "${weightSetData.actualReps}",
-            style = style,
-            color = color,
-            textAlign = TextAlign.End
-        )
-        Spacer(modifier = Modifier.width(5.dp))
-        Text(
-            text = repLabel,
-            style = style.copy(fontSize = style.fontSize * 0.625f),
-            textAlign = TextAlign.Start
-        )
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
+            Text(
+                text = "${weightSetData.actualReps}",
+                style = style,
+                color = color,
+                textAlign = TextAlign.End
+            )
+        }
     }
 }

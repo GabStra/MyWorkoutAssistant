@@ -239,13 +239,6 @@ fun WeightSetScreen (
                     style = style,
                     textAlign = TextAlign.End
                 )
-                Spacer(modifier = Modifier.width(5.dp))
-                val label = if (currentSet.actualReps == 1) "rep" else "reps"
-                Text(
-                    text = label,
-                    style = style.copy(fontSize = style.fontSize * 0.39f),
-                    modifier = Modifier.padding(bottom = 2.dp)
-                )
             }
         }
     }
@@ -304,6 +297,8 @@ fun WeightSetScreen (
 
     @Composable
     fun SetScreen(customModifier: Modifier) {
+        val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
+
         Column(
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -314,6 +309,12 @@ fun WeightSetScreen (
                 horizontalArrangement = Arrangement.Center
             ) {
                 WeightRow(Modifier)
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = "x",
+                    style = style.copy(fontSize = style.fontSize * 0.625f),
+                    textAlign = TextAlign.Center
+                )
                 Spacer(modifier = Modifier.width(5.dp))
                 RepsRow(Modifier)
             }

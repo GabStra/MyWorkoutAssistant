@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable;
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -117,7 +116,7 @@ fun NextExerciseInfo(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+
         when (state.set) {
             is WeightSet -> WeightSetDataViewerMinimal(
                 state.currentSetData as WeightSetData
@@ -320,7 +319,6 @@ fun RestScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     textComposable()
-                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                     val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
                     CustomHorizontalPager(
                         modifier = Modifier
