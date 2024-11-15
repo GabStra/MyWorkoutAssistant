@@ -346,11 +346,12 @@ fun HeartRateStandard(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
     hrViewModel: SensorDataViewModel,
-    userAge : Int
+    userAge : Int,
+    targetZone: Int?
 ) {
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
     val hr = currentHeartRate ?: 0
-    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge)
+    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge, targetZone = targetZone)
 }
 
 @Composable
@@ -358,9 +359,10 @@ fun HeartRatePolar(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
     polarViewModel: PolarViewModel,
-    userAge : Int
+    userAge : Int,
+    targetZone: Int?
 ) {
     val hrData by polarViewModel.hrDataState.collectAsState()
     val hr = hrData ?: 0
-    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge)
+    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge, targetZone = targetZone)
 }

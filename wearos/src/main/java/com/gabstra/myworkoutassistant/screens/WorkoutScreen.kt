@@ -53,23 +53,27 @@ fun WorkoutScreen(
     val isResuming by viewModel.isResuming.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
 
-    val heartRateChartComposable =  @Composable {
+    @Composable
+    fun heartRateChartComposable(targetZone: Int? = null){
         if(selectedWorkout.usePolarDevice){
             HeartRatePolar(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
                 polarViewModel,
-                userAge
+                userAge,
+                targetZone
             )
         }else{
             HeartRateStandard(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
                 hrViewModel,
-                userAge
+                userAge,
+                targetZone
             )
         }
     }
+
 
     BackHandler(true) {
         if(workoutState is WorkoutState.Finished) return@BackHandler
@@ -160,16 +164,15 @@ fun WorkoutScreen(
                     val state = updatedWorkoutState as WorkoutState.Set
                     ExerciseScreen(
                         viewModel,
-                        state,
-                        heartRateChartComposable
-                    )
+                        state
+                    ) { heartRateChartComposable(state.targetZone) }
                 }
                 is WorkoutState.Rest -> {
                     val state = updatedWorkoutState as WorkoutState.Rest
                     RestScreen(
                         viewModel,
                         state,
-                        heartRateChartComposable,
+                        { heartRateChartComposable() },
                         onTimerEnd = {
                             viewModel.storeSetData()
                             viewModel.pushAndStoreWorkoutData(false,context){

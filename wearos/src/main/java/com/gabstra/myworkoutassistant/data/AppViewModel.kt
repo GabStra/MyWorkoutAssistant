@@ -73,7 +73,8 @@ sealed class WorkoutState {
         val previousSetData: SetData?,
         var currentSetData:  SetData,
         val hasNoHistory: Boolean,
-        var skipped: Boolean
+        var skipped: Boolean,
+        val targetZone: Int? = null
     ) : WorkoutState()
     data class Rest(
         var set: com.gabstra.myworkoutassistant.shared.sets.Set,
@@ -1025,7 +1026,7 @@ class AppViewModel : ViewModel(){
                 }
 
                 val previousSetData = copySetData(currentSetData)
-                val setState: WorkoutState.Set = WorkoutState.Set(currentExercise.id,set,index.toUInt(),previousSetData, currentSetData,historySet == null,false)
+                val setState: WorkoutState.Set = WorkoutState.Set(currentExercise.id,set,index.toUInt(),previousSetData, currentSetData,historySet == null,false,exercise.targetZone)
                 workoutStateQueue.addLast(setState)
                 setStates.addLast(setState)
                 exerciseIndex++
