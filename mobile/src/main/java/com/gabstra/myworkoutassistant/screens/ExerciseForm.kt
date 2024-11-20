@@ -273,7 +273,7 @@ fun ExerciseForm(
             }
         }
 
-        val heartRateZones = listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5")
+        val heartRateZones = listOf("None") + listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5")
         val selectedTargetZone = remember { mutableStateOf(exercise?.targetZone) }
         val expandedHeartRateZone = remember { mutableStateOf(false) }
 
@@ -287,7 +287,7 @@ fun ExerciseForm(
             Box(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = when(selectedTargetZone.value) {
-                        null -> "None"
+                        null -> heartRateZones[0]
                         else -> heartRateZones[selectedTargetZone.value!!]
                     },
                     modifier = Modifier

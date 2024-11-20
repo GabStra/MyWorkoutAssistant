@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
@@ -24,6 +25,7 @@ import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.CurrentTime
+import com.gabstra.myworkoutassistant.composable.CustomBackHandler
 import com.gabstra.myworkoutassistant.composable.HeartRatePolar
 import com.gabstra.myworkoutassistant.composable.HeartRateStandard
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
@@ -33,7 +35,6 @@ import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
-import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -74,13 +75,6 @@ fun WorkoutScreen(
         }
     }
 
-
-    BackHandler(true) {
-        if(workoutState is WorkoutState.Finished) return@BackHandler
-        showWorkoutInProgressDialog = true
-        viewModel.pauseWorkout()
-    }
-
     CustomDialogYesOnLongPress(
         show = showWorkoutInProgressDialog,
         title = "Workout in progress",
@@ -112,6 +106,22 @@ fun WorkoutScreen(
         },
         holdTimeInMillis = 1000
     )
+
+    fun openWorkoutInProgressDialog(){
+        if(workoutState is WorkoutState.Finished) return
+        showWorkoutInProgressDialog = true
+        VibrateGentle(context)
+        viewModel.pauseWorkout()
+    }
+
+    var showSkipDialog by remember { mutableStateOf(false) }
+
+
+    if(workoutState !is WorkoutState.Set && workoutState !is WorkoutState.Rest){
+        BackHandler {
+            openWorkoutInProgressDialog()
+        }
+    }
 
     LifecycleObserver(
         onPaused = {
@@ -152,6 +162,11 @@ fun WorkoutScreen(
                 fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
             }, label = ""
         ) { updatedWorkoutState ->
+
+            LaunchedEffect(updatedWorkoutState){
+                showSkipDialog = false
+            }
+
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
                     val state = updatedWorkoutState as WorkoutState.Preparing
@@ -164,8 +179,12 @@ fun WorkoutScreen(
                     val state = updatedWorkoutState as WorkoutState.Set
                     ExerciseScreen(
                         viewModel,
-                        state
-                    ) { heartRateChartComposable(state.targetZone) }
+                        state,
+                        hearthRateChart = { heartRateChartComposable(state.targetZone) },
+                        onOpenWorkoutInProgressDialog = {
+                            openWorkoutInProgressDialog()
+                        }
+                    )
                 }
                 is WorkoutState.Rest -> {
                     val state = updatedWorkoutState as WorkoutState.Rest
@@ -178,7 +197,11 @@ fun WorkoutScreen(
                             viewModel.pushAndStoreWorkoutData(false,context){
                                 viewModel.goToNextState()
                             }
-                        })
+                        },
+                        onOpenWorkoutInProgressDialog = {
+                            openWorkoutInProgressDialog()
+                        }
+                    )
                 }
                 is WorkoutState.Finished -> {
                     val state = updatedWorkoutState as WorkoutState.Finished

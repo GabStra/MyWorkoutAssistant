@@ -39,6 +39,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
+import com.gabstra.myworkoutassistant.composable.CustomBackHandler
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
@@ -51,6 +52,7 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
+import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -148,6 +150,7 @@ fun RestScreen(
     state: WorkoutState.Rest,
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
+    onOpenWorkoutInProgressDialog: () -> Unit,
 ) {
     val set = state.set as RestSet
 
@@ -174,7 +177,7 @@ fun RestScreen(
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
-            3
+            2
         })
 
     val updateInteractionTime = {
@@ -292,6 +295,7 @@ fun RestScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(25.dp)
+            .circleMask()
     ) {
         if (isTimerInEditMode && nextWorkoutStateSet!=null) {
             ControlButtonsVertical(
@@ -318,7 +322,7 @@ fun RestScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    textComposable()
+
                     val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
                     CustomHorizontalPager(
                         modifier = Modifier
@@ -328,6 +332,7 @@ fun RestScreen(
                     ) { page ->
                         when (page) {
                             0 -> {
+                                textComposable()
                                 NextExerciseInfo(viewModel, nextWorkoutStateSet)
                             }
                             1 -> {
@@ -361,21 +366,6 @@ fun RestScreen(
                                     }
                                 }
                             }
-                            2 ->
-                                Box(
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    ButtonWithText(
-                                        text = "Skip",
-                                        onClick = {
-                                            if (timerJob?.isActive != true) return@ButtonWithText
-
-                                            VibrateGentle(context)
-                                            timerJob?.cancel()
-                                            showSkipDialog = true
-                                        },
-                                    )
-                                }
                         }
                     }
                 }
@@ -400,6 +390,13 @@ fun RestScreen(
 
         hearthRateChart()
     }
+
+    CustomBackHandler(onSinglePress = {
+        onOpenWorkoutInProgressDialog()
+    }, onDoublePress = {
+        VibrateGentle(context)
+        showSkipDialog = true
+    })
 
     CustomDialogYesOnLongPress(
         show = showSkipDialog,

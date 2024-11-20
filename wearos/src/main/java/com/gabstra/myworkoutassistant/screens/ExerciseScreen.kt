@@ -48,6 +48,7 @@ import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
+import com.gabstra.myworkoutassistant.composable.CustomBackHandler
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
@@ -60,6 +61,7 @@ import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -71,21 +73,6 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
-
-
-fun Modifier.circleMask() = this.drawWithContent {
-    // Create a circular path for the mask
-    val path = androidx.compose.ui.graphics.Path().apply {
-        val radius = size.width  * 0.45f
-        val center = Offset(size.width / 2, size.height / 2)
-        addOval(androidx.compose.ui.geometry.Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius))
-    }
-
-    // Clip the path and draw the content
-    clipPath(path) {
-        this@drawWithContent.drawContent()
-    }
-}
 
 
 @Composable
@@ -166,7 +153,8 @@ fun SimplifiedHorizontalPager(
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel,
     exerciseTitleComposable: @Composable () -> Unit,
-    onScrollEnabledChange: (Boolean) -> Unit
+    onScrollEnabledChange: (Boolean) -> Unit,
+    onOpenWorkoutInProgressDialog: () -> Unit,
 ) {
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
 
@@ -182,7 +170,7 @@ fun SimplifiedHorizontalPager(
                 onScrollEnabledChange = { onScrollEnabledChange(it) },
                 exerciseTitleComposable = exerciseTitleComposable
             )
-            1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
+            1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel,onOpenWorkoutInProgressDialog)
             2 -> PageNewSets(pagerState,updatedState,viewModel)
             3 -> PageNotes(exercise.notes)
         }
@@ -193,7 +181,8 @@ fun SimplifiedHorizontalPager(
 fun PageCompleteOrSkip(
     pagerState: PagerState,
     updatedState:  WorkoutState.Set,
-    viewModel: AppViewModel
+    viewModel: AppViewModel,
+    onOpenWorkoutInProgressDialog: () -> Unit,
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
 
@@ -204,6 +193,13 @@ fun PageCompleteOrSkip(
     var showSkipDialog by remember { mutableStateOf(false) }
 
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+
+    CustomBackHandler(onSinglePress = {
+        onOpenWorkoutInProgressDialog()
+    }, onDoublePress = {
+        VibrateGentle(context)
+        showSkipDialog = true
+    })
 
     LaunchedEffect(updatedState) {
         showConfirmDialog = false
@@ -234,15 +230,6 @@ fun PageCompleteOrSkip(
                     onClick = {
                         VibrateGentle(context)
                         showConfirmDialog = true
-                    },
-                )
-            }
-            item{
-                ButtonWithText(
-                    text = "Skip",
-                    onClick = {
-                        VibrateGentle(context)
-                        showSkipDialog = true
                     },
                 )
             }
@@ -476,7 +463,8 @@ fun PageNewSets(
 fun ExerciseScreen(
     viewModel: AppViewModel,
     state: WorkoutState.Set,
-    hearthRateChart: @Composable () -> Unit
+    hearthRateChart: @Composable () -> Unit,
+    onOpenWorkoutInProgressDialog: () -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -545,7 +533,8 @@ fun ExerciseScreen(
                     onScrollEnabledChange = {
                         allowHorizontalScrolling = it
                     },
-                    exerciseTitleComposable = exerciseTitleComposable
+                    exerciseTitleComposable = exerciseTitleComposable,
+                    onOpenWorkoutInProgressDialog = onOpenWorkoutInProgressDialog
                 )
             }
         }

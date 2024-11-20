@@ -12,7 +12,10 @@ import android.widget.Toast
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.content.ContextCompat
@@ -359,4 +362,18 @@ fun getContrastRatio(color1: Color, color2: Color): Double {
     val luminance2 = color2.luminance()
 
     return (max(luminance1, luminance2) + 0.05) / (min(luminance1, luminance2) + 0.05)
+}
+
+fun Modifier.circleMask() = this.drawWithContent {
+    // Create a circular path for the mask
+    val path = androidx.compose.ui.graphics.Path().apply {
+        val radius = size.width  * 0.45f
+        val center = Offset(size.width / 2, size.height / 2)
+        addOval(androidx.compose.ui.geometry.Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius))
+    }
+
+    // Clip the path and draw the content
+    clipPath(path) {
+        this@drawWithContent.drawContent()
+    }
 }
