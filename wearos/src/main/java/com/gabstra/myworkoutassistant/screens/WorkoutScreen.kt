@@ -107,21 +107,17 @@ fun WorkoutScreen(
         holdTimeInMillis = 1000
     )
 
-    fun openWorkoutInProgressDialog(){
-        if(workoutState is WorkoutState.Finished) return
-        showWorkoutInProgressDialog = true
-        VibrateGentle(context)
-        viewModel.pauseWorkout()
-    }
-
-    var showSkipDialog by remember { mutableStateOf(false) }
-
-
-    if(workoutState !is WorkoutState.Set && workoutState !is WorkoutState.Rest){
-        BackHandler {
-            openWorkoutInProgressDialog()
+    CustomBackHandler(
+        onSinglePress = {
+            VibrateGentle(context)
+            viewModel.openSkipDialog()
+        }, onDoublePress = {
+            if(workoutState is WorkoutState.Finished) return@CustomBackHandler
+            showWorkoutInProgressDialog = true
+            VibrateGentle(context)
+            viewModel.pauseWorkout()
         }
-    }
+    )
 
     LifecycleObserver(
         onPaused = {
@@ -162,11 +158,6 @@ fun WorkoutScreen(
                 fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
             }, label = ""
         ) { updatedWorkoutState ->
-
-            LaunchedEffect(updatedWorkoutState){
-                showSkipDialog = false
-            }
-
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
                     val state = updatedWorkoutState as WorkoutState.Preparing
@@ -180,10 +171,7 @@ fun WorkoutScreen(
                     ExerciseScreen(
                         viewModel,
                         state,
-                        hearthRateChart = { heartRateChartComposable(state.targetZone) },
-                        onOpenWorkoutInProgressDialog = {
-                            openWorkoutInProgressDialog()
-                        }
+                        hearthRateChart = { heartRateChartComposable(state.targetZone) }
                     )
                 }
                 is WorkoutState.Rest -> {
@@ -197,9 +185,6 @@ fun WorkoutScreen(
                             viewModel.pushAndStoreWorkoutData(false,context){
                                 viewModel.goToNextState()
                             }
-                        },
-                        onOpenWorkoutInProgressDialog = {
-                            openWorkoutInProgressDialog()
                         }
                     )
                 }

@@ -35,6 +35,8 @@ fun CircleWithNumber(
     number: Int,
     transparency: Float = 1f
 ) {
+    //val textColor =  Color.Black
+
     val textColor = if (getContrastRatio(circleColor, Color.Black) > getContrastRatio(circleColor, Color.White)) {
         Color.Black
     } else {

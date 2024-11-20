@@ -106,21 +106,15 @@ fun HeartRateCircularChart(
         }
     }
 
-    var lastAlertTime by remember { mutableLongStateOf(0L) }
-    val alertCooldown = 5000L //5 seconds in milliseconds
+    val alertCooldown = 1000L //5 seconds in milliseconds
 
     fun startAlertJob() {
         alertJob = scope.launch {
+            delay(2000)
+            Toast.makeText(context, "Heart rate over limit", Toast.LENGTH_LONG).show()
             while (isActive) {
-                val currentTime = System.currentTimeMillis()
-                if (lastAlertTime == 0L || (currentTime - lastAlertTime >= alertCooldown)) {
-                    Toast.makeText(context, "Heart rate over limit", Toast.LENGTH_LONG).show()
-                    VibrateShortImpulse(context)
-                    lastAlertTime = currentTime
-                    delay(alertCooldown)
-                } else {
-                    delay(alertCooldown - (currentTime - lastAlertTime))
-                }
+                VibrateShortImpulse(context)
+                delay(alertCooldown)
             }
         }
     }
@@ -162,6 +156,7 @@ fun HeartRateCircularChart(
             } else if(isInTargetZoneForTenSeconds) {
                 alarmJob = scope.launch {
                     delay(5000)
+                    Toast.makeText(context, "HR outside target zone", Toast.LENGTH_LONG).show()
                     while (isActive) {
                         VibrateTwiceAndBeep(context)
                         delay(2000)
@@ -179,9 +174,12 @@ fun HeartRateCircularChart(
 
 
     LaunchedEffect(mhrPercentage) {
-        alertJob?.cancel()
         if (mhrPercentage >= 100) {
-            startAlertJob()
+            if(alertJob?.isActive == false){
+                startAlertJob()
+            }
+        }else{
+            alertJob?.cancel()
         }
     }
 
@@ -200,11 +198,15 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) 
     val density = LocalDensity.current.density
     val circleRadius = 20f
 
+    val textColor = Color.Black
+
+    /*
     val textColor = if (getContrastRatio(fillColor, Color.Black) > getContrastRatio(fillColor, Color.White)) {
         Color.Black
     } else {
         Color.White
     }
+    */
 
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize()
@@ -252,7 +254,7 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) 
                     text = number.toString(),
                     style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
                     color = textColor,
-                    textAlign = TextAlign.Center,
+                    textAlign = TextAlign.Center
                 )
             }
         }

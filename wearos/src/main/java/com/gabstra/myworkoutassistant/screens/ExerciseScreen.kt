@@ -48,7 +48,6 @@ import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
-import com.gabstra.myworkoutassistant.composable.CustomBackHandler
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
@@ -153,8 +152,7 @@ fun SimplifiedHorizontalPager(
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel,
     exerciseTitleComposable: @Composable () -> Unit,
-    onScrollEnabledChange: (Boolean) -> Unit,
-    onOpenWorkoutInProgressDialog: () -> Unit,
+    onScrollEnabledChange: (Boolean) -> Unit
 ) {
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
 
@@ -170,7 +168,7 @@ fun SimplifiedHorizontalPager(
                 onScrollEnabledChange = { onScrollEnabledChange(it) },
                 exerciseTitleComposable = exerciseTitleComposable
             )
-            1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel,onOpenWorkoutInProgressDialog)
+            1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
             2 -> PageNewSets(pagerState,updatedState,viewModel)
             3 -> PageNotes(exercise.notes)
         }
@@ -181,8 +179,7 @@ fun SimplifiedHorizontalPager(
 fun PageCompleteOrSkip(
     pagerState: PagerState,
     updatedState:  WorkoutState.Set,
-    viewModel: AppViewModel,
-    onOpenWorkoutInProgressDialog: () -> Unit,
+    viewModel: AppViewModel
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
 
@@ -190,21 +187,11 @@ fun PageCompleteOrSkip(
 
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
-    var showSkipDialog by remember { mutableStateOf(false) }
-
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
-
-    CustomBackHandler(onSinglePress = {
-        onOpenWorkoutInProgressDialog()
-    }, onDoublePress = {
-        VibrateGentle(context)
-        showSkipDialog = true
-    })
 
     LaunchedEffect(updatedState) {
         showConfirmDialog = false
         showGoBackDialog = false
-        showSkipDialog = false
     }
 
     LaunchedEffect(pagerState.currentPage) {
@@ -247,8 +234,6 @@ fun PageCompleteOrSkip(
         }
     }
 
-
-
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
         title = "Complete exercise",
@@ -270,26 +255,6 @@ fun PageCompleteOrSkip(
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showConfirmDialog = false
-        },
-        holdTimeInMillis = 1000
-    )
-
-    CustomDialogYesOnLongPress(
-        show = showSkipDialog,
-        title = "Skip exercise",
-        message = "Do you want to skip this exercise?",
-        handleYesClick = {
-            VibrateGentle(context)
-            viewModel.skipExercise()
-            showSkipDialog = false
-        },
-        handleNoClick = {
-            showSkipDialog = false
-            VibrateGentle(context)
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showSkipDialog = false
         },
         holdTimeInMillis = 1000
     )
@@ -464,11 +429,9 @@ fun ExerciseScreen(
     viewModel: AppViewModel,
     state: WorkoutState.Set,
     hearthRateChart: @Composable () -> Unit,
-    onOpenWorkoutInProgressDialog: () -> Unit,
 ) {
-    val context = LocalContext.current
-
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
+    val showSkipDialog by viewModel.isSkipDialogOpen.collectAsState()
 
     val pagerState = rememberPagerState(
         initialPage = 0,
@@ -479,6 +442,7 @@ fun ExerciseScreen(
     LaunchedEffect(state.set.id) {
         pagerState.scrollToPage(0)
         allowHorizontalScrolling = true
+        viewModel.closeSkipDialog()
     }
 
     LaunchedEffect(allowHorizontalScrolling) {
@@ -534,7 +498,6 @@ fun ExerciseScreen(
                         allowHorizontalScrolling = it
                     },
                     exerciseTitleComposable = exerciseTitleComposable,
-                    onOpenWorkoutInProgressDialog = onOpenWorkoutInProgressDialog
                 )
             }
         }
@@ -553,4 +516,26 @@ fun ExerciseScreen(
 
         hearthRateChart()
     }
+
+    val context = LocalContext.current
+
+    CustomDialogYesOnLongPress(
+        show = showSkipDialog,
+        title = "Skip exercise",
+        message = "Do you want to skip this exercise?",
+        handleYesClick = {
+            VibrateGentle(context)
+            viewModel.skipExercise()
+            viewModel.closeSkipDialog()
+        },
+        handleNoClick = {
+            viewModel.closeSkipDialog()
+            VibrateGentle(context)
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            viewModel.closeSkipDialog()
+        },
+        holdTimeInMillis = 1000
+    )
 }

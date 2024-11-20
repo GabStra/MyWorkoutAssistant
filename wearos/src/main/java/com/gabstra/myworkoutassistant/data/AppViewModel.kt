@@ -227,6 +227,20 @@ class AppViewModel : ViewModel(){
     private val _hasExercises = MutableStateFlow<Boolean>(false)
     val hasExercises = _hasExercises.asStateFlow()
 
+    private val _isSkipDialogOpen = MutableStateFlow<Boolean>(false)
+
+    val isSkipDialogOpen = _isSkipDialogOpen.asStateFlow()
+
+    // Setter method to open dialog
+    fun openSkipDialog() {
+        _isSkipDialogOpen.value = true
+    }
+
+    // Setter method to close dialog
+    fun closeSkipDialog() {
+        _isSkipDialogOpen.value = false
+    }
+
     fun setWorkout(workout: Workout){
         _selectedWorkout.value = workout;
 

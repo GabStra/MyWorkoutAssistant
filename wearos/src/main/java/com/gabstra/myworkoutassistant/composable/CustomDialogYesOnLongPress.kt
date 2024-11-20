@@ -130,7 +130,7 @@ fun CustomDialogYesOnLongPress(
 
     if (show) {
         Dialog(
-            onDismissRequest = { handleNoClick() }
+            onDismissRequest = {  }
         ) {
             Box(
                 modifier = Modifier

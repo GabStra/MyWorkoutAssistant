@@ -72,7 +72,7 @@ fun CustomDialog(
 
     if (show) {
         Dialog(
-            onDismissRequest = { handleNoClick() }
+            onDismissRequest = {  }
         ) {
             // Use a Box to add some padding around the content
             Box(modifier = Modifier

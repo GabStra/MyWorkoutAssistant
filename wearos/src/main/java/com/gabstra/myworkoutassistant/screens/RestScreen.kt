@@ -150,7 +150,6 @@ fun RestScreen(
     state: WorkoutState.Rest,
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
-    onOpenWorkoutInProgressDialog: () -> Unit,
 ) {
     val set = state.set as RestSet
 
@@ -165,7 +164,7 @@ fun RestScreen(
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
-    var showSkipDialog by remember { mutableStateOf(false) }
+    val showSkipDialog by viewModel.isSkipDialogOpen.collectAsState()
 
     val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
     val nextWorkoutStateSet = if (nextWorkoutState is WorkoutState.Set) {
@@ -289,13 +288,12 @@ fun RestScreen(
         }
     }
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(25.dp)
-            .circleMask()
+            .padding(10.dp)
+            .circleMask(),
+        contentAlignment = Alignment.Center
     ) {
         if (isTimerInEditMode && nextWorkoutStateSet!=null) {
             ControlButtonsVertical(
@@ -315,53 +313,52 @@ fun RestScreen(
                     textComposable()
                 }
             )
-        } else {
-            if (nextWorkoutStateSet != null) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-
-                    val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
-                    CustomHorizontalPager(
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        pagerState = pagerState,
-                        userScrollEnabled = true
-                    ) { page ->
-                        when (page) {
-                            0 -> {
+        } else if (nextWorkoutStateSet != null) {
+                val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
+                CustomHorizontalPager(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(15.dp),
+                    pagerState = pagerState,
+                    userScrollEnabled = true
+                ) { page ->
+                    when (page) {
+                        0 -> {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
                                 textComposable()
                                 NextExerciseInfo(viewModel, nextWorkoutStateSet)
                             }
-                            1 -> {
-                                Box {
-                                    Text(
-                                        modifier = Modifier.fillMaxSize(),
-                                        text = "Notes",
-                                        style = MaterialTheme.typography.body1,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    val scrollState = rememberScrollState()
-                                    val notes = nextExercise.notes
-                                    Box(
-                                        modifier = Modifier.fillMaxSize()
-                                    ) {
-                                        Row {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(0.dp, 25.dp, 0.dp, 25.dp)
-                                                    .verticalScroll(scrollState)
-                                            ) {
-                                                Text(
-                                                    text = notes.ifEmpty { "NOT AVAILABLE" },
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    style = MaterialTheme.typography.body1,
-                                                    textAlign = TextAlign.Center
-                                                )
-                                            }
+                        }
+                        1 -> {
+                            Box {
+                                Text(
+                                    modifier = Modifier.fillMaxSize(),
+                                    text = "Notes",
+                                    style = MaterialTheme.typography.body1,
+                                    textAlign = TextAlign.Center
+                                )
+                                val scrollState = rememberScrollState()
+                                val notes = nextExercise.notes
+                                Box(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Row {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(0.dp, 25.dp, 0.dp, 25.dp)
+                                                .verticalScroll(scrollState)
+                                        ) {
+                                            Text(
+                                                text = notes.ifEmpty { "NOT AVAILABLE" },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                style = MaterialTheme.typography.body1,
+                                                textAlign = TextAlign.Center
+                                            )
                                         }
                                     }
                                 }
@@ -369,7 +366,6 @@ fun RestScreen(
                         }
                     }
                 }
-            }
         }
     }
 
@@ -391,13 +387,6 @@ fun RestScreen(
         hearthRateChart()
     }
 
-    CustomBackHandler(onSinglePress = {
-        onOpenWorkoutInProgressDialog()
-    }, onDoublePress = {
-        VibrateGentle(context)
-        showSkipDialog = true
-    })
-
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
         title = "Skip rest",
@@ -408,11 +397,11 @@ fun RestScreen(
                 endTimer =  currentSeconds
             )
             onTimerEnd()
-            showSkipDialog = false
+            viewModel.closeSkipDialog()
         },
         handleNoClick = {
             VibrateGentle(context)
-            showSkipDialog = false
+            viewModel.closeSkipDialog()
             startTimerJob()
         },
         handleOnAutomaticClose = {},
