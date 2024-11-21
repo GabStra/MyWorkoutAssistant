@@ -55,6 +55,8 @@ fun WeightSetScreen (
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable:  @Composable () -> Unit,
 ){
+
+
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData
@@ -65,6 +67,15 @@ fun WeightSetScreen (
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
+
+    val availableWeights = remember(exercise) {
+        exercise.equipmentId?.let { viewModel.GetEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() }
+    }
+
+    val closestWeight = availableWeights?.minByOrNull { kotlin.math.abs(it - currentSet.actualWeight) }
+    val closestWeightIndex = availableWeights?.indexOf(closestWeight)
+
+    var selectedWeightIndex by remember { mutableStateOf(closestWeightIndex) }
 
     val sets = remember(exercise) {
         exercise.sets.filter { it !is RestSet }
@@ -172,10 +183,16 @@ fun WeightSetScreen (
 
             VibrateGentle(context)
         }
-        if (isWeightInEditMode && (currentSet.actualWeight > 0)){
-            currentSet = currentSet.copy(
-                actualWeight = currentSet.actualWeight.minus(0.25F)
-            )
+        if (isWeightInEditMode ){
+            selectedWeightIndex?.let {
+                if (it > 0) {
+                    selectedWeightIndex = it - 1
+
+                    currentSet = currentSet.copy(
+                        actualWeight = availableWeights!!.elementAt(selectedWeightIndex!!).toFloat()
+                    )
+                }
+            }
 
             VibrateGentle(context)
         }
@@ -192,9 +209,15 @@ fun WeightSetScreen (
             VibrateGentle(context)
         }
         if (isWeightInEditMode){
-            currentSet = currentSet.copy(
-                actualWeight = currentSet.actualWeight.plus(0.25F)
-            )
+            selectedWeightIndex?.let {
+                if (it < availableWeights!!.size - 1) {
+                    selectedWeightIndex = it + 1
+
+                    currentSet = currentSet.copy(
+                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!).toFloat()
+                    )
+                }
+            }
 
             VibrateGentle(context)
         }

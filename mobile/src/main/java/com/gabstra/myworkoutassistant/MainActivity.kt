@@ -41,6 +41,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.navigation.NavController
+import com.gabstra.myworkoutassistant.screens.BarbellForm
+import com.gabstra.myworkoutassistant.screens.DumbbellsForm
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
 import com.gabstra.myworkoutassistant.screens.ExerciseHistoryScreen
@@ -58,6 +60,9 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
+import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -209,6 +214,10 @@ fun MyWorkoutAssistantNavHost(
     val updateMobileFlow = appViewModel.updateMobileFlow
 
     LaunchedEffect(appViewModel.workouts) {
+        workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
+    }
+
+    LaunchedEffect(appViewModel.equipments) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
     }
 
@@ -631,6 +640,7 @@ fun MyWorkoutAssistantNavHost(
             selectedWorkout = currentWorkout
 
             ExerciseForm(
+                appViewModel,
                 onExerciseUpsert = { newExercise ->
                     appViewModel.addWorkoutComponent(selectedWorkout, newExercise)
                     appViewModel.goBack()
@@ -661,6 +671,7 @@ fun MyWorkoutAssistantNavHost(
             ) as Exercise
 
             ExerciseForm(
+                appViewModel,
                 onExerciseUpsert = { updatedExercise ->
                     appViewModel.updateWorkoutComponentOld(
                         selectedWorkout,
@@ -885,6 +896,56 @@ fun MyWorkoutAssistantNavHost(
                 set = screenData.selectedSet,
                 exerciseType = parentExercise.exerciseType,
             )
+        }
+
+        is ScreenData.NewEquipment -> {
+            val screenData = appViewModel.currentScreenData as ScreenData.NewEquipment
+            val equipments by appViewModel.equipmentsFlow.collectAsState()
+
+            when (screenData.equipmentType) {
+                EquipmentType.BARBELL -> {
+                    BarbellForm(onBarbellUpsert = { newBarbell ->
+                        val newEquipments = equipments + newBarbell
+                        appViewModel.updateEquipments(newEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() })
+                }
+                EquipmentType.DUMBBELLS -> {
+                    DumbbellsForm(onDumbbellsUpsert = { newDumbbells ->
+                        val newEquipments = equipments + newDumbbells
+                        appViewModel.updateEquipments(newEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() })
+                }
+            }
+        }
+
+        is ScreenData.EditEquipment -> {
+            val screenData = appViewModel.currentScreenData as ScreenData.EditEquipment
+            val equipments by appViewModel.equipmentsFlow.collectAsState()
+
+            when (screenData.equipmentType) {
+                EquipmentType.BARBELL -> {
+                    val selectedBarbell = equipments.find { it.id == screenData.equipmentId } as Barbell
+                    BarbellForm(onBarbellUpsert = { updatedBarbell ->
+                        val updatedEquipments = equipments.map { equipment ->
+                            if (equipment.id == selectedBarbell.id) updatedBarbell else equipment
+                        }
+                        appViewModel.updateEquipments(updatedEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() }, barbell = selectedBarbell)
+                }
+                EquipmentType.DUMBBELLS -> {
+                    val selectedDumbbells = equipments.find { it.id == screenData.equipmentId } as Dumbbells
+                    DumbbellsForm(onDumbbellsUpsert = { updatedDumbbells ->
+                        val updatedEquipments = equipments.map { equipment ->
+                            if (equipment.id == selectedDumbbells.id) updatedDumbbells else equipment
+                        }
+                        appViewModel.updateEquipments(updatedEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() }, dumbbells = selectedDumbbells)
+                }
+            }
         }
     }
 }

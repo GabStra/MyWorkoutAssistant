@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
@@ -91,9 +92,14 @@ class AppViewModel : ViewModel(){
                 workouts = emptyList(),
                 polarDeviceId = null,
                 birthDateYear = 0,
-                weightKg = 0f
+                weightKg = 0f,
+                equipments = emptyList()
         )
     )
+
+    fun GetEquipmentById(id: UUID): Equipment? {
+        return workoutStore.equipments.find { it.id == id }
+    }
 
     private val _isPaused = mutableStateOf(false) // Private mutable state
     val isPaused: State<Boolean> = _isPaused // Public read-only State access
@@ -105,7 +111,6 @@ class AppViewModel : ViewModel(){
     fun resumeWorkout() {
         _isPaused.value = false
     }
-
 
     private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
     val workouts = _workouts.asStateFlow()
@@ -422,12 +427,15 @@ class AppViewModel : ViewModel(){
             "${exercise.name} - volume $lastTotalVolume - avg 1RM ${String.format("%.2f",avg1RM)}"
         )
 
+        val availableWeights = exercise.equipmentId?.let { GetEquipmentById(it)?.calculatePossibleCombinations() }
+            ?: emptySet()
+
         val distributedWorkout = when(exercise.exerciseType) {
             ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
                 exerciseSets.size - restSetCount,
                 lastTotalVolume,
                 avg1RM,
-                0.5,
+                availableWeights,
                 exercise.volumeIncreasePercent,
                 Pair(exercise.minLoadPercent, exercise.maxLoadPercent),
                 IntRange(exercise.minReps, exercise.maxReps),

@@ -10,6 +10,8 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
+import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -41,6 +43,9 @@ sealed class ScreenData() {
 
     class NewSet(val workoutId: UUID, val parentExerciseId: UUID) : ScreenData()
     class EditSet(val workoutId: UUID, val selectedSet: Set, val parentExerciseId: UUID) : ScreenData()
+
+    class NewEquipment(val equipmentType: EquipmentType) : ScreenData()
+    class EditEquipment(val equipmentId: UUID, val equipmentType: EquipmentType) : ScreenData()
 }
 
 
@@ -104,7 +109,8 @@ class AppViewModel() : ViewModel() {
         workouts = emptyList(),
         polarDeviceId = null,
         birthDateYear = 0,
-        weightKg = 0f
+        weightKg = 0f,
+        equipments = emptyList()
     ))
         private set
 
@@ -119,12 +125,28 @@ class AppViewModel() : ViewModel() {
             triggerMobile()
         }
 
+    var equipments: List<Equipment>
+        get() = workoutStore.equipments
+        private set(value) {
+            _equipmentsFlow.value = value
+            workoutStore = workoutStore.copy(equipments = value)
+            triggerMobile()
+        }
+
+    private val _equipmentsFlow = MutableStateFlow(workoutStore.equipments)
+    val equipmentsFlow = _equipmentsFlow.asStateFlow()
+
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore,triggerSend:Boolean = true) {
         workoutStore = newWorkoutStore
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue =  currentYear - workoutStore.birthDateYear
         _workoutsFlow.value = newWorkoutStore.workouts
+        _equipmentsFlow.value = newWorkoutStore.equipments
         if(triggerSend) triggerMobile()
+    }
+
+    fun updateEquipments(newEquipments: List<Equipment>) {
+        equipments = newEquipments
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {

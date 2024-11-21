@@ -20,5 +20,6 @@ data class Exercise (
     val maxReps : Int,
     val fatigueFactor: Float,
     val volumeIncreasePercent: Float,
-    val targetZone: Int?
+    val targetZone: Int?,
+    val equipmentId: UUID?
 ): WorkoutComponent(id,enabled)

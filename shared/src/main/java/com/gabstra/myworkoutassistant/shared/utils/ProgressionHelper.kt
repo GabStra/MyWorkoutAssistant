@@ -73,7 +73,7 @@ object VolumeDistributionHelper {
         val numberOfSets: Int,
         val targetTotalVolume: Double,
         val oneRepMax: Double,
-        val weightIncrement: Double,
+        val availableWeights: Set<Double>,
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
         val fatigueFactor: Float
@@ -90,7 +90,7 @@ object VolumeDistributionHelper {
         numberOfSets: Int,
         targetTotalVolume: Double,
         oneRepMax: Double,
-        weightIncrement: Double,
+        availableWeights: Set<Double>,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
         fatigueFactor: Float
@@ -101,7 +101,7 @@ object VolumeDistributionHelper {
             numberOfSets = numberOfSets,
             targetTotalVolume = targetTotalVolume,
             oneRepMax = oneRepMax,
-            weightIncrement = weightIncrement,
+            availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
             fatigueFactor = fatigueFactor
@@ -141,14 +141,10 @@ object VolumeDistributionHelper {
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
-            val minWeight =
-                ceil((params.oneRepMax * (params.percentLoadRange.first / 100)) / params.weightIncrement) * params.weightIncrement
-            val maxWeight =
-                (params.oneRepMax * (params.percentLoadRange.second / 100)) / params.weightIncrement * params.weightIncrement
+            val minWeight = params.oneRepMax * (params.percentLoadRange.first / 100)
+            val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
 
-            val weightRange = generateSequence(minWeight) { it + params.weightIncrement }
-                .takeWhile { it <= maxWeight }
-                .toList()
+            val weightRange = params.availableWeights.filter { it in minWeight..maxWeight }
 
             val setsDeferred = weightRange.map { weight ->
                 async(Dispatchers.Default) {
@@ -303,7 +299,7 @@ object VolumeDistributionHelper {
         numberOfSets: Int,
         targetTotalVolume: Double,
         oneRepMax: Double,
-        weightIncrement: Double,
+        availableWeights: Set<Double>,
         percentageIncrease: Float,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
@@ -320,7 +316,7 @@ object VolumeDistributionHelper {
             numberOfSets = numberOfSets,
             targetTotalVolume = minimumRequiredVolume,
             oneRepMax = oneRepMax,
-            weightIncrement = weightIncrement,
+            availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
             fatigueFactor = fatigueFactor
@@ -335,7 +331,7 @@ object VolumeDistributionHelper {
             numberOfSets = numberOfSets,
             targetTotalVolume = minimumRequiredVolume,
             oneRepMax = oneRepMax,
-            weightIncrement = weightIncrement,
+            availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
             fatigueFactor = fatigueFactor

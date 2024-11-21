@@ -7,15 +7,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper.getParametersByExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import java.util.UUID
 
 fun ExerciseType.toReadableString(): String {
     return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
@@ -52,6 +57,7 @@ fun stringToExerciseCategory(value: String): ProgressionHelper.ExerciseCategory?
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExerciseForm(
+    viewModel: AppViewModel,
     onExerciseUpsert: (Exercise) -> Unit,
     onCancel: () -> Unit,
     exercise: Exercise? = null, // Add exercise parameter with default value null
@@ -78,6 +84,11 @@ fun ExerciseForm(
     val maxReps = remember { mutableStateOf(exercise?.maxReps?.toFloat()?:12f) }
     val fatigueFactor = remember { mutableStateOf(exercise?.fatigueFactor?:0.1f) }
     val volumeIncreasePercent = remember { mutableStateOf(exercise?.volumeIncreasePercent?:5f) } // Default 5% increase
+
+    val equipments by viewModel.equipmentsFlow.collectAsState()
+
+    val selectedEquipmentId = remember { mutableStateOf<UUID?>(exercise?.equipmentId) }
+    val expandedEquipment = remember { mutableStateOf(false) }
 
     // Update parameters when category changes
     fun updateProgressiveOverloadParameters(category: ProgressionHelper.ExerciseCategory?) {
@@ -273,6 +284,42 @@ fun ExerciseForm(
             }
         }
 
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            Text(text = "Equipment:")
+            Box(modifier = Modifier.fillMaxWidth()) {
+                val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
+                Text(
+                    text = selectedEquipment?.name ?: "Select Equipment",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { expandedEquipment.value = true }
+                        .padding(8.dp)
+                )
+                DropdownMenu(
+                    expanded = expandedEquipment.value,
+                    onDismissRequest = { expandedEquipment.value = false },
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                ) {
+                    equipments.forEach { equipment ->
+                        DropdownMenuItem(
+                            onClick = {
+                                selectedEquipmentId.value = equipment.id
+                                expandedEquipment.value = false
+                            },
+                            text = {
+                                Text(text = equipment.name)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
         val heartRateZones = listOf("None") + listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5")
         val selectedTargetZone = remember { mutableStateOf(exercise?.targetZone) }
         val expandedHeartRateZone = remember { mutableStateOf(false) }
@@ -367,7 +414,8 @@ fun ExerciseForm(
                     fatigueFactor = fatigueFactor.value,
                     volumeIncreasePercent = volumeIncreasePercent.value,
                     notes = notesState.value.trim(),
-                    targetZone = selectedTargetZone.value
+                    targetZone = selectedTargetZone.value,
+                    equipmentId = selectedEquipmentId.value
                 )
 
                 onExerciseUpsert(newExercise)

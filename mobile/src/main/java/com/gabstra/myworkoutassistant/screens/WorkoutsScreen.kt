@@ -25,11 +25,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
 
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
@@ -38,10 +36,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -50,7 +46,6 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarColors
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -72,8 +67,10 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
+import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
+import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
@@ -82,6 +79,10 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
+import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.kizitonwose.calendar.compose.weekcalendar.WeekCalendarState
 import com.kizitonwose.calendar.core.WeekDay
@@ -229,6 +230,8 @@ fun WorkoutsScreen(
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
+    val equipments by appViewModel.equipmentsFlow.collectAsState()
+
     val enabledWorkouts = workouts.filter { it.enabled }
 
     val activeAndEnabledWorkouts =
@@ -245,7 +248,10 @@ fun WorkoutsScreen(
     val hasObjectives = timesCompletedInAWeekObjective.values.any { it > 0 }
 
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
-    var isSelectionModeActive by remember { mutableStateOf(false) }
+    var isWorkoutSelectionModeActive by remember { mutableStateOf(false) }
+
+    var selectedEquipments by remember { mutableStateOf(listOf<Equipment>()) }
+    var isEquipmentSelectionModeActive by remember { mutableStateOf(false) }
 
     var objectiveProgress by remember { mutableStateOf(0.0) }
 
@@ -284,7 +290,7 @@ fun WorkoutsScreen(
 
     val scope = rememberCoroutineScope()
 
-    val tabTitles = listOf("Status", "Workouts")
+    val tabTitles = listOf("Status", "Workouts", "Equipments")
 
     var selectedDate by remember {
         mutableStateOf<WeekDay>(
@@ -406,6 +412,189 @@ fun WorkoutsScreen(
         return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
     }
 
+    @Composable
+    fun workoutsBottomBar(){
+        if (selectedWorkouts.isNotEmpty()) {
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
+                    actions = {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val newWorkouts =
+                                        activeAndEnabledWorkouts.filter { workout ->
+                                            selectedWorkouts.none { it === workout }
+                                        }
+
+                                    val newWorkoutsWithUpdatedOrder =
+                                        newWorkouts.mapIndexed { index, workout ->
+                                            workout.copy(
+                                                order = index
+                                            )
+                                        }
+
+                                    appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
+                                    scope.launch(Dispatchers.IO) {
+                                        for (workout in selectedWorkouts) {
+                                            val workoutHistories =
+                                                workoutHistoryDao.getWorkoutsByWorkoutId(
+                                                    workout.id
+                                                )
+                                            for (workoutHistory in workoutHistories) {
+                                                setHistoryDao.deleteByWorkoutHistoryId(
+                                                    workoutHistory.id
+                                                )
+                                            }
+                                            workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                        }
+                                        groupedWorkoutsHistories =
+                                            workoutHistoryDao.getAllWorkoutHistories()
+                                                .groupBy { it.date }
+                                    }
+                                    selectedWorkouts = emptyList()
+                                    isWorkoutSelectionModeActive = false
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = Color.White.copy(alpha = .87f)
+                                )
+                            }
+                            Button(
+                                modifier = Modifier.padding(5.dp),
+                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                onClick = {
+                                    for (workout in selectedWorkouts) {
+                                        appViewModel.updateWorkout(
+                                            workout,
+                                            workout.copy(enabled = true)
+                                        )
+                                    }
+                                    selectedWorkouts = emptyList()
+                                    isWorkoutSelectionModeActive = false
+                                }) {
+                                Text("Enable")
+                            }
+                            Button(
+                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                modifier = Modifier.padding(5.dp),
+                                onClick = {
+                                    for (workout in selectedWorkouts) {
+                                        appViewModel.updateWorkout(
+                                            workout,
+                                            workout.copy(enabled = false)
+                                        )
+                                    }
+                                    selectedWorkouts = emptyList()
+                                    isWorkoutSelectionModeActive = false
+                                }) {
+                                Text("Disable")
+                            }
+
+                        }
+                    }
+                )
+            }
+
+        }else{
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
+                    actions = {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                        ) {
+
+                            Button(
+                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                onClick = {
+                                    appViewModel.setScreenData(ScreenData.NewWorkout());
+                                },
+                            ) {
+                                Text("New Workout")
+                            }
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun equipmentsBottomBar(){
+        if(selectedEquipments.isNotEmpty()){
+            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
+                    actions = {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = {
+                                val newEquipments = equipments.filter { item ->
+                                    selectedEquipments.none { it === item }
+                                }
+                                appViewModel.updateEquipments(newEquipments)
+                                isEquipmentSelectionModeActive = false
+                            }) {
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = Color.White.copy(alpha = .87f))
+                            }
+                        }
+                    }
+                )
+            }
+        }
+        else
+        {
+            BottomAppBar(
+                contentPadding = PaddingValues(0.dp),
+                containerColor = Color.Transparent,
+                actions = {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                    ) {
+                        GenericButtonWithMenu(
+                            menuItems = listOf(
+                                MenuItem("Add Barbell") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewEquipment(
+                                            EquipmentType.BARBELL
+                                        )
+                                    );
+                                },
+                                MenuItem("Add Dumbbells") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewEquipment(
+                                            EquipmentType.DUMBBELLS
+                                        )
+                                    );
+                                }
+
+                            ),
+                            content = {  Text("New Equipment") }
+                        )
+                    }
+                }
+            )
+        }
+    }
+
     Scaffold(
         topBar = {
             DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
@@ -442,121 +631,9 @@ fun WorkoutsScreen(
             }
         },
         bottomBar = {
-            if(selectedTabIndex != 1) return@Scaffold
-
-            if (selectedWorkouts.isNotEmpty()) {
-                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                    BottomAppBar(
-                        contentPadding = PaddingValues(0.dp),
-                        containerColor = Color.Transparent,
-                        actions = {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        val newWorkouts =
-                                            activeAndEnabledWorkouts.filter { workout ->
-                                                selectedWorkouts.none { it === workout }
-                                            }
-
-                                        val newWorkoutsWithUpdatedOrder =
-                                            newWorkouts.mapIndexed { index, workout ->
-                                                workout.copy(
-                                                    order = index
-                                                )
-                                            }
-
-                                        appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
-                                        scope.launch(Dispatchers.IO) {
-                                            for (workout in selectedWorkouts) {
-                                                val workoutHistories =
-                                                    workoutHistoryDao.getWorkoutsByWorkoutId(
-                                                        workout.id
-                                                    )
-                                                for (workoutHistory in workoutHistories) {
-                                                    setHistoryDao.deleteByWorkoutHistoryId(
-                                                        workoutHistory.id
-                                                    )
-                                                }
-                                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                            }
-                                            groupedWorkoutsHistories =
-                                                workoutHistoryDao.getAllWorkoutHistories()
-                                                    .groupBy { it.date }
-                                        }
-                                        selectedWorkouts = emptyList()
-                                        isSelectionModeActive = false
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete",
-                                        tint = Color.White.copy(alpha = .87f)
-                                    )
-                                }
-                                Button(
-                                    modifier = Modifier.padding(5.dp),
-                                    colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                                    onClick = {
-                                        for (workout in selectedWorkouts) {
-                                            appViewModel.updateWorkout(
-                                                workout,
-                                                workout.copy(enabled = true)
-                                            )
-                                        }
-                                        selectedWorkouts = emptyList()
-                                        isSelectionModeActive = false
-                                    }) {
-                                    Text("Enable")
-                                }
-                                Button(
-                                    colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                                    modifier = Modifier.padding(5.dp),
-                                    onClick = {
-                                        for (workout in selectedWorkouts) {
-                                            appViewModel.updateWorkout(
-                                                workout,
-                                                workout.copy(enabled = false)
-                                            )
-                                        }
-                                        selectedWorkouts = emptyList()
-                                        isSelectionModeActive = false
-                                    }) {
-                                    Text("Disable")
-                                }
-
-                            }
-                        }
-                    )
-                }
-
-            }else{
-                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                BottomAppBar(
-                    contentPadding = PaddingValues(0.dp),
-                    containerColor = Color.Transparent,
-                    actions = {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                        ) {
-
-                                Button(
-                                    colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                                    onClick = {
-                                        appViewModel.setScreenData(ScreenData.NewWorkout());
-                                    },
-                                ) {
-                                    Text("New Workout")
-                                }
-                            }
-                    }
-                )
-                }
+            when(selectedTabIndex){
+                1 -> workoutsBottomBar()
+                2 -> equipmentsBottomBar()
             }
         },
     ) {
@@ -759,13 +836,13 @@ fun WorkoutsScreen(
                                 PaddingValues(5.dp, 10.dp),
                                 items = activeWorkouts,
                                 selectedItems = selectedWorkouts,
-                                isSelectionModeActive,
+                                isWorkoutSelectionModeActive,
                                 onItemClick = {
                                     if (isCardExpanded) return@GenericSelectableList
                                     appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
                                 },
-                                onEnableSelection = { isSelectionModeActive = true },
-                                onDisableSelection = { isSelectionModeActive = false },
+                                onEnableSelection = { isWorkoutSelectionModeActive = true },
+                                onDisableSelection = { isWorkoutSelectionModeActive = false },
                                 onSelectionChange = { newSelection ->
                                     selectedWorkouts = newSelection
                                 },
@@ -785,6 +862,55 @@ fun WorkoutsScreen(
                                             it,
                                             true,
                                             enabled = it.enabled
+                                        )
+                                    }
+                                },
+                                isDragDisabled = true
+                            )
+                        }
+                    }
+
+                    2 -> {
+                        if (equipments.isEmpty()) {
+                            Text(
+                                text = "Add new equipment",
+                                textAlign = TextAlign.Center,
+                                color = Color.White.copy(alpha = .87f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(15.dp),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        } else {
+                            GenericSelectableList(
+                                PaddingValues(5.dp, 10.dp),
+                                items = equipments,
+                                selectedItems = selectedEquipments,
+                                isEquipmentSelectionModeActive,
+                                onItemClick = { equipment ->
+                                    val equipmentType = when (equipment) {
+                                        is Barbell -> EquipmentType.BARBELL
+                                        is Dumbbells -> EquipmentType.DUMBBELLS
+                                        else -> throw IllegalArgumentException("Unknown equipment type")
+                                    }
+
+                                    appViewModel.setScreenData(ScreenData.EditEquipment(equipment.id,equipment.type))
+                                },
+                                onEnableSelection = { isEquipmentSelectionModeActive = true },
+                                onDisableSelection = { isEquipmentSelectionModeActive = false },
+                                onSelectionChange = { newSelection ->
+                                    selectedEquipments = newSelection
+                                },
+                                onOrderChange = { },
+                                itemContent = { it ->
+                                    DarkModeContainer(whiteOverlayAlpha = .1f) {
+                                        Text(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(15.dp)
+                                                .basicMarquee(iterations = Int.MAX_VALUE),
+                                            text = it.name,
+                                            color = Color.White.copy(alpha = .87f),
                                         )
                                     }
                                 },
