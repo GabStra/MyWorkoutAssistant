@@ -430,6 +430,8 @@ class AppViewModel : ViewModel(){
         val availableWeights = exercise.equipmentId?.let { GetEquipmentById(it)?.calculatePossibleCombinations() }
             ?: emptySet()
 
+        Log.d("WorkoutViewModel", "Available weights: $availableWeights")
+
         val distributedWorkout = when(exercise.exerciseType) {
             ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
                 exerciseSets.size - restSetCount,

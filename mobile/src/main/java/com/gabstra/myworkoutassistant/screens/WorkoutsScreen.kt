@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 
@@ -543,6 +544,22 @@ fun WorkoutsScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            IconButton(onClick = {
+                                val newEquipments = selectedEquipments.map { it ->
+                                    when (it) {
+                                        is Barbell -> Barbell(UUID.randomUUID(), it.name + " (Copy)", it.availablePlates, it.barLength, it.additionalPlates, it.maxAdditionalItems)
+                                        is Dumbbells -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", it.availableDumbbells, it.additionalPlates, it.maxAdditionalItems)
+                                        else -> throw IllegalArgumentException("Unknown equipment type")
+                                    }
+                                }
+
+                                val newTotalEquipments = equipments + newEquipments
+
+                                appViewModel.updateEquipments(newTotalEquipments)
+                                isEquipmentSelectionModeActive = false
+                            }) {
+                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = Color.White.copy(alpha = .87f))
+                            }
                             IconButton(onClick = {
                                 val newEquipments = equipments.filter { item ->
                                     selectedEquipments.none { it === item }

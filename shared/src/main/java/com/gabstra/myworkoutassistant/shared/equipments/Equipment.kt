@@ -23,7 +23,7 @@ abstract class Equipment(
         val combinedCombinations = baseCombinations.flatMap { base ->
             additionalCombinations.map { additional -> base + additional }
         }
-        return (baseCombinations + combinedCombinations).sorted().toSet()
+        return (baseCombinations + combinedCombinations).filter { it != 0.0 }.sorted().toSet()
     }
 
     // Generate all valid combinations of additional plates

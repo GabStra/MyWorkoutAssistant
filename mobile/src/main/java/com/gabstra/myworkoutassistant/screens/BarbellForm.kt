@@ -128,7 +128,7 @@ fun BarbellForm(
                     }
                 }
 
-                availablePlatesState.value.forEach { plate ->
+                availablePlatesState.value.sortedBy { it.weight }.forEach { plate ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -169,14 +169,12 @@ fun BarbellForm(
                         text = "Additional Plates",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    if (additionalPlatesState.value.size < (maxAdditionalItemsState.value.toIntOrNull() ?: 0)) {
-                        IconButton(onClick = { showAdditionalPlateDialog.value = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Plate")
-                        }
+                    IconButton(onClick = { showAdditionalPlateDialog.value = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Plate")
                     }
                 }
 
-                additionalPlatesState.value.forEach { plate ->
+                additionalPlatesState.value.sortedBy { it.weight }.forEach { plate ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -267,7 +265,7 @@ fun BarbellForm(
                     onClick = {
                         val weight = newPlateWeightState.value.toDoubleOrNull()
                         val thickness = newPlateThicknessState.value.toDoubleOrNull()
-                        if (weight != null && thickness != null) {
+                        if (weight != null && weight > 0 && thickness != null) {
                             availablePlatesState.value = availablePlatesState.value + Plate(weight, thickness)
                             newPlateWeightState.value = ""
                             newPlateThicknessState.value = ""
@@ -325,7 +323,7 @@ fun BarbellForm(
                     onClick = {
                         val weight = newPlateWeightState.value.toDoubleOrNull()
                         val thickness = newPlateThicknessState.value.toDoubleOrNull()
-                        if (weight != null && thickness != null) {
+                        if (weight != null && weight > 0 && thickness != null) {
                             additionalPlatesState.value = additionalPlatesState.value + Plate(weight, thickness)
                             newPlateWeightState.value = ""
                             newPlateThicknessState.value = ""
@@ -333,8 +331,7 @@ fun BarbellForm(
                         }
                     },
                     enabled = newPlateWeightState.value.isNotEmpty() &&
-                            newPlateThicknessState.value.isNotEmpty() &&
-                            additionalPlatesState.value.size < (maxAdditionalItemsState.value.toIntOrNull() ?: 0)
+                            newPlateThicknessState.value.isNotEmpty()
                 ) {
                     Text("Add")
                 }
