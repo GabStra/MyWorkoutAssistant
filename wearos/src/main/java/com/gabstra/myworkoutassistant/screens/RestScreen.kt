@@ -404,6 +404,7 @@ fun RestScreen(
             viewModel.closeSkipDialog()
             startTimerJob()
         },
+        closeTimerInMillis = 2000,
         handleOnAutomaticClose = {},
         holdTimeInMillis = 1000
     )

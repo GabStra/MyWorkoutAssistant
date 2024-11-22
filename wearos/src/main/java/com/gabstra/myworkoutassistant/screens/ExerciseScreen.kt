@@ -532,7 +532,7 @@ fun ExerciseScreen(
             viewModel.closeSkipDialog()
             VibrateGentle(context)
         },
-        closeTimerInMillis = 5000,
+        closeTimerInMillis = 2000,
         handleOnAutomaticClose = {
             viewModel.closeSkipDialog()
         },

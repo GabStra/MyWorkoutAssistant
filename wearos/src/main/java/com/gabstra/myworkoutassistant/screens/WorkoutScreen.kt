@@ -99,7 +99,7 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
         },
-        closeTimerInMillis = 5000,
+        closeTimerInMillis = 2000,
         handleOnAutomaticClose = {
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()

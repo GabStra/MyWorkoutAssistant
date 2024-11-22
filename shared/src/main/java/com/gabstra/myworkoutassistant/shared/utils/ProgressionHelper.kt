@@ -119,16 +119,11 @@ object VolumeDistributionHelper {
         if (possibleSets.isEmpty()) return null
 
         // Find valid combination of sets with minimum fatigue
-        val validSetCombinations = findAllValidSetCombinations(
+        val validSetCombination = findValidSetCombination(
             possibleSets = possibleSets,
             targetSets = params.numberOfSets,
             targetVolume = params.targetTotalVolume,
-            maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
-        )
-
-        val validSetCombination =
-            validSetCombinations.sortedBy { it.totalFatigue }.minByOrNull { it.totalFatigue }
-                ?: return null
+        ) ?: return null
 
         return DistributedWorkout(
             sets = validSetCombination.sets,
@@ -167,7 +162,9 @@ object VolumeDistributionHelper {
                         it.percentLoad <= params.percentLoadRange.second
             }
 
-            filteredSets
+            //for sets with the same volume, keep the one with the lowest fatigue
+            val setsByVolume = filteredSets.groupBy { it.volume }
+            setsByVolume.map { it.value.minByOrNull { it.fatigue }!! }
         }
 
     data class SetCombination(
@@ -176,104 +173,139 @@ object VolumeDistributionHelper {
         val totalVolume: Double
     )
 
-    private fun findAllValidSetCombinations(
+    private fun findValidSetCombination(
         possibleSets: List<ExerciseSet>,
         targetSets: Int,
-        targetVolume: Double,
-        maxWeight: Double,
-        maxResults: Int = 10
-    ): List<SetCombination> {
-        val validSets = possibleSets.filter { it.weight <= maxWeight }
+        targetVolume: Double
+    ): SetCombination? {
+        if (possibleSets.isEmpty()) return null
 
-        if (validSets.isEmpty()) return emptyList()
+        // Pre-filter and sort possible sets by weight and then reps
+        val filteredSets = possibleSets
+            .sortedWith(compareByDescending<ExerciseSet> { it.weight }
+                .thenByDescending { it.reps })
+            .filter { it.volume <= targetVolume / targetSets * 1.2 }
+            .take(10)
 
-        val result = mutableListOf<SetCombination>()
-        val uniqueCombinations = mutableSetOf<List<ExerciseSet>>()
+        data class SearchState(
+            val remainingSets: Int,
+            val remainingVolume: Double,
+            val currentSets: List<ExerciseSet>,
+            val currentFatigue: Double,
+            val lastWeight: Double? = null
+        )
 
-        fun getValidSetsForRemaining(
-            remainingSets: Int,
-            remainingVolume: Double,
-            currentMaxWeight: Double,
-            lastFatigue: Double?
-        ): List<ExerciseSet> {
-            val targetVolumePerSet = remainingVolume / remainingSets
-            val minVolumePerSet = targetVolumePerSet * 0.9
-            val maxVolumePerSet = targetVolumePerSet * 1.1
+        val queue = ArrayDeque<SearchState>()
+        var bestCombination: SetCombination? = null
+        var closestVolumeGap = Double.MAX_VALUE
+        var bestFatigue = Double.MAX_VALUE
 
-            val filteredSets = validSets.filter { set ->
-                set.weight <= currentMaxWeight &&
-                        set.volume >= minVolumePerSet &&
-                        set.volume <= maxVolumePerSet &&
-                        (lastFatigue == null || set.fatigue <= lastFatigue)
-            }
-
-            return filteredSets.sortedWith(
-                compareBy(
-                    { kotlin.math.abs(it.volume - targetVolumePerSet) },
-                    { it.fatigue })
-            )
-        }
-
-        fun search(
-            remainingSets: Int,
-            currentMaxWeight: Double,
-            remainingVolume: Double,
-            currentSets: List<ExerciseSet>,
-            currentFatigue: Double
-        ): Boolean {
-            if (result.size >= maxResults) return true
-
-            if (currentSets.size == targetSets) {
-                val totalVolume = currentSets.sumOf { it.volume }
-                if (totalVolume >= targetVolume && totalVolume <= targetVolume * 1.1) {
-                    if (uniqueCombinations.add(currentSets)) {
-                        result.add(
-                            SetCombination(
-                                sets = currentSets,
-                                totalFatigue = currentFatigue,
-                                totalVolume = totalVolume
-                            )
-                        )
-                    }
-                    return result.size >= maxResults
-                }
-                return false
-            }
-
-            val lastFatigue = currentSets.lastOrNull()?.fatigue
-            val validSetsForRemaining = getValidSetsForRemaining(
-                remainingSets = remainingSets,
-                remainingVolume = remainingVolume,
-                currentMaxWeight = currentMaxWeight,
-                lastFatigue = lastFatigue
-            )
-
-            for (set in validSetsForRemaining) {
-                val newRemainingVolume = remainingVolume - set.volume
-
-                val shouldStop = search(
-                    remainingSets = remainingSets - 1,
-                    currentMaxWeight = set.weight,
-                    remainingVolume = newRemainingVolume,
-                    currentSets = currentSets + set,
-                    currentFatigue = currentFatigue + set.fatigue
-                )
-
-                if (shouldStop) return true
-            }
-
-            return false
-        }
-
-        search(
+        queue.add(SearchState(
             remainingSets = targetSets,
-            currentMaxWeight = maxWeight,
             remainingVolume = targetVolume,
             currentSets = emptyList(),
             currentFatigue = 0.0
-        )
+        ))
 
-        return result
+        while (queue.isNotEmpty()) {
+            val state = queue.removeFirst()
+
+            // Complete combination found
+            if (state.currentSets.size == targetSets) {
+                val totalVolume = state.currentSets.sumOf { it.volume }
+                val volumeGap = targetVolume - totalVolume
+
+                // Only consider solutions that don't exceed target volume and have proper weight progression
+                if (volumeGap >= 0 && isWeightProgressionValid(state.currentSets)) {
+                    // Update best combination if:
+                    // 1. This combination is closer to target volume, or
+                    // 2. Equal volume distance but has less fatigue
+                    if (volumeGap < closestVolumeGap ||
+                        (volumeGap == closestVolumeGap && state.currentFatigue < bestFatigue)) {
+                        closestVolumeGap = volumeGap
+                        bestFatigue = state.currentFatigue
+                        bestCombination = SetCombination(
+                            sets = state.currentSets,
+                            totalFatigue = state.currentFatigue,
+                            totalVolume = totalVolume
+                        )
+                    }
+                }
+                continue
+            }
+
+            val currentVolume = state.currentSets.sumOf { it.volume }
+            val volumeGap = targetVolume - currentVolume
+
+            // Skip if we've exceeded target volume
+            if (volumeGap < 0) {
+                continue
+            }
+
+            // Get valid next sets that maintain weight progression
+            val validNextSets = filteredSets
+                .filter { set ->
+                    // Weight must be equal or less than previous set
+                    val isWeightValid = if (state.lastWeight != null) {
+                        set.weight <= state.lastWeight
+                    } else true
+
+                    // Total volume must not exceed target
+                    val isVolumeValid = (currentVolume + set.volume) <= targetVolume
+
+                    isWeightValid && isVolumeValid
+                }
+
+            // Add new states to queue
+            for (set in validNextSets) {
+                // Calculate if this path could possibly get close enough to target
+                val remainingSets = state.remainingSets - 1
+                val remainingVolumeNeeded = targetVolume - (currentVolume + set.volume)
+                val isPathViable = if (remainingSets > 0) {
+                    // Check if we can possibly reach target with remaining sets
+                    val maxVolumePerRemainingSet = validNextSets
+                        .filter { it.weight <= set.weight }
+                        .maxOfOrNull { it.volume } ?: 0.0
+                    remainingVolumeNeeded <= (remainingSets * maxVolumePerRemainingSet)
+                } else true
+
+                if (isPathViable) {
+                    queue.add(SearchState(
+                        remainingSets = remainingSets,
+                        remainingVolume = state.remainingVolume - set.volume,
+                        currentSets = state.currentSets + set,
+                        currentFatigue = state.currentFatigue + set.fatigue,
+                        lastWeight = set.weight
+                    ))
+                }
+            }
+
+            // Manage queue size
+            if (queue.size > 1000) {
+                val sortedQueue = queue.sortedWith(compareBy(
+                    // Sort by how close they could get to target volume
+                    { state ->
+                        val currentStateVolume = state.currentSets.sumOf { it.volume }
+                        kotlin.math.abs(targetVolume - currentStateVolume)
+                    },
+                    { it.currentFatigue }
+                ))
+                queue.clear()
+                queue.addAll(sortedQueue.take(500))
+            }
+        }
+
+        return bestCombination
+    }
+
+    // Helper function to verify weight progression
+    private fun isWeightProgressionValid(sets: List<ExerciseSet>): Boolean {
+        for (i in 1 until sets.size) {
+            if (sets[i].weight > sets[i-1].weight) {
+                return false
+            }
+        }
+        return true
     }
 
     private fun createSet(
@@ -310,7 +342,6 @@ object VolumeDistributionHelper {
         }
 
         val minimumRequiredVolume = targetTotalVolume * (1 + (percentageIncrease / 100))
-        val maximumRequiredVolume = minimumRequiredVolume * 1.05
 
         val solution = distributeVolume(
             numberOfSets = numberOfSets,
@@ -322,11 +353,6 @@ object VolumeDistributionHelper {
             fatigueFactor = fatigueFactor
         )
 
-
-        if (solution != null && solution.totalVolume >= minimumRequiredVolume && solution.totalVolume <= maximumRequiredVolume) {
-            return Pair(solution, false)
-        }
-
         val increasedSetSolution = distributeVolume(
             numberOfSets = numberOfSets,
             targetTotalVolume = minimumRequiredVolume,
@@ -337,11 +363,23 @@ object VolumeDistributionHelper {
             fatigueFactor = fatigueFactor
         )
 
-        if (increasedSetSolution != null && increasedSetSolution.totalVolume >= minimumRequiredVolume && increasedSetSolution.totalVolume <= maximumRequiredVolume) {
+        if(solution == null && increasedSetSolution == null) {
+            return Pair(null, true)
+        }
+
+        if (solution != null && increasedSetSolution == null) {
+            return Pair(solution, false)
+        }
+
+        if(solution == null && increasedSetSolution != null) {
             return Pair(increasedSetSolution, false)
         }
 
-        return Pair(null, true)
+        return if(solution!!.totalFatigue<=increasedSetSolution!!.totalFatigue){
+            Pair(solution, false)
+        }else{
+            Pair(increasedSetSolution, false)
+        }
     }
 
     private fun createBodyWeightSet(
