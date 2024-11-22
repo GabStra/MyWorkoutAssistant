@@ -106,7 +106,7 @@ fun PreparingStandardScreen(
             Text(modifier = Modifier.fillMaxWidth(), text = "Preparing\nWatch HR Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(15.dp))
             LoadingText(baseText = "Please wait")
-            if(canSkip){
+            if(canSkip && state.dataLoaded){
                 Spacer(modifier = Modifier.height(25.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
                     Button(

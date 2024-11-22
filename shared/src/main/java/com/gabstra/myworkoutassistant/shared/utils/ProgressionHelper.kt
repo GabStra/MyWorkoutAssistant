@@ -66,7 +66,8 @@ object VolumeDistributionHelper {
         val totalVolume: Double,
         val totalFatigue: Double,
         val usedOneRepMax: Double,
-        val maxRepsUsed: Int
+        val maxRepsUsed: Int,
+        val averageFatiguePerSet: Double
     )
 
     data class WeightExerciseParameters(
@@ -86,7 +87,7 @@ object VolumeDistributionHelper {
         val fatigueFactor: Float
     )
 
-    suspend fun distributeVolume(
+    private suspend fun distributeVolume(
         numberOfSets: Int,
         targetTotalVolume: Double,
         oneRepMax: Double,
@@ -109,8 +110,6 @@ object VolumeDistributionHelper {
 
         // Try with original parameters first
         findSolution(baseParams)?.let { return it }
-
-        // If no solution found, try with increased reps only
         return null
     }
 
@@ -118,20 +117,57 @@ object VolumeDistributionHelper {
         val possibleSets = generatePossibleSets(params)
         if (possibleSets.isEmpty()) return null
 
-        // Find valid combination of sets with minimum fatigue
-        val validSetCombination = findValidSetCombination(
-            possibleSets = possibleSets,
-            targetSets = params.numberOfSets,
-            targetVolume = params.targetTotalVolume,
-        ) ?: return null
+        val possibleNumberOfSets = generatePossibleNumberOfSets(params)
+        if (possibleNumberOfSets.isEmpty()) return null
 
-        return DistributedWorkout(
-            sets = validSetCombination.sets,
-            totalVolume = validSetCombination.sets.sumOf { it.volume },
-            totalFatigue = validSetCombination.totalFatigue,
-            usedOneRepMax = params.oneRepMax,
-            maxRepsUsed = validSetCombination.sets.maxOf { it.reps }
-        )
+        val solutions = coroutineScope {
+            possibleNumberOfSets.map { numberOfSets ->
+                async(Dispatchers.IO) {
+                    val validSetCombination = findValidSetCombination(
+                        possibleSets = possibleSets,
+                        targetSets = numberOfSets,
+                        targetVolume = params.targetTotalVolume,
+                    ) ?: return@async null
+
+                    DistributedWorkout(
+                        sets = validSetCombination.sets,
+                        totalVolume = validSetCombination.sets.sumOf { it.volume },
+                        totalFatigue = validSetCombination.totalFatigue,
+                        usedOneRepMax = params.oneRepMax,
+                        maxRepsUsed = validSetCombination.sets.maxOf { it.reps },
+                        averageFatiguePerSet = validSetCombination.averageFatiguePerSet
+                    )
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        if (solutions.isEmpty()) return null
+
+        // Calculate the ranges for normalization
+        val minSets = solutions.minOf { it.sets.size }
+        val maxSets = solutions.maxOf { it.sets.size }
+        val minAvgFatigue = solutions.minOf { it.averageFatiguePerSet }
+        val maxAvgFatigue = solutions.maxOf { it.averageFatiguePerSet }
+
+        // Find solution with best balance between number of sets and average fatigue
+        return solutions.minByOrNull { solution ->
+            // Normalize both metrics to 0-1 range
+            val normalizedSets = if (maxSets == minSets) {
+                0.0
+            } else {
+                (solution.sets.size - minSets).toDouble() / (maxSets - minSets)
+            }
+
+            val normalizedFatigue = if (maxAvgFatigue == minAvgFatigue) {
+                0.0
+            } else {
+                (solution.averageFatiguePerSet - minAvgFatigue) / (maxAvgFatigue - minAvgFatigue)
+            }
+
+            // Calculate combined score (lower is better)
+            // Equal weight to both metrics
+            normalizedSets * 0.5 + normalizedFatigue * 0.5
+        }
     }
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
@@ -167,10 +203,44 @@ object VolumeDistributionHelper {
             setsByVolume.map { it.value.minByOrNull { it.fatigue }!! }
         }
 
+    private fun generatePossibleNumberOfSets(params: WeightExerciseParameters): Set<Int> {
+        val minWeight = params.oneRepMax * (params.percentLoadRange.first / 100.0)
+        val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100.0)
+
+        val possibleSets = mutableSetOf<Int>()
+        val weights = mutableSetOf<Double>()
+
+        weights.add(minWeight)
+        weights.add(maxWeight)
+
+        val reps = mutableSetOf<Int>()
+        reps.add(params.repsRange.first)
+        reps.add(params.repsRange.last)
+
+        weights.forEach { weight ->
+            reps.forEach { rep ->
+                val volume = weight * rep
+                val numberOfSets = (params.targetTotalVolume / volume).toInt()
+                if(numberOfSets > 0) {
+                    possibleSets.add(numberOfSets)
+                }
+            }
+        }
+
+        if(possibleSets.isEmpty()) return emptySet()
+
+        //get the min an max number of sets and return all the number in between
+        val minNumberOfSets = possibleSets.minOrNull() ?: 0
+        val maxNumberOfSets = possibleSets.maxOrNull() ?: 0
+
+        return (minNumberOfSets..maxNumberOfSets).toSet()
+    }
+
     data class SetCombination(
         val sets: List<ExerciseSet>,
         val totalFatigue: Double,
-        val totalVolume: Double
+        val totalVolume: Double,
+        val averageFatiguePerSet: Double
     )
 
     private fun findValidSetCombination(
@@ -227,7 +297,8 @@ object VolumeDistributionHelper {
                         bestCombination = SetCombination(
                             sets = state.currentSets,
                             totalFatigue = state.currentFatigue,
-                            totalVolume = totalVolume
+                            totalVolume = totalVolume,
+                            averageFatiguePerSet = state.currentFatigue / targetSets
                         )
                     }
                 }
@@ -353,6 +424,16 @@ object VolumeDistributionHelper {
             fatigueFactor = fatigueFactor
         )
 
+        if(solution == null) {
+            return Pair(null, true)
+        }else{
+            return Pair(solution, false)
+        }
+
+        /*if(numberOfSets >= 6) {
+
+        }
+
         val increasedSetSolution = distributeVolume(
             numberOfSets = numberOfSets,
             targetTotalVolume = minimumRequiredVolume,
@@ -375,11 +456,11 @@ object VolumeDistributionHelper {
             return Pair(increasedSetSolution, false)
         }
 
-        return if(solution!!.totalFatigue<=increasedSetSolution!!.totalFatigue){
+        return if(solution!!.averageFatiguePerSet<=increasedSetSolution!!.averageFatiguePerSet){
             Pair(solution, false)
         }else{
             Pair(increasedSetSolution, false)
-        }
+        }*/
     }
 
     private fun createBodyWeightSet(
@@ -421,7 +502,8 @@ object VolumeDistributionHelper {
             totalVolume = validSetCombination.sets.sumOf { it.volume },
             totalFatigue = validSetCombination.sets.sumOf { it.fatigue },
             usedOneRepMax = 1.0, // Not applicable for bodyweight
-            maxRepsUsed = validSetCombination.sets.maxOf { it.reps }
+            maxRepsUsed = validSetCombination.sets.maxOf { it.reps },
+            averageFatiguePerSet = validSetCombination.averageFatiguePerSet
         )
     }
 
@@ -489,7 +571,8 @@ object VolumeDistributionHelper {
                             SetCombination(
                                 sets = currentSets,
                                 totalFatigue = currentFatigue,
-                                totalVolume = totalVolume
+                                totalVolume = totalVolume,
+                                averageFatiguePerSet = currentFatigue / targetSets
                             )
                         )
                     }
