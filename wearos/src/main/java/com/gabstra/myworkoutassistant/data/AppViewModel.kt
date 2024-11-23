@@ -369,19 +369,27 @@ class AppViewModel : ViewModel(){
         }
     }
 
-    private suspend fun generateProgressions() {
+    private suspend fun generateProgressions(maxConcurrent: Int = 3) {
         distributedWorkoutByExerciseIdMap.clear()
 
         val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
             .filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }
             .filterIsInstance<Exercise>()
 
-        // Process exercises sequentially
-        exerciseWithWeightSets.forEach { exercise ->
-            val result = processExercise(exercise)
-            result?.let { (exerciseId, distribution) ->
-                distributedWorkoutByExerciseIdMap[exerciseId] = distribution
-            }
+        // Process exercises in parallel with a concurrency limit
+        val results = coroutineScope {
+            exerciseWithWeightSets.chunked(maxConcurrent).map { chunk ->
+                chunk.map { exercise ->
+                    async(Dispatchers.IO) {
+                        processExercise(exercise)
+                    }
+                }.awaitAll()
+            }.flatten()
+        }
+
+        // Collect results into the map
+        results.filterNotNull().forEach { (exerciseId, distribution) ->
+            distributedWorkoutByExerciseIdMap[exerciseId] = distribution
         }
     }
 
@@ -429,8 +437,6 @@ class AppViewModel : ViewModel(){
 
         val availableWeights = exercise.equipmentId?.let { GetEquipmentById(it)?.calculatePossibleCombinations() }
             ?: emptySet()
-
-        Log.d("WorkoutViewModel", "Available weights: $availableWeights")
 
         val distributedWorkout = when(exercise.exerciseType) {
             ExerciseType.WEIGHT -> VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(

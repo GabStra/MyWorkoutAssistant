@@ -1,12 +1,12 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import android.util.Log
 import kotlinx.coroutines.*
-import java.util.Collections
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.BitSet
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.ln
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.math.pow
+import kotlin.math.sqrt
 
 object ProgressionHelper {
     enum class ExerciseCategory {
@@ -113,61 +113,240 @@ object VolumeDistributionHelper {
         return null
     }
 
+    // Extension function to calculate variance of a list of doubles
+    fun List<Double>.variance(): Double {
+        val mean = this.average()
+        return this.map { (it - mean) * (it - mean) }.average()
+    }
+
+    fun List<Int>.standardDeviation(): Double {
+        val mean = average()
+        return sqrt(map { (it - mean) * (it - mean) }.average())
+    }
+
+    fun findBestCombination(
+        sets: List<ExerciseSet>,
+        targetVolume: Double
+    ): List<ExerciseSet> {
+        val sortedSets = sets.sortedByDescending { it.weight }
+        var bestCombination: List<ExerciseSet> = emptyList()
+        var bestVolumeDeviation = Double.MAX_VALUE
+        var bestPenaltyScore = Double.MIN_VALUE
+
+        // Early termination checks
+        val maxPossibleVolume = sets.sumOf { it.volume }
+        if (maxPossibleVolume < targetVolume) return emptyList()
+
+        val twoSmallestSets = sets.asSequence()
+            .sortedBy { it.volume }
+            .take(2)
+            .toList()
+        if (twoSmallestSets.size < 2 || twoSmallestSets.sumOf { it.volume } > targetVolume) {
+            return emptyList()
+        }
+
+        // Use smaller cache with more specific key
+        data class ScoreKey(val numSets: Int, val volumeDeviation: Double)
+        val scoreCache = LruCache<ScoreKey, Double>(100)
+
+        fun getMinVolumeNeeded(startIndex: Int, requiredSets: Int): Double {
+            if (startIndex >= sortedSets.size || requiredSets <= 0) return Double.MAX_VALUE
+
+            return sortedSets.asSequence()
+                .drop(startIndex)
+                .sortedBy { it.volume }
+                .take(requiredSets)
+                .sumOf { it.volume }
+        }
+
+        fun calculateScore(
+            numSets: Int,
+            currentCombination: List<ExerciseSet>,
+            currentVolume: Double
+        ): Double {
+            if (numSets < 2) return 0.0
+
+            val volumeDeviation = abs(currentVolume - targetVolume) / targetVolume
+            val key = ScoreKey(numSets, volumeDeviation)
+
+            return scoreCache.get(key) {
+                val reps = currentCombination.map { it.reps }
+                val maxReps = reps.maxOrNull() ?: 0
+                val minReps = reps.minOrNull() ?: 0
+                val repStdDev = reps.standardDeviation()
+
+                val volumeScore = when {
+                    volumeDeviation > 0.3 -> 0.01   // More than 30% off target
+                    volumeDeviation > 0.2 -> 0.1    // More than 20% off target
+                    volumeDeviation > 0.1 -> 0.5    // More than 10% off target
+                    else -> 1.0                      // Within 10% of target
+                }
+
+                // Other factors now have much less impact
+                val setPenalty = 0.95.pow(maxOf(0, numSets - 4)) // Reduced penalty for set count
+                val totalFatigue = currentCombination.sumOf { it.fatigue }
+                val fatiguePenalty = 0.98.pow(totalFatigue) // Reduced impact
+                val lowRepPenalty = currentCombination.count { it.reps < 3 } * 0.5
+
+                val repConsistencyScore = 1.0 / (1.0 + (repStdDev * 0.1))
+
+                val repBalanceScore = 1.0 / (1.0 + (repStdDev * 2))
+
+                // Volume score is the primary factor
+                volumeScore * setPenalty * fatiguePenalty  * (1.0 - lowRepPenalty)
+            }
+        }
+
+        fun backtrack(
+            start: Int,
+            currentCombination: ArrayList<ExerciseSet>,
+            currentTotalVolume: Double,
+            usedIndices: BitSet,
+            remainingMaxVolume: Double
+        ): Boolean {
+            // Early termination checks
+            val remainingSetsNeeded = maxOf(2 - currentCombination.size, 0)
+            if (remainingSetsNeeded > 0) {
+                val minVolumeForRemainingSets = getMinVolumeNeeded(start, remainingSetsNeeded)
+                if (minVolumeForRemainingSets == Double.MAX_VALUE ||
+                    currentTotalVolume + minVolumeForRemainingSets > targetVolume * 1.01) { // Slightly relaxed constraint
+                    return false
+                }
+            }
+
+            if (currentCombination.size < 2 &&
+                sortedSets.size - start + currentCombination.size < 2) {
+                return false
+            }
+
+            val currentVolumeDeviation = abs(currentTotalVolume - targetVolume) / targetVolume
+            val penaltyScore = calculateScore(
+                currentCombination.size,
+                currentCombination,
+                currentTotalVolume
+            )
+
+            if (currentCombination.size >= 2) {
+                val shouldUpdate = currentVolumeDeviation < bestVolumeDeviation ||
+                        (currentVolumeDeviation == bestVolumeDeviation && penaltyScore > bestPenaltyScore)
+
+                if (shouldUpdate) {
+                    bestVolumeDeviation = currentVolumeDeviation
+                    bestPenaltyScore = penaltyScore
+
+                    if(currentVolumeDeviation < 0.005) {
+                        bestCombination = ArrayList(currentCombination)
+                        return true
+                    }
+                }
+            }
+
+            if (currentTotalVolume >= targetVolume || // Slightly relaxed upper bound
+                start >= sortedSets.size ||
+                currentCombination.size >= 10) {
+                return false
+            }
+
+            for (i in start until sortedSets.size) {
+                if (usedIndices[i]) continue
+
+                val nextSet = sortedSets[i]
+                val newTotalVolume = currentTotalVolume + nextSet.volume
+
+                if (newTotalVolume > targetVolume) continue // Slightly relaxed constraint
+
+                if (currentCombination.isNotEmpty()) {
+                    val lastSetReps = currentCombination.last().reps
+                    val repsDifference = abs(nextSet.reps - lastSetReps) / lastSetReps.toDouble()
+                    if (repsDifference > 0.3) continue
+
+                    // Get current rep stats
+                    val currentReps = currentCombination.map { it.reps }
+                    val currentMinReps = currentReps.minOrNull() ?: 0
+                    val currentMaxReps = currentReps.maxOrNull() ?: 0
+
+                    val newMin = minOf(currentMinReps, nextSet.reps)
+                    val newMax = maxOf(currentMaxReps, nextSet.reps)
+                    val ratio = newMax.toDouble() / newMin
+
+                    if (ratio > 2) continue
+
+                    // Weight/rep order check
+                    if (nextSet.weight > currentCombination.last().weight ||
+                        (nextSet.weight == currentCombination.last().weight &&
+                                nextSet.reps > currentCombination.last().reps)
+                    ) continue
+                }
+
+                val projectedDeviation = abs(newTotalVolume - targetVolume) / targetVolume
+                if (currentCombination.size >= 2 && projectedDeviation >= bestVolumeDeviation) continue
+
+                currentCombination.add(nextSet)
+                usedIndices.set(i)
+
+                if (backtrack(
+                        i + 1,
+                        currentCombination,
+                        newTotalVolume,
+                        usedIndices,
+                        remainingMaxVolume - nextSet.volume
+                    )) {
+                    return true
+                }
+
+                currentCombination.removeAt(currentCombination.size - 1)
+                usedIndices.clear(i)
+            }
+
+            return false
+        }
+
+        backtrack(
+            0,
+            ArrayList(),
+            0.0,
+            BitSet(sortedSets.size),
+            maxPossibleVolume
+        )
+
+        return bestCombination
+    }
+
+    // Simple LRU Cache implementation to limit memory usage
+    class LruCache<K, V>(private val maxSize: Int) {
+        private val map = LinkedHashMap<K, V>(maxSize, 0.75f, true)
+
+        fun get(key: K, compute: () -> V): V {
+            map[key]?.let { return it }
+
+            val value = compute()
+            put(key, value)
+            return value
+        }
+
+        private fun put(key: K, value: V) {
+            map[key] = value
+            if (map.size > maxSize) {
+                map.remove(map.keys.first())
+            }
+        }
+    }
+
     private suspend fun findSolution(params: WeightExerciseParameters): DistributedWorkout? {
         val possibleSets = generatePossibleSets(params)
         if (possibleSets.isEmpty()) return null
 
-        val possibleNumberOfSets = generatePossibleNumberOfSets(params)
-        if (possibleNumberOfSets.isEmpty()) return null
+        val validSetCombination = findBestCombination(possibleSets, params.targetTotalVolume)
+        if (validSetCombination.isEmpty()) return null
 
-        val solutions = coroutineScope {
-            possibleNumberOfSets.map { numberOfSets ->
-                async(Dispatchers.IO) {
-                    val validSetCombination = findValidSetCombination(
-                        possibleSets = possibleSets,
-                        targetSets = numberOfSets,
-                        targetVolume = params.targetTotalVolume,
-                    ) ?: return@async null
-
-                    DistributedWorkout(
-                        sets = validSetCombination.sets,
-                        totalVolume = validSetCombination.sets.sumOf { it.volume },
-                        totalFatigue = validSetCombination.totalFatigue,
-                        usedOneRepMax = params.oneRepMax,
-                        maxRepsUsed = validSetCombination.sets.maxOf { it.reps },
-                        averageFatiguePerSet = validSetCombination.averageFatiguePerSet
-                    )
-                }
-            }.awaitAll().filterNotNull()
-        }
-
-        if (solutions.isEmpty()) return null
-
-        // Calculate the ranges for normalization
-        val minSets = solutions.minOf { it.sets.size }
-        val maxSets = solutions.maxOf { it.sets.size }
-        val minAvgFatigue = solutions.minOf { it.averageFatiguePerSet }
-        val maxAvgFatigue = solutions.maxOf { it.averageFatiguePerSet }
-
-        // Find solution with best balance between number of sets and average fatigue
-        return solutions.minByOrNull { solution ->
-            // Normalize both metrics to 0-1 range
-            val normalizedSets = if (maxSets == minSets) {
-                0.0
-            } else {
-                (solution.sets.size - minSets).toDouble() / (maxSets - minSets)
-            }
-
-            val normalizedFatigue = if (maxAvgFatigue == minAvgFatigue) {
-                0.0
-            } else {
-                (solution.averageFatiguePerSet - minAvgFatigue) / (maxAvgFatigue - minAvgFatigue)
-            }
-
-            // Calculate combined score (lower is better)
-            // Equal weight to both metrics
-            normalizedSets * 0.5 + normalizedFatigue * 0.5
-        }
+        return DistributedWorkout(
+            sets = validSetCombination,
+            totalVolume = validSetCombination.sumOf { it.volume },
+            totalFatigue = validSetCombination.sumOf { it.fatigue },
+            usedOneRepMax = params.oneRepMax,
+            maxRepsUsed = validSetCombination.maxOf { it.reps },
+            averageFatiguePerSet = validSetCombination.sumOf { it.fatigue } / params.numberOfSets
+        )
     }
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
@@ -221,13 +400,13 @@ object VolumeDistributionHelper {
             reps.forEach { rep ->
                 val volume = weight * rep
                 val numberOfSets = (params.targetTotalVolume / volume).toInt()
-                if(numberOfSets > 0) {
+                if (numberOfSets > 0) {
                     possibleSets.add(numberOfSets)
                 }
             }
         }
 
-        if(possibleSets.isEmpty()) return emptySet()
+        if (possibleSets.isEmpty()) return emptySet()
 
         //get the min an max number of sets and return all the number in between
         val minNumberOfSets = possibleSets.minOrNull() ?: 0
@@ -270,12 +449,14 @@ object VolumeDistributionHelper {
         var closestVolumeGap = Double.MAX_VALUE
         var bestFatigue = Double.MAX_VALUE
 
-        queue.add(SearchState(
-            remainingSets = targetSets,
-            remainingVolume = targetVolume,
-            currentSets = emptyList(),
-            currentFatigue = 0.0
-        ))
+        queue.add(
+            SearchState(
+                remainingSets = targetSets,
+                remainingVolume = targetVolume,
+                currentSets = emptyList(),
+                currentFatigue = 0.0
+            )
+        )
 
         while (queue.isNotEmpty()) {
             val state = queue.removeFirst()
@@ -291,7 +472,8 @@ object VolumeDistributionHelper {
                     // 1. This combination is closer to target volume, or
                     // 2. Equal volume distance but has less fatigue
                     if (volumeGap < closestVolumeGap ||
-                        (volumeGap == closestVolumeGap && state.currentFatigue < bestFatigue)) {
+                        (volumeGap == closestVolumeGap && state.currentFatigue < bestFatigue)
+                    ) {
                         closestVolumeGap = volumeGap
                         bestFatigue = state.currentFatigue
                         bestCombination = SetCombination(
@@ -341,13 +523,15 @@ object VolumeDistributionHelper {
                 } else true
 
                 if (isPathViable) {
-                    queue.add(SearchState(
-                        remainingSets = remainingSets,
-                        remainingVolume = state.remainingVolume - set.volume,
-                        currentSets = state.currentSets + set,
-                        currentFatigue = state.currentFatigue + set.fatigue,
-                        lastWeight = set.weight
-                    ))
+                    queue.add(
+                        SearchState(
+                            remainingSets = remainingSets,
+                            remainingVolume = state.remainingVolume - set.volume,
+                            currentSets = state.currentSets + set,
+                            currentFatigue = state.currentFatigue + set.fatigue,
+                            lastWeight = set.weight
+                        )
+                    )
                 }
             }
 
@@ -372,7 +556,7 @@ object VolumeDistributionHelper {
     // Helper function to verify weight progression
     private fun isWeightProgressionValid(sets: List<ExerciseSet>): Boolean {
         for (i in 1 until sets.size) {
-            if (sets[i].weight > sets[i-1].weight) {
+            if (sets[i].weight > sets[i - 1].weight) {
                 return false
             }
         }
@@ -387,7 +571,21 @@ object VolumeDistributionHelper {
     ): ExerciseSet {
         val volume = weight * reps
         val percentLoad = (weight / oneRepMax) * 100
-        val fatigue = volume * (1 + fatigueFactor * ln(1 + (percentLoad * reps / 100)))
+
+        // Calculate intensity multiplier based on proximity to 1RM
+        // Exponential increase as weight gets closer to 1RM
+        val intensityMultiplier = kotlin.math.exp(
+            1.5 * (percentLoad / 100.0) * (percentLoad / 100.0)
+        )
+
+        // Rep multiplier - higher reps are exponentially more fatiguing
+        val repMultiplier = 1 + ln(1.0 + reps)
+
+        // Enhanced fatigue calculation that maintains original parameter influence
+        // while incorporating intensity and rep effects
+        val fatigue = volume * (1 + fatigueFactor * ln(
+            1 + (intensityMultiplier * repMultiplier * percentLoad * reps / 10000)
+        ))
 
         return ExerciseSet(
             weight = weight,
@@ -424,9 +622,9 @@ object VolumeDistributionHelper {
             fatigueFactor = fatigueFactor
         )
 
-        if(solution == null) {
+        if (solution == null) {
             return Pair(null, true)
-        }else{
+        } else {
             return Pair(solution, false)
         }
 
