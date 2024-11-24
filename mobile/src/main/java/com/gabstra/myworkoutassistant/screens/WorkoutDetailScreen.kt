@@ -126,12 +126,14 @@ fun Menu(
 @Composable
 fun WorkoutComponentRenderer(
     workoutComponent: WorkoutComponent,
-    showRest:Boolean
+    showRest:Boolean,
+    appViewModel: AppViewModel
 ) {
     when (workoutComponent) {
         is Exercise -> ExerciseRenderer(
             exercise = workoutComponent,
-            showRest = showRest
+            showRest = showRest,
+            appViewModel = appViewModel
         )
 
         is Rest ->
@@ -560,7 +562,8 @@ fun WorkoutDetailScreen(
                     itemContent = { it ->
                         WorkoutComponentRenderer(
                             workoutComponent = it,
-                            showRest = showRest
+                            showRest = showRest,
+                            appViewModel = appViewModel
                         )
                     },
                     isDragDisabled = true

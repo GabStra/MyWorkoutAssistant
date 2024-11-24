@@ -189,7 +189,7 @@ fun WeightSetScreen (
                     selectedWeightIndex = it - 1
 
                     currentSet = currentSet.copy(
-                        actualWeight = availableWeights!!.elementAt(selectedWeightIndex!!).toFloat()
+                        actualWeight = availableWeights!!.elementAt(selectedWeightIndex!!)
                     )
                 }
             }
@@ -214,7 +214,7 @@ fun WeightSetScreen (
                     selectedWeightIndex = it + 1
 
                     currentSet = currentSet.copy(
-                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!).toFloat()
+                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!)
                     )
                 }
             }
@@ -300,7 +300,7 @@ fun WeightSetScreen (
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 Text(
-                    text = if (currentSet.actualWeight % 1 == 0f) {
+                    text = if (currentSet.actualWeight % 1 == 0.0) {
                         "${currentSet.actualWeight.toInt()}"
                     } else {
                         "${currentSet.actualWeight}"

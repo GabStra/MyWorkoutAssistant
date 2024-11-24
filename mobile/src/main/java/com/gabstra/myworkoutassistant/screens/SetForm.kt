@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
 import com.gabstra.myworkoutassistant.composables.TimedDurationSetForm
@@ -48,6 +49,7 @@ fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
 
 @Composable
 fun SetForm(
+    viewModel: AppViewModel,
     onSetUpsert: (Set) -> Unit,
     onCancel: () -> Unit,
     set: Set? = null, // Add exercise parameter with default value null
@@ -91,7 +93,7 @@ fun SetForm(
             SetType.BODY_WEIGHT_SET -> {
                 BodyWeightSetForm(
                     onSetUpsert = onSetUpsert,
-                    bodyWeightSet = set as BodyWeightSet?,
+                    bodyWeightSet = set as BodyWeightSet?
                 )
             }
             SetType.COUNTUP_SET -> {

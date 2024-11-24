@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.screens.ComponentRenderer
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -30,7 +31,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 fun ExerciseRenderer(
     exercise: Exercise,
     modifier: Modifier = Modifier,
-    showRest:Boolean
+    showRest:Boolean,
+    appViewModel: AppViewModel
 ){
     var sets = exercise.sets
 
@@ -45,7 +47,9 @@ fun ExerciseRenderer(
                 verticalAlignment = Alignment.CenterVertically
             ){
                 Text(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp)
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
                     style = MaterialTheme.typography.bodyMedium,
@@ -60,7 +64,9 @@ fun ExerciseRenderer(
             isExpandable = true,
             title = { m ->
                 Text(
-                    modifier = m.fillMaxWidth().padding(horizontal = 10.dp)
+                    modifier = m
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp)
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
                     style = MaterialTheme.typography.bodyMedium,
@@ -87,7 +93,7 @@ fun ExerciseRenderer(
                                 )
                                 when (set) {
                                     is WeightSet -> {
-                                        val weightText = if (set.weight % 1 == 0f) {
+                                        val weightText = if (set.weight % 1 == 0.0) {
                                             "${set.weight.toInt()}"
                                         } else {
                                             "${set.weight}"
@@ -102,7 +108,7 @@ fun ExerciseRenderer(
 
                                     is BodyWeightSet -> {
                                         Text(
-                                            text = "${set.reps}",
+                                            text = if(set.additionalWeight<=0) "${set.reps}" else "${set.additionalWeight} kg x ${set.reps}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                                         )

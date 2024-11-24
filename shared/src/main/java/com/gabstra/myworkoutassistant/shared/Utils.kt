@@ -142,7 +142,7 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
 
 fun initializeSetData(set: Set): SetData = when (set) {
     is WeightSet -> WeightSetData(set.reps, set.weight)
-    is BodyWeightSet -> BodyWeightSetData(set.reps)
+    is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds)
@@ -150,7 +150,7 @@ fun initializeSetData(set: Set): SetData = when (set) {
 
 fun getNewSet(set: Set): Set = when (set) {
     is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight)
-    is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps)
+    is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight)
     is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
     is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
     is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds)
@@ -188,6 +188,7 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
             return BodyWeightSet(
                 id = setHistory.setId,
                 reps = setData.actualReps,
+                additionalWeight = setData.additionalWeight
             )
         }
 

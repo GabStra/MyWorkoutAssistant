@@ -109,7 +109,7 @@ class AppViewModel() : ViewModel() {
         workouts = emptyList(),
         polarDeviceId = null,
         birthDateYear = 0,
-        weightKg = 0f,
+        weightKg = 0.0,
         equipments = emptyList()
     ))
         private set

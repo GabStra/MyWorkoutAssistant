@@ -7,5 +7,5 @@ data class WorkoutStore(
     val equipments: List<Equipment> = emptyList(), // List of available equipment
     val polarDeviceId: String? = null,
     val birthDateYear: Int,
-    val weightKg: Float,
+    val weightKg: Double,
 )

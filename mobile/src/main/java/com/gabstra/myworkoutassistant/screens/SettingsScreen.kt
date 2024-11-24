@@ -102,7 +102,7 @@ fun SettingsScreen(
                     val newWorkoutStore = workoutStore.copy(
                         polarDeviceId = polarDeviceIdState.value,
                         birthDateYear = birthDateYear,
-                        weightKg = weightState.value.toFloatOrNull() ?: 0f
+                        weightKg = weightState.value.toDoubleOrNull() ?: 0.0
                     )
                     onSave(newWorkoutStore)
                 },

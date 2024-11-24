@@ -19,7 +19,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
 fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
-    val weightText = if (weightSetData.actualWeight % 1 == 0f) {
+    val weightText = if (weightSetData.actualWeight % 1 == 0.0) {
         "${weightSetData.actualWeight.toInt()}"
     } else {
         "${weightSetData.actualWeight}"

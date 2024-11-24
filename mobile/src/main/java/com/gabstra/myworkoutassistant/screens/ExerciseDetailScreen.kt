@@ -63,7 +63,7 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 @Composable
-fun ComponentRenderer(set: Set) {
+fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
     Row(
         modifier = Modifier.padding(15.dp),
         horizontalArrangement = Arrangement.Center,
@@ -92,12 +92,26 @@ fun ComponentRenderer(set: Set) {
             }
 
             is BodyWeightSet -> {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "Reps: ${set.reps}",
-                    color = Color.White.copy(alpha = .87f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Reps: ${set.reps}",
+                        color = Color.White.copy(alpha = .87f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+
+                    if(set.additionalWeight != 0.0){
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "Additional Weight: ${set.additionalWeight} kg",
+                            color = Color.White.copy(alpha = .87f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                }
             }
 
             is EnduranceSet -> {
@@ -465,7 +479,7 @@ fun ExerciseDetailScreen(
                     isDragDisabled = true,
                     itemContent = { it ->
                         DarkModeContainer(whiteOverlayAlpha = .1f) {
-                            ComponentRenderer(it)
+                            ComponentRenderer(it,appViewModel)
                         }
                     }
                 )

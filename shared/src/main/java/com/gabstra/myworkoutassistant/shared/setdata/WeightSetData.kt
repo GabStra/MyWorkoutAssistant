@@ -1,3 +1,3 @@
 package com.gabstra.myworkoutassistant.shared.setdata
 
-data class WeightSetData (val actualReps: Int, val actualWeight: Float) : SetData()
+data class WeightSetData (val actualReps: Int, val actualWeight: Double) : SetData()

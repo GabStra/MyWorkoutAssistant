@@ -69,11 +69,11 @@ fun WeightSetForm(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
                 val reps = repsState.value.toIntOrNull() ?: 0
-                val weight = weightState.value.toFloatOrNull() ?: 0f
+                val weight = weightState.value.toDoubleOrNull() ?: 0.0
                 val newWeightSet = WeightSet(
                     id = UUID.randomUUID(),
                     reps = if (reps >= 0) reps else 0,
-                    weight = if (weight >= 0f) weight else 0f,
+                    weight = if (weight >= 0.0) weight else 0.0,
                 )
 
                 // Call the callback to insert/update the exercise

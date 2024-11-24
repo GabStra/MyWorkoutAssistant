@@ -313,7 +313,7 @@ fun PageExerciseDetail(
         onEditModeEnabled = { onScrollEnabledChange(false) },
         onTimerDisabled = { onScrollEnabledChange(true) },
         onTimerEnabled = { onScrollEnabledChange(false) },
-        extraInfo = if(updatedState.hasNoHistory) null else extraInfoComposable,
+        extraInfo = null,
         exerciseTitleComposable = exerciseTitleComposable
     )
 }

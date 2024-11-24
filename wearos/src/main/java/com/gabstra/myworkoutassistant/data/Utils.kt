@@ -348,12 +348,12 @@ fun calculateIntensity(weight: Float, oneRepMax: Float): Float {
     return weight / oneRepMax
 }
 
-fun calculateOneRepMax(weight: Float, reps: Int): Float {
-    return weight / (1.0278f - (0.0278f * reps))
+fun calculateOneRepMax(weight: Double, reps: Int): Double {
+    return weight / (1.0278 - (0.0278 * reps))
 }
 
-fun calculateVolume(weight: Float, reps: Int): Float {
-    if(weight == 0f) return reps.toFloat()
+fun calculateVolume(weight: Double, reps: Int): Double {
+    if(weight == 0.0) return reps.toDouble()
     return weight * reps
 }
 

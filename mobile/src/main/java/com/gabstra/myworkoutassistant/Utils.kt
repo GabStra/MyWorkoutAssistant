@@ -178,7 +178,7 @@ fun getEndOfWeek(date: LocalDate): LocalDate {
     return date.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
 }
 
-fun getOneRepMax(weight: Float, reps: Int): Float {
+fun getOneRepMax(weight: Double, reps: Int): Double {
     return weight / (1.0278f - (0.0278f * reps))
 }
 
@@ -208,7 +208,7 @@ suspend fun sendWorkoutsToHealthConnect(
     workoutHistoryDao: WorkoutHistoryDao,
     updateAll: Boolean = false,
     age: Int,
-    weightKg: Float,
+    weightKg: Double,
 ) {
     if (workouts.isEmpty()) return
 
@@ -339,11 +339,11 @@ suspend fun sendWorkoutsToHealthConnect(
     }
 }
 
-fun calculateVolume(weight: Float, reps: Int): Float {
-    if(weight == 0f) return reps.toFloat()
+fun calculateVolume(weight: Double, reps: Int): Double {
+    if(weight == 0.0) return reps.toDouble()
     return weight * reps
 }
 
-fun calculateOneRepMax(weight: Float, reps: Int): Float {
-    return weight / (1.0278f - (0.0278f * reps))
+fun calculateOneRepMax(weight: Double, reps: Int): Double {
+    return weight / (1.0278 - (0.0278 * reps))
 }

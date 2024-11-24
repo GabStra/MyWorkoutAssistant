@@ -77,9 +77,9 @@ fun ExerciseHistoryScreen(
 
     var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
-    var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Double>?>(null) }
     var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
-    var oneRepMaxMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var oneRepMaxMarkerTarget by remember { mutableStateOf<Pair<Int, Double>?>(null) }
     var oneRepMaxEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
 
@@ -119,18 +119,18 @@ fun ExerciseHistoryScreen(
                 return@withContext
             }
 
-            val volumes = mutableListOf<Pair<Int, Float>>()
+            val volumes = mutableListOf<Pair<Int, Double>>()
             val durations = mutableListOf<Pair<Int, Float>>()
-            val oneRepMaxs = mutableListOf<Pair<Int, Float>>()
+            val oneRepMaxs = mutableListOf<Pair<Int, Double>>()
             for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
                     workoutHistory.id,
                     exercise.id
                 )
-                var volume = 0f
+                var volume = 0.0
                 var duration = 0f
 
-                var oneRepMax = 0f
+                var oneRepMax = 0.0
                 for (setHistory in setHistories) {
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
@@ -140,7 +140,8 @@ fun ExerciseHistoryScreen(
 
                     if (setHistory.setData is BodyWeightSetData) {
                         val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.actualReps
+                        volume += setData.actualReps * (setData.relativeBodyWeightInKg + setData.additionalWeight)
+                        oneRepMax += getOneRepMax((setData.relativeBodyWeightInKg + setData.additionalWeight), setData.actualReps)
                     }
 
                     if (setHistory.setData is TimedDurationSetData) {
@@ -163,7 +164,7 @@ fun ExerciseHistoryScreen(
 
             }
 
-            if (volumes.any { it.second != 0f }) {
+            if (volumes.any { it.second != 0.0 }) {
                 if (volumes.count() == 1) {
                     volumeMarkerTarget = volumes.last()
                 } else if (volumes.count() > 1) {
@@ -185,7 +186,7 @@ fun ExerciseHistoryScreen(
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
             }
 
-            if (oneRepMaxs.any { it.second != 0f }) {
+            if (oneRepMaxs.any { it.second != 0.0 }) {
                 if (oneRepMaxs.count() == 1) {
                     oneRepMaxMarkerTarget = oneRepMaxs.last()
                 } else if (oneRepMaxs.count() > 1) {

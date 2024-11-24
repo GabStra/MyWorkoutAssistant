@@ -177,7 +177,7 @@ fun WorkoutHistoryScreen(
     var workoutDurationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var heartRateEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
 
-    var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
+    var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Double>?>(null) }
     var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var workoutDurationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -211,14 +211,14 @@ fun WorkoutHistoryScreen(
     var kiloCaloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
-        val volumes = mutableListOf<Pair<Int, Float>>()
+        val volumes = mutableListOf<Pair<Int, Double>>()
         val durations = mutableListOf<Pair<Int, Float>>()
         val workoutDurations = mutableListOf<Pair<Int, Float>>()
         for (workoutHistory in workoutHistories) {
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
 
-            var volume = 0f
+            var volume = 0.0
             var duration = 0f
             for (setHistory in setHistories) {
                 if (setHistory.setData is WeightSetData) {
@@ -252,7 +252,7 @@ fun WorkoutHistoryScreen(
         }
 
         //check if volumes are not all 0
-        if (volumes.any { it.second != 0f }) {
+        if (volumes.any { it.second != 0.0 }) {
             if (volumes.count() == 1) {
                 volumeMarkerTarget = volumes.last()
             } else if (volumes.count() > 1) {

@@ -107,12 +107,14 @@ fun WorkoutScreen(
         holdTimeInMillis = 1000
     )
 
+    val showSkipDialog by viewModel.isSkipDialogOpen.collectAsState()
+
     CustomBackHandler(
         onSinglePress = {
             VibrateGentle(context)
             viewModel.openSkipDialog()
         }, onDoublePress = {
-            if(workoutState is WorkoutState.Finished) return@CustomBackHandler
+            if(workoutState is WorkoutState.Finished || showSkipDialog) return@CustomBackHandler
             showWorkoutInProgressDialog = true
             VibrateGentle(context)
             viewModel.pauseWorkout()

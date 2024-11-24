@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -13,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -84,6 +86,8 @@ fun ExerciseForm(
     val maxReps = remember { mutableStateOf(exercise?.maxReps?.toFloat()?:12f) }
     val fatigueFactor = remember { mutableStateOf(exercise?.fatigueFactor?:0.1f) }
     val volumeIncreasePercent = remember { mutableStateOf(exercise?.volumeIncreasePercent?:5f) } // Default 5% increase
+
+    val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
     val equipments by viewModel.equipmentsFlow.collectAsState()
 
@@ -160,7 +164,7 @@ fun ExerciseForm(
             Spacer(modifier = Modifier.height(10.dp))
         }
 
-        if(selectedExerciseType.value == ExerciseType.WEIGHT || selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
+        if(selectedExerciseType.value == ExerciseType.WEIGHT){
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -211,28 +215,26 @@ fun ExerciseForm(
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    if(selectedExerciseType.value == ExerciseType.WEIGHT){
-                        Text(
-                            text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
+                    Text(
+                        text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
 
-                        RangeSlider(
-                            value = minLoadPercent.value..maxLoadPercent.value,
-                            onValueChange = { range ->
-                                minLoadPercent.value = range.start
-                                maxLoadPercent.value = range.endInclusive
-                            },
-                            valueRange = 0f..100f,
-                            steps = 98,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp)
-                        )
+                    RangeSlider(
+                        value = minLoadPercent.value..maxLoadPercent.value,
+                        onValueChange = { range ->
+                            minLoadPercent.value = range.start
+                            maxLoadPercent.value = range.endInclusive
+                        },
+                        valueRange = 0f..100f,
+                        steps = 98,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp)
+                    )
 
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
                         text = "Reps Range (${minReps.value.toInt()} - ${maxReps.value.toInt()})",
@@ -284,6 +286,21 @@ fun ExerciseForm(
             }
         }
 
+        if(selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = bodyWeightPercentage.value,
+                onValueChange = {
+                    if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
+                        bodyWeightPercentage.value = it
+                    }
+                },
+                label = { Text("BodyWeight %") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -294,7 +311,7 @@ fun ExerciseForm(
             Box(modifier = Modifier.fillMaxWidth()) {
                 val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
                 Text(
-                    text = selectedEquipment?.name ?: "Select Equipment",
+                    text = selectedEquipment?.name ?: "None",
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { expandedEquipment.value = true }
@@ -305,6 +322,15 @@ fun ExerciseForm(
                     onDismissRequest = { expandedEquipment.value = false },
                     modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 ) {
+                    DropdownMenuItem(
+                        onClick = {
+                            selectedEquipmentId.value =null
+                            expandedEquipment.value = false
+                        },
+                        text = {
+                            Text(text = "None")
+                        }
+                    )
                     equipments.forEach { equipment ->
                         DropdownMenuItem(
                             onClick = {
@@ -399,6 +425,7 @@ fun ExerciseForm(
         Button(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
+                val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()
                 val newExercise = Exercise(
                     id = exercise?.id ?: java.util.UUID.randomUUID(),
                     name = nameState.value.trim(),
@@ -415,7 +442,8 @@ fun ExerciseForm(
                     volumeIncreasePercent = volumeIncreasePercent.value,
                     notes = notesState.value.trim(),
                     targetZone = selectedTargetZone.value,
-                    equipmentId = selectedEquipmentId.value
+                    equipmentId = selectedEquipmentId.value,
+                    bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                 )
 
                 onExerciseUpsert(newExercise)

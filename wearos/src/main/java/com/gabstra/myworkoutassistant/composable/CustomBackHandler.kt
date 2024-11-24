@@ -20,7 +20,7 @@ fun CustomBackHandler(
     enabled: Boolean = true,
     onSinglePress: () -> Unit,
     onDoublePress: () -> Unit,
-    doublePressDuration: Long = 300L,
+    doublePressDuration: Long = 400L,
 ) {
     var lastBackPressTime by remember { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()

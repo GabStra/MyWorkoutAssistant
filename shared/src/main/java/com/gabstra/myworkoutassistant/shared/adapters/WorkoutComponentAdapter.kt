@@ -53,6 +53,10 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
                 if (src.equipmentId != null){
                     jsonObject.addProperty("equipmentId", src.equipmentId.toString())
                 }
+
+                if (src.bodyWeightPercentage != null){
+                    jsonObject.addProperty("bodyWeightPercentage", src.bodyWeightPercentage)
+                }
             }
             is Rest -> {
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
@@ -153,7 +157,13 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
                     null
                 }
 
-                Exercise(id,enabled, name, doNotStoreHistory,notes, sets, exerciseType,exerciseCategory, minLoadPercent, maxLoadPercent, minReps, maxReps, fatigueFactor, volumeIncreasePercent,targetZone,equipmentId)
+                val bodyWeightPercentage = if (jsonObject.has("bodyWeightPercentage")) {
+                    jsonObject.get("bodyWeightPercentage").asDouble
+                } else {
+                    null
+                }
+
+                Exercise(id,enabled, name, doNotStoreHistory,notes, sets, exerciseType,exerciseCategory, minLoadPercent, maxLoadPercent, minReps, maxReps, fatigueFactor, volumeIncreasePercent,targetZone,equipmentId,bodyWeightPercentage)
             }
             "Rest" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt

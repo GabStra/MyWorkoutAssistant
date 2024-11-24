@@ -27,6 +27,7 @@ fun BodyWeightSetForm(
 ) {
     // Mutable state for form fields
     val repsState = remember { mutableStateOf(bodyWeightSet?.reps?.toString() ?: "") }
+    val additionalWeightState = remember { mutableStateOf(bodyWeightSet?.additionalWeight?.toString() ?: "") }
 
     Column(
         modifier = Modifier
@@ -47,14 +48,30 @@ fun BodyWeightSetForm(
                 .fillMaxWidth()
         )
 
+        OutlinedTextField(
+            value = additionalWeightState.value,
+            onValueChange = { input ->
+                if (input.isEmpty() || input.all { it -> it.isDigit() }) {
+                    // Update the state only if the input is empty or all characters are digits
+                    additionalWeightState.value = input
+                }
+            },
+            label = { Text("Additional Weight") },
+            keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+            modifier = Modifier
+                .fillMaxWidth()
+        )
+
         // Submit button
         Button(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
                 val reps = repsState.value.toIntOrNull() ?: 0
+                val additionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
                 val newBodyWeightSet = BodyWeightSet(
                     id = UUID.randomUUID(),
                     reps = if (reps >= 0) reps else 0,
+                    additionalWeight = additionalWeight,
                 )
 
                 // Call the callback to insert/update the exercise

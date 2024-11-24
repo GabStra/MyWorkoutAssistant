@@ -38,6 +38,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             }
             is BodyWeightSet ->{
                 jsonObject.addProperty("reps", src.reps)
+                jsonObject.addProperty("additionalWeight", src.additionalWeight)
             }
             is TimedDurationSet ->{
                 jsonObject.addProperty("timeInMillis", src.timeInMillis)
@@ -66,12 +67,13 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
         return when (type) {
             "WeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
-                val weight = jsonObject.get("weight").asFloat
+                val weight = jsonObject.get("weight").asDouble
                 WeightSet(id,reps, weight)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
-                BodyWeightSet(id,reps)
+                val additionalWeight = if(jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
+                BodyWeightSet(id,reps,additionalWeight)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt

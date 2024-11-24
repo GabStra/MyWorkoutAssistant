@@ -50,7 +50,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     )
                     when (setData) {
                         is WeightSetData -> {
-                            val weightText = if (setData.actualWeight % 1 == 0f) {
+                            val weightText = if (setData.actualWeight % 1 == 0.0) {
                                 "${setData.actualWeight.toInt()}"
                             } else {
                                 "${setData.actualWeight}"

@@ -308,10 +308,13 @@ fun MyWorkoutAssistantNavHost(
                                         val avgOneRepMax = if(firstSetData is WeightSetData){
                                             setDataList.sumOf { item ->
                                                 val weightSetData = item as WeightSetData
-                                                calculateOneRepMax(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
+                                                calculateOneRepMax(weightSetData.actualWeight, weightSetData.actualReps)
                                             } / setDataList.size
                                         }else{
-                                            0.0
+                                            setDataList.sumOf { item ->
+                                                val bodyWeightSetData = item as BodyWeightSetData
+                                                calculateOneRepMax(bodyWeightSetData.relativeBodyWeightInKg + bodyWeightSetData.additionalWeight, bodyWeightSetData.actualReps)
+                                            } / setDataList.size
                                         }
 
                                         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
@@ -715,6 +718,7 @@ fun MyWorkoutAssistantNavHost(
                     appViewModel.goBack()
                 },
                 exerciseType = parentExercise.exerciseType,
+                viewModel = appViewModel
             )
         }
 
@@ -895,6 +899,7 @@ fun MyWorkoutAssistantNavHost(
                 },
                 set = screenData.selectedSet,
                 exerciseType = parentExercise.exerciseType,
+                viewModel = appViewModel
             )
         }
 
