@@ -363,6 +363,7 @@ class AppViewModel : ViewModel(){
                 restoreExecutedSets()
                 loadWorkoutHistory()
                 generateProgressions()
+                applyProgressions()
                 generateWorkoutStates()
                 workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
@@ -383,7 +384,82 @@ class AppViewModel : ViewModel(){
         exerciseWithWeightSets.forEach { exercise ->
             val result = processExercise(exercise)
             result?.let { (exerciseId, distribution) ->
+                val oldSets = exercise.sets.filter { it is BodyWeightSet || it is WeightSet}.joinToString { it -> when(it){
+                    is BodyWeightSet -> "(${it.reps} reps x ${it.additionalWeight} kg)"
+                    is WeightSet -> "(${it.reps} reps x ${it.weight} kg)"
+                    else -> ""
+                } }
+                Log.d("WorkoutViewModel", "Old sets: $oldSets")
                 distributedWorkoutByExerciseIdMap[exerciseId] = distribution
+            }
+        }
+    }
+
+    private fun applyProgressions(){
+        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+
+        exercises.forEach { exercise ->
+            if(exercise.doNotStoreHistory) return@forEach
+
+            var currentExercise = exercise
+
+            var exerciseSets = currentExercise.sets.filter { it !is RestSet }
+            val distributedWorkout = if(distributedWorkoutByExerciseIdMap.containsKey(currentExercise.id)) distributedWorkoutByExerciseIdMap[currentExercise.id] else null
+
+            if(distributedWorkout != null){
+                if(distributedWorkout.first != null){
+                    val distributedSets = distributedWorkout.first!!.sets
+                    val lastRestSet = currentExercise.sets.filterIsInstance<RestSet>().lastOrNull()
+
+                    val newSets = currentExercise.sets.toMutableList()
+
+                    if(exerciseSets.size > distributedSets.size){
+                        val lastExercise = exerciseSets[distributedSets.size-1]
+                        val lastExerciseIndex = newSets.indexOf(lastExercise)
+                        newSets.removeAll { newSets.indexOf(it) > lastExerciseIndex }
+                    }
+
+                    exerciseSets = newSets.filter { it !is RestSet }
+
+                    for ((index, setInfo) in distributedSets.withIndex()) {
+                        if (index < exerciseSets.size) continue
+
+                        if(lastRestSet!=null){
+                            val newRestSet = RestSet(UUID.randomUUID(),lastRestSet.timeInSeconds)
+                            newSets.add(newRestSet)
+                        }
+
+                        val newSet = when(exercise.exerciseType){
+                            ExerciseType.BODY_WEIGHT -> {
+                                BodyWeightSet(UUID.randomUUID(),setInfo.reps,setInfo.weight)
+                            }
+                            ExerciseType.WEIGHT -> WeightSet(UUID.randomUUID(),setInfo.reps, setInfo.weight)
+                            else -> throw IllegalArgumentException("Unknown exercise type")
+                        }
+
+                        newSets.add(newSet)
+                    }
+
+                    val newExercise = exercise.copy(sets = newSets)
+                    currentExercise = newExercise
+                    updateWorkout(exercise,newExercise)
+                }
+
+                if(distributedWorkout.second){
+                    val newSets = currentExercise.sets.toMutableList()
+                    val newRestSet = RestSet(UUID.randomUUID(),20,true)
+                    newSets.add(newRestSet)
+
+                    val newSet = when(val new = getNewSet(currentExercise.sets.last())){
+                        is BodyWeightSet ->  new.copy(reps = 3)
+                        is WeightSet -> new.copy(reps = 3)
+                        else -> throw IllegalArgumentException("Unknown set type")
+                    }
+
+                    newSets.add(newSet)
+                    val newExercise = exercise.copy(sets = newSets)
+                    updateWorkout(exercise,newExercise)
+                }
             }
         }
     }
@@ -416,12 +492,6 @@ class AppViewModel : ViewModel(){
     private suspend fun processExercise(exercise: Exercise): Pair<UUID,Pair<DistributedWorkout?,Boolean>>? {
         if(exercise.doNotStoreHistory) return null
 
-        val totalHistoricalSetDataList = when(exercise.exerciseType) {
-            ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
-            ExerciseType.BODY_WEIGHT -> getHistoricalSetsDataByExerciseId<BodyWeightSetData>(exercise.id)
-            else -> emptyList()
-        }
-
         if(exercise.exerciseType == ExerciseType.BODY_WEIGHT && exercise.bodyWeightPercentage == null){
             return null
         }
@@ -430,6 +500,12 @@ class AppViewModel : ViewModel(){
 
         var totalVolume = 0.0
         var avg1RM = 0.0
+
+        val totalHistoricalSetDataList = when(exercise.exerciseType) {
+            ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
+            ExerciseType.BODY_WEIGHT -> getHistoricalSetsDataByExerciseId<BodyWeightSetData>(exercise.id)
+            else -> emptyList()
+        }
 
         if (totalHistoricalSetDataList.isNotEmpty()) {
             totalVolume = totalHistoricalSetDataList.sumOf {
@@ -580,6 +656,7 @@ class AppViewModel : ViewModel(){
                 currentWorkoutHistory = null
                 loadWorkoutHistory()
                 generateProgressions()
+                applyProgressions()
                 generateWorkoutStates()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
             }
@@ -1025,71 +1102,10 @@ class AppViewModel : ViewModel(){
     private fun addStatesFromExercise(exercise: Exercise){
         if(exercise.sets.isEmpty()) return
 
-        var currentExercise = exercise
-
-        var exerciseSets = exercise.sets.filter { it !is RestSet }
         val distributedWorkout = if(distributedWorkoutByExerciseIdMap.containsKey(exercise.id)) distributedWorkoutByExerciseIdMap[exercise.id] else null
+        val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        if(distributedWorkout != null){
-            if(distributedWorkout.first != null){
-                val distributedSets = distributedWorkout.first!!.sets
-                val lastRestSet = exercise.sets.filterIsInstance<RestSet>().lastOrNull()
-
-                val newSets = exercise.sets.toMutableList()
-
-                if(exerciseSets.size > distributedSets.size){
-                    val lastExercise = exerciseSets[distributedSets.size-1]
-                    val lastExerciseIndex = newSets.indexOf(lastExercise)
-                    newSets.removeAll { newSets.indexOf(it) > lastExerciseIndex }
-                }
-
-                exerciseSets = newSets.filter { it !is RestSet }
-
-                for ((index, setInfo) in distributedSets.withIndex()) {
-                    if (index < exerciseSets.size) continue
-
-                    if(lastRestSet!=null){
-                        val newRestSet = RestSet(UUID.randomUUID(),lastRestSet.timeInSeconds)
-                        newSets.add(newRestSet)
-                    }
-
-                    val newSet = when(exercise.exerciseType){
-                        ExerciseType.BODY_WEIGHT -> {
-                            BodyWeightSet(UUID.randomUUID(),setInfo.reps,setInfo.weight)
-                        }
-                        ExerciseType.WEIGHT -> WeightSet(UUID.randomUUID(),setInfo.reps, setInfo.weight)
-                        else -> throw IllegalArgumentException("Unknown exercise type")
-                    }
-
-                    newSets.add(newSet)
-                }
-
-                val newExercise = exercise.copy(sets = newSets)
-                updateWorkout(exercise,newExercise)
-                currentExercise = newExercise
-                exerciseSets = newSets.filter { it !is RestSet }
-            }
-
-            if(distributedWorkout.second){
-                val newSets = exercise.sets.toMutableList()
-                val newRestSet = RestSet(UUID.randomUUID(),20,true)
-                newSets.add(newRestSet)
-
-                val newSet = when(val new = getNewSet(exercise.sets.last())){
-                    is BodyWeightSet ->  new.copy(reps = 3)
-                    is WeightSet -> new.copy(reps = 3)
-                    else -> throw IllegalArgumentException("Unknown set type")
-                }
-
-                newSets.add(newSet)
-                val newExercise = exercise.copy(sets = newSets)
-                updateWorkout(exercise,newExercise)
-                currentExercise = newExercise
-                exerciseSets = newSets.filter { it !is RestSet }
-            }
-        }
-
-        for ((index, set) in currentExercise.sets.withIndex()) {
+        for ((index, set) in exercise.sets.withIndex()) {
             if(set is RestSet){
                 val restSet = RestSet(set.id,set.timeInSeconds)
 
@@ -1097,16 +1113,17 @@ class AppViewModel : ViewModel(){
                     set = restSet,
                     order = index.toUInt(),
                     currentSetData = initializeSetData(RestSet(set.id,set.timeInSeconds)),
-                    exerciseId = currentExercise.id
+                    exerciseId = exercise.id
                 )
                 workoutStateQueue.addLast(restState)
-            }else{
-                val historySet = if(currentExercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
-
+            }
+            else
+            {
+                val historySet = if(exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
                 var currentSetData = initializeSetData(set)
 
-                if(currentExercise.exerciseType == ExerciseType.BODY_WEIGHT && currentExercise.bodyWeightPercentage != null){
-                    currentSetData = (currentSetData as BodyWeightSetData).copy(relativeBodyWeightInKg = bodyWeight.value * (currentExercise.bodyWeightPercentage!!/100))
+                if(exercise.exerciseType == ExerciseType.BODY_WEIGHT && exercise.bodyWeightPercentage != null){
+                    currentSetData = (currentSetData as BodyWeightSetData).copy(relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!!/100))
                 }
 
                 if(historySet != null){
@@ -1116,12 +1133,11 @@ class AppViewModel : ViewModel(){
                     }
                 }
 
-                if(distributedWorkout?.first != null){
-                    val exerciseIndex = exerciseSets.indexOf(set)
-                    val distributedSet = distributedWorkout.first!!.sets[exerciseIndex]
-                    currentSetData = when(currentExercise.exerciseType){
+                val distributedSets = distributedWorkout?.first?.sets
+                distributedSets?.getOrNull(exerciseSets.indexOf(set))?.let { distributedSet ->
+                    currentSetData = when (exercise.exerciseType) {
                         ExerciseType.BODY_WEIGHT -> {
-                            val relativeBodyWeightInKg =  (currentSetData as BodyWeightSetData).relativeBodyWeightInKg
+                            val relativeBodyWeightInKg = (currentSetData as BodyWeightSetData).relativeBodyWeightInKg
                             BodyWeightSetData(
                                 actualReps = distributedSet.reps,
                                 relativeBodyWeightInKg = relativeBodyWeightInKg,
@@ -1130,14 +1146,14 @@ class AppViewModel : ViewModel(){
                         }
                         ExerciseType.WEIGHT -> WeightSetData(
                             actualReps = distributedSet.reps,
-                            actualWeight = distributedSet.weight,
+                            actualWeight = distributedSet.weight
                         )
                         else -> throw IllegalArgumentException("Unknown exercise type")
                     }
                 }
 
                 val previousSetData = copySetData(currentSetData)
-                val setState: WorkoutState.Set = WorkoutState.Set(currentExercise.id,set,index.toUInt(),previousSetData, currentSetData,historySet == null,false,exercise.targetZone)
+                val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index.toUInt(),previousSetData, currentSetData,historySet == null,false,exercise.targetZone)
                 workoutStateQueue.addLast(setState)
                 setStates.addLast(setState)
             }
