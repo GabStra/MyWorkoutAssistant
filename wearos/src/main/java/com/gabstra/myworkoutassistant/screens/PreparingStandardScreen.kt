@@ -83,10 +83,9 @@ fun PreparingStandardScreen(
 
         val isReady = state.dataLoaded && currentMillis >=3000
 
-
         if (isReady) {
             hasTriggeredNextState = true
-            Log.d("WorkoutViewModel","hasWorkoutRecord $hasWorkoutRecord")
+
             if(hasWorkoutRecord){
                 viewModel.resumeLastState()
             }else{

@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun KeepOn(
+    appViewModel: AppViewModel,
     enableDimming: Boolean = true, // Parameter to control dimming
     dimDelay: Long = 15000L, // Delay before dimming the screen
     content: @Composable () -> Unit
@@ -76,6 +78,13 @@ fun KeepOn(
 
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            isDimmed = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        appViewModel.lightScreenUp.collect {
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         }

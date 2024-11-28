@@ -13,14 +13,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.composable.LoadingText
+import com.gabstra.myworkoutassistant.data.AppViewModel
 
 @Composable
-fun LoadingScreen(text: String = "Loading...", extraContent: @Composable () -> Unit = {}) {
+fun LoadingScreen(appViewModel: AppViewModel, text: String = "Loading...", extraContent: @Composable () -> Unit = {}) {
     BackHandler(true) {
         // Do nothing
     }
 
-    KeepOn {
+    KeepOn(appViewModel) {
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.Center,

@@ -152,6 +152,12 @@ object VolumeDistributionHelper {
                 .sumOf { it.volume }
         }
 
+        fun List<Double>.standardDeviation(): Double {
+            val mean = this.average()
+            val variance = this.map { (it - mean) * (it - mean) }.average()
+            return kotlin.math.sqrt(variance)
+        }
+
         fun calculateScore(
             numSets: Int,
             currentCombination: List<ExerciseSet>,
@@ -159,19 +165,28 @@ object VolumeDistributionHelper {
         ): Double {
             if (numSets < 2) return 0.0
 
-            //val volumeDeviation = abs(currentVolume - targetVolume) / targetVolume
             val setPenalty = 0.95.pow(maxOf(0, numSets - 3))
             val totalFatigue = currentCombination.sumOf { it.fatigue }
-            val fatiguePenalty = 0.95.pow(totalFatigue) // Reduced impact
+            val fatiguePenalty = 0.95.pow(totalFatigue)
             val lowRepPenalty = currentCombination.count { it.reps < 3 } * 0.95
 
-            /* val reps = currentCombination.map { it.reps }
-             val repStdDev = reps.standardDeviation()
-             val repConsistencyScore = 1.0 / (1.0 + (repStdDev * 0.1))
-             val repBalanceScore = 1.0 / (1.0 + (repStdDev * 2))*/
+            // Calculate weight consistency bonus
+            val weights = currentCombination.map { it.weight }
+            val weightStdDev = weights.standardDeviation()
+            val weightConsistencyBonus = 1.0 / (1.0 + (weightStdDev * 0.1))
 
-            return setPenalty * fatiguePenalty  * (1.0 - lowRepPenalty)
+            // Calculate fatigue distribution bonus
+            val fatigues = currentCombination.map { it.fatigue }
+            val fatigueStdDev = fatigues.standardDeviation()
+            val fatigueDistributionBonus = 1.0 / (1.0 + (fatigueStdDev * 0.2))
+
+            return setPenalty *
+                    fatiguePenalty *
+                    (1.0 - lowRepPenalty) *
+                    weightConsistencyBonus *
+                    fatigueDistributionBonus
         }
+
 
         fun backtrack(
             start: Int,
@@ -210,14 +225,12 @@ object VolumeDistributionHelper {
                     bestVolumeDeviation = currentVolumeDeviation
                     bestPenaltyScore = penaltyScore
 
-
-                    if(currentVolumeDeviation <= 0.05) {
+                    /*if(currentVolumeDeviation <= 0.05) {
                         val bestCombinationString = currentCombination.joinToString { "(${it.weight}, ${it.reps})" }
                         Log.d("WorkoutViewModel", "Target: $targetVolume | Valid combination - score: $penaltyScore volume: $currentTotalVolume - $bestCombinationString")
-                    }
+                    }*/
 
-
-                    if(currentVolumeDeviation <= 0.01) {
+                    if(currentVolumeDeviation <= 0.02) {
                         bestCombination = ArrayList(currentCombination)
                     }
                 }
@@ -306,8 +319,8 @@ object VolumeDistributionHelper {
     private suspend fun findSolution(params: WeightExerciseParameters): DistributedWorkout? {
         val possibleSets = generatePossibleSets(params)
 
-       val possibleSetsData = possibleSets.joinToString { "(${it.weight}, ${it.reps}, ${it.volume})" }
-        Log.d("WorkoutViewModel", "Possible sets: $possibleSetsData")
+        //val possibleSetsData = possibleSets.joinToString { "(${it.weight}, ${it.reps}, ${it.volume})" }
+        //Log.d("WorkoutViewModel", "Possible sets: $possibleSetsData")
 
         if (possibleSets.isEmpty()) return null
 
@@ -546,7 +559,7 @@ object VolumeDistributionHelper {
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
         fatigueFactor: Float
-    ): Pair<DistributedWorkout?, Boolean> {
+    ): DistributedWorkout? {
         if (percentageIncrease < 0) {
             throw IllegalArgumentException("Percentage increase must be positive")
         }
@@ -562,11 +575,20 @@ object VolumeDistributionHelper {
             fatigueFactor = fatigueFactor
         )
 
-        return if (solution == null) {
-            Pair(null, true)
-        } else {
-            Pair(solution, false)
+        if (solution != null) {
+            return solution
         }
+
+        val noIncreaseSolution = distributeVolume(
+            targetTotalVolume = currentVolume,
+            oneRepMax = oneRepMax,
+            availableWeights = availableWeights,
+            percentLoadRange = percentLoadRange,
+            repsRange = repsRange,
+            fatigueFactor = fatigueFactor
+        )
+
+        return noIncreaseSolution
     }
 
     private fun createBodyWeightSet(

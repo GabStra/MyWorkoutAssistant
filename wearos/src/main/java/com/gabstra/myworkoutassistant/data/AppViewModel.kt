@@ -46,10 +46,12 @@ import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
@@ -249,6 +251,15 @@ class AppViewModel : ViewModel(){
         _isSkipDialogOpen.value = false
     }
 
+    private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
+    val lightScreenUp = _lightScreenUp.receiveAsFlow()
+
+    fun lightScreenUp() {
+        viewModelScope.launch {
+            _lightScreenUp.send(Unit)
+        }
+    }
+
     fun setWorkout(workout: Workout){
         _selectedWorkout.value = workout;
 
@@ -409,7 +420,7 @@ class AppViewModel : ViewModel(){
             if(distributedWorkout != null){
                 if(distributedWorkout.first != null){
                     val distributedSets = distributedWorkout.first!!.sets
-                    val lastRestSet = currentExercise.sets.filterIsInstance<RestSet>().lastOrNull()
+                    val lastRestSet = currentExercise.sets.filterIsInstance<RestSet>().filter { !it.isRestPause }.lastOrNull()
 
                     val newSets = currentExercise.sets.toMutableList()
 
@@ -431,7 +442,8 @@ class AppViewModel : ViewModel(){
 
                         val newSet = when(exercise.exerciseType){
                             ExerciseType.BODY_WEIGHT -> {
-                                BodyWeightSet(UUID.randomUUID(),setInfo.reps,setInfo.weight)
+                                val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!!/100)
+                                BodyWeightSet(UUID.randomUUID(),setInfo.reps,setInfo.weight-relativeBodyWeight)
                             }
                             ExerciseType.WEIGHT -> WeightSet(UUID.randomUUID(),setInfo.reps, setInfo.weight)
                             else -> throw IllegalArgumentException("Unknown exercise type")
@@ -499,7 +511,7 @@ class AppViewModel : ViewModel(){
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
         var totalVolume = 0.0
-        var avg1RM = 0.0
+        var avg1RM: Double
 
         val totalHistoricalSetDataList = when(exercise.exerciseType) {
             ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
@@ -517,8 +529,7 @@ class AppViewModel : ViewModel(){
             }
         }
 
-        if(totalVolume == 0.0) {
-
+        if(totalVolume == 0.0 || (exercise.exerciseType == ExerciseType.BODY_WEIGHT && totalVolume <= bodyWeight.value)) {
             totalVolume = exerciseSets.sumOf {
                 when(it) {
                     is BodyWeightSet -> {
@@ -560,7 +571,7 @@ class AppViewModel : ViewModel(){
 
         Log.d(
             "WorkoutViewModel",
-            "${exercise.name} - volume $totalVolume - avg 1RM ${String.format("%.2f",avg1RM)}"
+            "${exercise.name} - volume $totalVolume - avg 1RM ${String.format("%.2f",avg1RM).replace(",",".")}"
         )
 
         val availableWeights = when(exercise.exerciseType) {
@@ -585,8 +596,8 @@ class AppViewModel : ViewModel(){
             exercise.fatigueFactor
         )
 
-        if (distributedWorkout.first != null) {
-            distributedWorkout.first!!.sets.forEachIndexed { index, set ->
+        if (distributedWorkout != null) {
+            distributedWorkout.sets.forEachIndexed { index, set ->
                 if(exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!!/100)
                     Log.d(
@@ -602,16 +613,11 @@ class AppViewModel : ViewModel(){
             }
             Log.d(
                 "WorkoutViewModel",
-                "volume $totalVolume to ${distributedWorkout.first!!.totalVolume} +${String.format("%.2f", ((distributedWorkout.first!!.totalVolume - totalVolume) / totalVolume) * 100)}%"
-            )
-        }else if(distributedWorkout.second){
-            Log.d(
-                "WorkoutViewModel",
-                "Add rest pause set"
+                "volume $totalVolume to ${distributedWorkout.totalVolume} +${String.format("%.2f", ((distributedWorkout.totalVolume - totalVolume) / totalVolume) * 100)}%"
             )
         }
 
-        return exercise.id to distributedWorkout
+        return exercise.id to Pair(distributedWorkout,false)
     }
 
     fun resumeLastState(){

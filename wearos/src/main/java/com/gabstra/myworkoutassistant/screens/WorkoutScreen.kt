@@ -113,11 +113,13 @@ fun WorkoutScreen(
         onSinglePress = {
             VibrateGentle(context)
             viewModel.openSkipDialog()
+            viewModel.lightScreenUp()
         }, onDoublePress = {
             if(workoutState is WorkoutState.Finished || showSkipDialog) return@CustomBackHandler
             showWorkoutInProgressDialog = true
             VibrateGentle(context)
             viewModel.pauseWorkout()
+            viewModel.lightScreenUp()
         }
     )
 
@@ -145,12 +147,12 @@ fun WorkoutScreen(
     ) {
         CurrentTime()
         if(isResuming){
-            LoadingScreen("Resuming workout")
+            LoadingScreen(viewModel,"Resuming workout")
             return@Box
         }
 
         if(isRefreshing){
-            LoadingScreen("Reloading workout")
+            LoadingScreen(viewModel,"Reloading workout")
             return@Box
         }
 

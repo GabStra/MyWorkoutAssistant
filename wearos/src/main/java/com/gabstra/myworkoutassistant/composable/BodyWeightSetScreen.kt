@@ -363,12 +363,11 @@ fun BodyWeightSetScreen(
                         color = Color.Black
                     )
                 }
-                if(marker != null && marker.ratio < 1){
-                    markers.add(marker)
-                }
 
-                val ratio = if (previousVolumeUpToNow.toDouble() != 0.0) {
-                    (currentTotalVolume.toDouble() - previousVolumeUpToNow.toDouble()) / previousVolumeUpToNow.toDouble()
+                marker?.let { markers.add(it) }
+
+                val ratio = if (previousVolumeUpToNow != 0.0) {
+                    (currentTotalVolume - previousVolumeUpToNow) / previousVolumeUpToNow
                 } else {
                     0.0
                 }

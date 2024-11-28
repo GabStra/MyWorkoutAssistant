@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -318,6 +319,7 @@ fun WeightSetScreen (
         }
     }
 
+    @SuppressLint("DefaultLocale")
     @Composable
     fun SetScreen(customModifier: Modifier) {
         val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
@@ -360,9 +362,7 @@ fun WeightSetScreen (
                     )
                 }
 
-                if(marker != null && marker.ratio < 1){
-                    markers.add(marker)
-                }
+                marker?.let { markers.add(it) }
 
                 val ratio = if (previousVolumeUpToNow != 0.0) {
                     (currentTotalVolume - previousVolumeUpToNow) / previousVolumeUpToNow

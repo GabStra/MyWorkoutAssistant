@@ -165,7 +165,7 @@ fun TrendComponentProgressBarWithMarker(
     modifier: Modifier = Modifier,
     label: String,
     ratio: Double,
-    progressBarColor: Color? = null,
+    progressBarColor: Color,
     markers: List<MarkerData> = emptyList(),
     indicatorMarker: MarkerData? = null
 ) {
@@ -180,7 +180,7 @@ fun TrendComponentProgressBarWithMarker(
         LinearProgressBarWithRounderBordersAndMarker(
             progress = ratio.toFloat(),
             modifier = Modifier.weight(1f).padding(bottom = 2.dp),
-            progressBarColor = progressBarColor?.takeIf { ratio < 1 } ?: if (ratio >= 1) MyColors.Green else MyColors.Orange,
+            progressBarColor = progressBarColor,
             markers = markers,
             indicatorMarker = indicatorMarker
         )

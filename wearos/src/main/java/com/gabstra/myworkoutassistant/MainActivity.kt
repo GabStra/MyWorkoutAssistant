@@ -235,7 +235,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             composable(Screen.Workout.route) {
                 val isPaused by appViewModel.isPaused
 
-                KeepOn(enableDimming = !isPaused){
+                KeepOn(appViewModel,enableDimming = !isPaused){
                     WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
                 }
             }
@@ -251,7 +251,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                     trackColor = MaterialTheme.colors.background
                 )
 
-                LoadingScreen("Syncing with phone")
+                LoadingScreen(appViewModel,"Syncing with phone")
             }
         }
     }
