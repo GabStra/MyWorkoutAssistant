@@ -156,7 +156,7 @@ class WorkoutManager {
 
         private fun updateSet(sets: List<Set>, oldSet: Set, updatedSet: Set): List<Set> {
             return sets.map { set ->
-                if(set === oldSet) {
+                if(set.id == oldSet.id) {
                     updatedSet
                 }else{
                     set

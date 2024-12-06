@@ -85,8 +85,11 @@ fun KeepOn(
 
     LaunchedEffect(Unit) {
         appViewModel.lightScreenUp.collect {
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
+            if (isDimmed) {
+                setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+                isDimmed = false
+            }
+            resetDimming()
         }
     }
 

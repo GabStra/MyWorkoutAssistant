@@ -20,19 +20,60 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
 fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
-    val label = if (bodyWeightSetData.actualReps == 1) "rep" else "reps"
-    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
-        Text(
-            text = "${bodyWeightSetData.actualReps}",
-            style = style,
-            color = color,
-            textAlign = TextAlign.End
-        )
-        Spacer(modifier = Modifier.width(5.dp))
-        Text(
-            text = label,
-            style = style.copy(fontSize = style.fontSize * 0.625f),
-            textAlign = TextAlign.Start
-        )
+    if(bodyWeightSetData.additionalWeight != 0.0){
+        val weightText = if (bodyWeightSetData.additionalWeight % 1 == 0.0) {
+            "${bodyWeightSetData.additionalWeight.toInt()}"
+        } else {
+            "${bodyWeightSetData.additionalWeight}"
+        }
+
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center){
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
+                Text(
+                    text = weightText,
+                    style = style,
+                    color = color,
+                    textAlign = TextAlign.End
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = "kg",
+                    style = style.copy(fontSize = style.fontSize * 0.625f),
+                    textAlign = TextAlign.Start
+                )
+            }
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = "x",
+                style = style.copy(fontSize = style.fontSize * 0.625f),
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
+                Text(
+                    text = "${bodyWeightSetData.actualReps}",
+                    style = style,
+                    color = color,
+                    textAlign = TextAlign.End
+                )
+            }
+        }
+    }else{
+        val label = if (bodyWeightSetData.actualReps == 1) "rep" else "reps"
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
+            Text(
+                text = "${bodyWeightSetData.actualReps}",
+                style = style,
+                color = color,
+                textAlign = TextAlign.End
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = label,
+                style = style.copy(fontSize = style.fontSize * 0.625f),
+                textAlign = TextAlign.Start
+            )
+        }
     }
 }

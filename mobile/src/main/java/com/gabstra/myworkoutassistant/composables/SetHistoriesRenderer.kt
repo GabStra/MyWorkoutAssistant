@@ -64,25 +64,30 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         }
 
                         is BodyWeightSetData -> {
+                            val weightText = if (setData.additionalWeight % 1 == 0.0) {
+                                "${setData.additionalWeight.toInt()}"
+                            } else {
+                                "${setData.additionalWeight}"
+                            }
+
+                            val text = if(setData.additionalWeight != 0.0) "${weightText} kg x ${setData.actualReps}" else "${setData.actualReps}"
                             Text(
-                                text = "${setData.actualReps}",
+                                text = text,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .87f),
                             )
                         }
 
                         is TimedDurationSetData -> {
-                            Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.spacedBy(5.dp),
-                            ) {
+                            if(setData.endTimer == 0) {
                                 Text(
-                                    "Timer set to: " + formatTime(setData.startTimer / 1000),
+                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.White.copy(alpha = .87f)
                                 )
+                            }else{
                                 Text(
-                                    "Stopped at: " + formatTime(setData.endTimer / 1000),
+                                    "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.White.copy(alpha = .87f)
                                 )
@@ -90,17 +95,17 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         }
 
                         is EnduranceSetData -> {
-                            Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.spacedBy(5.dp),
-                            ) {
-                                Text("Timer set to: " + formatTime(setData.startTimer / 1000),
+                            if(setData.endTimer == 0) {
+                                Text(
+                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = .6f)
+                                    color = Color.White.copy(alpha = .87f)
                                 )
-                                Text("Stopped at: " + formatTime(setData.endTimer / 1000),
+                            }else{
+                                Text(
+                                    "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = .6f)
+                                    color = Color.White.copy(alpha = .87f)
                                 )
                             }
                         }
@@ -113,14 +118,15 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ){
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        Text("Rest Timer set to: " + formatTime(setData.startTimer),
+                    if(setData.endTimer == 0) {
+                        Text(
+                            "Rest for: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = .6f)
                         )
-                        Text("Stopped at: " + formatTime(setData.endTimer),
+                    }else{
+                        Text(
+                            "Rest from: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = .6f)
                         )

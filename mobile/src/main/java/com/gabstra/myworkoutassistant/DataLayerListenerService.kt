@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.gms.wearable.DataEventBuffer
@@ -113,6 +114,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                     val oldSet = setById[setHistory.setId]!!
                                                     if (!isSetDataValid(oldSet,setHistory.setData)) continue
                                                     val newSet = getNewSetFromSetHistory(oldSet,setHistory.setData) ?: continue
+
                                                     updateSetInExerciseRecursively(workoutComponents,exercise,oldSet,newSet)
                                                 } else {
                                                     val newSet = getNewSetFromSetHistory(setHistory)

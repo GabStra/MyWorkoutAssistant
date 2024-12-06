@@ -39,7 +39,9 @@ import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -65,12 +67,6 @@ fun BodyWeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val actualWeight = remember(exercise) {
-        exercise.bodyWeightPercentage?.let { bodyWeightPercentage ->
-            bodyWeightPercentage * viewModel.bodyWeight.value
-        } ?: 0.0
-    }
-
     val sets = remember(exercise) {
         exercise.sets.filter { it !is RestSet }
     }
@@ -87,17 +83,6 @@ fun BodyWeightSetScreen(
         viewModel.getHistoricalSetsDataByExerciseId<BodyWeightSetData>(state.exerciseId)
     }
 
-    val cumulativePastVolumePerSet = remember(totalHistoricalSetDataList) {
-        totalHistoricalSetDataList.runningFold(0.0) { acc, setData ->
-            acc + calculateVolume(setData.relativeBodyWeightInKg + setData.additionalWeight, setData.actualReps)
-        }.drop(1)
-    }
-
-    val lastTotalVolume = remember(totalHistoricalSetDataList) {
-        totalHistoricalSetDataList.sumOf {
-            calculateVolume(it.relativeBodyWeightInKg+it.additionalWeight, it.actualReps)
-        }.toDouble()
-    }
 
     val historicalSetDataList = remember(state.exerciseId,state.set.id) {
         viewModel.getHistoricalSetsDataByExerciseIdAndTakeUntilSetId<BodyWeightSetData>(state.exerciseId, state.set.id)
@@ -119,26 +104,35 @@ fun BodyWeightSetScreen(
         }
     }
 
-    val currentVolume = currentSet.actualReps
+    val currentVolume = calculateVolume(currentSet.relativeBodyWeightInKg+currentSet.additionalWeight, currentSet.actualReps)
 
     val currentTotalVolume = currentVolume + executedVolume
 
     val bestVolumeProgress = remember(bestTotalVolume,currentTotalVolume) {
-        if (bestTotalVolume != 0.0) currentTotalVolume.toDouble() / bestTotalVolume else 0.0
+        if (bestTotalVolume != 0.0) currentTotalVolume / bestTotalVolume else 0.0
     }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
 
-    val availableWeights = remember(exercise) {
-        exercise.equipmentId?.let { viewModel.GetEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() }
-    }
+    var availableWeights by remember { mutableStateOf<Set<Double>>(emptySet()) }
+    var closestWeight by remember { mutableStateOf<Double?>(null) }
+    var closestWeightIndex by remember { mutableStateOf<Int?>(null) }
+    var selectedWeightIndex by remember { mutableStateOf<Int?>(null) }
 
-    val closestWeight = remember(availableWeights, currentSet) {
-        availableWeights?.minByOrNull { kotlin.math.abs(it - (currentSet.additionalWeight)) }
+    LaunchedEffect(exercise) {
+        withContext(Dispatchers.IO) {
+            availableWeights = exercise.equipmentId?.let {
+                viewModel.getEquipmentById(it)?.calculatePossibleCombinations()
+            } ?: emptySet()
+
+            closestWeight = availableWeights.minByOrNull {
+                kotlin.math.abs(it - currentSet.additionalWeight)
+            }
+            closestWeightIndex = availableWeights.indexOf(closestWeight)
+            selectedWeightIndex = closestWeightIndex
+        }
     }
-    val closestWeightIndex = remember(closestWeight){ availableWeights?.indexOf(closestWeight) }
-    var selectedWeightIndex by remember(closestWeightIndex) { mutableStateOf(closestWeightIndex) }
 
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -189,7 +183,7 @@ fun BodyWeightSetScreen(
                     selectedWeightIndex = it - 1
 
                     currentSet = currentSet.copy(
-                        additionalWeight = availableWeights!!.elementAt(selectedWeightIndex!!)
+                        additionalWeight = availableWeights.elementAt(selectedWeightIndex!!)
                     )
                 }
             }
@@ -209,7 +203,7 @@ fun BodyWeightSetScreen(
         }
         if (isWeightInEditMode){
             selectedWeightIndex?.let {
-                if (it < availableWeights!!.size - 1) {
+                if (it < availableWeights.size - 1) {
                     selectedWeightIndex = it + 1
 
                     currentSet = currentSet.copy(
@@ -223,7 +217,7 @@ fun BodyWeightSetScreen(
     }
 
     @Composable
-    fun RepsRow(modifier: Modifier) {
+    fun RepsRow(modifier: Modifier,showRepsLabel:Boolean = true) {
         Row(
             modifier = modifier
                 .combinedClickable(
@@ -254,19 +248,21 @@ fun BodyWeightSetScreen(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.Center
             ) {
-                val style = MaterialTheme.typography.body1.copy(fontSize = 24.sp)
+                val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 Text(
                     text = "${currentSet.actualReps}",
                     style = style,
                     textAlign = TextAlign.End
                 )
-                Spacer(modifier = Modifier.width(5.dp))
-                val label = if (currentSet.actualReps == 1) "rep" else "reps"
-                Text(
-                    text = label,
-                    style = style.copy(fontSize = style.fontSize * 0.39f),
-                    modifier = Modifier.padding(bottom = 2.dp)
-                )
+                if(showRepsLabel){
+                    Spacer(modifier = Modifier.width(5.dp))
+                    val label = if (currentSet.actualReps == 1) "rep" else "reps"
+                    Text(
+                        text = label,
+                        style = style.copy(fontSize = style.fontSize * 0.39f),
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
             }
         }
     }
@@ -329,21 +325,26 @@ fun BodyWeightSetScreen(
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if(availableWeights != null){
+            if(availableWeights.isNotEmpty()){
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
-                WeightRow(Modifier)
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = "x",
-                    style = style.copy(fontSize = style.fontSize * 0.625f),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                RepsRow(Modifier)
+                Row(
+                    modifier =  Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    WeightRow(Modifier)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "x",
+                        style = style.copy(fontSize = style.fontSize * 0.625f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    RepsRow(Modifier,showRepsLabel = false)
+                }
             }else{
                 RepsRow(Modifier)
             }
-
 
             if (bestVolumeProgress > 0) {
                 Spacer(modifier = Modifier.height(5.dp))
@@ -353,18 +354,15 @@ fun BodyWeightSetScreen(
                     else -> MyColors.Green
                 }
 
-
                 val markers = mutableListOf<MarkerData>()
 
-                val marker = cumulativePastVolumePerSet.getOrNull(setIndex)?.let {
-                    MarkerData(
-                        ratio = it / bestTotalVolume,
-                        text = "${setIndex + 1}",
-                        color = Color.Black
-                    )
-                }
+                val marker = MarkerData(
+                    ratio = bestVolumeProgress,
+                    text = "${setIndex + 1}",
+                    color = Color.Black
+                )
 
-                marker?.let { markers.add(it) }
+                markers.add(marker)
 
                 val ratio = if (previousVolumeUpToNow != 0.0) {
                     (currentTotalVolume - previousVolumeUpToNow) / previousVolumeUpToNow
@@ -416,7 +414,7 @@ fun BodyWeightSetScreen(
         verticalArrangement = Arrangement.Center,
         modifier = modifier.padding(horizontal = 15.dp)
     ){
-        if (isRepsInEditMode) {
+        if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier
                     .fillMaxSize()

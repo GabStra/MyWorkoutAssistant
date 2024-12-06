@@ -70,7 +70,7 @@ fun WeightSetScreen (
     }
 
     val availableWeights = remember(exercise) {
-        exercise.equipmentId?.let { viewModel.GetEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() }
+        exercise.equipmentId?.let { viewModel.getEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() }
     }
 
     val closestWeight = availableWeights?.minByOrNull { kotlin.math.abs(it - currentSet.actualWeight) }
@@ -354,15 +354,13 @@ fun WeightSetScreen (
 
                 val markers = mutableListOf<MarkerData>()
 
-                val marker = cumulativePastVolumePerSet.getOrNull(setIndex)?.let {
-                    MarkerData(
-                        ratio = it / bestTotalVolume,
-                        text = "${setIndex + 1}",
-                        color = Color.Black
-                    )
-                }
+                val marker = MarkerData(
+                    ratio = bestVolumeProgress,
+                    text = "${setIndex + 1}",
+                    color = Color.Black
+                )
 
-                marker?.let { markers.add(it) }
+                markers.add(marker)
 
                 val ratio = if (previousVolumeUpToNow != 0.0) {
                     (currentTotalVolume - previousVolumeUpToNow) / previousVolumeUpToNow

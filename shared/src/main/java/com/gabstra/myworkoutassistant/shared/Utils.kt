@@ -233,7 +233,8 @@ fun getNewSetFromSetHistory(set: Set, setData: SetData): Set? {
         is BodyWeightSet -> {
             if (setData is BodyWeightSetData) {
                 return set.copy(
-                    reps = setData.actualReps
+                    reps = setData.actualReps,
+                    additionalWeight = setData.additionalWeight,
                 )
             }
         }

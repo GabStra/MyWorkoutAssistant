@@ -215,45 +215,48 @@ fun ExerciseForm(
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    Text(
-                        text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+                    if(selectedExerciseType.value == ExerciseType.WEIGHT) {
 
-                    RangeSlider(
-                        value = minLoadPercent.value..maxLoadPercent.value,
-                        onValueChange = { range ->
-                            minLoadPercent.value = range.start
-                            maxLoadPercent.value = range.endInclusive
-                        },
-                        valueRange = 0f..100f,
-                        steps = 98,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp)
-                    )
+                        Text(
+                            text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                        RangeSlider(
+                            value = minLoadPercent.value..maxLoadPercent.value,
+                            onValueChange = { range ->
+                                minLoadPercent.value = range.start
+                                maxLoadPercent.value = range.endInclusive
+                            },
+                            valueRange = 0f..100f,
+                            steps = 98,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp)
+                        )
 
-                    Text(
-                        text = "Reps Range (${minReps.value.toInt()} - ${maxReps.value.toInt()})",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                    RangeSlider(
-                        value = minReps.value..maxReps.value,
-                        onValueChange = { range ->
-                            minReps.value = range.start
-                            maxReps.value = range.endInclusive
-                        },
-                        valueRange = 1f..50f,
-                        steps = 49,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp)
-                    )
+                        Text(
+                            text = "Reps Range (${minReps.value.toInt()} - ${maxReps.value.toInt()})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        RangeSlider(
+                            value = minReps.value..maxReps.value,
+                            onValueChange = { range ->
+                                minReps.value = range.start
+                                maxReps.value = range.endInclusive
+                            },
+                            valueRange = 1f..50f,
+                            steps = 49,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp)
+                        )
+                    }
 
                     Text(
                         text = "Volume Increase per Session (${volumeIncreasePercent.value.toInt()}%)",

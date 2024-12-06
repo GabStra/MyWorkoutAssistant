@@ -97,6 +97,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
+                        modifier = Modifier.weight(1f),
                         text = "Reps: ${set.reps}",
                         color = Color.White.copy(alpha = .87f),
                         style = MaterialTheme.typography.bodyMedium,
@@ -105,7 +106,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
                     if(set.additionalWeight != 0.0){
                         Text(
                             modifier = Modifier.weight(1f),
-                            text = "Additional Weight: ${set.additionalWeight} kg",
+                            text = "Weight: ${set.additionalWeight} kg",
                             color = Color.White.copy(alpha = .87f),
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.End
@@ -456,15 +457,15 @@ fun ExerciseDetailScreen(
                     selectedItems = selectedSets,
                     isSelectionModeActive,
                     onItemClick = {
-                        if(it is RestSet){
-                            appViewModel.setScreenData(
-                                ScreenData.EditRestSet(
-                                    workout.id,
-                                    it,
-                                    exercise.id
-                                )
+                        if(it !is RestSet) return@GenericSelectableList
+
+                        appViewModel.setScreenData(
+                            ScreenData.EditRestSet(
+                                workout.id,
+                                it,
+                                exercise.id
                             )
-                        }
+                        )
                     },
                     onEnableSelection = { isSelectionModeActive = true },
                     onDisableSelection = { isSelectionModeActive = false },
