@@ -268,10 +268,10 @@ object VolumeDistributionHelper {
         val usedMemoryBytes = runtime.totalMemory() - runtime.freeMemory()  // Currently used memory
         val availableMemoryBytes = maxMemoryBytes - usedMemoryBytes
 
-        // Reserve 20% of available memory for overhead and other operations
-        val safeMemoryBytes = availableMemoryBytes * 0.8
+        // Reserve 10% of available memory for overhead and other operations
+        val safeMemoryBytes = availableMemoryBytes * 0.9
 
-        // Estimate memory needed per job (conservative estimate - 4MB)
+        // Estimate memory needed per job (conservative estimate - 1MB)
         val estimatedBytesPerJob = 1 * 1024 * 1024
 
         val maxJobsByMemory = (safeMemoryBytes / estimatedBytesPerJob).toInt()
@@ -300,7 +300,7 @@ object VolumeDistributionHelper {
             }
 
             // Simple timeout handling
-            if (withTimeoutOrNull(30_000) { allJobs.joinAll() } == null) {
+            if (withTimeoutOrNull(60_000) { allJobs.joinAll() } == null) {
                 // Timeout occurred
                 supervisorJob.cancel()
             }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -33,6 +34,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -84,6 +87,12 @@ fun NextExerciseInfo(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
+    val exerciseSetStates = remember(state) { viewModel.getAllExerciseWorkoutStates(state.exerciseId).filter { it.set !is RestSet } }
+
+    val nextSetStates = remember (exerciseSetStates, setIndex) {
+        exerciseSetStates.filterIndexed { index, _ -> index > setIndex }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxHeight()
@@ -119,25 +128,36 @@ fun NextExerciseInfo(
             )
         }
 
-        when (state.set) {
-            is WeightSet -> WeightSetDataViewerMinimal(
-                state.currentSetData as WeightSetData
-            )
+        val scrollState = rememberScrollState()
 
-            is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                state.currentSetData as BodyWeightSetData
-            )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            for(nextSetState in nextSetStates) {
+                when (nextSetState.set) {
+                    is WeightSet -> WeightSetDataViewerMinimal(
+                        nextSetState.currentSetData as WeightSetData
+                    )
 
-            is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                state.currentSetData as TimedDurationSetData
-            )
+                    is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                        nextSetState.currentSetData as BodyWeightSetData
+                    )
 
-            is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                state.currentSetData as EnduranceSetData
-            )
+                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                        nextSetState.currentSetData as TimedDurationSetData
+                    )
 
-            is RestSet -> {
-                throw RuntimeException("RestSet should not be here")
+                    is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                        nextSetState.currentSetData as EnduranceSetData
+                    )
+
+                    is RestSet -> {
+                        throw RuntimeException("RestSet should not be here")
+                    }
+                }
             }
         }
     }

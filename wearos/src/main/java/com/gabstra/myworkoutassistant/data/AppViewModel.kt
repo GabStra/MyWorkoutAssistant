@@ -131,6 +131,8 @@ class AppViewModel : ViewModel(){
         _backupProgress.value = progress
     }
 
+    private val allWorkoutStates: MutableList<WorkoutState> = mutableListOf()
+
     var polarDeviceId: String = ""
         get() = workoutStore.polarDeviceId?: ""
 
@@ -407,6 +409,10 @@ class AppViewModel : ViewModel(){
         }
     }
     */
+
+    public fun getAllExerciseWorkoutStates(exerciseId: UUID): List<WorkoutState.Set> {
+        return allWorkoutStates.filter { it is WorkoutState.Set }.filter { (it as WorkoutState.Set).exerciseId == exerciseId }.filterIsInstance<WorkoutState.Set>()
+    }
 
     private fun applyProgressions(){
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
@@ -960,6 +966,18 @@ class AppViewModel : ViewModel(){
                         exerciseInfos.add(exerciseInfo)
                     }
                 }
+
+                val currentWorkoutStore = workoutStoreRepository.getWorkoutStore()
+                val newWorkoutStore = currentWorkoutStore.copy(workouts = currentWorkoutStore.workouts.map {
+                    if(it.id == _selectedWorkout.value.id){
+                        it.copy(workoutComponents = _selectedWorkout.value.workoutComponents)
+                    }else{
+                        it
+                    }
+                })
+
+                workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
+                updateWorkoutStore(newWorkoutStore)
             }
 
             val currentState = _workoutState.value
@@ -979,18 +997,6 @@ class AppViewModel : ViewModel(){
                         ExerciseInfos = exerciseInfos
                     )
                 )
-
-                val currentWorkoutStore = workoutStoreRepository.getWorkoutStore()
-                val newWorkoutStore = currentWorkoutStore.copy(workouts = currentWorkoutStore.workouts.map {
-                    if(it.id == _selectedWorkout.value.id){
-                        it.copy(workoutComponents = _selectedWorkout.value.workoutComponents)
-                    }else{
-                        it
-                    }
-                })
-
-                workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
-                updateWorkoutStore(newWorkoutStore)
 
                 if(context != null && !result){
                     withContext(Dispatchers.Main){
@@ -1100,6 +1106,7 @@ class AppViewModel : ViewModel(){
                         currentSetData = initializeSetData(RestSet(workoutComponent.id,workoutComponent.timeInSeconds))
                     )
                     workoutStateQueue.addLast(restState)
+                    allWorkoutStates.add(restState)
                 }
             }
         }
@@ -1122,6 +1129,7 @@ class AppViewModel : ViewModel(){
                     exerciseId = exercise.id
                 )
                 workoutStateQueue.addLast(restState)
+                allWorkoutStates.add(restState)
             }
             else
             {
@@ -1162,6 +1170,7 @@ class AppViewModel : ViewModel(){
                 val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index.toUInt(),previousSetData, currentSetData,historySet == null,false,exercise.targetZone)
                 workoutStateQueue.addLast(setState)
                 setStates.addLast(setState)
+                allWorkoutStates.add(setState)
             }
         }
     }
