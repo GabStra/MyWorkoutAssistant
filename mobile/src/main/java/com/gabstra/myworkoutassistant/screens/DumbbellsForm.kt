@@ -48,7 +48,7 @@ fun DumbbellsForm(
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(dumbbells?.name ?: "") }
     val maxAdditionalItemsState = remember { mutableStateOf((dumbbells?.maxAdditionalItems ?: 0).toString()) }
-
+    val volumeMultiplierState = remember { mutableStateOf(dumbbells?.volumeMultiplier.toString()) }
 
     // State for dumbbells and plates
     val availableDumbbellsState = remember { mutableStateOf(dumbbells?.availableDumbbells ?: emptyList<DumbbellUnit>()) }
@@ -77,6 +77,19 @@ fun DumbbellsForm(
             value = nameState.value,
             onValueChange = { nameState.value = it },
             label = { Text("Dumbbells Set Name") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        // Volume Multiplier field
+        OutlinedTextField(
+            value = volumeMultiplierState.value,
+            onValueChange = {
+                if (it.isEmpty() || it.all { char -> char.isDigit() || char == '.' }) {
+                    volumeMultiplierState.value = it
+                }
+            },
+            label = { Text("Volume Multiplier") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -194,7 +207,8 @@ fun DumbbellsForm(
                     name = nameState.value.trim(),
                     availableDumbbells = availableDumbbellsState.value,
                     additionalPlates = additionalPlatesState.value,
-                    maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0
+                    maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0,
+                    volumeMultiplier = volumeMultiplierState.value.toDoubleOrNull() ?: 1.0
                 )
                 onDumbbellsUpsert(newDumbbells)
             },

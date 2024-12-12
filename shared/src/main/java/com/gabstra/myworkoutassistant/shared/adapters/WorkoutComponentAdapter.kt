@@ -70,7 +70,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>, JsonDeserializ
         val id = UUID.fromString(jsonObject.get("id").asString)
         val type = jsonObject.get("type").asString
 
-
         val enabled = jsonObject.get("enabled").asBoolean
 
         val doNotStoreHistory = if (jsonObject.has("doNotStoreHistory")) {

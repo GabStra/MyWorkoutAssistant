@@ -37,8 +37,8 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.data.calculateVolume
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.delay
@@ -61,7 +61,7 @@ fun WeightSetScreen (
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData
-    var currentSet by remember { mutableStateOf(state.currentSetData as WeightSetData) }
+    var currentSetData by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
     var bestTotalVolume by remember { mutableDoubleStateOf(0.0) }
 
@@ -73,7 +73,7 @@ fun WeightSetScreen (
         exercise.equipmentId?.let { viewModel.getEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() }
     }
 
-    val closestWeight = availableWeights?.minByOrNull { kotlin.math.abs(it - currentSet.actualWeight) }
+    val closestWeight = availableWeights?.minByOrNull { kotlin.math.abs(it - currentSetData.actualWeight) }
     val closestWeightIndex = availableWeights?.indexOf(closestWeight)
 
     var selectedWeightIndex by remember { mutableStateOf(closestWeightIndex) }
@@ -90,18 +90,12 @@ fun WeightSetScreen (
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.exerciseId)
     }
 
-    val totalHistoricalSetDataList = remember(state.exerciseId) {
-        viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.exerciseId)
+    val equipment = remember(exercise) {
+        viewModel.getEquipmentById(exercise.equipmentId!!)
     }
 
-    val cumulativePastVolumePerSet = remember(totalHistoricalSetDataList) {
-        totalHistoricalSetDataList.runningFold(0.0) { acc, setData ->
-            acc + calculateVolume(setData.actualWeight,setData.actualReps)
-        }.drop(1)
-    }
-
-    val lastTotalVolume = remember(totalHistoricalSetDataList) {
-        totalHistoricalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
+    val equipmentVolumeMultiplier = remember(equipment) {
+        equipment?.volumeMultiplier ?: 1.0
     }
 
     val historicalSetDataList = remember(state.exerciseId,state.set.id) {
@@ -109,7 +103,7 @@ fun WeightSetScreen (
     }
 
     val previousVolumeUpToNow = remember(historicalSetDataList) {
-        historicalSetDataList.sumOf { calculateVolume(it.actualWeight,it.actualReps).toDouble() }
+        historicalSetDataList.sumOf { it.volume}
     }
 
     // Store the executed set data list
@@ -118,15 +112,10 @@ fun WeightSetScreen (
     }
 
     val executedVolume = remember(executedSetDataList) {
-        executedSetDataList.sumOf { calculateVolume(it.actualWeight, it.actualReps).toDouble() }
+        executedSetDataList.sumOf { it.volume}
     }
 
-    val currentVolume = calculateVolume(
-        currentSet.actualWeight,
-        currentSet.actualReps,
-    )
-
-    val currentTotalVolume = currentVolume + executedVolume
+    val currentTotalVolume = currentSetData.volume + executedVolume
 
     val bestVolumeProgress = remember(bestTotalVolume, currentTotalVolume) {
         if (bestTotalVolume > 0) currentTotalVolume / bestTotalVolume else 0.0
@@ -141,16 +130,10 @@ fun WeightSetScreen (
         lastInteractionTime = System.currentTimeMillis()
     }
 
-/*    val maxWeightSetData = historicalSetDataList.maxByOrNull { it.actualWeight }!!
-    val minRepsMaxWeightSetData = historicalSetDataList.filter { it.actualWeight == maxWeightSetData.actualWeight }.minByOrNull { it.actualReps }!!
-    val max1RM = getOneRepMax(minRepsMaxWeightSetData.actualWeight, minRepsMaxWeightSetData.actualReps)
-
-    val current1RM = getOneRepMax(currentSet.actualWeight, currentSet.actualReps)*/
-
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
-    LaunchedEffect(currentSet) {
-        state.currentSetData = currentSet
+    LaunchedEffect(currentSetData) {
+        state.currentSetData = currentSetData
     }
 
     LaunchedEffect(isInEditMode) {
@@ -177,9 +160,9 @@ fun WeightSetScreen (
 
     fun onMinusClick(){
         updateInteractionTime()
-        if (isRepsInEditMode && (currentSet.actualReps > 1)){
-            currentSet = currentSet.copy(
-                actualReps = currentSet.actualReps-1
+        if (isRepsInEditMode && (currentSetData.actualReps > 1)){
+            currentSetData = currentSetData.copy(
+                actualReps = currentSetData.actualReps-1
             )
 
             VibrateGentle(context)
@@ -189,7 +172,7 @@ fun WeightSetScreen (
                 if (it > 0) {
                     selectedWeightIndex = it - 1
 
-                    currentSet = currentSet.copy(
+                    currentSetData = currentSetData.copy(
                         actualWeight = availableWeights!!.elementAt(selectedWeightIndex!!)
                     )
                 }
@@ -203,8 +186,8 @@ fun WeightSetScreen (
     fun onPlusClick(){
         updateInteractionTime()
         if (isRepsInEditMode){
-            currentSet = currentSet.copy(
-                actualReps = currentSet.actualReps+1
+            currentSetData = currentSetData.copy(
+                actualReps = currentSetData.actualReps+1
             )
 
             VibrateGentle(context)
@@ -214,8 +197,8 @@ fun WeightSetScreen (
                 if (it < availableWeights!!.size - 1) {
                     selectedWeightIndex = it + 1
 
-                    currentSet = currentSet.copy(
-                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!)
+                    currentSetData = currentSetData.copy(
+                        actualWeight = availableWeights!!.elementAt(selectedWeightIndex!!)
                     )
                 }
             }
@@ -242,7 +225,7 @@ fun WeightSetScreen (
                     },
                     onDoubleClick = {
                         if (isRepsInEditMode) {
-                            currentSet = currentSet.copy(
+                            currentSetData = currentSetData.copy(
                                 actualReps = previousSet.actualReps
                             )
 
@@ -259,7 +242,7 @@ fun WeightSetScreen (
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 Text(
-                    text = "${currentSet.actualReps}",
+                    text = "${currentSetData.actualReps}",
                     style = style,
                     textAlign = TextAlign.End
                 )
@@ -284,7 +267,7 @@ fun WeightSetScreen (
                         },
                         onDoubleClick = {
                             if (isWeightInEditMode) {
-                                currentSet = currentSet.copy(
+                                currentSetData = currentSetData.copy(
                                     actualWeight = previousSet.actualWeight
                                 )
 
@@ -300,11 +283,17 @@ fun WeightSetScreen (
                 horizontalArrangement = Arrangement.Center
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
+                var weight = if(equipment != null && equipment is Barbell){
+                    (currentSetData.actualWeight - equipment.barWeight) / equipmentVolumeMultiplier
+                }else{
+                    currentSetData.actualWeight / equipmentVolumeMultiplier
+                }
+
                 Text(
-                    text = if (currentSet.actualWeight % 1 == 0.0) {
-                        "${currentSet.actualWeight.toInt()}"
+                    text = if (weight % 1 == 0.0) {
+                        "${weight.toInt()}"
                     } else {
-                        "${currentSet.actualWeight}"
+                        "$weight"
                     },
                     style = style,
                     textAlign = TextAlign.End

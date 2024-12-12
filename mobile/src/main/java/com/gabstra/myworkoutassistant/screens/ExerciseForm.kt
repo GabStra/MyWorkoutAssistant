@@ -258,22 +258,6 @@ fun ExerciseForm(
                         )
                     }
 
-                    Text(
-                        text = "Volume Increase per Session (${volumeIncreasePercent.value.toInt()}%)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
-                    Slider(
-                        value = volumeIncreasePercent.value,
-                        onValueChange = { volumeIncreasePercent.value = it },
-                        valueRange = 0f..20f,
-                        steps = 19,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp)
-                    )
-
                     OutlinedButton(
                         onClick = {
                             // Reset to default values for the selected category
@@ -287,6 +271,24 @@ fun ExerciseForm(
                     }
                 }
             }
+        }
+
+        if(selectedExerciseType.value == ExerciseType.WEIGHT || selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
+            Text(
+                text = "Volume Increase per Session (${volumeIncreasePercent.value.toInt()}%)",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Slider(
+                value = volumeIncreasePercent.value,
+                onValueChange = { volumeIncreasePercent.value = it },
+                valueRange = 0f..20f,
+                steps = 19,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            )
         }
 
         if(selectedExerciseType.value == ExerciseType.BODY_WEIGHT){

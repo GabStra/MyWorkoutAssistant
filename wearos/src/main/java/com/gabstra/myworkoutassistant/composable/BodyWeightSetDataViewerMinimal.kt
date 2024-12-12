@@ -15,18 +15,27 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
-fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
+fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, equipment: Equipment?, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
     if(bodyWeightSetData.additionalWeight != 0.0){
-        val weightText = if (bodyWeightSetData.additionalWeight % 1 == 0.0) {
-            "${bodyWeightSetData.additionalWeight.toInt()}"
-        } else {
-            "${bodyWeightSetData.additionalWeight}"
+        val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
+
+        var weight = if(equipment != null && equipment is Barbell){
+            (bodyWeightSetData.additionalWeight - equipment.barWeight) / equipmentVolumeMultiplier
+        }else{
+            bodyWeightSetData.additionalWeight / equipmentVolumeMultiplier
         }
 
+        val weightText = if (weight % 1 == 0.0) {
+            "${weight.toInt()}"
+        } else {
+            "$weight"
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center){
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){

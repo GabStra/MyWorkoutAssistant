@@ -83,6 +83,10 @@ fun NextExerciseInfo(
     val exercise = viewModel.exercisesById[state.exerciseId]!!
     val exerciseSets = exercise.sets.filter { it !is RestSet }
 
+    val equipment = remember(exercise) {
+        viewModel.getEquipmentById(exercise.equipmentId!!)
+    }
+
     val setIndex = exerciseSets.indexOf(state.set)
 
     var marqueeEnabled by remember { mutableStateOf(false) }
@@ -90,7 +94,7 @@ fun NextExerciseInfo(
     val exerciseSetStates = remember(state) { viewModel.getAllExerciseWorkoutStates(state.exerciseId).filter { it.set !is RestSet } }
 
     val nextSetStates = remember (exerciseSetStates, setIndex) {
-        exerciseSetStates.filterIndexed { index, _ -> index > setIndex }
+        exerciseSetStates.filterIndexed { index, _ -> index >= setIndex }
     }
 
     Column(
@@ -134,28 +138,39 @@ fun NextExerciseInfo(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+
             for(nextSetState in nextSetStates) {
-                when (nextSetState.set) {
-                    is WeightSet -> WeightSetDataViewerMinimal(
-                        nextSetState.currentSetData as WeightSetData
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        text = "${exerciseSetStates.indexOf(nextSetState) + 1}",
+                        style = MaterialTheme.typography.body1,
+                        textAlign = TextAlign.Center
                     )
+                    when (nextSetState.set) {
+                        is WeightSet -> WeightSetDataViewerMinimal(
+                            nextSetState.currentSetData as WeightSetData,
+                            equipment = equipment
+                        )
 
-                    is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                        nextSetState.currentSetData as BodyWeightSetData
-                    )
+                        is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                            nextSetState.currentSetData as BodyWeightSetData,
+                            equipment = equipment
+                        )
 
-                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                        nextSetState.currentSetData as TimedDurationSetData
-                    )
+                        is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                            nextSetState.currentSetData as TimedDurationSetData
+                        )
 
-                    is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                        nextSetState.currentSetData as EnduranceSetData
-                    )
+                        is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                            nextSetState.currentSetData as EnduranceSetData
+                        )
 
-                    is RestSet -> {
-                        throw RuntimeException("RestSet should not be here")
+                        is RestSet -> {
+                            throw RuntimeException("RestSet should not be here")
+                        }
                     }
                 }
             }

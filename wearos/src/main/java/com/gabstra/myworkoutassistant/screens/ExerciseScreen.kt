@@ -287,7 +287,7 @@ fun PageExerciseDetail(
     onScrollEnabledChange: (Boolean) -> Unit,
     exerciseTitleComposable:  @Composable () -> Unit,
 ) {
-    val extraInfoComposable: @Composable (WorkoutState.Set) -> Unit = {state ->
+    /*val extraInfoComposable: @Composable (WorkoutState.Set) -> Unit = {state ->
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center
@@ -300,7 +300,7 @@ fun PageExerciseDetail(
                 is RestSet -> throw IllegalStateException("Rest set should not be here")
             }
         }
-    }
+    }*/
 
     if(updatedState.set is RestSet || updatedState.currentSetData is RestSetData || updatedState.previousSetData is RestSetData){
         throw IllegalStateException("Rest set should not be here")

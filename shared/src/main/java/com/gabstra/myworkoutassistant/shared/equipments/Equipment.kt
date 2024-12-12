@@ -6,7 +6,8 @@ abstract class Equipment(
     val id : UUID,
     val additionalPlates: List<Plate>,
     val maxAdditionalItems: Int,
-    val type: EquipmentType
+    val type: EquipmentType,
+    val volumeMultiplier: Double = 1.0
 ) {
     abstract val name: String
 
@@ -37,7 +38,7 @@ abstract class Equipment(
             if (combination.size >= maxAdditionalItems) return
 
             for (i in plates.indices) {
-                combine(plates.subList(i + 1, plates.size), combination + plates[i], sum + plates[i].weight)
+                combine(plates.subList(i + 1, plates.size), combination + plates[i], sum + (plates[i].weight*volumeMultiplier))
             }
         }
 

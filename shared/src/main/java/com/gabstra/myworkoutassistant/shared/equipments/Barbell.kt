@@ -7,9 +7,11 @@ class Barbell(
     override val name: String,
     val availablePlates: List<Plate>, // List of available plates
     val barLength: Int, // Total length of the bar in mm
+    val barWeight: Double, // Weight of the bar in kg
     additionalPlates: List<Plate> = emptyList(),
-    maxAdditionalItems: Int = 0
-) : Equipment(id,additionalPlates, maxAdditionalItems, EquipmentType.BARBELL) {
+    maxAdditionalItems: Int = 0,
+    volumeMultiplier: Double = 1.0,
+) : Equipment(id,additionalPlates, maxAdditionalItems, EquipmentType.BARBELL, volumeMultiplier) {
 
     override fun calculateBaseCombinations(): Set<Double> {
         val combinations = mutableSetOf<Double>()
@@ -20,11 +22,11 @@ class Barbell(
                 combinations.add(sum)
             }
             for (i in plates.indices) {
-                combine(plates.subList(i + 1, plates.size), combination + plates[i], sum + plates[i].weight)
+                combine(plates.subList(i + 1, plates.size), combination + plates[i], sum + (plates[i].weight*volumeMultiplier))
             }
         }
 
-        combine(availablePlates, emptyList(), 0.0)
+        combine(availablePlates, emptyList(), barWeight)
         return combinations.toSet()
     }
 }

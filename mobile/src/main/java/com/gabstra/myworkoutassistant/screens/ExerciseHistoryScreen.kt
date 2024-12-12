@@ -2,14 +2,11 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -121,7 +118,7 @@ fun ExerciseHistoryScreen(
 
             val volumes = mutableListOf<Pair<Int, Double>>()
             val durations = mutableListOf<Pair<Int, Float>>()
-            val oneRepMaxs = mutableListOf<Pair<Int, Double>>()
+            val oneRepMaxes = mutableListOf<Pair<Int, Double>>()
             for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
                     workoutHistory.id,
@@ -132,16 +129,18 @@ fun ExerciseHistoryScreen(
 
                 var oneRepMax = 0.0
                 for (setHistory in setHistories) {
+                    val equipment = exercise?.equipmentId?.let { appViewModel.getEquipmentById(it) }
+
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
-                        volume += setData.actualReps * setData.actualWeight
-                        oneRepMax += getOneRepMax(setData.actualWeight, setData.actualReps)
+                        volume += setData.volume
+                        oneRepMax += getOneRepMax(setData.getWeight(equipment), setData.actualReps)
                     }
 
                     if (setHistory.setData is BodyWeightSetData) {
                         val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.actualReps * (setData.relativeBodyWeightInKg + setData.additionalWeight)
-                        oneRepMax += getOneRepMax((setData.relativeBodyWeightInKg + setData.additionalWeight), setData.actualReps)
+                        volume += setData.volume
+                        oneRepMax += getOneRepMax(setData.getWeight(equipment), setData.actualReps)
                     }
 
                     if (setHistory.setData is TimedDurationSetData) {
@@ -159,7 +158,7 @@ fun ExerciseHistoryScreen(
 
                 if(oneRepMax > 0){
                     val avgOneRepMax = oneRepMax / setHistories.size
-                    oneRepMaxs.add(Pair(workoutHistories.indexOf(workoutHistory), avgOneRepMax))
+                    oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), avgOneRepMax))
                 }
 
             }
@@ -186,15 +185,15 @@ fun ExerciseHistoryScreen(
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
             }
 
-            if (oneRepMaxs.any { it.second != 0.0 }) {
-                if (oneRepMaxs.count() == 1) {
-                    oneRepMaxMarkerTarget = oneRepMaxs.last()
-                } else if (oneRepMaxs.count() > 1) {
-                    oneRepMaxMarkerTarget = oneRepMaxs.maxBy { it.second }
+            if (oneRepMaxes.any { it.second != 0.0 }) {
+                if (oneRepMaxes.count() == 1) {
+                    oneRepMaxMarkerTarget = oneRepMaxes.last()
+                } else if (oneRepMaxes.count() > 1) {
+                    oneRepMaxMarkerTarget = oneRepMaxes.maxBy { it.second }
                 }
 
                 oneRepMaxEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build { series(*(oneRepMaxs.map { it.second }).toTypedArray()) })
+                    CartesianChartModel(LineCartesianLayerModel.build { series(*(oneRepMaxes.map { it.second }).toTypedArray()) })
             }
 
             isLoading = false

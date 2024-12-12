@@ -14,12 +14,14 @@ class EquipmentAdapter : JsonSerializer<Equipment>, JsonDeserializer<Equipment> 
             addProperty("name", src.name)
             addProperty("maxAdditionalItems", src.maxAdditionalItems)
             add("additionalPlates", context.serialize(src.additionalPlates))
+            addProperty("volumeMultiplier", src.volumeMultiplier)
             when (src) {
                 is Dumbbells -> {
                     add("dumbbells", context.serialize(src.availableDumbbells))
                 }
                 is Barbell -> {
                     add("plates", context.serialize(src.availablePlates))
+                    addProperty("barWeight",src.barWeight)
                     addProperty("barLength", src.barLength)
                 }
             }
@@ -40,13 +42,16 @@ class EquipmentAdapter : JsonSerializer<Equipment>, JsonDeserializer<Equipment> 
             emptyList()
         }
 
+        val volumeMultiplier = if(obj.has("volumeMultiplier")){  obj.get("volumeMultiplier").asDouble } else{ 1.0 }
+
         return when (EquipmentType.valueOf(obj.get("type").asString)) {
             EquipmentType.DUMBBELLS -> Dumbbells(
                 id = id,
                 name = name,
                 availableDumbbells = context.deserialize(obj.get("dumbbells"), dumbbellListType),
                 additionalPlates = additionalPlates,
-                maxAdditionalItems = maxAdditionalItems
+                maxAdditionalItems = maxAdditionalItems,
+                volumeMultiplier = volumeMultiplier
             )
 
             EquipmentType.BARBELL -> Barbell(
@@ -55,7 +60,9 @@ class EquipmentAdapter : JsonSerializer<Equipment>, JsonDeserializer<Equipment> 
                 availablePlates = context.deserialize(obj.get("plates"), plateListType),
                 barLength = obj.get("barLength").asInt,
                 additionalPlates = additionalPlates,
-                maxAdditionalItems = maxAdditionalItems
+                maxAdditionalItems = maxAdditionalItems,
+                barWeight = if(obj.has("barWeight")){  obj.get("barWeight").asDouble } else{ 0.0 },
+                volumeMultiplier = volumeMultiplier
             )
         }
     }

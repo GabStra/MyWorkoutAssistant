@@ -62,6 +62,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
@@ -89,6 +90,7 @@ import java.time.ZoneOffset
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 class MyReceiver(
     private val appViewModel: AppViewModel,
@@ -213,11 +215,12 @@ fun MyWorkoutAssistantNavHost(
 
     val updateMobileFlow = appViewModel.updateMobileFlow
 
-    LaunchedEffect(appViewModel.workouts) {
+    LaunchedEffect(appViewModel.workoutStore) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
     }
 
-    LaunchedEffect(appViewModel.equipments) {
+    val equipments by appViewModel.equipmentsFlow.collectAsState()
+    LaunchedEffect(equipments) {
         workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
     }
 
@@ -245,6 +248,10 @@ fun MyWorkoutAssistantNavHost(
                             }
 
                             workoutStoreRepository.saveWorkoutStore( appBackup.WorkoutStore.copy(workouts = allowedWorkouts))
+
+                            fun getEquipmentById(id: UUID): Equipment? {
+                                return appBackup.WorkoutStore.equipments.find { it.id == id }
+                            }
 
                             val deleteAndInsertJob = launch {
                                 workoutHistoryDao.deleteAll()
@@ -279,6 +286,8 @@ fun MyWorkoutAssistantNavHost(
                                 allExercises.forEach { exercise ->
                                     if(exercise.doNotStoreHistory) return@forEach
 
+                                    val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
+
                                     if(setHistoriesByExerciseId[exercise.id] == null) return@forEach
                                     val setHistories = setHistoriesByExerciseId[exercise.id]!!
 
@@ -290,34 +299,30 @@ fun MyWorkoutAssistantNavHost(
 
                                     validVolumeSetHistoriesGroups.forEach { (_, validVolumeSetHistories) ->
                                         val setDataList = validVolumeSetHistories.filter { setHistory -> setHistory.setData !is RestSetData }.map { setHistory -> setHistory.setData }
-
-                                        val firstSetData = setDataList.first()
-                                        val volume = when(firstSetData){
-                                            is BodyWeightSetData -> {
-                                                setDataList.sumOf {item -> (item as BodyWeightSetData).actualReps }.toDouble()
+                                        val volume = setDataList.sumOf {
+                                            when(it) {
+                                                is BodyWeightSetData -> it.volume
+                                                is WeightSetData ->  it.volume
+                                                else -> throw IllegalArgumentException("Unknown set type")
                                             }
-                                            is WeightSetData -> {
-                                                setDataList.sumOf { item ->
-                                                    val weightSetData = item as WeightSetData
-                                                    calculateVolume(weightSetData.actualWeight, weightSetData.actualReps).toDouble()
-                                                }
-                                            }
-                                            else -> throw IllegalArgumentException("Unknown set type")
                                         }
 
-                                        val avgOneRepMax = if(firstSetData is WeightSetData){
-                                            setDataList.sumOf { item ->
-                                                val weightSetData = item as WeightSetData
-                                                calculateOneRepMax(weightSetData.actualWeight, weightSetData.actualReps)
-                                            } / setDataList.size
-                                        }else{
-                                            setDataList.sumOf { item ->
-                                                val bodyWeightSetData = item as BodyWeightSetData
-                                                calculateOneRepMax(bodyWeightSetData.relativeBodyWeightInKg + bodyWeightSetData.additionalWeight, bodyWeightSetData.actualReps)
-                                            } / setDataList.size
-                                        }
+                                        val avgOneRepMax = (setDataList.sumOf {
+                                            when(it) {
+                                                is BodyWeightSetData -> calculateOneRepMax(it.getWeight(equipment), it.actualReps)
+                                                is WeightSetData -> calculateOneRepMax(it.getWeight(equipment), it.actualReps)
+                                                else -> throw IllegalArgumentException("Unknown set type")
+                                            }
+                                        }) / setDataList.size
 
-                                        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
+                                        val newExerciseInfo = ExerciseInfo(
+                                            id = exercise.id,
+                                            bestVolume = volume,
+                                            avgOneRepMax = avgOneRepMax
+                                        )
+                                        exerciseInfoDao.insert(newExerciseInfo)
+
+                                        /*val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
                                         if(exerciseInfo == null){
                                             val newExerciseInfo = ExerciseInfo(
                                                 id = exercise.id,
@@ -333,7 +338,7 @@ fun MyWorkoutAssistantNavHost(
                                             if(exerciseInfo.avgOneRepMax < avgOneRepMax){
                                                 exerciseInfoDao.updateAvgOneRepMax(exercise.id,avgOneRepMax)
                                             }
-                                        }
+                                        }*/
                                     }
                                 }
                             }
@@ -402,7 +407,7 @@ fun MyWorkoutAssistantNavHost(
                 onBackupClick = {
                     scope.launch {
                         try{
-                            val sdf = SimpleDateFormat("dd_MM_yyyy", Locale.getDefault())
+                           val sdf = SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.getDefault())
                             val currentDate = sdf.format(Date())
                             val filename = "my_workout_history_$currentDate.json"
 
@@ -421,7 +426,7 @@ fun MyWorkoutAssistantNavHost(
                             }
                             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
 
-                            val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories,exerciseInfos)
+                            val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = allowedWorkouts), validWorkoutHistories, setHistories,exerciseInfos)
                             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                             writeJsonToDownloadsFolder(context, filename, jsonString)
                             Toast.makeText(
@@ -672,6 +677,8 @@ fun MyWorkoutAssistantNavHost(
                 selectedWorkout,
                 screenData.selectedExerciseId
             ) as Exercise
+
+            Log.d("EditExercise", "selectedExercise: $selectedExercise")
 
             ExerciseForm(
                 appViewModel,

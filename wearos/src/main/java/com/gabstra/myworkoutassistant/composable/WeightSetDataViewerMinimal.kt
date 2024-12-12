@@ -15,14 +15,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
-fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
-    val weightText = if (weightSetData.actualWeight % 1 == 0.0) {
-        "${weightSetData.actualWeight.toInt()}"
+fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, equipment: Equipment?, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
+    val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
+    var weight = if(equipment != null && equipment is Barbell){
+        (weightSetData.actualWeight - equipment.barWeight) / equipmentVolumeMultiplier
+    }else{
+        weightSetData.actualWeight / equipmentVolumeMultiplier
+    }
+
+    val weightText = if (weight % 1 == 0.0) {
+        "${weight.toInt()}"
     } else {
-        "${weightSetData.actualWeight}"
+        "$weight"
     }
 
 

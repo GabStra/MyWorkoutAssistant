@@ -32,11 +32,13 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             is WeightSetData -> {
                 jsonObject.addProperty("actualReps", src.actualReps)
                 jsonObject.addProperty("actualWeight", src.actualWeight)
+                jsonObject.addProperty("volume", src.volume)
             }
             is BodyWeightSetData ->{
                 jsonObject.addProperty("actualReps", src.actualReps)
                 jsonObject.addProperty("additionalWeight", src.additionalWeight)
                 jsonObject.addProperty("relativeBodyWeightInKg", src.relativeBodyWeightInKg)
+                jsonObject.addProperty("volume", src.volume)
             }
             is TimedDurationSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
@@ -62,13 +64,15 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             "WeightSetData" -> {
                 val actualReps = jsonObject.get("actualReps").asInt
                 val actualWeight = jsonObject.get("actualWeight").asDouble
-                WeightSetData(actualReps, actualWeight)
+                val volume = if(jsonObject.has("volume")) jsonObject.get("volume").asDouble else 0.0
+                WeightSetData(actualReps, actualWeight, volume)
             }
             "BodyWeightSetData" -> {
                 val actualReps = jsonObject.get("actualReps").asInt
                 val additionalWeight = if(jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
                 val relativeBodyWeightInKg = if(jsonObject.has("relativeBodyWeightInKg")) jsonObject.get("relativeBodyWeightInKg").asDouble else 0.0
-                BodyWeightSetData(actualReps,additionalWeight,relativeBodyWeightInKg)
+                val volume =  if(jsonObject.has("volume")) jsonObject.get("volume").asDouble else 0.0
+                BodyWeightSetData(actualReps,additionalWeight,relativeBodyWeightInKg,volume)
             }
             "TimedDurationSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt

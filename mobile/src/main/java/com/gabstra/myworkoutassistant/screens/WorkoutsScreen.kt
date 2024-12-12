@@ -547,8 +547,8 @@ fun WorkoutsScreen(
                             IconButton(onClick = {
                                 val newEquipments = selectedEquipments.map { it ->
                                     when (it) {
-                                        is Barbell -> Barbell(UUID.randomUUID(), it.name + " (Copy)", it.availablePlates, it.barLength, it.additionalPlates, it.maxAdditionalItems)
-                                        is Dumbbells -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", it.availableDumbbells, it.additionalPlates, it.maxAdditionalItems)
+                                        is Barbell -> Barbell(UUID.randomUUID(), it.name + " (Copy)", it.availablePlates, it.barLength,it.barWeight, it.additionalPlates, it.maxAdditionalItems, it.volumeMultiplier)
+                                        is Dumbbells -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", it.availableDumbbells, it.additionalPlates, it.maxAdditionalItems, it.volumeMultiplier)
                                         else -> throw IllegalArgumentException("Unknown equipment type")
                                     }
                                 }

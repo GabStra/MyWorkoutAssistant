@@ -4,8 +4,12 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.TreeMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.ConcurrentSkipListMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
@@ -116,7 +120,268 @@ object VolumeDistributionHelper {
         return null
     }
 
+    fun scoreCombination(combination: List<ExerciseSet>, targetVolume: Double,maxWeight: Double): Double {
+        val totalVolume = combination.sumOf { it.volume }
+        val volumeDeviation = abs(totalVolume - targetVolume) / targetVolume
+
+        // If volume deviation is too high, return worst possible score
+        if (volumeDeviation > 0.02) return 0.0
+
+        // Calculate base score components (higher is better)
+        val volumeScore = 1.0 / (1.0 + volumeDeviation) // Approaches 1 as deviation approaches 0
+        val setScore = 1.0 / combination.size // Fewer sets = higher score
+        val fatigueScore = 1.0 / (1.0 + combination.sumOf { it.fatigue })
+
+        // Weight-related scores
+        val averageWeight = combination.map { it.weight }.average()
+        val weightLevelScore = if (maxWeight > 0) {
+            1.0 - (averageWeight / maxWeight)
+        } else 0.0
+
+        val weightDifferences = combination.zipWithNext().map { (a, b) ->
+            abs(a.weight - b.weight) / a.weight
+        }
+        val weightConsistencyScore = if (weightDifferences.isEmpty()) 1.0
+        else 1.0 / (1.0 + weightDifferences.average())
+
+        // Combine scores with weights to prioritize
+        return (volumeScore * 1000 +    // Highest priority: volume match
+                setScore * 100 +        // Second priority: fewer sets
+                fatigueScore * 100 +     // Third priority: lower fatigue
+                weightConsistencyScore * 100 + // Fourth priority: consistent weights
+                weightLevelScore * 100)    // Fifth priority: lower weights
+    }
+
+    object MemoryChunkCalculator {
+        private const val SAFETY_FACTOR = 0.7
+        private const val MIN_CHUNK_SIZE = 10
+        private val runtime = Runtime.getRuntime()
+
+        private fun estimateMemoryPerCombination(
+            sampleLeft: List<ExerciseSet>,
+            sampleRight: List<ExerciseSet>
+        ): Long {
+            val avgSetSize = maxOf(sampleLeft.size, sampleRight.size)
+            return (16 + 24 + 8 * avgSetSize + 16).toLong()
+        }
+
+        fun calculateChunkSize(
+            leftCombinations: List<Pair<Double, List<ExerciseSet>>>,
+            rightSorted: List<Pair<Double, List<ExerciseSet>>>
+        ): Int {
+            val availableProcessors = runtime.availableProcessors()
+            val maxMemory = runtime.maxMemory()
+            val freeMemory = runtime.freeMemory()
+            val availableMemory = (maxMemory - (maxMemory - freeMemory)) * SAFETY_FACTOR
+
+            val sampleLeft = leftCombinations.firstOrNull()?.second ?: emptyList()
+            val sampleRight = rightSorted.firstOrNull()?.second ?: emptyList()
+            val memoryPerCombination = estimateMemoryPerCombination(sampleLeft, sampleRight)
+            val maxCombinationsInMemory = availableMemory / memoryPerCombination
+            val memoryBasedChunkSize = maxCombinationsInMemory / availableProcessors
+            val cpuBasedChunkSize = maxOf(1, leftCombinations.size / (availableProcessors * 2))
+
+            return maxOf(
+                MIN_CHUNK_SIZE,
+                minOf(
+                    memoryBasedChunkSize.toInt(),
+                    cpuBasedChunkSize,
+                    leftCombinations.size
+                )
+            )
+        }
+    }
+
     private suspend fun findBestCombination(
+        sets: List<ExerciseSet>,
+        targetVolume: Double,
+        timeoutSeconds: Long = 30
+    ): List<ExerciseSet> = coroutineScope {
+        if (sets.isEmpty() || sets.sumOf { it.volume } < targetVolume) {
+            Log.d("WorkoutViewModel", "Total volume is less than target")
+            return@coroutineScope emptyList()
+        }
+
+        val maxWeight = sets.maxOfOrNull { it.weight }?.takeIf { it > 0 } ?: 0.0
+        val validSets = sets.sortedWith(compareBy<ExerciseSet> { it.weight }.thenBy { it.reps })
+        val sortedVolumes = validSets.map { it.volume }.sortedDescending()
+
+        class Combination(private val capacity: Int) {
+            private val indices = IntArray(capacity)
+            private var size = 0
+
+            fun add(index: Int) {
+                indices[size++] = index
+            }
+
+            fun removeLast() {
+                size--
+            }
+
+            fun size() = size
+
+            fun getVolume(sets: List<ExerciseSet>): Double {
+                var volume = 0.0
+                for (i in 0 until size) {
+                    volume += sets[indices[i]].volume
+                }
+                return volume
+            }
+
+            fun toList(): IntArray = indices.copyOf(size)
+        }
+
+        val mutex = Mutex()
+        var bestCombination = IntArray(0)
+        var bestScore = 0.0
+
+        fun scoreCombination(indices: Combination): Double {
+            val totalVolume = indices.getVolume(validSets)
+            val volumeDeviation = abs(totalVolume - targetVolume) / targetVolume
+
+            if (volumeDeviation > 0.02) return 0.0
+
+            val volumeScore = 1.0 / (1.0 + volumeDeviation)
+            val setScore = 1.0 / indices.size()
+
+            var totalFatigue = 0.0
+            var totalWeight = 0.0
+            var lastVolume = 0.0
+            var volumeDiffSum = 0.0
+            var volumeDiffCount = 0
+
+            val list = indices.toList()
+            for (i in 0 until indices.size()) {
+                val set = validSets[list[i]]
+                totalFatigue += set.fatigue
+                totalWeight += set.weight
+
+                if (i > 0) {
+                    volumeDiffSum += abs(set.volume - lastVolume) / lastVolume
+                    volumeDiffCount++
+                }
+                lastVolume = set.volume
+            }
+
+            val fatigueScore = 1.0 / (1.0 + totalFatigue)
+            val weightLevelScore = if (maxWeight > 0) {
+                1.0 - (totalWeight / indices.size() / maxWeight)
+            } else 0.0
+
+            val volumeConsistencyScore = if (volumeDiffCount > 0) {
+                1.0 / (1.0 + volumeDiffSum / volumeDiffCount)
+            } else 1.0
+
+            return (volumeScore * 100 +
+                    setScore * 100 +
+                    fatigueScore * 100 +
+                    weightLevelScore * 100 +
+                    volumeConsistencyScore * 100)
+        }
+
+        suspend fun processState(combination: Combination) {
+            val combinationScore = scoreCombination(combination)
+            mutex.withLock {
+                if (combinationScore > bestScore) {
+                    bestScore = combinationScore
+                    bestCombination = combination.toList()
+                }
+            }
+        }
+
+        suspend fun backtrack(
+            start: Int,
+            currentCombination: Combination,
+            remainingVolume: Double,
+            scope: CoroutineScope
+        ) {
+            if (currentCombination.size() >= 3) {
+                processState(currentCombination)
+            }
+
+            if (currentCombination.size() == 6) {
+                return
+            }
+
+            val slotsLeft = 6 - currentCombination.size()
+            if (slotsLeft > 0) {
+                val bestPossibleVolume = sortedVolumes.firstOrNull() ?: 0.0
+                val maxPossibleVolume = bestPossibleVolume * slotsLeft
+
+                if (maxPossibleVolume + currentCombination.getVolume(validSets) < targetVolume * 0.98) {
+                    return
+                }
+            }
+
+            for (i in start until validSets.size) {
+                if (!scope.isActive) return
+
+                val nextSet = validSets[i]
+
+                if (nextSet.volume > remainingVolume) {
+                    continue
+                }
+
+                if (currentCombination.size() > 0) {
+                    val lastSet =
+                        validSets[currentCombination.toList()[currentCombination.size() - 1]]
+                    if (nextSet.weight == lastSet.weight && nextSet.reps > lastSet.reps) {
+                        continue
+                    }
+                }
+
+                currentCombination.add(i)
+
+                backtrack(
+                    start = i,
+                    currentCombination = currentCombination,
+                    remainingVolume = remainingVolume - nextSet.volume,
+                    scope = scope
+                )
+
+                currentCombination.removeLast()
+            }
+        }
+
+        val runtime = Runtime.getRuntime()
+        val maxMemoryBytes = runtime.maxMemory()
+        val usedMemoryBytes = runtime.totalMemory() - runtime.freeMemory()
+        val availableMemoryBytes = maxMemoryBytes - usedMemoryBytes
+        val safeMemoryBytes = availableMemoryBytes * 0.9
+        val estimatedBytesPerJob = 0.25 * 1024 * 1024
+
+        val maxJobsByMemory = (safeMemoryBytes / estimatedBytesPerJob).toInt()
+        val maxJobsByCPU = runtime.availableProcessors()
+        val maxParallelJobs = minOf(maxJobsByMemory, maxJobsByCPU).coerceAtLeast(1)
+
+        val batchSize = maxOf(1, validSets.size / maxParallelJobs)
+        val supervisorJob = SupervisorJob()
+        val scope = CoroutineScope(Dispatchers.IO + supervisorJob)
+
+        try {
+            withTimeoutOrNull(timeoutSeconds * 1000) {
+                coroutineScope {
+                    (0 until validSets.size step batchSize).map { startIndex ->
+                        launch(scope.coroutineContext) {
+                            backtrack(
+                                start = startIndex,
+                                currentCombination = Combination(6),
+                                remainingVolume = targetVolume,
+                                scope = scope
+                            )
+                        }
+                    }.joinAll()
+                }
+            }
+        } finally {
+            supervisorJob.cancelAndJoin()
+        }
+
+        // Convert best indices back to ExerciseSet list
+        return@coroutineScope bestCombination.map { validSets[it] }.reversed()
+    }
+
+   /* private suspend fun findBestCombination(
         sets: List<ExerciseSet>,
         targetVolume: Double
     ): List<ExerciseSet> = coroutineScope {
@@ -128,11 +393,7 @@ object VolumeDistributionHelper {
 
         val maxWeight = sets.maxOfOrNull { it.weight }?.takeIf { it > 0 } ?: 0.0
 
-        val volumePerSetMap = (3..6).associateWith { targetVolume / it }
-
         val validSets = sets.sortedWith(compareBy<ExerciseSet> { it.weight }.thenBy { it.reps })
-
-        Log.d("WorkoutViewModel", "Sets to check: ${validSets.size} out of ${sets.size}")
 
         val mutex = Mutex()
         val exploredStates = ConcurrentHashMap.newKeySet<Long>()
@@ -243,7 +504,7 @@ object VolumeDistributionHelper {
 
                 backtrack(i, currentCombination, scope)
 
-                /*if(currentCombination.size >=3){
+                *//*if(currentCombination.size >=3){
                     val desiredVolumePerSet = volumePerSetMap[currentCombination.size]!!
 
                     val lowerRangeVolumePerSet = desiredVolumePerSet * 0.9
@@ -257,7 +518,7 @@ object VolumeDistributionHelper {
                 }else{
                     backtrack(i, currentCombination, scope)
                 }
-*/
+*//*
                 currentCombination.removeAt(currentCombination.lastIndex)
             }
         }
@@ -300,7 +561,7 @@ object VolumeDistributionHelper {
             }
 
             // Simple timeout handling
-            if (withTimeoutOrNull(60_000) { allJobs.joinAll() } == null) {
+            if (withTimeoutOrNull(30_000) { allJobs.joinAll() } == null) {
                 // Timeout occurred
                 supervisorJob.cancel()
             }
@@ -312,7 +573,7 @@ object VolumeDistributionHelper {
         }
 
         bestCombination.reversed()
-    }
+    }*/
 
     private suspend fun findSolution(params: WeightExerciseParameters): DistributedWorkout? {
         val possibleSets = generatePossibleSets(params)

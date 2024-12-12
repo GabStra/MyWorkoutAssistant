@@ -46,6 +46,10 @@ fun BarbellForm(
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(barbell?.name ?: "") }
     val barLengthState = remember { mutableStateOf(barbell?.barLength?.toString() ?: "") }
+    val barWeightState = remember { mutableStateOf(barbell?.barWeight?.toString() ?: "") }
+
+    val volumeMultiplierState = remember { mutableStateOf(barbell?.volumeMultiplier?.toString() ?: "") }
+
     val maxAdditionalItemsState = remember { mutableStateOf((barbell?.maxAdditionalItems ?: 0).toString()) }
 
     // State for plates
@@ -86,6 +90,32 @@ fun BarbellForm(
                 }
             },
             label = { Text("Bar Length (mm)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        // Bar weight field
+        OutlinedTextField(
+            value = barWeightState.value,
+            onValueChange = {
+                if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                    barWeightState.value = it
+                }
+            },
+            label = { Text("Bar Weight (kg)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        // Volume Multiplier field
+        OutlinedTextField(
+            value = volumeMultiplierState.value,
+            onValueChange = {
+                if (it.isEmpty() || it.all { char -> char.isDigit() || char == '.' }) {
+                    volumeMultiplierState.value = it
+                }
+            },
+            label = { Text("Volume Multiplier") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth()
         )
@@ -205,7 +235,9 @@ fun BarbellForm(
                     availablePlates = availablePlatesState.value,
                     barLength = barLengthState.value.toIntOrNull() ?: 0,
                     additionalPlates = additionalPlatesState.value,
-                    maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0
+                    maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0,
+                    barWeight = barWeightState.value.toDoubleOrNull() ?: 0.0,
+                    volumeMultiplier = volumeMultiplierState.value.toDoubleOrNull() ?: 1.0
                 )
                 onBarbellUpsert(newBarbell)
             },

@@ -117,6 +117,18 @@ class AppViewModel() : ViewModel() {
     private val _workoutsFlow = MutableStateFlow(workoutStore.workouts)
     val workoutsFlow = _workoutsFlow.asStateFlow()
 
+    fun getEquipmentById(equipmentId: UUID): Equipment? {
+        return equipments.find { it.id == equipmentId }
+    }
+
+    fun getWorkoutById(workoutId: UUID): Workout? {
+        return workouts.find { it.id == workoutId }
+    }
+
+    fun getExerciseById(workout: Workout, exerciseId: UUID): Exercise? {
+        return workout.workoutComponents.find { it.id == exerciseId && it is Exercise } as Exercise?
+    }
+
     var workouts: List<Workout>
         get() = workoutStore.workouts
         private set(value) {

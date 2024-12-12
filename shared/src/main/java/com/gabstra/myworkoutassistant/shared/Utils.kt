@@ -141,8 +141,8 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
 }
 
 fun initializeSetData(set: Set): SetData = when (set) {
-    is WeightSet -> WeightSetData(set.reps, set.weight)
-    is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0)
+    is WeightSet -> WeightSetData(set.reps, set.weight,0.0)
+    is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds)
