@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.DistributedWorkout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -79,7 +80,8 @@ sealed class WorkoutState {
         val hasNoHistory: Boolean,
         var skipped: Boolean,
         val targetZone: Int? = null,
-        val currentBodyWeight: Double
+        val currentBodyWeight: Double,
+        val plateChange: PlateCalculator.Companion.PlateChange? = null
     ) : WorkoutState()
     data class Rest(
         var set: com.gabstra.myworkoutassistant.shared.sets.Set,
@@ -1149,9 +1151,22 @@ class AppViewModel : ViewModel(){
         if(exercise.sets.isEmpty()) return
 
         val distributedWorkout = if(distributedWorkoutByExerciseIdMap.containsKey(exercise.id)) distributedWorkoutByExerciseIdMap[exercise.id] else null
+
+        val distributedSets = distributedWorkout?.first?.sets
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        val equipment =  exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
+        val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
+
+        val plateChanges = mutableListOf<PlateCalculator.Companion.PlateChange>()
+
+        if(equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT && distributedSets != null){
+            val setWeights = distributedSets.map { it.weight }.toList()
+            val plateWeights = equipment.availablePlates.map { it.weight }.toList()
+
+            try{
+                plateChanges.addAll(PlateCalculator.calculatePlateChanges(plateWeights,setWeights,equipment.barWeight))
+            }catch (_: Exception){}
+        }
 
         for ((index, set) in exercise.sets.withIndex()) {
             if(set is RestSet){
@@ -1179,7 +1194,6 @@ class AppViewModel : ViewModel(){
                     }
                 }
 
-                val distributedSets = distributedWorkout?.first?.sets
                 distributedSets?.getOrNull(exerciseSets.indexOf(set))?.let { distributedSet ->
                     currentSetData = when (exercise.exerciseType) {
                         ExerciseType.BODY_WEIGHT -> {
@@ -1205,7 +1219,11 @@ class AppViewModel : ViewModel(){
                 }
 
                 val previousSetData = copySetData(currentSetData)
-                val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index.toUInt(),previousSetData, currentSetData,historySet == null,false,exercise.targetZone,bodyWeight.value)
+
+                val exerciseIndex = exerciseSets.indexOf(set)
+                val plateChange = plateChanges.getOrNull(exerciseIndex)
+
+                val setState: WorkoutState.Set = WorkoutState.Set(exercise.id,set,index.toUInt(),previousSetData, currentSetData,historySet == null,false,exercise.targetZone,bodyWeight.value,plateChange)
                 workoutStateQueue.addLast(setState)
                 setStates.addLast(setState)
                 allWorkoutStates.add(setState)

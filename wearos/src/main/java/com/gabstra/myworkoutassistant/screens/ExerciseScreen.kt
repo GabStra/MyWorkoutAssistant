@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.PagerState
@@ -61,6 +63,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -72,6 +75,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 
 @Composable
@@ -162,22 +166,22 @@ fun SimplifiedHorizontalPager(
         userScrollEnabled = allowHorizontalScrolling
     ) { page ->
         when (page) {
-            0 -> PageExerciseDetail(
+            0 -> PagePlates(updatedState,exercise,viewModel)
+            1 -> PageExerciseDetail(
                 updatedState = updatedState,
                 viewModel = viewModel,
                 onScrollEnabledChange = { onScrollEnabledChange(it) },
                 exerciseTitleComposable = exerciseTitleComposable
             )
-            1 -> PageCompleteOrSkip(pagerState,updatedState,viewModel)
-            2 -> PageNewSets(pagerState,updatedState,viewModel)
-            3 -> PageNotes(exercise.notes)
+            2 -> PageCompleteOrSkip(updatedState,viewModel)
+            3 -> PageNewSets(updatedState,viewModel)
+            4 -> PageNotes(exercise.notes)
         }
     }
 }
 
 @Composable
 fun PageCompleteOrSkip(
-    pagerState: PagerState,
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel
 ) {
@@ -192,10 +196,6 @@ fun PageCompleteOrSkip(
     LaunchedEffect(updatedState) {
         showConfirmDialog = false
         showGoBackDialog = false
-    }
-
-    LaunchedEffect(pagerState.currentPage) {
-        listState.scrollToItem(0)
     }
 
     Scaffold(
@@ -322,7 +322,9 @@ fun PageExerciseDetail(
 fun PageNotes(notes: String) {
     val scrollState = rememberScrollState()
     Box(
-        modifier = Modifier.fillMaxSize().padding(top=10.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 10.dp)
     ) {
         Text(
             modifier = Modifier.fillMaxSize(),
@@ -348,18 +350,114 @@ fun PageNotes(notes: String) {
 }
 
 @Composable
+fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: AppViewModel) {
+    val equipment = remember(exercise) {
+        viewModel.getEquipmentById(exercise.equipmentId!!)
+    }
+
+    val scrollState = rememberScrollState()
+    Column(
+        modifier =
+        Modifier.fillMaxSize()
+        .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "Plates Helper",
+            style = MaterialTheme.typography.body1,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (equipment == null || equipment !is Barbell || updatedState.plateChange == null) {
+            Text(
+                text = "NOT AVAILABLE",
+                style = MaterialTheme.typography.body1,
+                textAlign = TextAlign.Center
+            )
+        } else {
+            if (updatedState.plateChange.remove.isEmpty() && updatedState.plateChange.add.isEmpty()) {
+                Text(
+                    text = "No changes needed",
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.body1,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    if (updatedState.plateChange.remove.isNotEmpty()) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally // Add this
+                        ) {
+                            Text(
+                                text = "Remove",
+                                style = MaterialTheme.typography.body1,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(5.dp))
+                            updatedState.plateChange.remove.forEach { plate ->
+                                val text = if (plate % 1 == 0.0) {
+                                    "${plate.toInt()}"
+                                } else {
+                                    "$plate"
+                                }
+
+                                Text(
+                                    text = text,
+                                    style = MaterialTheme.typography.body1,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                    }
+
+                    if (updatedState.plateChange.add.isNotEmpty()) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally // Add this
+                        ) {
+                            Text(
+                                text = "Add",
+                                style = MaterialTheme.typography.body1,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(5.dp))
+                            updatedState.plateChange.add.forEach { plate ->
+                                val text = if (plate % 1 == 0.0) {
+                                    "${plate.toInt()}"
+                                } else {
+                                    "$plate"
+                                }
+
+                                Text(
+                                    text = text,
+                                    style = MaterialTheme.typography.body1,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun PageNewSets(
-    pagerState: PagerState,
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel
 ){
     val context = LocalContext.current
 
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
-
-    LaunchedEffect(pagerState.currentPage) {
-        listState.scrollToItem(0);
-    }
 
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
     val exerciseSets = exercise.sets
@@ -436,18 +534,18 @@ fun ExerciseScreen(
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
-        4
+        5
     })
 
     LaunchedEffect(state.set.id) {
-        pagerState.scrollToPage(0)
+        pagerState.scrollToPage(1)
         allowHorizontalScrolling = true
         viewModel.closeSkipDialog()
     }
 
     LaunchedEffect(allowHorizontalScrolling) {
         if (!allowHorizontalScrolling && pagerState.currentPage != 0) {
-            pagerState.scrollToPage(0)
+            pagerState.scrollToPage(1)
         }
     }
 

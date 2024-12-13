@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 fun KeepOn(
     appViewModel: AppViewModel,
     enableDimming: Boolean = true, // Parameter to control dimming
-    dimDelay: Long = 15000L, // Delay before dimming the screen
+    dimDelay: Long = 30000L, // Delay before dimming the screen
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
