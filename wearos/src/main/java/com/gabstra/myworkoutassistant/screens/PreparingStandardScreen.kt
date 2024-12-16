@@ -58,11 +58,6 @@ fun PreparingStandardScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
-    val staticKey = remember { Any() }
-    LaunchedEffect(staticKey){
-        showWorkoutInProgressNotification(context)
-    }
-
     LaunchedEffect(Unit){
         scope.launch {
             while (true) {

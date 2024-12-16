@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -41,7 +42,9 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -73,10 +76,31 @@ fun WeightSetScreen (
         exercise.equipmentId?.let { viewModel.getEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() }
     }
 
-    val closestWeight = availableWeights?.minByOrNull { kotlin.math.abs(it - currentSetData.actualWeight) }
-    val closestWeightIndex = availableWeights?.indexOf(closestWeight)
+    val equipment = remember(exercise) {
+        if(exercise.equipmentId != null) {
+            viewModel.getEquipmentById(exercise.equipmentId!!)
+        } else null
+    }
 
-    var selectedWeightIndex by remember { mutableStateOf(closestWeightIndex) }
+    val equipmentVolumeMultiplier = remember(equipment) {
+        equipment?.volumeMultiplier ?: 1.0
+    }
+
+    var closestWeight by remember { mutableStateOf<Double?>(null) }
+    var closestWeightIndex by remember { mutableStateOf<Int?>(null) }
+    var selectedWeightIndex by remember { mutableStateOf<Int?>(null) }
+
+    val cumulativeWeight = remember(currentSetData,equipment){
+        currentSetData.getWeight(equipment)
+    }
+
+    LaunchedEffect(currentSetData,availableWeights,cumulativeWeight) {
+        withContext(Dispatchers.IO) {
+            closestWeight = availableWeights?.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
+            closestWeightIndex = availableWeights?.indexOf(closestWeight)
+            selectedWeightIndex = closestWeightIndex
+        }
+    }
 
     val sets = remember(exercise) {
         exercise.sets.filter { it !is RestSet }
@@ -90,12 +114,12 @@ fun WeightSetScreen (
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.exerciseId)
     }
 
-    val equipment = remember(exercise) {
-        viewModel.getEquipmentById(exercise.equipmentId!!)
-    }
 
-    val equipmentVolumeMultiplier = remember(equipment) {
-        equipment?.volumeMultiplier ?: 1.0
+    LaunchedEffect(equipment) {
+        Log.d("WorkoutViewModel", "Equipment: $equipment VolumeMultiplier: ${equipment?.volumeMultiplier}")
+        if(equipment != null && equipment is Barbell){
+            Log.d("WorkoutViewModel", "Barbell: ${equipment.barWeight}")
+        }
     }
 
     val historicalSetDataList = remember(state.exerciseId,state.set.id) {
@@ -172,8 +196,14 @@ fun WeightSetScreen (
                 if (it > 0) {
                     selectedWeightIndex = it - 1
 
+                    val newActualWeight = if(equipment is Barbell){
+                        (availableWeights!!.elementAt(selectedWeightIndex!!) - equipment.barWeight) / equipmentVolumeMultiplier
+                    }else{
+                        availableWeights!!.elementAt(selectedWeightIndex!!)/ equipmentVolumeMultiplier
+                    }
+
                     currentSetData = currentSetData.copy(
-                        actualWeight = availableWeights!!.elementAt(selectedWeightIndex!!)
+                        actualWeight = newActualWeight
                     )
                 }
             }
@@ -197,8 +227,14 @@ fun WeightSetScreen (
                 if (it < availableWeights!!.size - 1) {
                     selectedWeightIndex = it + 1
 
+                    val newActualWeight = if(equipment is Barbell){
+                        (availableWeights!!.elementAt(selectedWeightIndex!!) - equipment.barWeight) / equipmentVolumeMultiplier
+                    }else{
+                        availableWeights!!.elementAt(selectedWeightIndex!!)/ equipmentVolumeMultiplier
+                    }
+
                     currentSetData = currentSetData.copy(
-                        actualWeight = availableWeights!!.elementAt(selectedWeightIndex!!)
+                        actualWeight = newActualWeight
                     )
                 }
             }
@@ -283,11 +319,11 @@ fun WeightSetScreen (
                 horizontalArrangement = Arrangement.Center
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
-                var weight = if(equipment != null && equipment is Barbell){
-                    (currentSetData.actualWeight - equipment.barWeight) / equipmentVolumeMultiplier
-                }else{
-                    currentSetData.actualWeight / equipmentVolumeMultiplier
-                }
+                val weight = currentSetData.actualWeight
+
+                Log.d("WorkoutViewModel", "Actual weight: ${currentSetData.actualWeight}")
+
+                Log.d("WorkoutViewModel", "Weight: $weight")
 
                 Text(
                     text = if (weight % 1 == 0.0) {

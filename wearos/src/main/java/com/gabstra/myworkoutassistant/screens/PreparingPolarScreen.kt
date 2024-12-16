@@ -60,11 +60,6 @@ fun PreparingPolarScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
-    val staticKey = remember { Any() }
-    LaunchedEffect(staticKey){
-        showWorkoutInProgressNotification(context)
-    }
-
     LaunchedEffect(Unit){
         if(viewModel.polarDeviceId.isEmpty()){
             Toast.makeText(context, "No polar device id set", Toast.LENGTH_SHORT).show()

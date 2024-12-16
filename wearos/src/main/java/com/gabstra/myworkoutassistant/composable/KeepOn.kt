@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun KeepOn(
     appViewModel: AppViewModel,
-    enableDimming: Boolean = true, // Parameter to control dimming
+    enableDimming: Boolean = true, // Parameter to control dimmingadb connect 192.168.1.82
     dimDelay: Long = 30000L, // Delay before dimming the screen
     content: @Composable () -> Unit
 ) {

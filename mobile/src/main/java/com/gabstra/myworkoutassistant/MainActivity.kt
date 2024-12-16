@@ -247,7 +247,7 @@ fun MyWorkoutAssistantNavHost(
                                 workout.isActive || (!workout.isActive && appBackup.WorkoutHistories.any { it.workoutId == workout.id })
                             }
 
-                            workoutStoreRepository.saveWorkoutStore( appBackup.WorkoutStore.copy(workouts = allowedWorkouts))
+                            val newWorkoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
 
                             fun getEquipmentById(id: UUID): Equipment? {
                                 return appBackup.WorkoutStore.equipments.find { it.id == id }
@@ -322,7 +322,7 @@ fun MyWorkoutAssistantNavHost(
                                         )
                                         exerciseInfoDao.insert(newExerciseInfo)
 
-                                        /*val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
+                                        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
                                         if(exerciseInfo == null){
                                             val newExerciseInfo = ExerciseInfo(
                                                 id = exercise.id,
@@ -338,7 +338,7 @@ fun MyWorkoutAssistantNavHost(
                                             if(exerciseInfo.avgOneRepMax < avgOneRepMax){
                                                 exerciseInfoDao.updateAvgOneRepMax(exercise.id,avgOneRepMax)
                                             }
-                                        }*/
+                                        }
                                     }
                                 }
                             }
@@ -346,7 +346,8 @@ fun MyWorkoutAssistantNavHost(
                             // Wait for the delete and insert operations to complete
                             deleteAndInsertJob.join()
 
-                            appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+                            appViewModel.updateWorkoutStore(newWorkoutStore)
+                            workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
                             appViewModel.triggerUpdate()
 
                             // Show the success toast after all operations are complete
@@ -407,7 +408,7 @@ fun MyWorkoutAssistantNavHost(
                 onBackupClick = {
                     scope.launch {
                         try{
-                           val sdf = SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.getDefault())
+                            val sdf = SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.getDefault())
                             val currentDate = sdf.format(Date())
                             val filename = "my_workout_history_$currentDate.json"
 

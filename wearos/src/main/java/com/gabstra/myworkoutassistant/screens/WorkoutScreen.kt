@@ -35,6 +35,7 @@ import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -53,6 +54,12 @@ fun WorkoutScreen(
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
     val isResuming by viewModel.isResuming.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+
+    val triggerMobileNotification by viewModel.enableWorkoutNotificationFlow.collectAsState()
+
+    LaunchedEffect(triggerMobileNotification){
+        showWorkoutInProgressNotification(context)
+    }
 
     @Composable
     fun heartRateChartComposable(targetZone: Int? = null){

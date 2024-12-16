@@ -352,7 +352,7 @@ fun PageNotes(notes: String) {
 @Composable
 fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: AppViewModel) {
     val equipment = remember(exercise) {
-        viewModel.getEquipmentById(exercise.equipmentId!!)
+        if(exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
     }
 
     val scrollState = rememberScrollState()

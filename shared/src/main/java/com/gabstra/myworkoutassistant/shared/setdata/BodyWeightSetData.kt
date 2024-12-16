@@ -8,7 +8,7 @@ data class BodyWeightSetData(val actualReps: Int, val additionalWeight:Double, v
     fun getWeight(equipment: Equipment?): Double {
         if(equipment != null){
             if(equipment is Barbell){
-                return equipment.barWeight + (relativeBodyWeightInKg + (additionalWeight*equipment.volumeMultiplier))
+                return equipment.barWeight + relativeBodyWeightInKg + (additionalWeight*equipment.volumeMultiplier)
             }
 
             return (relativeBodyWeightInKg + (additionalWeight*equipment.volumeMultiplier))

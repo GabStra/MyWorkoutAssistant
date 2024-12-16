@@ -80,7 +80,7 @@ fun BodyWeightSetScreen(
     }
 
     val equipment = remember(exercise) {
-        viewModel.getEquipmentById(exercise.equipmentId!!)
+        if(exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
     }
 
     val equipmentVolumeMultiplier = remember(equipment) {
@@ -112,20 +112,21 @@ fun BodyWeightSetScreen(
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
 
-    var availableWeights by remember { mutableStateOf<Set<Double>>(emptySet()) }
     var closestWeight by remember { mutableStateOf<Double?>(null) }
     var closestWeightIndex by remember { mutableStateOf<Int?>(null) }
     var selectedWeightIndex by remember { mutableStateOf<Int?>(null) }
 
-    LaunchedEffect(exercise) {
-        withContext(Dispatchers.IO) {
-            availableWeights = exercise.equipmentId?.let {
-                viewModel.getEquipmentById(it)?.calculatePossibleCombinations()
-            } ?: emptySet()
+    val availableWeights = remember(exercise) {
+        exercise.equipmentId?.let { viewModel.getEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() } ?: emptySet()
+    }
 
-            closestWeight = availableWeights.minByOrNull {
-                kotlin.math.abs(it - currentSetData.additionalWeight)
-            }
+    val cumulativeWeight = remember(currentSetData,equipment){
+        currentSetData.getWeight(equipment)
+    }
+
+    LaunchedEffect(currentSetData,availableWeights,cumulativeWeight) {
+        withContext(Dispatchers.IO) {
+            closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
             closestWeightIndex = availableWeights.indexOf(closestWeight)
             selectedWeightIndex = closestWeightIndex
         }
@@ -298,11 +299,7 @@ fun BodyWeightSetScreen(
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
 
-                var weight = if(equipment != null && equipment is Barbell){
-                    (currentSetData.additionalWeight - equipment.barWeight) / equipmentVolumeMultiplier
-                }else{
-                    currentSetData.additionalWeight / equipmentVolumeMultiplier
-                }
+                val weight = currentSetData.additionalWeight
 
                 Text(
                     text = if (weight % 1 == 0.0) {
