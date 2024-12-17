@@ -410,7 +410,8 @@ class AppViewModel : ViewModel(){
         }
     }
 
-  /*private suspend fun generateProgressions() {
+
+/*  private suspend fun generateProgressions() {
         distributedWorkoutByExerciseIdMap.clear()
 
         val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
@@ -431,7 +432,6 @@ class AppViewModel : ViewModel(){
             }
         }
     }*/
-
 
     public fun getAllExerciseWorkoutStates(exerciseId: UUID): List<WorkoutState.Set> {
         return allWorkoutStates.filter { it is WorkoutState.Set }.filter { (it as WorkoutState.Set).exerciseId == exerciseId }.filterIsInstance<WorkoutState.Set>()
@@ -528,7 +528,7 @@ class AppViewModel : ViewModel(){
     }
 
 
-   private suspend fun generateProgressions() {
+    private suspend fun generateProgressions() {
         distributedWorkoutByExerciseIdMap.clear()
 
         val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
@@ -560,6 +560,8 @@ class AppViewModel : ViewModel(){
         val equipment =  exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
         val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
 
+
+
         var totalVolume = 0.0
         var avg1RM = 0.0
 
@@ -585,6 +587,32 @@ class AppViewModel : ViewModel(){
                     else -> 0.0
                 }
             }) / totalHistoricalSetDataList.size
+        }else{
+            val exerciseSets = exercise.sets.filter { it !is RestSet }
+
+            totalVolume = exerciseSets.sumOf {
+                when(it) {
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!!/100)
+                        it.getWeight(equipment,relativeBodyWeight)*it.reps
+                    }
+                    is WeightSet -> {
+                        it.getWeight(equipment)*it.reps
+                    }
+                    else -> 0.0
+                }
+            }
+
+            avg1RM = (exerciseSets.sumOf {
+                when(it) {
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!!/100)
+                        calculateOneRepMax(it.getWeight(equipment,relativeBodyWeight), it.reps)
+                    }
+                    is WeightSet ->calculateOneRepMax(it.getWeight(equipment), it.reps)
+                    else -> 0.0
+                }
+            }) / exerciseSets.size
         }
 
         if(totalVolume == 0.0 || avg1RM == 0.0) {

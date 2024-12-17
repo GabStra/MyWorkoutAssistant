@@ -4,6 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.lang.Math.pow
 import java.util.TreeMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -84,7 +85,8 @@ object VolumeDistributionHelper {
         val availableWeights: Set<Double>,
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
-        val fatigueFactor: Float
+        val fatigueFactor: Float,
+        val minimumVolumeDeviation: Double
     )
 
     data class BodyWeightExerciseParameters(
@@ -100,7 +102,8 @@ object VolumeDistributionHelper {
         availableWeights: Set<Double>,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
-        fatigueFactor: Float
+        fatigueFactor: Float,
+        minimumVolumeDeviation: Double = 0.0
     ): DistributedWorkout? {
 
         // Create base parameters
@@ -110,7 +113,8 @@ object VolumeDistributionHelper {
             availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
-            fatigueFactor = fatigueFactor
+            fatigueFactor = fatigueFactor,
+            minimumVolumeDeviation = minimumVolumeDeviation
         )
 
 
@@ -195,6 +199,7 @@ object VolumeDistributionHelper {
     private suspend fun findBestCombination(
         sets: List<ExerciseSet>,
         targetVolume: Double,
+        minimumVolumeDeviation: Double,
         timeoutSeconds: Long = 30
     ): List<ExerciseSet> = coroutineScope {
         if (sets.isEmpty() || sets.sumOf { it.volume } < targetVolume) {
@@ -204,7 +209,6 @@ object VolumeDistributionHelper {
 
         val maxWeight = sets.maxOfOrNull { it.weight }?.takeIf { it > 0 } ?: 0.0
         val validSets = sets.sortedWith(compareBy<ExerciseSet> { it.weight }.thenBy { it.reps })
-        val sortedVolumes = validSets.map { it.volume }.sortedDescending()
 
         class Combination(private val capacity: Int) {
             private val indices = IntArray(capacity)
@@ -239,7 +243,7 @@ object VolumeDistributionHelper {
             val totalVolume = indices.getVolume(validSets)
             val volumeDeviation = abs(totalVolume - targetVolume) / targetVolume
 
-            if (volumeDeviation > 0.02) return 0.0
+            if (volumeDeviation > minimumVolumeDeviation) return 0.0
 
             val volumeScore = 1.0 / (1.0 + volumeDeviation)
             val setScore = 1.0 / indices.size()
@@ -264,18 +268,22 @@ object VolumeDistributionHelper {
             }
 
             val fatigueScore = 1.0 / (1.0 + totalFatigue)
+
+            val averageWeight = totalWeight / indices.size()
             val weightLevelScore = if (maxWeight > 0) {
-                1.0 - (totalWeight / indices.size() / maxWeight)
+                // More aggressive exponential reward for lower weights
+                (1.0 - (averageWeight / maxWeight)).pow(8.0)
             } else 0.0
 
             val volumeConsistencyScore = if (volumeDiffCount > 0) {
                 1.0 / (1.0 + volumeDiffSum / volumeDiffCount)
             } else 1.0
 
-            return (volumeScore * 100 +
+
+            return (volumeScore * 200 +
+                    weightLevelScore * 200 +
                     setScore * 100 +
                     fatigueScore * 100 +
-                    weightLevelScore * 100 +
                     volumeConsistencyScore * 100)
         }
 
@@ -301,16 +309,6 @@ object VolumeDistributionHelper {
 
             if (currentCombination.size() == 6) {
                 return
-            }
-
-            val slotsLeft = 6 - currentCombination.size()
-            if (slotsLeft > 0) {
-                val bestPossibleVolume = sortedVolumes.firstOrNull() ?: 0.0
-                val maxPossibleVolume = bestPossibleVolume * slotsLeft
-
-                if (maxPossibleVolume + currentCombination.getVolume(validSets) < targetVolume * 0.98) {
-                    return
-                }
             }
 
             for (i in start until validSets.size) {
@@ -579,7 +577,7 @@ object VolumeDistributionHelper {
         val possibleSets = generatePossibleSets(params)
         if (possibleSets.isEmpty()) return null
 
-        val validSetCombination = findBestCombination(possibleSets, params.targetTotalVolume)
+        val validSetCombination = findBestCombination(possibleSets, params.targetTotalVolume,params.minimumVolumeDeviation)
         if (validSetCombination.isEmpty()) return null
 
         return DistributedWorkout(
@@ -818,19 +816,22 @@ object VolumeDistributionHelper {
             throw IllegalArgumentException("Percentage increase must be positive")
         }
 
-        val minimumRequiredVolume = currentVolume * (1 + (percentageIncrease / 100))
+        if(percentageIncrease >= 1){
+            val minimumRequiredVolume = currentVolume * (1 + (percentageIncrease / 100))
 
-        val solution = distributeVolume(
-            targetTotalVolume = minimumRequiredVolume,
-            oneRepMax = oneRepMax,
-            availableWeights = availableWeights,
-            percentLoadRange = percentLoadRange,
-            repsRange = repsRange,
-            fatigueFactor = fatigueFactor
-        )
+            val solution = distributeVolume(
+                targetTotalVolume = minimumRequiredVolume,
+                oneRepMax = oneRepMax,
+                availableWeights = availableWeights,
+                percentLoadRange = percentLoadRange,
+                repsRange = repsRange,
+                fatigueFactor = fatigueFactor,
+                minimumVolumeDeviation = (percentageIncrease / 100.0) - 0.01
+            )
 
-        if (solution != null) {
-            return solution
+            if (solution != null) {
+                return solution
+            }
         }
 
         val noIncreaseSolution = distributeVolume(
