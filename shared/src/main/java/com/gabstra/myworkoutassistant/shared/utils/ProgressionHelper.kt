@@ -149,11 +149,11 @@ object VolumeDistributionHelper {
         else 1.0 / (1.0 + weightDifferences.average())
 
         // Combine scores with weights to prioritize
-        return (volumeScore * 1000 +    // Highest priority: volume match
-                setScore * 100 +        // Second priority: fewer sets
-                fatigueScore * 100 +     // Third priority: lower fatigue
-                weightConsistencyScore * 100 + // Fourth priority: consistent weights
-                weightLevelScore * 100)    // Fifth priority: lower weights
+        return (volumeScore * 200 +
+                weightConsistencyScore * 200 + // Fourth priority: consistent weights
+                weightLevelScore * 200 +
+                setScore * 100 +
+                fatigueScore * 100 )
     }
 
     object MemoryChunkCalculator {
@@ -245,46 +245,41 @@ object VolumeDistributionHelper {
 
             if (volumeDeviation > minimumVolumeDeviation) return 0.0
 
-            val volumeScore = 1.0 / (1.0 + volumeDeviation)
-            val setScore = 1.0 / indices.size()
-
-            var totalFatigue = 0.0
             var totalWeight = 0.0
-            var lastVolume = 0.0
-            var volumeDiffSum = 0.0
-            var volumeDiffCount = 0
+            var maxSetWeight = 0.0
+            var minSetWeight = Double.MAX_VALUE
+            var maxReps = 0
+            var minReps = Int.MAX_VALUE
 
             val list = indices.toList()
             for (i in 0 until indices.size()) {
                 val set = validSets[list[i]]
-                totalFatigue += set.fatigue
                 totalWeight += set.weight
-
-                if (i > 0) {
-                    volumeDiffSum += abs(set.volume - lastVolume) / lastVolume
-                    volumeDiffCount++
-                }
-                lastVolume = set.volume
+                maxSetWeight = maxOf(maxWeight, set.weight)
+                minSetWeight = minOf(minSetWeight, set.weight)
+                maxReps = maxOf(maxReps, set.reps)
+                minReps = minOf(minReps, set.reps)
             }
 
-            val fatigueScore = 1.0 / (1.0 + totalFatigue)
-
             val averageWeight = totalWeight / indices.size()
-            val weightLevelScore = if (maxWeight > 0) {
-                // More aggressive exponential reward for lower weights
-                (1.0 - (averageWeight / maxWeight)).pow(8.0)
-            } else 0.0
 
-            val volumeConsistencyScore = if (volumeDiffCount > 0) {
-                1.0 / (1.0 + volumeDiffSum / volumeDiffCount)
-            } else 1.0
+            // Calculate consistency scores
 
 
-            return (volumeScore * 200 +
-                    weightLevelScore * 200 +
-                    setScore * 100 +
-                    fatigueScore * 100 +
-                    volumeConsistencyScore * 100)
+            // Scoring components
+            val volumeScore = 1.0 / (1.0 + volumeDeviation)
+            val weightScore = 1.0 / (1.0 + averageWeight)
+            val consistencyScore = if(maxWeight >0) {
+                val weightDisparity = (maxSetWeight - minSetWeight) / maxWeight
+                val repsDisparity = (maxReps - minReps) / maxReps.toDouble()
+                1.0 / (1.0 + weightDisparity + repsDisparity)
+            }else{
+                0.0
+            }
+
+            return (volumeScore * 400 +          // Volume matching is primary
+                    weightScore * 300 +          // Weight minimization is secondary
+                    consistencyScore * 300)      // Set consistency is equally important
         }
 
         suspend fun processState(combination: Combination) {
@@ -310,6 +305,11 @@ object VolumeDistributionHelper {
             if (currentCombination.size() == 6) {
                 return
             }
+
+
+            val maxPossibleSetVolume = validSets.subList(start, validSets.size).maxOf { it.volume }
+            val minPossibleVolume = remainingVolume - maxPossibleSetVolume * (6 - currentCombination.size())
+            if (minPossibleVolume > 0) return
 
             for (i in start until validSets.size) {
                 if (!scope.isActive) return

@@ -20,20 +20,14 @@ import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
-fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, equipment: Equipment?, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
-    val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
-    var weight = if(equipment != null && equipment is Barbell){
-        (weightSetData.actualWeight - equipment.barWeight) / equipmentVolumeMultiplier
-    }else{
-        weightSetData.actualWeight / equipmentVolumeMultiplier
-    }
+fun WeightSetDataViewerMinimal(weightSetData: WeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
+    val weight = weightSetData.actualWeight
 
     val weightText = if (weight % 1 == 0.0) {
         "${weight.toInt()}"
     } else {
         "$weight"
     }
-
 
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center){
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){

@@ -149,13 +149,11 @@ fun NextExerciseInfo(
                         )
                         when (nextSetState.set) {
                             is WeightSet -> WeightSetDataViewerMinimal(
-                                nextSetState.currentSetData as WeightSetData,
-                                equipment = equipment
+                                nextSetState.currentSetData as WeightSetData
                             )
 
                             is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                                nextSetState.currentSetData as BodyWeightSetData,
-                                equipment = equipment
+                                nextSetState.currentSetData as BodyWeightSetData
                             )
 
                             is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
