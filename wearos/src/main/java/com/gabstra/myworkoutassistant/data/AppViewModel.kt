@@ -411,7 +411,7 @@ class AppViewModel : ViewModel(){
     }
 
 
-/*  private suspend fun generateProgressions() {
+/*    private suspend fun generateProgressions() {
         distributedWorkoutByExerciseIdMap.clear()
 
         val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
@@ -528,14 +528,14 @@ class AppViewModel : ViewModel(){
     }
 
 
-    private suspend fun generateProgressions() {
+   private suspend fun generateProgressions() {
         distributedWorkoutByExerciseIdMap.clear()
 
         val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
             .filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }
             .filterIsInstance<Exercise>()
 
-        // Process exercises in parallel with a concurrency limit
+        // Process exercises in parallel
         val results = coroutineScope {
             exerciseWithWeightSets.map { exercise ->
                 async(Dispatchers.IO) {
@@ -559,8 +559,6 @@ class AppViewModel : ViewModel(){
 
         val equipment =  exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
         val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
-
-
 
         var totalVolume = 0.0
         var avg1RM = 0.0
@@ -634,11 +632,11 @@ class AppViewModel : ViewModel(){
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
 
-        Log.d("WorkoutViewModel","Available weights: $availableWeights")
-        Log.d("WorkoutViewModel","1RM: $avg1RM")
+        //Log.d("WorkoutViewModel","Available weights: $availableWeights")
+        //Log.d("WorkoutViewModel","1RM: $avg1RM")
 
-        val loadPercentageRange = if(exercise.exerciseType == ExerciseType.BODY_WEIGHT) Pair(1.0,100.0) else Pair(exercise.minLoadPercent, exercise.maxLoadPercent)
-        val repsRange  = if(exercise.exerciseType == ExerciseType.BODY_WEIGHT) IntRange(1,30) else IntRange(exercise.minReps, exercise.maxReps)
+        val loadPercentageRange =  Pair(0.0,95.0)
+        val repsRange  = IntRange(1,30)
 
         val distributedWorkout = VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
             totalVolume,
@@ -683,7 +681,7 @@ class AppViewModel : ViewModel(){
             }
             Log.d(
                 "WorkoutViewModel",
-                "volume $totalVolume to ${distributedWorkout.totalVolume} +${String.format("%.2f", ((distributedWorkout.totalVolume - totalVolume) / totalVolume) * 100)}%"
+                "Progression found - volume $totalVolume -> ${distributedWorkout.totalVolume} +${String.format("%.2f", ((distributedWorkout.totalVolume - totalVolume) / totalVolume) * 100)}%"
             )
         }else{
             Log.d("WorkoutViewModel","Failed to distribute volume for ${exercise.name}")
@@ -1178,22 +1176,28 @@ class AppViewModel : ViewModel(){
     private fun addStatesFromExercise(exercise: Exercise){
         if(exercise.sets.isEmpty()) return
 
+        val exerciseSets = exercise.sets.filter { it !is RestSet }
+        val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
+        val plateChanges = mutableListOf<PlateCalculator.Companion.PlateChange>()
         val distributedWorkout = if(distributedWorkoutByExerciseIdMap.containsKey(exercise.id)) distributedWorkoutByExerciseIdMap[exercise.id] else null
 
-        val distributedSets = distributedWorkout?.first?.sets
-        val exerciseSets = exercise.sets.filter { it !is RestSet }
+        if(equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT && distributedWorkout != null){
+            val distributedSets = distributedWorkout.first?.sets
+            if(distributedSets != null) {
+                val setWeights = distributedSets.map { it.weight }.toList()
+                val plateWeights = equipment.availablePlates.map { it.weight }.toList()
 
-        val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
-
-        val plateChanges = mutableListOf<PlateCalculator.Companion.PlateChange>()
-
-        if(equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT && distributedSets != null){
-            val setWeights = distributedSets.map { it.weight }.toList()
-            val plateWeights = equipment.availablePlates.map { it.weight }.toList()
-
-            try{
-                plateChanges.addAll(PlateCalculator.calculatePlateChanges(plateWeights,setWeights,equipment.barWeight))
-            }catch (_: Exception){}
+                try {
+                    plateChanges.addAll(
+                        PlateCalculator.calculatePlateChanges(
+                            plateWeights,
+                            setWeights,
+                            equipment.barWeight
+                        )
+                    )
+                } catch (_: Exception) {
+                }
+            }
         }
 
         for ((index, set) in exercise.sets.withIndex()) {
@@ -1214,13 +1218,6 @@ class AppViewModel : ViewModel(){
                 val historySet = if(exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
                 var currentSetData = initializeSetData(set)
 
-                if(historySet != null){
-                    val historySetData = historySet.setData
-                    if(isSetDataValid(set,historySetData)){
-                        currentSetData = historySet.setData
-                    }
-                }
-
                 if(currentSetData is BodyWeightSetData){
                     currentSetData = currentSetData.copy(
                         relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!!/100),
@@ -1230,7 +1227,17 @@ class AppViewModel : ViewModel(){
                     currentSetData =  currentSetData.copy(volume = currentSetData.calculateVolume(equipment))
                 }
 
-                val previousSetData = copySetData(currentSetData)
+                var previousSetData = copySetData(currentSetData)
+
+                if(historySet != null){
+                    val historySetData = historySet.setData
+                    if(isSetDataValid(set,historySetData)){
+                        if(distributedWorkout == null){
+                            currentSetData = copySetData(historySetData)
+                        }
+                        previousSetData = historySet.setData
+                    }
+                }
 
                 val plateChange = plateChanges.getOrNull(exerciseSets.indexOf(set))
 

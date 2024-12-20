@@ -12,6 +12,6 @@ class Dumbbells (
 ) : Equipment(id,additionalPlates, maxAdditionalItems, EquipmentType.DUMBBELLS,volumeMultiplier) {
 
     override fun calculateBaseCombinations(): Set<Double> {
-        return availableDumbbells.map { it.weight }.toSet()
+        return availableDumbbells.map { it.weight*volumeMultiplier }.toSet()
     }
 }

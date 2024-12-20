@@ -86,7 +86,7 @@ object VolumeDistributionHelper {
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
         val fatigueFactor: Float,
-        val minimumVolumeDeviation: Double
+        val minimumVolume: Double
     )
 
     data class BodyWeightExerciseParameters(
@@ -103,7 +103,7 @@ object VolumeDistributionHelper {
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
         fatigueFactor: Float,
-        minimumVolumeDeviation: Double = 0.0
+        minimumVolume: Double
     ): DistributedWorkout? {
 
         // Create base parameters
@@ -114,11 +114,9 @@ object VolumeDistributionHelper {
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
             fatigueFactor = fatigueFactor,
-            minimumVolumeDeviation = minimumVolumeDeviation
+            minimumVolume = minimumVolume
         )
 
-
-        Log.d("WorkoutViewModel", "Finding best combination for ${baseParams.targetTotalVolume}")
         // Try with original parameters first
         findSolution(baseParams)?.let { return it }
         return null
@@ -199,16 +197,19 @@ object VolumeDistributionHelper {
     private suspend fun findBestCombination(
         sets: List<ExerciseSet>,
         targetVolume: Double,
-        minimumVolumeDeviation: Double,
-        timeoutSeconds: Long = 30
+        minimumVolume: Double,
+        timeoutSeconds: Long = 90,
+        earlyExitSeconds: Long = 20  // Add parameter for early exit timeout
     ): List<ExerciseSet> = coroutineScope {
         if (sets.isEmpty() || sets.sumOf { it.volume } < targetVolume) {
             Log.d("WorkoutViewModel", "Total volume is less than target")
             return@coroutineScope emptyList()
         }
 
-        val maxWeight = sets.maxOfOrNull { it.weight }?.takeIf { it > 0 } ?: 0.0
-        val validSets = sets.sortedWith(compareBy<ExerciseSet> { it.weight }.thenBy { it.reps })
+        val validSets = sets.filter { it.volume < targetVolume }.sortedWith(compareBy<ExerciseSet> { it.weight }.thenBy { it.reps })
+
+        // Track time of last improvement
+        var lastImprovementTime = System.currentTimeMillis()
 
         class Combination(private val capacity: Int) {
             private val indices = IntArray(capacity)
@@ -237,49 +238,45 @@ object VolumeDistributionHelper {
 
         val mutex = Mutex()
         var bestCombination = IntArray(0)
-        var bestScore = 0.0
+        var bestScore = Double.MIN_VALUE
+        var hasValidCombination = false  // Add flag to track if we found any valid combination
 
         fun scoreCombination(indices: Combination): Double {
             val totalVolume = indices.getVolume(validSets)
+
+            if(totalVolume < minimumVolume) return Double.MIN_VALUE
+
             val volumeDeviation = abs(totalVolume - targetVolume) / targetVolume
 
-            if (volumeDeviation > minimumVolumeDeviation) return 0.0
-
-            var totalWeight = 0.0
-            var maxSetWeight = 0.0
-            var minSetWeight = Double.MAX_VALUE
-            var maxReps = 0
-            var minReps = Int.MAX_VALUE
-
             val list = indices.toList()
-            for (i in 0 until indices.size()) {
-                val set = validSets[list[i]]
-                totalWeight += set.weight
-                maxSetWeight = maxOf(maxWeight, set.weight)
-                minSetWeight = minOf(minSetWeight, set.weight)
-                maxReps = maxOf(maxReps, set.reps)
-                minReps = minOf(minReps, set.reps)
-            }
+            val combinationSets = list.map { validSets[it] }
 
-            val averageWeight = totalWeight / indices.size()
+            // Calculate min/max for reps and weights
+            val minReps = combinationSets.minOf { it.reps }
+            val maxReps = combinationSets.maxOf { it.reps }
 
-            // Calculate consistency scores
+            val repRatio = maxReps.toDouble() / minReps
 
+            val minSetWeight = combinationSets.minOf { it.weight }
+            val maxSetWeight = combinationSets.maxOf { it.weight }
 
-            // Scoring components
-            val volumeScore = 1.0 / (1.0 + volumeDeviation)
-            val weightScore = 1.0 / (1.0 + averageWeight)
-            val consistencyScore = if(maxWeight >0) {
-                val weightDisparity = (maxSetWeight - minSetWeight) / maxWeight
-                val repsDisparity = (maxReps - minReps) / maxReps.toDouble()
-                1.0 / (1.0 + weightDisparity + repsDisparity)
-            }else{
-                0.0
-            }
+            val weightRatio = maxSetWeight / minSetWeight
 
-            return (volumeScore * 400 +          // Volume matching is primary
-                    weightScore * 300 +          // Weight minimization is secondary
-                    consistencyScore * 300)      // Set consistency is equally important
+            val maxFatigue = combinationSets.maxOf { it.fatigue }
+            val minFatigue = combinationSets.minOf { it.fatigue }
+
+            val fatigueRatio = maxFatigue / minFatigue
+
+            val repPenalty = 1.0 - exp(-50.0 * (repRatio - 1.0))
+            val weightPenalty = 1.0 - exp(-50.0 * (weightRatio - 1.0))
+            val fatiguePenalty = 1.0 - exp(-100.0 * (fatigueRatio - 1.0))
+
+            val consistencyScore = 1.0 - maxOf(repPenalty, weightPenalty, fatiguePenalty)
+
+            // Calculate scores
+            val volumeScore = 1.0 / (1.0 + (volumeDeviation * 20))
+
+            return volumeScore * (consistencyScore * consistencyScore)
         }
 
         suspend fun processState(combination: Combination) {
@@ -288,8 +285,17 @@ object VolumeDistributionHelper {
                 if (combinationScore > bestScore) {
                     bestScore = combinationScore
                     bestCombination = combination.toList()
+                    hasValidCombination = true  // Set flag when we find a valid combination
+                    lastImprovementTime = System.currentTimeMillis()  // Reset timer on improvement
                 }
             }
+        }
+
+        fun checkEarlyExit(scope: CoroutineScope): Boolean {
+            if(!hasValidCombination) return false
+
+            val timeSinceImprovement = (System.currentTimeMillis() - lastImprovementTime) / 1000
+            return timeSinceImprovement >= earlyExitSeconds && scope.isActive
         }
 
         suspend fun backtrack(
@@ -298,6 +304,14 @@ object VolumeDistributionHelper {
             remainingVolume: Double,
             scope: CoroutineScope
         ) {
+            if(remainingVolume < 0) return
+
+            // Add early exit check
+            if (checkEarlyExit(scope)) {
+                scope.coroutineContext.cancelChildren()
+                return
+            }
+
             if (currentCombination.size() >= 3) {
                 processState(currentCombination)
             }
@@ -306,17 +320,25 @@ object VolumeDistributionHelper {
                 return
             }
 
+            val remainingSets = validSets.subList(start, validSets.size)
 
-            val maxPossibleSetVolume = validSets.subList(start, validSets.size).maxOf { it.volume }
+            val maxPossibleSetVolume = remainingSets.maxOf { it.volume }
             val minPossibleVolume = remainingVolume - maxPossibleSetVolume * (6 - currentCombination.size())
             if (minPossibleVolume > 0) return
+
+            if (currentCombination.size() < 3) {
+                val minSetVolume = remainingSets.minOf { it.volume }
+                if (minSetVolume * (3 - currentCombination.size()) > remainingVolume) {
+                    return
+                }
+            }
 
             for (i in start until validSets.size) {
                 if (!scope.isActive) return
 
                 val nextSet = validSets[i]
 
-                if (nextSet.volume > remainingVolume) {
+                if (remainingVolume - nextSet.volume < 0) {
                     continue
                 }
 
@@ -359,7 +381,7 @@ object VolumeDistributionHelper {
         try {
             withTimeoutOrNull(timeoutSeconds * 1000) {
                 coroutineScope {
-                    (0 until validSets.size step batchSize).map { startIndex ->
+                    (validSets.indices step batchSize).map { startIndex ->
                         launch(scope.coroutineContext) {
                             backtrack(
                                 start = startIndex,
@@ -577,7 +599,7 @@ object VolumeDistributionHelper {
         val possibleSets = generatePossibleSets(params)
         if (possibleSets.isEmpty()) return null
 
-        val validSetCombination = findBestCombination(possibleSets, params.targetTotalVolume,params.minimumVolumeDeviation)
+        val validSetCombination = findBestCombination(possibleSets, params.targetTotalVolume,params.minimumVolume)
         if (validSetCombination.isEmpty()) return null
 
         return DistributedWorkout(
@@ -826,7 +848,7 @@ object VolumeDistributionHelper {
                 percentLoadRange = percentLoadRange,
                 repsRange = repsRange,
                 fatigueFactor = fatigueFactor,
-                minimumVolumeDeviation = (percentageIncrease / 100.0) - 0.01
+                minimumVolume = currentVolume * 1.01
             )
 
             if (solution != null) {
@@ -840,7 +862,8 @@ object VolumeDistributionHelper {
             availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
-            fatigueFactor = fatigueFactor
+            fatigueFactor = fatigueFactor,
+            minimumVolume = currentVolume
         )
 
         return noIncreaseSolution

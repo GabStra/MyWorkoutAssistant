@@ -114,14 +114,6 @@ fun WeightSetScreen (
         bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.exerciseId)
     }
 
-
-    LaunchedEffect(equipment) {
-        Log.d("WorkoutViewModel", "Equipment: $equipment VolumeMultiplier: ${equipment?.volumeMultiplier}")
-        if(equipment != null && equipment is Barbell){
-            Log.d("WorkoutViewModel", "Barbell: ${equipment.barWeight}")
-        }
-    }
-
     val historicalSetDataList = remember(state.exerciseId,state.set.id) {
         viewModel.getHistoricalSetsDataByExerciseIdAndTakeUntilSetId<WeightSetData>(state.exerciseId, state.set.id)
     }
@@ -320,10 +312,6 @@ fun WeightSetScreen (
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 val weight = currentSetData.actualWeight
-
-                Log.d("WorkoutViewModel", "Actual weight: ${currentSetData.actualWeight}")
-
-                Log.d("WorkoutViewModel", "Weight: $weight")
 
                 Text(
                     text = if (weight % 1 == 0.0) {
