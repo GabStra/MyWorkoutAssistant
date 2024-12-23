@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -17,14 +18,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -35,14 +34,12 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.formatNumberWithUnit
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -61,53 +58,28 @@ fun BodyWeightSetScreen(
     val previousSet = state.previousSetData as BodyWeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
-    var bestTotalVolume by remember { mutableDoubleStateOf(0.0) }
 
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
-    }
-
-    val sets = remember(exercise) {
-        exercise.sets.filter { it !is RestSet }
-    }
-
-    val setIndex = remember(state.set.id) {
-        sets.indexOfFirst { it.id == state.set.id }
-    }
-
-    LaunchedEffect(state.exerciseId) {
-        bestTotalVolume = viewModel.getBestVolumeByExerciseId(state.exerciseId)
     }
 
     val equipment = remember(exercise) {
         if(exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
     }
 
-    val equipmentVolumeMultiplier = remember(equipment) {
-        equipment?.volumeMultiplier ?: 1.0
+    val totalHistoricalVolume = remember(state.exerciseId,state.set.id) {
+        val totalHistoricalSetDataList = viewModel.getHistoricalSetsDataByExerciseId<BodyWeightSetData>(state.exerciseId)
+        totalHistoricalSetDataList.sumOf { it.volume }
     }
 
-    val historicalSetDataList = remember(state.exerciseId,state.set.id) {
-        viewModel.getHistoricalSetsDataByExerciseIdAndTakeUntilSetId<BodyWeightSetData>(state.exerciseId, state.set.id)
-    }
-
-    val previousVolumeUpToNow = remember(historicalSetDataList,equipmentVolumeMultiplier) {
-        historicalSetDataList.sumOf { it.volume }
-    }
-
-    val executedSetDataList = remember(state.exerciseId,state.set.id) {
-        viewModel.getExecutedSetsDataByExerciseIdAndTakeUntilSetId<BodyWeightSetData>(state.exerciseId, state.set.id)
-    }
-
-    val executedVolume = remember(executedSetDataList,equipmentVolumeMultiplier) {
+    val executedVolume = remember(state.exerciseId,state.set.id)  {
+        val executedSetDataList = viewModel.getExecutedSetsDataByExerciseIdAndTakePriorToSetId<BodyWeightSetData>(state.exerciseId, state.set.id)
         executedSetDataList.sumOf { it.volume }
     }
 
     val currentTotalVolume =  currentSetData.volume + executedVolume
 
-    val bestVolumeProgress = remember(bestTotalVolume,currentTotalVolume) {
-        if (bestTotalVolume != 0.0) currentTotalVolume / bestTotalVolume else 0.0
-    }
+    val historicalVolumeProgression = if (totalHistoricalVolume != 0.0) currentTotalVolume / totalHistoricalVolume else 0.0
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
@@ -342,6 +314,7 @@ fun BodyWeightSetScreen(
         }
     }
 
+    @SuppressLint("DefaultLocale")
     @Composable
     fun SetScreen(customModifier: Modifier) {
         Column(
@@ -369,19 +342,30 @@ fun BodyWeightSetScreen(
                 RepsRow(Modifier)
             }
 
-            if(bestVolumeProgress > 0){
+            if(historicalVolumeProgression > 0){
                 Spacer(modifier = Modifier.height(10.dp))
-                val progressColorBar = when {
-                    currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
-                    currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
-                    else -> MyColors.Green
+                val progressColorBar = if(historicalVolumeProgression<1) {
+                    MyColors.Orange
+                }else{
+                    MyColors.Green
                 }
 
                 TrendComponentProgressBarWithMarker(
                     modifier = Modifier.fillMaxWidth(),
                     label = "Vol:",
-                    ratio = bestVolumeProgress,
+                    ratio = historicalVolumeProgression,
                     progressBarColor = progressColorBar,
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                val currentVolume = historicalVolumeProgression * totalHistoricalVolume
+
+                Text(
+                    text = formatNumberWithUnit(currentVolume),
+                    style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign  = TextAlign.Center
                 )
             }
         }

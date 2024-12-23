@@ -206,12 +206,12 @@ fun TrendComponentProgressBarWithMarker(
                 .replace(".0%", "%")
         }
 
-       if(ratio != 0.0){
+       if(ratio > 1.0){
             val displayText = formatRatio(ratio)
             Text(
                 text = displayText,
                 style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
-                color = if(ratio>1) MyColors.Green else MyColors.Red
+                color = MyColors.Green
             )
         }
     }

@@ -108,9 +108,7 @@ object VolumeDistributionHelper {
         fatigueFactor: Float,
         minimumVolume: Double
     ): DistributedWorkout? {
-
-        // Create base parameters
-        val baseParams = WeightExerciseParameters(
+        val params = WeightExerciseParameters(
             targetTotalVolume = targetTotalVolume,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
@@ -120,81 +118,26 @@ object VolumeDistributionHelper {
             minimumVolume = minimumVolume
         )
 
-        // Try with original parameters first
-        findSolution(baseParams)?.let { return it }
-        return null
-    }
+        val possibleSets = generatePossibleSets(params)
+        if (possibleSets.isEmpty()) return null
 
-    fun scoreCombination(combination: List<ExerciseSet>, targetVolume: Double,maxWeight: Double): Double {
-        val totalVolume = combination.sumOf { it.volume }
-        val volumeDeviation = abs(totalVolume - targetVolume) / targetVolume
-
-        // If volume deviation is too high, return worst possible score
-        if (volumeDeviation > 0.02) return 0.0
-
-        // Calculate base score components (higher is better)
-        val volumeScore = 1.0 / (1.0 + volumeDeviation) // Approaches 1 as deviation approaches 0
-        val setScore = 1.0 / combination.size // Fewer sets = higher score
-        val fatigueScore = 1.0 / (1.0 + combination.sumOf { it.fatigue })
-
-        // Weight-related scores
-        val averageWeight = combination.map { it.weight }.average()
-        val weightLevelScore = if (maxWeight > 0) {
-            1.0 - (averageWeight / maxWeight)
-        } else 0.0
-
-        val weightDifferences = combination.zipWithNext().map { (a, b) ->
-            abs(a.weight - b.weight) / a.weight
-        }
-        val weightConsistencyScore = if (weightDifferences.isEmpty()) 1.0
-        else 1.0 / (1.0 + weightDifferences.average())
-
-        // Combine scores with weights to prioritize
-        return (volumeScore * 200 +
-                weightConsistencyScore * 200 + // Fourth priority: consistent weights
-                weightLevelScore * 200 +
-                setScore * 100 +
-                fatigueScore * 100 )
-    }
-
-    object MemoryChunkCalculator {
-        private const val SAFETY_FACTOR = 0.7
-        private const val MIN_CHUNK_SIZE = 10
-        private val runtime = Runtime.getRuntime()
-
-        private fun estimateMemoryPerCombination(
-            sampleLeft: List<ExerciseSet>,
-            sampleRight: List<ExerciseSet>
-        ): Long {
-            val avgSetSize = maxOf(sampleLeft.size, sampleRight.size)
-            return (16 + 24 + 8 * avgSetSize + 16).toLong()
+        var validSetCombination = findBestCombination(possibleSets, params.targetTotalVolume,params.minimumVolume)
+        if (validSetCombination.isEmpty()) {
+            val newPossibleSets = generatePossibleSets(params.copy(percentLoadRange = Pair(0.0,95.0), repsRange =  IntRange(1,30)))
+            val newSets = newPossibleSets.filter { it !in possibleSets }
+            if(newSets.isNotEmpty()){
+                validSetCombination = findBestCombination(newPossibleSets, params.targetTotalVolume,params.minimumVolume)
+            }
         }
 
-        fun calculateChunkSize(
-            leftCombinations: List<Pair<Double, List<ExerciseSet>>>,
-            rightSorted: List<Pair<Double, List<ExerciseSet>>>
-        ): Int {
-            val availableProcessors = runtime.availableProcessors()
-            val maxMemory = runtime.maxMemory()
-            val freeMemory = runtime.freeMemory()
-            val availableMemory = (maxMemory - (maxMemory - freeMemory)) * SAFETY_FACTOR
-
-            val sampleLeft = leftCombinations.firstOrNull()?.second ?: emptyList()
-            val sampleRight = rightSorted.firstOrNull()?.second ?: emptyList()
-            val memoryPerCombination = estimateMemoryPerCombination(sampleLeft, sampleRight)
-            val maxCombinationsInMemory = availableMemory / memoryPerCombination
-            val memoryBasedChunkSize = maxCombinationsInMemory / availableProcessors
-            val cpuBasedChunkSize = maxOf(1, leftCombinations.size / (availableProcessors * 2))
-
-            return maxOf(
-                MIN_CHUNK_SIZE,
-                minOf(
-                    memoryBasedChunkSize.toInt(),
-                    cpuBasedChunkSize,
-                    leftCombinations.size
-                )
-            )
-        }
+        return DistributedWorkout(
+            sets = validSetCombination,
+            totalVolume = validSetCombination.sumOf { it.volume },
+            totalFatigue = validSetCombination.sumOf { it.fatigue },
+            usedOneRepMax = params.oneRepMax,
+            maxRepsUsed = validSetCombination.maxOf { it.reps },
+            averageFatiguePerSet = validSetCombination.sumOf { it.fatigue } / validSetCombination.size
+        )
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -202,7 +145,7 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         targetVolume: Double,
         minimumVolume: Double,
-        timeoutSeconds: Long = 60,
+        timeoutSeconds: Long = 90,
     ): List<ExerciseSet> = coroutineScope {
         if (sets.isEmpty() || sets.sumOf { it.volume } < targetVolume) {
             Log.d("WorkoutViewModel", "Total volume is less than target")
@@ -365,6 +308,8 @@ object VolumeDistributionHelper {
 
             withTimeoutOrNull(timeoutSeconds * 1000) {
                 val channel = Channel<Int>(Channel.RENDEZVOUS)
+                val completedIndices = AtomicInteger(0)
+                val totalIndices = validSets.indices.count()
 
                 scope.launch {
                     validSets.indices.forEach { channel.send(it) }
@@ -393,6 +338,7 @@ object VolumeDistributionHelper {
                                             scope = scope
                                         )
 
+                                        completedIndices.incrementAndGet()
                                         startNewConsumerIfPossible()
                                     }
                                 } finally {
@@ -405,17 +351,12 @@ object VolumeDistributionHelper {
                     }
                 }
 
-                // Start initial consumers
                 repeat(currentMaxJobs) {
                     startNewConsumerIfPossible()
                 }
 
-                // Wait for all jobs to complete
-                while (!channel.isClosedForReceive || runningJobs.isNotEmpty()) {
-                    if (channel.isClosedForReceive && runningJobs.all { it.isCompleted }) {
-                        break
-                    }
-                    delay(100)
+                while (completedIndices.get() < totalIndices) {
+                    delay(250)
                 }
             }
         } finally {
@@ -619,29 +560,6 @@ object VolumeDistributionHelper {
 
         bestCombination.reversed()
     }*/
-
-    private suspend fun findSolution(params: WeightExerciseParameters): DistributedWorkout? {
-        val possibleSets = generatePossibleSets(params)
-        if (possibleSets.isEmpty()) return null
-
-        var validSetCombination = findBestCombination(possibleSets, params.targetTotalVolume,params.minimumVolume)
-        if (validSetCombination.isNullOrEmpty()) {
-            val newPossibleSets = generatePossibleSets(params.copy(percentLoadRange = Pair(0.0,95.0), repsRange =  IntRange(1,30)))
-            val newSets = newPossibleSets.filter { it !in possibleSets }
-            if(newSets.isNotEmpty()){
-                validSetCombination = findBestCombination(newPossibleSets, params.targetTotalVolume,params.minimumVolume)
-            }
-        }
-
-        return DistributedWorkout(
-            sets = validSetCombination,
-            totalVolume = validSetCombination.sumOf { it.volume },
-            totalFatigue = validSetCombination.sumOf { it.fatigue },
-            usedOneRepMax = params.oneRepMax,
-            maxRepsUsed = validSetCombination.maxOf { it.reps },
-            averageFatiguePerSet = validSetCombination.sumOf { it.fatigue } / validSetCombination.size
-        )
-    }
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {

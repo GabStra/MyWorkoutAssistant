@@ -7,7 +7,6 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -1131,11 +1130,10 @@ class AppViewModel : ViewModel(){
             .mapNotNull { it.setData as? T }
     }
 
-    inline fun <reified T : SetData> getExecutedSetsDataByExerciseIdAndTakeUntilSetId(exerciseId: UUID, setId: UUID): List<T> {
+    inline fun <reified T : SetData> getExecutedSetsDataByExerciseIdAndTakePriorToSetId(exerciseId: UUID, setId: UUID): List<T> {
         return executedSetsHistory
             .filter { it.exerciseId == exerciseId }
             .takeWhile { it.setId != setId }
-            .plus(executedSetsHistory.filter{  it.exerciseId == exerciseId && it.id == setId })
             .mapNotNull { it.setData as? T }
     }
 

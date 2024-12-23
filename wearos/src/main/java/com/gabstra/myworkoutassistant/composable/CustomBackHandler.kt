@@ -15,32 +15,30 @@ import com.gabstra.myworkoutassistant.data.VibrateGentle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun CustomBackHandler(
     enabled: Boolean = true,
     onSinglePress: () -> Unit,
     onDoublePress: () -> Unit,
-    doublePressDuration: Long = 400L,
+    doublePressDuration: Long = 300L,
 ) {
-    // Track the last back press time
     var lastBackPressTime by remember { mutableLongStateOf(0L) }
-
-    // Track whether we're currently in a potential double-press window
     var isInDoublePressPeriod by remember { mutableStateOf(false) }
-
-    // Coroutine scope for delayed operations
     val scope = rememberCoroutineScope()
+    var pendingJob by remember { mutableStateOf<Job?>(null) }
 
-    // Jobs for both single and double press handlers
-    var singlePressJob by remember { mutableStateOf<Job?>(null) }
-    var doublePressResetJob by remember { mutableStateOf<Job?>(null) }
+    val resetState = {
+        lastBackPressTime = 0L
+        isInDoublePressPeriod = false
+        pendingJob?.cancel()
+        pendingJob = null
+    }
 
-    // Cleanup on disposal
-    DisposableEffect(Unit) {
+    DisposableEffect(scope) {
         onDispose {
-            singlePressJob?.cancel()
-            doublePressResetJob?.cancel()
+            pendingJob?.cancel()
         }
     }
 
@@ -49,34 +47,29 @@ fun CustomBackHandler(
         val timeSinceLastPress = currentTime - lastBackPressTime
 
         when {
-            // If we receive a press during the double-press window
-            timeSinceLastPress < doublePressDuration && isInDoublePressPeriod -> {
-                // Cancel any pending single-press action
-                singlePressJob?.cancel()
-                doublePressResetJob?.cancel()
-
-                // Reset state
-                lastBackPressTime = 0
-                isInDoublePressPeriod = false
-
-                // Execute double-press action
-                onDoublePress()
+            // Check for double press
+            isInDoublePressPeriod && timeSinceLastPress < doublePressDuration -> {
+                pendingJob?.cancel()
+                resetState()
+                scope.launch {
+                    onDoublePress()
+                }
             }
-
-            // First press or press after the double-press window
+            // Handle first press or press after double press duration
             else -> {
-                // Update state for tracking double press
                 lastBackPressTime = currentTime
                 isInDoublePressPeriod = true
 
-                // Schedule the single-press action with state reset
-                singlePressJob?.cancel()
-                singlePressJob = scope.launch {
-                    delay(doublePressDuration)
-                    onSinglePress()
-                    // Reset state after single press is executed
-                    isInDoublePressPeriod = false
-                    lastBackPressTime = 0
+                pendingJob?.cancel()
+                pendingJob = scope.launch {
+                    try {
+                        delay(doublePressDuration)
+                        if (isInDoublePressPeriod) {
+                            onSinglePress()
+                        }
+                    } finally {
+                        resetState()
+                    }
                 }
             }
         }

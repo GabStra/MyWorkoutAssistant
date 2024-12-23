@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -94,9 +95,7 @@ fun NextExerciseInfo(
 
     val exerciseSetStates = remember(state) { viewModel.getAllExerciseWorkoutStates(state.exerciseId).filter { it.set !is RestSet } }
 
-    val nextSetStates = remember (exerciseSetStates, setIndex) {
-        exerciseSetStates.filterIndexed { index, _ -> index >= setIndex }
-    }
+    val nextSetStates =  exerciseSetStates.filterIndexed { index, _ -> index >= setIndex }
 
     Column(
         modifier = Modifier
@@ -133,40 +132,42 @@ fun NextExerciseInfo(
             )
         }
 
-        ScalingLazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            autoCentering = AutoCenteringParams(itemIndex = 0),
-            state = rememberScalingLazyListState(initialCenterItemIndex = 0),
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(bottom = 10.dp),
+            state =  rememberLazyListState(initialFirstVisibleItemIndex = 0),
             verticalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            for(nextSetState in nextSetStates) {
-                item{
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(
-                            text = "${exerciseSetStates.indexOf(nextSetState) + 1})",
-                            style = MaterialTheme.typography.body1,
-                            textAlign = TextAlign.Center
+            items(
+                count = nextSetStates.size,
+                key = { index -> "${nextSetStates[index].set.id}_$index" }
+            ) { index ->
+                val nextSetState = nextSetStates[index]
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        text = "${exerciseSetStates.indexOf(nextSetState) + 1})",
+                        style = MaterialTheme.typography.body1,
+                        textAlign = TextAlign.Center
+                    )
+                    when (nextSetState.set) {
+                        is WeightSet -> WeightSetDataViewerMinimal(
+                            nextSetState.currentSetData as WeightSetData
                         )
-                        when (nextSetState.set) {
-                            is WeightSet -> WeightSetDataViewerMinimal(
-                                nextSetState.currentSetData as WeightSetData
-                            )
 
-                            is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                                nextSetState.currentSetData as BodyWeightSetData
-                            )
+                        is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                            nextSetState.currentSetData as BodyWeightSetData
+                        )
 
-                            is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                                nextSetState.currentSetData as TimedDurationSetData
-                            )
+                        is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                            nextSetState.currentSetData as TimedDurationSetData
+                        )
 
-                            is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                                nextSetState.currentSetData as EnduranceSetData
-                            )
+                        is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                            nextSetState.currentSetData as EnduranceSetData
+                        )
 
-                            is RestSet -> {
-                                throw RuntimeException("RestSet should not be here")
-                            }
+                        is RestSet -> {
+                            throw RuntimeException("RestSet should not be here")
                         }
                     }
                 }
