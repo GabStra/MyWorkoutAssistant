@@ -1217,20 +1217,20 @@ class AppViewModel : ViewModel(){
             }
             else
             {
-                val historySet = if(exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
+
                 var currentSetData = initializeSetData(set)
 
                 if(currentSetData is BodyWeightSetData){
-                    currentSetData = currentSetData.copy(
-                        relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!!/100),
-                        volume = currentSetData.calculateVolume(equipment)
-                    )
+                    currentSetData = currentSetData.copy( relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!!/100) )
+                    currentSetData =  currentSetData.copy(volume = currentSetData.calculateVolume(equipment))
                 }else if(currentSetData is WeightSetData){
                     currentSetData =  currentSetData.copy(volume = currentSetData.calculateVolume(equipment))
                 }
 
                 var previousSetData = copySetData(currentSetData)
 
+                val historySet = if(exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
+                
                 if(historySet != null){
                     val historySetData = historySet.setData
                     if(isSetDataValid(set,historySetData)){

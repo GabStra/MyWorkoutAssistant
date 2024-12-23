@@ -275,7 +275,8 @@ fun WeightSetScreen (
                     onDoubleClick = {
                         if (isRepsInEditMode) {
                             currentSetData = currentSetData.copy(
-                                actualReps = previousSet.actualReps
+                                actualReps = previousSet.actualReps,
+                                volume = previousSet.volume
                             )
 
                             VibrateTwice(context)
@@ -317,7 +318,8 @@ fun WeightSetScreen (
                         onDoubleClick = {
                             if (isWeightInEditMode) {
                                 currentSetData = currentSetData.copy(
-                                    actualWeight = previousSet.actualWeight
+                                    actualWeight = previousSet.actualWeight,
+                                    volume = previousSet.volume
                                 )
 
                                 VibrateTwice(context)
