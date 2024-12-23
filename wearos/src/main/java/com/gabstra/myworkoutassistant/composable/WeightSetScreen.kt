@@ -131,7 +131,8 @@ fun WeightSetScreen (
         executedSetDataList.sumOf { it.volume}
     }
 
-    val currentTotalVolume = currentSetData.volume + executedVolume
+
+    val currentTotalVolume =  currentSetData.volume + executedVolume
 
     val bestVolumeProgress = remember(bestTotalVolume, currentTotalVolume) {
         if (bestTotalVolume > 0) currentTotalVolume / bestTotalVolume else 0.0
@@ -177,8 +178,13 @@ fun WeightSetScreen (
     fun onMinusClick(){
         updateInteractionTime()
         if (isRepsInEditMode && (currentSetData.actualReps > 1)){
-            currentSetData = currentSetData.copy(
+            val newSetData = currentSetData.copy(
                 actualReps = currentSetData.actualReps-1
+            )
+
+            currentSetData = currentSetData.copy(
+                actualReps = newSetData.actualReps,
+                volume = newSetData.calculateVolume(equipment)
             )
 
             VibrateGentle(context)
@@ -194,8 +200,13 @@ fun WeightSetScreen (
                         availableWeights!!.elementAt(selectedWeightIndex!!)/ equipmentVolumeMultiplier
                     }
 
-                    currentSetData = currentSetData.copy(
+                    val newSetData = currentSetData.copy(
                         actualWeight = newActualWeight
+                    )
+
+                    currentSetData = currentSetData.copy(
+                        actualWeight = newSetData.actualWeight,
+                        volume = newSetData.calculateVolume(equipment)
                     )
                 }
             }
@@ -208,8 +219,13 @@ fun WeightSetScreen (
     fun onPlusClick(){
         updateInteractionTime()
         if (isRepsInEditMode){
-            currentSetData = currentSetData.copy(
+            val newSetData = currentSetData.copy(
                 actualReps = currentSetData.actualReps+1
+            )
+
+            currentSetData = currentSetData.copy(
+                actualReps = newSetData.actualReps,
+                volume = newSetData.calculateVolume(equipment)
             )
 
             VibrateGentle(context)
@@ -225,8 +241,13 @@ fun WeightSetScreen (
                         availableWeights!!.elementAt(selectedWeightIndex!!)/ equipmentVolumeMultiplier
                     }
 
-                    currentSetData = currentSetData.copy(
+                    val newSetData = currentSetData.copy(
                         actualWeight = newActualWeight
+                    )
+
+                    currentSetData = currentSetData.copy(
+                        actualWeight = newSetData.actualWeight,
+                        volume = newSetData.calculateVolume(equipment)
                     )
                 }
             }
@@ -358,59 +379,18 @@ fun WeightSetScreen (
             }
 
             if(bestVolumeProgress > 0){
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 val progressColorBar = when {
                     currentTotalVolume < previousVolumeUpToNow -> MyColors.Red
                     currentTotalVolume == previousVolumeUpToNow -> MyColors.Orange
                     else -> MyColors.Green
                 }
 
-                val markers = mutableListOf<MarkerData>()
-
-                val marker = MarkerData(
-                    ratio = bestVolumeProgress,
-                    text = "${setIndex + 1}",
-                    color = Color.Black
-                )
-
-                markers.add(marker)
-
-                val ratio = if (previousVolumeUpToNow != 0.0) {
-                    (currentTotalVolume - previousVolumeUpToNow) / previousVolumeUpToNow
-                } else {
-                    0.0
-                }
-
-                val displayText = when {
-                    ratio >= 1 -> String.format("x%.2f", ratio+1).replace(',','.')
-                    ratio >= 0.1 -> String.format("+%d%%", (ratio * 100).roundToInt())
-                    ratio > 0 -> String.format("+%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
-                    ratio <= -0.1 -> String.format("%d%%", (ratio * 100).roundToInt())
-                    else -> String.format("%.1f%%", (ratio * 100)).replace(',','.').replace(".0","")
-                }
-
-                val indicatorMarker = if(ratio == 0.0) null else MarkerData(
-                    ratio = bestVolumeProgress,
-                    text = displayText,
-                    color = Color.White,
-                    textColor = if(ratio > 0) MyColors.Green else MyColors.Red
-                )
-
-                /*if(bestTotalVolume != lastTotalVolume){
-                    markers = markers + MarkerData(
-                        ratio = lastTotalVolume / bestTotalVolume,
-                        text = "${cumulativePastVolumePerSet.size}",
-                        color = Color.Black
-                    )
-                }*/
-
                 TrendComponentProgressBarWithMarker(
                     modifier = Modifier.fillMaxWidth(),
                     label = "Vol:",
                     ratio = bestVolumeProgress,
                     progressBarColor = progressColorBar,
-                    indicatorMarker = indicatorMarker,
-                    markers = markers
                 )
             }
         }

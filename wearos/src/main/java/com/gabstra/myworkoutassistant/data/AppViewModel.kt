@@ -406,6 +406,7 @@ class AppViewModel : ViewModel(){
                 Log.d("WorkoutViewModel","Resumed workout")
                 triggerWorkoutNotification()
                 onEnd()
+                lightScreenUp()
             }
         }
     }
@@ -528,7 +529,7 @@ class AppViewModel : ViewModel(){
     }
 
 
-   private suspend fun generateProgressions() {
+  private suspend fun generateProgressions() {
         distributedWorkoutByExerciseIdMap.clear()
 
         val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
@@ -635,8 +636,8 @@ class AppViewModel : ViewModel(){
         //Log.d("WorkoutViewModel","Available weights: $availableWeights")
         //Log.d("WorkoutViewModel","1RM: $avg1RM")
 
-        val loadPercentageRange =  Pair(0.0,95.0)
-        val repsRange  = IntRange(1,30)
+        val loadPercentageRange = if(exercise.exerciseType == ExerciseType.BODY_WEIGHT) Pair(0.0,95.0) else Pair(exercise.minLoadPercent, exercise.maxLoadPercent)
+        val repsRange  = if(exercise.exerciseType == ExerciseType.BODY_WEIGHT) IntRange(1,30) else IntRange(exercise.minReps, exercise.maxReps)
 
         val distributedWorkout = VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
             totalVolume,
@@ -734,6 +735,7 @@ class AppViewModel : ViewModel(){
                 generateWorkoutStates()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                 triggerWorkoutNotification()
+                lightScreenUp()
             }
         }
     }

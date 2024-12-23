@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
+import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -119,13 +120,14 @@ fun WorkoutScreen(
 
     CustomBackHandler(
         onSinglePress = {
+            if(workoutState is WorkoutState.Finished || showWorkoutInProgressDialog) return@CustomBackHandler
             VibrateGentle(context)
             viewModel.openSkipDialog()
             viewModel.lightScreenUp()
         }, onDoublePress = {
             if(workoutState is WorkoutState.Finished || showSkipDialog) return@CustomBackHandler
             showWorkoutInProgressDialog = true
-            VibrateGentle(context)
+            VibrateTwice(context)
             viewModel.pauseWorkout()
             viewModel.lightScreenUp()
         }

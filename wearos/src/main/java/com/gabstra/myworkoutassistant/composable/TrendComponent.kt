@@ -177,6 +177,17 @@ fun TrendComponentProgressBarWithMarker(
             textAlign = TextAlign.End
         )
 
+        val cornerRadius = 6.dp
+        val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
+
+        SimpleProgressIndicator(
+            progress = ratio.toFloat(),
+            trackColor = MaterialTheme.colors.background,
+            progressBarColor = progressBarColor,
+            modifier = Modifier.height(10.dp).weight(1f).padding(horizontal = 5.dp).clip(roundedCornerShape),
+        )
+
+        /*
         LinearProgressBarWithRounderBordersAndMarker(
             progress = ratio.toFloat(),
             modifier = Modifier.weight(1f).padding(bottom = 2.dp),
@@ -184,21 +195,25 @@ fun TrendComponentProgressBarWithMarker(
             markers = markers,
             indicatorMarker = indicatorMarker
         )
+        */
 
-       /*
-       if(ratio != 0.0 && ratio>1){
-            val displayText = when {
-                ratio >= 2 -> String.format("x%.1f", ratio).replace(',','.').replace(".0","")
-                ratio >= 1.1 -> String.format("+%d%%", ((ratio - 1) * 100).roundToInt())
-                else -> String.format("+%.1f%%", ((ratio - 1) * 100)).replace(',','.').replace(".0","")
-            }
+        fun formatRatio(ratio: Double): String {
+            if (ratio == 1.0) return "0%"
+            return String.format(
+                "%+.1f%%",
+                ((ratio - 1) * 100)
+            ).replace(',', '.')
+                .replace(".0%", "%")
+        }
+
+       if(ratio != 0.0){
+            val displayText = formatRatio(ratio)
             Text(
                 text = displayText,
                 style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
-                color = MyColors.Green
+                color = if(ratio>1) MyColors.Green else MyColors.Red
             )
         }
-        */
     }
 }
 
