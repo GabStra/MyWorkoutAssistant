@@ -195,6 +195,7 @@ fun WorkoutScreen(
                         state,
                         { heartRateChartComposable() },
                         onTimerEnd = {
+                            viewModel.lightScreenUp()
                             viewModel.storeSetData()
                             viewModel.pushAndStoreWorkoutData(false,context){
                                 viewModel.goToNextState()

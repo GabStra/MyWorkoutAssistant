@@ -142,7 +142,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+        try{
+            val workoutStore = workoutStoreRepository.getWorkoutStore()
+            appViewModel.updateWorkoutStore(workoutStore)
+        }catch(exception: Exception){
+            Toast.makeText(this, "Failed to load workout repository", Toast.LENGTH_SHORT).show()
+        }
+
         appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
     }
 

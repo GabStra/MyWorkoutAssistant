@@ -118,7 +118,7 @@ class WorkoutManager {
 
         fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: Set, index: UInt? = null): List<WorkoutComponent> {
             return components.map { component ->
-                if (component == parentExercise) {
+                if (component.id == parentExercise.id) {
                     val exercise = component as Exercise
                     val mutableSets = component.sets.toMutableList()
                     if (index != null && index.toInt() in mutableSets.indices) {
