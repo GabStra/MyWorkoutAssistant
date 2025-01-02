@@ -21,7 +21,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
 @Composable
-fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
+fun BodyWeightSetDataViewerMinimal(modifier: Modifier = Modifier,bodyWeightSetData: BodyWeightSetData, style: TextStyle = MaterialTheme.typography.body1, color: Color = Color.Unspecified){
     if(bodyWeightSetData.additionalWeight != 0.0){
         val weight = bodyWeightSetData.additionalWeight
         val weightText = if (weight % 1 == 0.0) {
@@ -30,7 +30,7 @@ fun BodyWeightSetDataViewerMinimal(bodyWeightSetData: BodyWeightSetData, style: 
             "$weight"
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center){
+        Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center){
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.Center){
                 Text(
                     text = weightText,

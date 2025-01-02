@@ -37,9 +37,11 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.MaterialTheme
@@ -63,6 +65,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -74,6 +77,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -359,10 +363,11 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
     Column(
         modifier =
         Modifier.fillMaxSize()
-        .padding(10.dp),
+        .padding(15.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
+            modifier = Modifier.fillMaxWidth(),
             text = "Plates Helper",
             style = MaterialTheme.typography.body1,
             textAlign = TextAlign.Center
@@ -376,7 +381,7 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
                 textAlign = TextAlign.Center
             )
         } else {
-            if (updatedState.plateChange.remove.isEmpty() && updatedState.plateChange.add.isEmpty()) {
+            if (updatedState.plateChange.steps.isEmpty()) {
                 Text(
                     text = "No changes needed",
                     modifier = Modifier.fillMaxWidth(),
@@ -390,59 +395,45 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
                         .verticalScroll(scrollState),
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    if (updatedState.plateChange.remove.isNotEmpty()) {
+                    if (updatedState.plateChange.steps.isNotEmpty()) {
+                        val style = MaterialTheme.typography.body1
                         Column(
-                            horizontalAlignment = Alignment.CenterHorizontally // Add this
+                            modifier= Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text(
-                                text = "Remove",
-                                style = MaterialTheme.typography.body1,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(5.dp))
-                            updatedState.plateChange.remove.forEach { plate ->
-                                val text = if (plate % 1 == 0.0) {
-                                    "${plate.toInt()}"
-                                } else {
-                                    "$plate"
-                                }
+                            updatedState.plateChange.steps.forEachIndexed { index, step ->
+                                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)){
+                                    Text(
+                                        text = "${index+1})",
+                                        style = MaterialTheme.typography.body1,
+                                        textAlign = TextAlign.Start
+                                    )
+                                    Row(modifier= Modifier.fillMaxWidth(),horizontalArrangement= Arrangement.Center, verticalAlignment = Alignment.Bottom) {
+                                        val weightText = if (step.weight % 1 == 0.0) {
+                                            "${step.weight.toInt()}"
+                                        } else {
+                                            "${step.weight}"
+                                        }
 
-                                Text(
-                                    text = text,
-                                    style = MaterialTheme.typography.body1,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
+                                        val actionText = if(step.action == PlateCalculator.Companion.Action.ADD) { "+" } else { "-" }
+
+                                        Text(
+                                            text = "$actionText $weightText",
+                                            style = style,
+                                            textAlign = TextAlign.End,
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = "kg",
+                                            style = style.copy(fontSize = style.fontSize * 0.5f),
+                                            modifier = Modifier.padding(bottom = 2.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
-                    }
 
-                    if (updatedState.plateChange.add.isNotEmpty()) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally // Add this
-                        ) {
-                            Text(
-                                text = "Add",
-                                style = MaterialTheme.typography.body1,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(5.dp))
-                            updatedState.plateChange.add.forEach { plate ->
-                                val text = if (plate % 1 == 0.0) {
-                                    "${plate.toInt()}"
-                                } else {
-                                    "$plate"
-                                }
-
-                                Text(
-                                    text = text,
-                                    style = MaterialTheme.typography.body1,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                            }
-                        }
                     }
                 }
             }

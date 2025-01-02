@@ -5,15 +5,13 @@ import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 
 data class WeightSetData (val actualReps: Int, val actualWeight: Double, val volume: Double) : SetData(){
     fun getWeight(equipment: Equipment?): Double {
-        if(equipment != null){
-            if(equipment is Barbell){
-                return equipment.barWeight + (actualWeight*equipment.volumeMultiplier)
-            }
-
-            return actualWeight * equipment.volumeMultiplier
+        return if(equipment is Barbell){
+            equipment.barWeight + (actualWeight*equipment.volumeMultiplier)
+        }else if(equipment != null){
+            actualWeight*equipment.volumeMultiplier
+        }else {
+            actualWeight
         }
-
-        return actualWeight
     }
 
     fun calculateVolume(equipment: Equipment?): Double {

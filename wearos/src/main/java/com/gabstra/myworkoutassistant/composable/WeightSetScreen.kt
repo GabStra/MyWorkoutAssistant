@@ -25,7 +25,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,8 +57,6 @@ fun WeightSetScreen (
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable:  @Composable () -> Unit,
 ){
-
-
     val context = LocalContext.current
 
     val previousSet = state.previousSetData as WeightSetData
@@ -230,7 +230,7 @@ fun WeightSetScreen (
     }
 
     @Composable
-    fun RepsRow(modifier: Modifier) {
+    fun RepsRow(modifier: Modifier, showRepsLabel:Boolean = false) {
         Row(
             modifier = modifier
                 .combinedClickable(
@@ -264,11 +264,23 @@ fun WeightSetScreen (
                 horizontalArrangement = Arrangement.Center
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
+                val isDifferent = currentSetData.actualReps != previousSet.actualReps
+
                 Text(
                     text = "${currentSetData.actualReps}",
                     style = style,
+                    color =  if(isDifferent) MyColors.Orange else Color.Unspecified,
                     textAlign = TextAlign.End
                 )
+                if(showRepsLabel){
+                    Spacer(modifier = Modifier.width(3.dp))
+                    val label = if (currentSetData.actualReps == 1) "rep" else "reps"
+                    Text(
+                        text = label,
+                        style = style.copy(fontSize = style.fontSize * 0.5),
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
             }
         }
     }
@@ -309,6 +321,8 @@ fun WeightSetScreen (
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 val weight = currentSetData.actualWeight
 
+                val isDifferent = weight != previousSet.actualWeight
+
                 Text(
                     text = if (weight % 1 == 0.0) {
                         "${weight.toInt()}"
@@ -316,12 +330,13 @@ fun WeightSetScreen (
                         "$weight"
                     },
                     style = style,
+                    color =  if(isDifferent) MyColors.Orange else Color.Unspecified,
                     textAlign = TextAlign.End
                 )
-                Spacer(modifier = Modifier.width(5.dp))
+                Spacer(modifier = Modifier.width(3.dp))
                 Text(
                     text = "kg",
-                    style = style.copy(fontSize = style.fontSize * 0.39f),
+                    style = style.copy(fontSize = style.fontSize * 0.5f),
                     modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
@@ -372,8 +387,13 @@ fun WeightSetScreen (
 
                 val currentVolume = historicalVolumeProgression * totalHistoricalVolume
 
+                val text = if(state.progressionValue != null) {
+                    "${formatNumberWithUnit(currentVolume)} | +${"%.2f".format(state.progressionValue).replace(",", ".")}%"
+                }else{
+                    formatNumberWithUnit(currentVolume)
+                }
                 Text(
-                    text = formatNumberWithUnit(currentVolume),
+                    text = text,
                     style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
                     modifier = Modifier.fillMaxWidth(),
                     textAlign  = TextAlign.Center
@@ -406,7 +426,7 @@ fun WeightSetScreen (
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        if (isRepsInEditMode) RepsRow(Modifier)
+                        if (isRepsInEditMode) RepsRow(Modifier, showRepsLabel = true)
                         if (isWeightInEditMode) WeightRow(Modifier)
                     }
                 }

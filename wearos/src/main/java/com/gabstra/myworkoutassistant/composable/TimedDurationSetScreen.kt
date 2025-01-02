@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -170,6 +171,8 @@ fun TimedDurationSetScreen(
     }
 
     val textComposable = @Composable {
+        val isDifferent = currentSet.startTimer != previousSet.startTimer
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -201,6 +204,7 @@ fun TimedDurationSetScreen(
                     ),
                 text = FormatTime(currentMillis / 1000),
                 style = MaterialTheme.typography.display2,
+                color =  if(isDifferent) MyColors.Orange else Color.Unspecified,
             )
         }
     }

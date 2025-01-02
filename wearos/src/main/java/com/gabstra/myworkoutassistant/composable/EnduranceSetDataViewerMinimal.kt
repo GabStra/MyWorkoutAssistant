@@ -15,10 +15,11 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 
 
 @Composable
-fun EnduranceSetDataViewerMinimal(enduranceSetData: EnduranceSetData,style: TextStyle = MaterialTheme.typography.body1,color: Color = Color.Unspecified,historyMode : Boolean = false){
+fun EnduranceSetDataViewerMinimal(modifier: Modifier = Modifier,enduranceSetData: EnduranceSetData,style: TextStyle = MaterialTheme.typography.body1,color: Color = Color.Unspecified,historyMode : Boolean = false){
     val time = if(historyMode) enduranceSetData.endTimer else enduranceSetData.startTimer
 
     Text(
+        modifier = modifier,
         text =  FormatTime(time / 1000),
         style = style,
         color = color

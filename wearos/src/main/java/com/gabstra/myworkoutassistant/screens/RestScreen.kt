@@ -143,7 +143,7 @@ fun NextExerciseInfo(
                 key = { index -> "${nextSetStates[index].set.id}_$index" }
             ) { index ->
                 val nextSetState = nextSetStates[index]
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)){
                     Text(
                         text = "${exerciseSetStates.indexOf(nextSetState) + 1})",
                         style = MaterialTheme.typography.body1,
@@ -151,18 +151,22 @@ fun NextExerciseInfo(
                     )
                     when (nextSetState.set) {
                         is WeightSet -> WeightSetDataViewerMinimal(
+                            modifier = Modifier.fillMaxWidth(),
                             nextSetState.currentSetData as WeightSetData
                         )
 
                         is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                            modifier = Modifier.fillMaxWidth(),
                             nextSetState.currentSetData as BodyWeightSetData
                         )
 
                         is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                            modifier = Modifier.fillMaxWidth(),
                             nextSetState.currentSetData as TimedDurationSetData
                         )
 
                         is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                            modifier = Modifier.fillMaxWidth(),
                             nextSetState.currentSetData as EnduranceSetData
                         )
 
