@@ -143,36 +143,29 @@ fun NextExerciseInfo(
                 key = { index -> "${nextSetStates[index].set.id}_$index" }
             ) { index ->
                 val nextSetState = nextSetStates[index]
-                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)){
-                    Text(
-                        text = "${exerciseSetStates.indexOf(nextSetState) + 1})",
-                        style = MaterialTheme.typography.body1,
-                        textAlign = TextAlign.Center
+                when (nextSetState.set) {
+                    is WeightSet -> WeightSetDataViewerMinimal(
+                        modifier = Modifier.fillMaxWidth(),
+                        nextSetState.currentSetData as WeightSetData
                     )
-                    when (nextSetState.set) {
-                        is WeightSet -> WeightSetDataViewerMinimal(
-                            modifier = Modifier.fillMaxWidth(),
-                            nextSetState.currentSetData as WeightSetData
-                        )
 
-                        is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                            modifier = Modifier.fillMaxWidth(),
-                            nextSetState.currentSetData as BodyWeightSetData
-                        )
+                    is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                        modifier = Modifier.fillMaxWidth(),
+                        nextSetState.currentSetData as BodyWeightSetData
+                    )
 
-                        is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                            modifier = Modifier.fillMaxWidth(),
-                            nextSetState.currentSetData as TimedDurationSetData
-                        )
+                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                        modifier = Modifier.fillMaxWidth(),
+                        nextSetState.currentSetData as TimedDurationSetData
+                    )
 
-                        is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                            modifier = Modifier.fillMaxWidth(),
-                            nextSetState.currentSetData as EnduranceSetData
-                        )
+                    is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                        modifier = Modifier.fillMaxWidth(),
+                        nextSetState.currentSetData as EnduranceSetData
+                    )
 
-                        is RestSet -> {
-                            throw RuntimeException("RestSet should not be here")
-                        }
+                    is RestSet -> {
+                        throw RuntimeException("RestSet should not be here")
                     }
                 }
             }
