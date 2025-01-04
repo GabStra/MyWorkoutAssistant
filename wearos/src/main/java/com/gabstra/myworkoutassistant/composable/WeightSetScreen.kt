@@ -88,10 +88,11 @@ fun WeightSetScreen (
         currentSetData.getWeight(equipment)
     }
 
-    LaunchedEffect(currentSetData,availableWeights,cumulativeWeight) {
+    LaunchedEffect(availableWeights,cumulativeWeight) {
         withContext(Dispatchers.IO) {
-            closestWeight = availableWeights?.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
-            closestWeightIndex = availableWeights?.indexOf(closestWeight)
+            if(availableWeights.isNullOrEmpty()) return@withContext
+            closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
+            closestWeightIndex = availableWeights.indexOf(closestWeight)
             selectedWeightIndex = closestWeightIndex
         }
     }

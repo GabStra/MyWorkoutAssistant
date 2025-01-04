@@ -13,6 +13,7 @@ import kotlin.math.absoluteValue
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 object ProgressionHelper {
     enum class ExerciseCategory {
@@ -74,6 +75,7 @@ object VolumeDistributionHelper {
         val usedOneRepMax: Double,
         val maxRepsUsed: Int,
         val averageFatiguePerSet: Double,
+        val averagePercentLoad: Double,
         val progressIncrease: Double,
     )
 
@@ -117,7 +119,6 @@ object VolumeDistributionHelper {
         val totalVolume = validSetCombination.sumOf { it.volume }
 
 
-
         return DistributedWorkout(
             sets = validSetCombination,
             totalVolume = validSetCombination.sumOf { it.volume },
@@ -125,7 +126,8 @@ object VolumeDistributionHelper {
             usedOneRepMax = params.oneRepMax,
             maxRepsUsed = validSetCombination.maxOf { it.reps },
             averageFatiguePerSet = validSetCombination.sumOf { it.fatigue } / validSetCombination.size,
-            progressIncrease = ((totalVolume - params.originalVolume) / params.originalVolume) * 100
+            progressIncrease = ((totalVolume - params.originalVolume) / params.originalVolume) * 100,
+            averagePercentLoad = validSetCombination.sumOf { it.percentLoad } / validSetCombination.size
         )
     }
 
@@ -354,26 +356,16 @@ object VolumeDistributionHelper {
         return@coroutineScope bestCombination.map { validSets[it] }
     }
 
-    // Use value class to reduce memory overhead
-    @JvmInline
-    value class SearchResult(val pair: Pair<List<ExerciseSet>, Double>) {
-        val combination: List<ExerciseSet> get() = pair.first
-        val score: Double get() = pair.second
-
-        companion object {
-            val EMPTY = SearchResult(emptyList<ExerciseSet>() to Double.MIN_VALUE)
-        }
-    }
-
     private suspend fun findBestCombinationVariant(
         sets: List<ExerciseSet>,
         targetVolume: Double,
         minimumVolume: Double,
+        fixedRestTime: Double = 90.0,
+        recoveryRate: Double = 1.0
     ) = coroutineScope {
-        // Pre-calculate constants
-        val EXP_50 = exp(-50.0)
         val MAX_SETS = 5
         val MIN_VALID_SETS = 3
+        val recoveryMultiplier = exp(-fixedRestTime / (300.0 * recoveryRate))
 
         // Improved initial filtering and sorting
         val sortedSets = sets
@@ -392,64 +384,42 @@ object VolumeDistributionHelper {
         // Optimized scoring function
         fun scoreCombination(
             setCombo: List<ExerciseSet>,
-            fixedRestTime: Double = 90.0,
-            recoveryRate: Double = 1.0
         ): Double {
-            if (setCombo.isEmpty()) return Double.NEGATIVE_INFINITY
-
-            // Calculate accumulated fatigue
-            val recoveryMultiplier = exp(-fixedRestTime / (300.0 * recoveryRate))
-            var accumulatedFatigue = 0.0
-            val fatigues = setCombo.map {
-                accumulatedFatigue = accumulatedFatigue * recoveryMultiplier + it.fatigue
-                accumulatedFatigue
-            }
-
-            // Check volume constraints
             val totalVolume = setCombo.sumOf { it.volume }
-            if (totalVolume !in minimumVolume..targetVolume) return Double.NEGATIVE_INFINITY
 
-            // Main volume score
-            val mainVolumeScore = ((totalVolume - targetVolume) / targetVolume).let {
-                if (it < 0) exp(-abs(it) * 35) else exp(-it * 25)
-            }
+            val volumePercentWeight = 1000.0
+            val maxPercentLoad = setCombo.maxOf { it.percentLoad }
 
-            // If only one set
-            if (setCombo.size == 1) {
-                return mainVolumeScore * (1.0 / (1.0 + exp(-totalVolume / fatigues.last() + 50)))
-            }
+            // Calculate normalized scores between 0 and 1
+            val normalizedVolume = totalVolume / targetVolume
+            val normalizedPercentLoad = maxPercentLoad / 100.0
 
-            // Multi-set calculations
-            val efficiencies = setCombo.mapIndexed { i, set -> set.volume / fatigues[i] }
-            val efficiencyScore = (1 until setCombo.size)
-                .map { efficiencies[it] / efficiencies[it - 1] }
-                .minOrNull()
-                ?.let { exp(-(1.0 - it) * 2.0) } ?: 1.0
+            // Create a combined score that rewards balance
+            // Using a geometric mean approach to favor balanced values
+            val combinedScore = sqrt(normalizedVolume * (1.0 - normalizedPercentLoad)) * volumePercentWeight
 
-            val fatigueTrend = (1 until setCombo.size)
-                .map { exp(-abs(fatigues[it] - fatigues[it - 1]) * 0.5) }
-                .average()
-
-            val avgFatigue = fatigues.last() / setCombo.size
-            val fatigueScore = (exp(-fatigues.maxOf { abs(it - avgFatigue) } * 0.3) + fatigueTrend) / 2.0
-
-            // Volume progression score (per-set volume comparison)
+            // Volume progression score
+            val progressionWeight = 100.0
             val volumeProgressionScore = (1 until setCombo.size)
                 .map { i ->
-                    when (setCombo[i].volume / setCombo[i - 1].volume) {
-                        in 0.95..Double.MAX_VALUE -> 1.0
-                        in 0.85..0.95           -> 0.9
-                        in 0.75..0.85           -> 0.7
-                        else                    -> 0.5
+                    val ratio = setCombo[i].volume / setCombo[i - 1].volume
+                    when {
+                        ratio > 1.0 -> 0.0  // Penalize any volume increase
+                        ratio == 1.0 -> 1.0  // Perfect for maintaining volume
+                        ratio < 0.5 -> 0.0   // Too much decrease
+                        else -> {
+                            // Linear interpolation between 0.5 and 1.0
+                            (ratio - 0.5) / 0.5
+                        }
                     }
-                }.average()
+                }.average().coerceAtLeast(0.0001) * progressionWeight
 
-            // Final score
-            return mainVolumeScore *
-                    efficiencyScore *
-                    fatigueScore *
-                    volumeProgressionScore *
-                    (1.0 / (1.0 + exp(-totalVolume / fatigues.last() + 50)))
+            // Set count score (fewer sets are better)
+            val setWeight = 10.0
+            val setCountScore = (1.0 / (setCombo.size + 1)) * setWeight
+
+            // Return weighted sum
+            return combinedScore + volumeProgressionScore + setCountScore
         }
 
         // Optimized state class for stack-based search
@@ -487,10 +457,11 @@ object VolumeDistributionHelper {
                     while (stack.isNotEmpty()) {
                         val state = stack.removeLast()
                         restoreComboToDepth(state.depth)
+                        val SCORE_EPSILON = 0.1
 
-                        if (currentCombo.size >= MIN_VALID_SETS && state.currentVolume >= minimumVolume) {
+                        if (currentCombo.size >= MIN_VALID_SETS && state.currentVolume >= minimumVolume && state.currentVolume <= targetVolume) {
                             val score = scoreCombination(currentCombo)
-                            if (score > bestScore) {
+                            if (score > bestScore || (abs(score - bestScore) <= SCORE_EPSILON && currentCombo.size < bestCombination.size)) {
                                 bestScore = score
                                 bestCombination = ArrayList(currentCombo)
                             }

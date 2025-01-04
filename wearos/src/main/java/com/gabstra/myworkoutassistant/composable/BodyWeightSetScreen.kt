@@ -60,13 +60,35 @@ fun BodyWeightSetScreen(
     val previousSet = state.previousSetData as BodyWeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
-
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
 
     val equipment = remember(exercise) {
         if(exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
+    }
+
+    var closestWeight by remember { mutableStateOf<Double?>(null) }
+    var closestWeightIndex by remember { mutableStateOf<Int?>(null) }
+    var selectedWeightIndex by remember { mutableStateOf<Int?>(null) }
+
+    val availableWeights = remember(equipment) {
+        if(equipment == null) return@remember emptySet()
+        equipment.calculatePossibleCombinations()
+    }
+
+    val cumulativeWeight = remember(currentSetData,equipment){
+        currentSetData.getWeight(equipment) - currentSetData.relativeBodyWeightInKg
+    }
+
+    LaunchedEffect(availableWeights,cumulativeWeight) {
+        withContext(Dispatchers.IO) {
+            if(availableWeights.isEmpty()) return@withContext
+            closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
+            closestWeightIndex = availableWeights.indexOf(closestWeight)
+            selectedWeightIndex = closestWeightIndex
+        }
+
     }
 
     val totalHistoricalVolume = remember(state.exerciseId,state.set.id) {
@@ -83,34 +105,14 @@ fun BodyWeightSetScreen(
 
     val historicalVolumeProgression = if (totalHistoricalVolume != 0.0) currentTotalVolume / totalHistoricalVolume else 0.0
 
-    var isRepsInEditMode by remember { mutableStateOf(false) }
-    var isWeightInEditMode by remember { mutableStateOf(false) }
-
-    var closestWeight by remember { mutableStateOf<Double?>(null) }
-    var closestWeightIndex by remember { mutableStateOf<Int?>(null) }
-    var selectedWeightIndex by remember { mutableStateOf<Int?>(null) }
-
-    val availableWeights = remember(exercise) {
-        exercise.equipmentId?.let { viewModel.getEquipmentById(it)?.calculatePossibleCombinations() ?: emptySet() } ?: emptySet()
-    }
-
-    val cumulativeWeight = remember(currentSetData,equipment){
-        currentSetData.getWeight(equipment)
-    }
-
-    LaunchedEffect(currentSetData,availableWeights,cumulativeWeight) {
-        withContext(Dispatchers.IO) {
-            closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
-            closestWeightIndex = availableWeights.indexOf(closestWeight)
-            selectedWeightIndex = closestWeightIndex
-        }
-    }
-
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
     }
+
+    var isRepsInEditMode by remember { mutableStateOf(false) }
+    var isWeightInEditMode by remember { mutableStateOf(false) }
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 

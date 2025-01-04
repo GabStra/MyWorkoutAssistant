@@ -756,6 +756,11 @@ class AppViewModel : ViewModel() {
                         "%.2f",
                         ((distributedWorkout.totalVolume - totalVolume) / totalVolume) * 100
                     )
+                }% Average percentage load: ${
+                    String.format(
+                        "%.2f",
+                        distributedWorkout.averagePercentLoad
+                    ).replace(",", ".")
                 }%"
             )
         } else {

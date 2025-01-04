@@ -132,40 +132,48 @@ fun NextExerciseInfo(
             )
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(bottom = 10.dp),
-            state =  rememberLazyListState(initialFirstVisibleItemIndex = 0),
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp)
+                .padding(bottom = 10.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            items(
-                count = nextSetStates.size,
-                key = { index -> "${nextSetStates[index].set.id}_$index" }
-            ) { index ->
-                val nextSetState = nextSetStates[index]
-                when (nextSetState.set) {
-                    is WeightSet -> WeightSetDataViewerMinimal(
-                        modifier = Modifier.fillMaxWidth(),
-                        nextSetState.currentSetData as WeightSetData
+            nextSetStates.forEachIndexed { index, nextSetState ->
+                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        text = "${index + 1})",
+                        style = MaterialTheme.typography.body1,
+                        textAlign = TextAlign.Start
                     )
+                    Row(modifier= Modifier.fillMaxWidth(),horizontalArrangement= Arrangement.Center) {
+                        when (nextSetState.set) {
+                            is WeightSet -> WeightSetDataViewerMinimal(
+                                modifier = Modifier.fillMaxWidth(),
+                                nextSetState.currentSetData as WeightSetData
+                            )
 
-                    is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                        modifier = Modifier.fillMaxWidth(),
-                        nextSetState.currentSetData as BodyWeightSetData
-                    )
+                            is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
+                                modifier = Modifier.fillMaxWidth(),
+                                nextSetState.currentSetData as BodyWeightSetData
+                            )
 
-                    is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                        modifier = Modifier.fillMaxWidth(),
-                        nextSetState.currentSetData as TimedDurationSetData
-                    )
+                            is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
+                                modifier = Modifier.fillMaxWidth(),
+                                nextSetState.currentSetData as TimedDurationSetData
+                            )
 
-                    is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                        modifier = Modifier.fillMaxWidth(),
-                        nextSetState.currentSetData as EnduranceSetData
-                    )
+                            is EnduranceSet -> EnduranceSetDataViewerMinimal(
+                                modifier = Modifier.fillMaxWidth(),
+                                nextSetState.currentSetData as EnduranceSetData
+                            )
 
-                    is RestSet -> {
-                        throw RuntimeException("RestSet should not be here")
+                            is RestSet -> {
+                                throw RuntimeException("RestSet should not be here")
+                            }
+                        }
                     }
                 }
             }
