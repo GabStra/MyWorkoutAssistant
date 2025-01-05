@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,7 +59,7 @@ fun WeightSetScreen (
 ){
     val context = LocalContext.current
 
-    val previousSet = state.previousSetData as WeightSetData
+    val previousSetData = state.previousSetData as WeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
     val exercise = remember(state.exerciseId) {
@@ -89,7 +89,7 @@ fun WeightSetScreen (
     }
 
     LaunchedEffect(availableWeights,cumulativeWeight) {
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Default) {
             if(availableWeights.isNullOrEmpty()) return@withContext
             closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
             closestWeightIndex = availableWeights.indexOf(closestWeight)
@@ -108,9 +108,33 @@ fun WeightSetScreen (
     }
 
 
-    val currentTotalVolume =  currentSetData.volume + executedVolume
+    val currentTotalVolume by remember {
+        derivedStateOf {
+            currentSetData.volume + executedVolume
+        }
+    }
 
-    val historicalVolumeProgression  = if (totalHistoricalVolume != 0.0) currentTotalVolume / totalHistoricalVolume else 0.0
+    val historicalVolumeProgression by remember {
+        derivedStateOf {
+            if (totalHistoricalVolume != 0.0) {
+                currentTotalVolume / totalHistoricalVolume
+            } else 0.0
+        }
+    }
+
+    val previousTotalVolume by remember {
+        derivedStateOf {
+            previousSetData.volume + executedVolume
+        }
+    }
+
+    val previousHistoricalVolumeProgression by remember {
+        derivedStateOf {
+            if (totalHistoricalVolume != 0.0) {
+                previousTotalVolume / totalHistoricalVolume
+            } else 0.0
+        }
+    }
 
     var isRepsInEditMode by remember { mutableStateOf(false) }
     var isWeightInEditMode by remember { mutableStateOf(false) }
@@ -248,9 +272,13 @@ fun WeightSetScreen (
                     },
                     onDoubleClick = {
                         if (isRepsInEditMode) {
+                            val newSetData = currentSetData.copy(
+                                actualReps = previousSetData.actualReps,
+                            )
+
                             currentSetData = currentSetData.copy(
-                                actualReps = previousSet.actualReps,
-                                volume = previousSet.volume
+                                actualReps = newSetData.actualReps,
+                                volume = newSetData.calculateVolume(equipment)
                             )
 
                             VibrateTwice(context)
@@ -265,12 +293,16 @@ fun WeightSetScreen (
                 horizontalArrangement = Arrangement.Center
             ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
-                val isDifferent = currentSetData.actualReps != previousSet.actualReps
+                val textColor  = when {
+                    currentSetData.actualReps == previousSetData.actualReps -> Color.Unspecified
+                    currentSetData.actualReps < previousSetData.actualReps  -> MyColors.Red
+                    else -> MyColors.Green
+                }
 
                 Text(
                     text = "${currentSetData.actualReps}",
                     style = style,
-                    color =  if(isDifferent) MyColors.Orange else Color.Unspecified,
+                    color = textColor,
                     textAlign = TextAlign.End
                 )
                 if(showRepsLabel){
@@ -279,7 +311,8 @@ fun WeightSetScreen (
                     Text(
                         text = label,
                         style = style.copy(fontSize = style.fontSize * 0.5),
-                        modifier = Modifier.padding(bottom = 2.dp)
+                        modifier = Modifier.padding(bottom = 2.dp),
+                        color = textColor,
                     )
                 }
             }
@@ -303,9 +336,13 @@ fun WeightSetScreen (
                         },
                         onDoubleClick = {
                             if (isWeightInEditMode) {
+                                val newSetData = currentSetData.copy(
+                                    actualWeight = previousSetData.actualWeight,
+                                )
+
                                 currentSetData = currentSetData.copy(
-                                    actualWeight = previousSet.actualWeight,
-                                    volume = previousSet.volume
+                                    actualWeight = previousSetData.actualWeight,
+                                    volume = newSetData.calculateVolume(equipment)
                                 )
 
                                 VibrateTwice(context)
@@ -322,7 +359,11 @@ fun WeightSetScreen (
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 val weight = currentSetData.actualWeight
 
-                val isDifferent = weight != previousSet.actualWeight
+                val textColor = when {
+                    currentSetData.actualWeight == previousSetData.actualWeight -> Color.Unspecified
+                    currentSetData.actualWeight < previousSetData.actualWeight  -> MyColors.Red
+                    else -> MyColors.Green
+                }
 
                 Text(
                     text = if (weight % 1 == 0.0) {
@@ -331,14 +372,15 @@ fun WeightSetScreen (
                         "$weight"
                     },
                     style = style,
-                    color =  if(isDifferent) MyColors.Orange else Color.Unspecified,
+                    color =  textColor,
                     textAlign = TextAlign.End
                 )
                 Spacer(modifier = Modifier.width(3.dp))
                 Text(
                     text = "kg",
                     style = style.copy(fontSize = style.fontSize * 0.5f),
-                    modifier = Modifier.padding(bottom = 2.dp)
+                    modifier = Modifier.padding(bottom = 2.dp),
+                    color =  textColor,
                 )
             }
         }
@@ -371,34 +413,53 @@ fun WeightSetScreen (
 
             if(historicalVolumeProgression > 0){
                 Spacer(modifier = Modifier.height(10.dp))
-                val progressColorBar = if(historicalVolumeProgression<1) {
-                    MyColors.Orange
-                }else{
-                    MyColors.Green
+                val progressColor = when {
+                    historicalVolumeProgression == previousHistoricalVolumeProgression -> MyColors.Orange
+                    historicalVolumeProgression < previousHistoricalVolumeProgression -> MyColors.Red
+                    historicalVolumeProgression < 1.0 -> MyColors.Green
+                    else -> MyColors.Green
                 }
 
                 TrendComponentProgressBarWithMarker(
                     modifier = Modifier.fillMaxWidth(),
                     label = "Vol:",
                     ratio = historicalVolumeProgression,
-                    progressBarColor = progressColorBar,
+                    progressBarColor = progressColor,
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
                 val currentVolume = historicalVolumeProgression * totalHistoricalVolume
 
-                val text = if(state.progressionValue != null) {
+                if(state.progressionValue != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = formatNumberWithUnit(currentVolume),
+                            style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                            textAlign = TextAlign.Center,
+                            color = progressColor
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "+${"%.2f".format(state.progressionValue).replace(",", ".")}% ",
+                            style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                     "${formatNumberWithUnit(currentVolume)} | +${"%.2f".format(state.progressionValue).replace(",", ".")}%"
                 }else{
-                    formatNumberWithUnit(currentVolume)
+                    Text(
+                        text =  formatNumberWithUnit(currentVolume),
+                        style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign  = TextAlign.Center,
+                        color = progressColor
+                    )
                 }
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign  = TextAlign.Center
-                )
             }
         }
     }

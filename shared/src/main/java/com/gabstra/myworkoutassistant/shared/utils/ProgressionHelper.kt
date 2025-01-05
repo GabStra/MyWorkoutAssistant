@@ -356,22 +356,29 @@ object VolumeDistributionHelper {
         return@coroutineScope bestCombination.map { validSets[it] }
     }
 
+    data class Solution(
+        val combination: List<ExerciseSet>,
+        val totalVolume: Double,
+        val volumeProgression: Double,
+        val maxPercentLoad: Double,
+        val setCount: Int
+    )
+
     private suspend fun findBestCombinationVariant(
         sets: List<ExerciseSet>,
         targetVolume: Double,
         minimumVolume: Double,
-        fixedRestTime: Double = 90.0,
-        recoveryRate: Double = 1.0
     ) = coroutineScope {
         val MAX_SETS = 5
         val MIN_VALID_SETS = 3
-        val recoveryMultiplier = exp(-fixedRestTime / (300.0 * recoveryRate))
+        val MAX_SOLUTIONS = 50
+
+        val solutions = Collections.synchronizedList(ArrayList<Solution>(MAX_SOLUTIONS))
 
         // Improved initial filtering and sorting
         val sortedSets = sets
             .asSequence()
             .filter { set ->
-                set.volume <= targetVolume &&
                         set.volume * 3 <= targetVolume &&
                         set.volume * 5 >= minimumVolume
             }
@@ -381,45 +388,16 @@ object VolumeDistributionHelper {
         // Early return if we don't have enough sets
         if (sortedSets.size < MIN_VALID_SETS) return@coroutineScope emptyList()
 
-        // Optimized scoring function
-        fun scoreCombination(
-            setCombo: List<ExerciseSet>,
-        ): Double {
-            val totalVolume = setCombo.sumOf { it.volume }
-
-            val volumePercentWeight = 1000.0
-            val maxPercentLoad = setCombo.maxOf { it.percentLoad }
-
-            // Calculate normalized scores between 0 and 1
-            val normalizedVolume = totalVolume / targetVolume
-            val normalizedPercentLoad = maxPercentLoad / 100.0
-
-            // Create a combined score that rewards balance
-            // Using a geometric mean approach to favor balanced values
-            val combinedScore = sqrt(normalizedVolume * (1.0 - normalizedPercentLoad)) * volumePercentWeight
-
-            // Volume progression score
-            val progressionWeight = 100.0
-            val volumeProgressionScore = (1 until setCombo.size)
+        fun calculateVolumeProgression(setCombo: List<ExerciseSet>): Double {
+            return (1 until setCombo.size)
                 .map { i ->
                     val ratio = setCombo[i].volume / setCombo[i - 1].volume
                     when {
                         ratio > 1.0 -> 0.0  // Penalize any volume increase
                         ratio == 1.0 -> 1.0  // Perfect for maintaining volume
-                        ratio < 0.5 -> 0.0   // Too much decrease
-                        else -> {
-                            // Linear interpolation between 0.5 and 1.0
-                            (ratio - 0.5) / 0.5
-                        }
+                        else -> ratio  // Linear progression for all decreasing ratios
                     }
-                }.average().coerceAtLeast(0.0001) * progressionWeight
-
-            // Set count score (fewer sets are better)
-            val setWeight = 10.0
-            val setCountScore = (1.0 / (setCombo.size + 1)) * setWeight
-
-            // Return weighted sum
-            return combinedScore + volumeProgressionScore + setCountScore
+                }.average()
         }
 
         // Optimized state class for stack-based search
@@ -447,6 +425,8 @@ object VolumeDistributionHelper {
                 }
 
                 for (firstSetIdx in startIdx until endIdx) {
+                    if (solutions.size >= MAX_SOLUTIONS) break
+
                     stack.clear()
                     currentCombo.clear()
 
@@ -455,15 +435,30 @@ object VolumeDistributionHelper {
                     stack.addLast(SearchState(0, firstSetIdx, firstSet.volume))
 
                     while (stack.isNotEmpty()) {
+                        if (solutions.size >= MAX_SOLUTIONS) break
+
                         val state = stack.removeLast()
                         restoreComboToDepth(state.depth)
-                        val SCORE_EPSILON = 0.1
 
-                        if (currentCombo.size >= MIN_VALID_SETS && state.currentVolume >= minimumVolume && state.currentVolume <= targetVolume) {
-                            val score = scoreCombination(currentCombo)
-                            if (score > bestScore || (abs(score - bestScore) <= SCORE_EPSILON && currentCombo.size < bestCombination.size)) {
-                                bestScore = score
-                                bestCombination = ArrayList(currentCombo)
+                        if (currentCombo.size >= MIN_VALID_SETS &&
+                            state.currentVolume >= minimumVolume &&
+                            state.currentVolume <= targetVolume
+                        ) {
+                            val maxPercentLoad = currentCombo.maxOf { it.percentLoad }
+                            val volumeProgression = calculateVolumeProgression(currentCombo)
+
+                            synchronized(solutions) {
+                                if (solutions.size < MAX_SOLUTIONS) {
+                                    solutions.add(
+                                        Solution(
+                                            combination = ArrayList(currentCombo),
+                                            totalVolume = state.currentVolume,
+                                            volumeProgression = volumeProgression,
+                                            maxPercentLoad = maxPercentLoad,
+                                            setCount = currentCombo.size
+                                        )
+                                    )
+                                }
                             }
                         }
 
@@ -515,7 +510,7 @@ object VolumeDistributionHelper {
 
         (0 until numThreads)
             .map { threadIdx ->
-                async(Dispatchers.IO) {
+                async(Dispatchers.Default) {
                     val startIdx = threadIdx * chunkSize
                     val endIdx = minOf(startIdx + chunkSize, sortedSets.size)
                     if (startIdx < endIdx) searchChunk(startIdx, endIdx)
@@ -523,8 +518,13 @@ object VolumeDistributionHelper {
                 }
             }
             .awaitAll()
-            .maxByOrNull { it.second }
-            ?.first ?: emptyList()
+
+        solutions.sortedWith(
+            compareBy<Solution> { it.maxPercentLoad }
+                .thenByDescending { it.totalVolume  }
+                .thenByDescending { it.volumeProgression }
+                .thenBy { it.setCount }
+        ).firstOrNull()?.combination ?: emptyList()
     }
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
@@ -535,13 +535,23 @@ object VolumeDistributionHelper {
 
             val setsDeferred = weightRange.map { weight ->
                 async(Dispatchers.IO) {
-                    params.repsRange.map { reps ->
-                        createSet(
-                            weight = weight,
-                            reps = reps,
-                            oneRepMax = params.oneRepMax,
-                        )
-                    }
+                    val loadPercentage = weight / params.oneRepMax
+                    val expectedReps = (-1.0/0.055 * ln((loadPercentage * 100 - 52.2) / 41.9)).toInt()
+                    val tolerance = 1
+
+                    // Only create sets for reps within the valid range
+                    params.repsRange
+                        .filter { reps ->
+                            (reps >= expectedReps - tolerance) &&
+                                    (reps <= expectedReps + tolerance)
+                        }
+                        .map { reps ->
+                            createSet(
+                                weight = weight,
+                                reps = reps,
+                                oneRepMax = params.oneRepMax,
+                            )
+                        }
                 }
             }
 
@@ -562,12 +572,12 @@ object VolumeDistributionHelper {
         weight: Double,
         reps: Int,
         oneRepMax: Double,
-        proximityToFailure: Int = 2,
     ): ExerciseSet {
         val volume = weight * reps
         val relativeIntensity = weight / oneRepMax
         val percentLoad = relativeIntensity * 100
 
+        /*
         // Smoothed intensity multiplier
         val intensityMultiplier = when {
             relativeIntensity > 0.85 -> exp(2.0 + (relativeIntensity - 0.85) * 10.0)
@@ -596,11 +606,12 @@ object VolumeDistributionHelper {
                         repMultiplier *
                         rirMultiplier
                 )
+        */
 
         return ExerciseSet(
             weight = weight,
             reps = reps,
-            fatigue = fatigue,
+            fatigue = 0.0,
             volume = volume,
             percentLoad = percentLoad,
         )

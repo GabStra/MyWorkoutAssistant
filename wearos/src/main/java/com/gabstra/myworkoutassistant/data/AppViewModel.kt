@@ -563,8 +563,8 @@ class AppViewModel : ViewModel() {
             distributedWorkoutByExerciseIdMap[exerciseId] = distribution
         }
 
-        /*
-        // Process exercises sequentially
+
+       /* // Process exercises sequentially
         exerciseWithWeightSets.forEach { exercise ->
             val result = processExercise(exercise)
             result?.let { (exerciseId, distribution) ->
@@ -684,17 +684,8 @@ class AppViewModel : ViewModel() {
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
 
-        val minLoadPercent = if (exercise.minLoadPercent < 40) 40.0 else exercise.minLoadPercent
-        val loadPercentageRange =
-            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) Pair(40.0, 93.0) else Pair(
-                minLoadPercent,
-                exercise.maxLoadPercent
-            )
-        val repsRange =
-            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) IntRange(3, 30) else IntRange(
-                exercise.minReps,
-                exercise.maxReps
-            )
+        val loadPercentageRange =  Pair(40.0, 93.0)
+        val repsRange = IntRange(3, 30)
 
         val volumeIncreasePercent =
             if (exercise.volumeIncreasePercent > 3) 3.0f else exercise.volumeIncreasePercent
