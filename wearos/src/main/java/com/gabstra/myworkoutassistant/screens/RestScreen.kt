@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,6 +33,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,17 +88,9 @@ fun NextExerciseInfo(
     val exercise = viewModel.exercisesById[state.exerciseId]!!
     val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-    val equipment = remember(exercise) {
-        if(exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
-    }
-
     val setIndex = exerciseSets.indexOf(state.set)
-
     var marqueeEnabled by remember { mutableStateOf(false) }
-
-    val exerciseSetStates = remember(state) { viewModel.getAllExerciseWorkoutStates(state.exerciseId).filter { it.set !is RestSet } }
-
-    val nextSetStates =  exerciseSetStates.filterIndexed { index, _ -> index >= setIndex }
+    val exerciseSetStates = remember(state.exerciseId) { viewModel.getAllExerciseWorkoutStates(state.exerciseId).filter { it.set !is RestSet } }
 
     Column(
         modifier = Modifier
@@ -141,32 +136,36 @@ fun NextExerciseInfo(
             verticalArrangement = Arrangement.spacedBy(5.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            nextSetStates.forEachIndexed { index, nextSetState ->
-                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            exerciseSetStates.forEachIndexed { index, nextSetState ->
+                if(index < setIndex) {
+                    return@forEachIndexed
+                }
+                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     Text(
                         text = "${index + 1})",
                         style = MaterialTheme.typography.body1,
                         textAlign = TextAlign.Start
                     )
-                    Row(modifier= Modifier.fillMaxWidth(),horizontalArrangement= Arrangement.Center) {
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Row(horizontalArrangement= Arrangement.Center) {
                         when (nextSetState.set) {
                             is WeightSet -> WeightSetDataViewerMinimal(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier,
                                 nextSetState.currentSetData as WeightSetData
                             )
 
                             is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier,
                                 nextSetState.currentSetData as BodyWeightSetData
                             )
 
                             is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier,
                                 nextSetState.currentSetData as TimedDurationSetData
                             )
 
                             is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier,
                                 nextSetState.currentSetData as EnduranceSetData
                             )
 
@@ -189,6 +188,13 @@ fun RestScreen(
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
 ) {
+    val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
+    val nextWorkoutStateSet = if (nextWorkoutState is WorkoutState.Set) {
+        nextWorkoutState as WorkoutState.Set
+    } else {
+        null
+    }
+
     val set = state.set as RestSet
 
     val context = LocalContext.current
@@ -204,13 +210,6 @@ fun RestScreen(
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
     val showSkipDialog by viewModel.isSkipDialogOpen.collectAsState()
 
-    val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
-    val nextWorkoutStateSet = if (nextWorkoutState is WorkoutState.Set) {
-        nextWorkoutState as WorkoutState.Set
-    } else {
-        null
-    }
-    
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {

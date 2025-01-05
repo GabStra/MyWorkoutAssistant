@@ -167,7 +167,7 @@ fun SimplifiedHorizontalPager(
     CustomHorizontalPager(
         modifier = modifier,
         pagerState = pagerState,
-        userScrollEnabled = allowHorizontalScrolling
+        userScrollEnabled = allowHorizontalScrolling,
     ) { page ->
         when (page) {
             0 -> PagePlates(updatedState,exercise,viewModel)

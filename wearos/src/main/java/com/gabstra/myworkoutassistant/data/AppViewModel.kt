@@ -421,7 +421,7 @@ class AppViewModel : ViewModel() {
                 workoutStateHistory.clear()
                 _isHistoryEmpty.value = workoutStateHistory.isEmpty()
                 setStates.clear()
-
+                allWorkoutStates.clear()
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
@@ -443,9 +443,8 @@ class AppViewModel : ViewModel() {
     }
 
     public fun getAllExerciseWorkoutStates(exerciseId: UUID): List<WorkoutState.Set> {
-        return allWorkoutStates.filter { it is WorkoutState.Set }
-            .filter { (it as WorkoutState.Set).exerciseId == exerciseId }
-            .filterIsInstance<WorkoutState.Set>()
+        return allWorkoutStates.filterIsInstance<WorkoutState.Set>()
+            .filter { it.exerciseId == exerciseId }
     }
 
     private fun applyProgressions() {
@@ -795,6 +794,7 @@ class AppViewModel : ViewModel() {
                 workoutStateHistory.clear()
                 _isHistoryEmpty.value = workoutStateHistory.isEmpty()
                 setStates.clear()
+                allWorkoutStates.clear()
                 executedSetsHistory.clear()
                 heartBeatHistory.clear()
                 startWorkoutTime = null
@@ -1375,8 +1375,11 @@ class AppViewModel : ViewModel() {
         }
 
         val newState = workoutStateQueue.pollFirst()!!
-        if (workoutStateQueue.isNotEmpty()) _nextWorkoutState.value = workoutStateQueue.peek()!!
+        val nextWorkoutState =  if (workoutStateQueue.isNotEmpty()) workoutStateQueue.peek()!! else null
         _workoutState.value = newState
+        if(nextWorkoutState != null) {
+            _nextWorkoutState.value = nextWorkoutState
+        }
     }
 
     fun goToPreviousSet() {

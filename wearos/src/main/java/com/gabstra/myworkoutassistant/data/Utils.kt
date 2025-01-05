@@ -380,8 +380,9 @@ fun Modifier.circleMask() = this.drawWithContent {
 }
 
 @SuppressLint("DefaultLocale")
-fun formatNumberWithUnit(value: Double, unit: String = "kg"): String = when {
-    value >= 1_000_000 -> String.format("%.1fM %s", value / 1_000_000f, unit).replace(",", ".")
-    value >= 1_000 -> String.format("%.1fk %s", value / 1_000f, unit).replace(",", ".")
-    else -> String.format("%.1f %s", value, unit).replace(",", ".")
-}.replace("\\.0(?= [A-Za-z]+$)".toRegex(), "")
+fun formatNumber(value: Double, unit: String? = null): String = (when {
+    value >= 1_000_000 -> String.format("%.1fM", value / 1_000_000f)
+    value >= 1_000 -> String.format("%.1fk", value / 1_000f)
+    else -> String.format("%.1f", value)
+}.replace(",", ".").replace(".0", "") + (unit?.let { " $it" } ?: "")).trim()
+

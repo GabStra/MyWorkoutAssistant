@@ -30,13 +30,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.data.formatNumberWithUnit
+import com.gabstra.myworkoutassistant.data.formatNumber
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import kotlinx.coroutines.Dispatchers
@@ -65,23 +66,26 @@ fun BodyWeightSetScreen(
     }
 
     val equipment = remember(exercise) {
-        if(exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
+        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
 
-    var closestWeight by remember { mutableStateOf<Double?>(null) }
-    var closestWeightIndex by remember { mutableStateOf<Int?>(null) }
-    var selectedWeightIndex by remember { mutableStateOf<Int?>(null) }
+    var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
+    var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
+    var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
 
-    val availableWeights = remember(equipment) {
-        if(equipment == null) return@remember emptySet()
-        equipment.calculatePossibleCombinations()
+    var availableWeights by remember(exercise) { mutableStateOf<Set<Double>>(emptySet()) }
+
+    LaunchedEffect(equipment) {
+        availableWeights = withContext(Dispatchers.Default) {
+            equipment?.calculatePossibleCombinations() ?: emptySet()
+        }
     }
 
     val cumulativeWeight = remember(currentSetData,equipment){
         currentSetData.getWeight(equipment) - currentSetData.relativeBodyWeightInKg
     }
 
-    LaunchedEffect(availableWeights,cumulativeWeight) {
+   LaunchedEffect(availableWeights,cumulativeWeight) {
         withContext(Dispatchers.Default) {
             if(availableWeights.isEmpty()) return@withContext
             closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
@@ -91,7 +95,7 @@ fun BodyWeightSetScreen(
 
     }
 
-    val totalHistoricalVolume = remember(state.exerciseId,state.set.id) {
+    val totalHistoricalVolume = remember(state.exerciseId) {
         val totalHistoricalSetDataList = viewModel.getHistoricalSetsDataByExerciseId<BodyWeightSetData>(state.exerciseId)
         totalHistoricalSetDataList.sumOf { it.volume }
     }
@@ -99,6 +103,14 @@ fun BodyWeightSetScreen(
     val executedVolume = remember(state.exerciseId,state.set.id)  {
         val executedSetDataList = viewModel.getExecutedSetsDataByExerciseIdAndTakePriorToSetId<BodyWeightSetData>(state.exerciseId, state.set.id)
         executedSetDataList.sumOf { it.volume }
+    }
+
+    val executedVolumeProgression by remember {
+        derivedStateOf {
+            if (executedVolume != 0.0) {
+                executedVolume / totalHistoricalVolume
+            } else 0.0
+        }
     }
 
     val currentTotalVolume by remember {
@@ -239,8 +251,7 @@ fun BodyWeightSetScreen(
         Row(
             modifier = modifier
                 .combinedClickable(
-                    onClick = {
-                    },
+                    onClick = {},
                     onLongClick = {
                         if (!forceStopEditMode) {
                             isRepsInEditMode = !isRepsInEditMode
@@ -374,6 +385,11 @@ fun BodyWeightSetScreen(
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            if(equipment!=null && availableWeights.isEmpty()){
+                CircularProgressIndicator()
+                return
+            }
+
             if(availableWeights.isNotEmpty()){
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 Row(
@@ -398,9 +414,8 @@ fun BodyWeightSetScreen(
             if(historicalVolumeProgression > 0){
                 Spacer(modifier = Modifier.height(10.dp))
                 val progressColor = when {
-                    historicalVolumeProgression == previousHistoricalVolumeProgression -> MyColors.Orange
+                    historicalVolumeProgression == previousHistoricalVolumeProgression -> Color.White
                     historicalVolumeProgression < previousHistoricalVolumeProgression -> MyColors.Red
-                    historicalVolumeProgression < 1.0 -> MyColors.Green
                     else -> MyColors.Green
                 }
 
@@ -408,41 +423,77 @@ fun BodyWeightSetScreen(
                     modifier = Modifier.fillMaxWidth(),
                     label = "Vol:",
                     ratio = historicalVolumeProgression,
-                    progressBarColor = progressColor,
+                    previousRatio = executedVolumeProgression,
+                    progressBarColor = Color.White,
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(5.dp))
 
-                val currentVolume = historicalVolumeProgression * totalHistoricalVolume
+                val indicatorStyle = MaterialTheme.typography.body2
 
-                if(state.progressionValue != null) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
+                        Row(
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = formatNumber(currentTotalVolume),
+                                style = indicatorStyle,
+                                textAlign = TextAlign.End,
+                                color = progressColor
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "kg",
+                                style = indicatorStyle.copy(fontSize = indicatorStyle.fontSize * 0.5f),
+                                modifier = Modifier.padding(bottom = 2.dp),
+                                color = progressColor,
+                            )
+                        }
+
+                        val diff = currentTotalVolume - previousTotalVolume
+
+                        if(diff != 0.0){
+                            Spacer(modifier = Modifier.width(5.dp))
+                            val diffColor = if(diff > 0) MyColors.Green else MyColors.Red
+                            Row(
+                                verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = if(diff > 0) "+${formatNumber(diff)}" else formatNumber(diff),
+                                    style = indicatorStyle,
+                                    textAlign = TextAlign.Center,
+                                    color = diffColor
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "kg",
+                                    style = indicatorStyle.copy(fontSize = indicatorStyle.fontSize * 0.5f),
+                                    modifier = Modifier.padding(bottom = 2.dp),
+                                    color = diffColor,
+                                )
+                            }
+                        }
+                    }
+
+                    if(state.progressionValue != null) {
                         Text(
-                            text = formatNumberWithUnit(currentVolume),
+                            text = "Target: +${"%.2f".format(state.progressionValue).replace(",", ".")}% ",
                             style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
                             textAlign = TextAlign.Center,
-                            color = progressColor
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "+${"%.2f".format(state.progressionValue).replace(",", ".")}% ",
-                            style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f),
-                            textAlign = TextAlign.Center,
+                            color = MyColors.Green
                         )
                     }
-                    "${formatNumberWithUnit(currentVolume)} | +${"%.2f".format(state.progressionValue).replace(",", ".")}%"
-                }else{
-                    Text(
-                        text =  formatNumberWithUnit(currentVolume),
-                        style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign  = TextAlign.Center,
-                        color = progressColor
-                    )
                 }
             }
         }

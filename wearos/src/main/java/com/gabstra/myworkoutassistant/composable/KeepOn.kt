@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun KeepOn(
     appViewModel: AppViewModel,
-    enableDimming: Boolean = true, // Parameter to control dimmingadb connect 192.168.1.82
+    enableDimming: Boolean = true,
     dimDelay: Long = 30000L, // Delay before dimming the screen
     content: @Composable () -> Unit
 ) {
@@ -56,17 +56,25 @@ fun KeepOn(
 
     LifecycleObserver(
         onStarted = {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             applyKeepScreenOnFlag()
             if(!isDimmed) resetDimming()
         },
         onResumed = {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             applyKeepScreenOnFlag()
             if(!isDimmed) resetDimming()
         },
         onPaused = {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         },
         onStopped = {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         }
     )

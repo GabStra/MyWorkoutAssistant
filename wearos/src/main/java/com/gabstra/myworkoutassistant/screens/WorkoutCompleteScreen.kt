@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -27,12 +28,14 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
+import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 
 import java.time.Duration
 import java.time.LocalDateTime
 
+@SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutCompleteScreen(
@@ -57,6 +60,8 @@ fun WorkoutCompleteScreen(
     var dataSent by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit){
+        VibrateShortImpulse(context)
+
         cancelWorkoutInProgressNotification(context)
         if(!workout.usePolarDevice){
             hrViewModel.stopMeasuringHeartRate()
@@ -73,7 +78,6 @@ fun WorkoutCompleteScreen(
         while (!dataSent && System.currentTimeMillis() - startTime < 10000){
             delay(1000)
         }
-
 
         navController.navigate(Screen.WorkoutSelection.route){
             popUpTo(Screen.WorkoutSelection.route) {

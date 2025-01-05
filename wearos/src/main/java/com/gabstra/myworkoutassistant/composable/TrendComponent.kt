@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -165,6 +166,7 @@ fun TrendComponentProgressBarWithMarker(
     modifier: Modifier = Modifier,
     label: String,
     ratio: Double,
+    previousRatio: Double = 0.0,
     progressBarColor: Color,
     markers: List<MarkerData> = emptyList(),
     indicatorMarker: MarkerData? = null
@@ -173,19 +175,40 @@ fun TrendComponentProgressBarWithMarker(
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = label,
-            style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
+            style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
             textAlign = TextAlign.End
         )
 
         val cornerRadius = 6.dp
         val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
 
-        SimpleProgressIndicator(
-            progress = ratio.toFloat(),
-            trackColor = MaterialTheme.colors.background,
-            progressBarColor = progressBarColor,
-            modifier = Modifier.height(10.dp).weight(1f).padding(horizontal = 5.dp).clip(roundedCornerShape),
-        )
+        Row(modifier = Modifier.height(10.dp).weight(1f).padding(horizontal = 5.dp).clip(roundedCornerShape)){
+            if(previousRatio != 0.0){
+                SimpleProgressIndicator(
+                    progress = 1f,
+                    trackColor = MaterialTheme.colors.background,
+                    progressBarColor = MyColors.Green,
+                    modifier = Modifier.height(10.dp).weight(previousRatio.toFloat()),
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+
+                val remainingRatio = ((ratio-previousRatio)/(1-previousRatio)).toFloat()
+
+                SimpleProgressIndicator(
+                    progress = remainingRatio,
+                    trackColor = MaterialTheme.colors.background,
+                    progressBarColor = progressBarColor,
+                    modifier = Modifier.height(10.dp).weight(1-(previousRatio.toFloat())),
+                )
+            }else{
+                SimpleProgressIndicator(
+                    progress = ratio.toFloat(),
+                    trackColor = MaterialTheme.colors.background,
+                    progressBarColor = progressBarColor,
+                    modifier = Modifier.height(10.dp).weight(1f),
+                )
+            }
+        }
 
         /*
         LinearProgressBarWithRounderBordersAndMarker(
@@ -210,7 +233,7 @@ fun TrendComponentProgressBarWithMarker(
             val displayText = formatRatio(ratio)
             Text(
                 text = displayText,
-                style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
+                style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
                 color = MyColors.Green
             )
         }

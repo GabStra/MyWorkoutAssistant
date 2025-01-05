@@ -135,7 +135,6 @@ fun HeartRateCircularChart(
         LaunchedEffect(currentZone) {
             zoneTrackingJob?.cancel()
 
-
             if(currentZone == targetZone) {
                 if(isInTargetZoneForTenSeconds) {
                     alarmJob?.cancel()
@@ -280,8 +279,15 @@ private fun HeartRateView(
     val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
     val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
 
-    var isDisplayingHr by remember { mutableStateOf(true) }
-    val textToDisplay = if(isDisplayingHr) if (hr == 0) "-" else hr.toString() else "Zone $zone"
+    var displayMode by remember { mutableStateOf(0) }
+
+    val textToDisplay = when(displayMode) {
+        0 -> if (hr == 0) "-" else hr.toString()
+        1 -> "Zone $zone"
+        else -> "${(mhrPercentage).toInt()}%"
+    }
+
+    val showHeartIcon = displayMode == 0
     val context = LocalContext.current
 
     val startAngle = 115f
@@ -305,15 +311,15 @@ private fun HeartRateView(
                 .combinedClickable(
                     onClick = { },
                     onLongClick = {
-                        isDisplayingHr = !isDisplayingHr
+                        displayMode = (displayMode + 1) % 3
                         VibrateGentle(context)
                     }
                 )
         ) {
-            if(isDisplayingHr){
+            if(showHeartIcon){
                 HeartIcon(
                     modifier = Modifier.size(15.dp),
-                    tint =  if (hr == 0) Color.DarkGray else MyColors.Red
+                    tint = if (hr == 0) Color.DarkGray else MyColors.Red
                 )
                 Spacer(modifier = Modifier.width(5.dp))
             }
