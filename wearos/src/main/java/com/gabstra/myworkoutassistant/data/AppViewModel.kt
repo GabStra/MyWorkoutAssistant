@@ -656,7 +656,6 @@ class AppViewModel : ViewModel() {
                             bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                         calculateOneRepMax(it.getWeight(equipment, relativeBodyWeight), it.reps)
                     }
-
                     is WeightSet -> calculateOneRepMax(it.getWeight(equipment), it.reps)
                     else -> 0.0
                 }
@@ -683,7 +682,7 @@ class AppViewModel : ViewModel() {
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
 
-        val loadPercentageRange =  Pair(40.0, 93.0)
+        val loadPercentageRange = Pair(40.0, 93.0)
         val repsRange = IntRange(3, 30)
 
         val volumeIncreasePercent =
@@ -699,16 +698,17 @@ class AppViewModel : ViewModel() {
             exercise.fatigueFactor
         )
 
+        Log.d(
+            "WorkoutViewModel",
+            "${exercise.name} (${exercise.exerciseType}) - volume $totalVolume - avg 1RM ${
+                String.format(
+                    "%.2f",
+                    avg1RM
+                ).replace(",", ".")
+            } desired increase in percentage: ${volumeIncreasePercent}% "
+        )
+
         if (distributedWorkout != null) {
-            Log.d(
-                "WorkoutViewModel",
-                "${exercise.name} (${exercise.exerciseType}) - volume $totalVolume - avg 1RM ${
-                    String.format(
-                        "%.2f",
-                        avg1RM
-                    ).replace(",", ".")
-                } desired increase in percentage: ${volumeIncreasePercent}% "
-            )
             distributedWorkout.sets.forEachIndexed { index, set ->
                 if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight =

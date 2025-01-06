@@ -221,12 +221,10 @@ fun TrendComponentProgressBarWithMarker(
         */
 
         fun formatRatio(ratio: Double): String {
-            if (ratio == 1.0) return "0%"
             return String.format(
-                "%+.1f%%",
+                "%+.2f%%",
                 ((ratio - 1) * 100)
             ).replace(',', '.')
-                .replace(".0%", "%")
         }
 
        if(ratio > 1.0){

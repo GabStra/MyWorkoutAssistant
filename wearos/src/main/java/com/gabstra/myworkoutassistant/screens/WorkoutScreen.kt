@@ -199,6 +199,7 @@ fun WorkoutScreen(
                             viewModel.storeSetData()
                             viewModel.pushAndStoreWorkoutData(false,context){
                                 viewModel.goToNextState()
+                                viewModel.lightScreenUp()
                             }
                         }
                     )

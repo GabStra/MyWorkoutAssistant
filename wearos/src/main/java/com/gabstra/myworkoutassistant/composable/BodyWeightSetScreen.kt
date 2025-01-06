@@ -486,12 +486,18 @@ fun BodyWeightSetScreen(
                         }
                     }
 
-                    if(state.progressionValue != null) {
+                    if(state.progressionValue != null && state.progressionValue > 0) {
+                        val targetColor = if(historicalVolumeProgression > 1 && ((historicalVolumeProgression-1)*100)>=state.progressionValue) {
+                            MyColors.Green
+                        }else{
+                            Color.White
+                        }
+
                         Text(
                             text = "Target: +${"%.2f".format(state.progressionValue).replace(",", ".")}% ",
                             style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
                             textAlign = TextAlign.Center,
-                            color = MyColors.Green
+                            color = targetColor
                         )
                     }
                 }
