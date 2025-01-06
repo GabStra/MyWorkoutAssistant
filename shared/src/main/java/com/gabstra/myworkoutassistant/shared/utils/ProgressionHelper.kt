@@ -14,6 +14,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 object ProgressionHelper {
     enum class ExerciseCategory {
@@ -340,14 +341,7 @@ object VolumeDistributionHelper {
 
     data class Solution(
         val combination: List<ExerciseSet>,
-        val totalVolume: Double,
-        val maxVolume: Double,
-        val weightProgression: Double,
-        val maxPercentLoad: Double,
-        val maxFatigue: Double,
         val totalFatigue: Double,
-        val maxReps: Double,
-        val setCount: Int
     )
 
     private suspend fun findBestCombinationVariant(
@@ -406,11 +400,10 @@ object VolumeDistributionHelper {
                             if (solutions.size >= MAX_SOLUTIONS) return
 
                             val nextSet = sortedSets[nextIdx]
-                            val isValidSequence = lastSet.weight > nextSet.weight || (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps)
+                            val isValidSequence = (lastSet.weight > nextSet.weight || (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps)) && lastSet.fatigue >= nextSet.fatigue
 
                             if (isValidSequence) {
                                 val newVolume = currentVolume + nextSet.volume
-                                //if (newVolume > targetVolume) break
 
                                 val newCombo = currentCombo + nextSet
                                 if (newCombo.size >= MIN_VALID_SETS && newVolume >= minimumVolume && newVolume <= targetVolume) {
@@ -434,14 +427,11 @@ object VolumeDistributionHelper {
                     solutions.add(
                         Solution(
                             combination = combo,
-                            totalVolume = volume,
-                            maxVolume = combo.maxOf { it.volume },
-                            weightProgression = calculateWeightProgression(combo),
-                            maxPercentLoad = combo.maxOf { it.percentLoad },
-                            maxFatigue = combo.maxOf { it.fatigue },
-                            totalFatigue = combo.sumOf { it.fatigue },
-                            setCount = combo.size,
-                            maxReps = combo.maxOf { it.reps.toDouble() }
+                            totalFatigue = combo.sumOf {
+                                val i = combo.indexOf(it)
+                                val w = 1 + 0.2 * (i - 1)
+                                it.fatigue * w
+                            },
                         )
                     )
                 }
@@ -466,11 +456,7 @@ object VolumeDistributionHelper {
             }
             .awaitAll()
 
-        val maxFatigueValues = solutions.map { it.maxFatigue }
-        val totalFatiguePerSetValues = solutions.map { it.totalFatigue }
-        val maxPercentLoadValues = solutions.map { it.maxPercentLoad }
-        val maxVolumeValues = solutions.map { it.maxVolume }
-        val maxRepsValues = solutions.map { it.maxReps }
+        val totalFatigueValues = solutions.map { it.totalFatigue }
 
         fun List<Double>.normalizeMinMax(): List<Double> {
             val min = minOrNull() ?: return emptyList()
@@ -479,14 +465,10 @@ object VolumeDistributionHelper {
             return if (range == 0.0) map { 0.0 } else map { (it - min) / range }
         }
 
-        val maxFatigueNorm = maxFatigueValues.normalizeMinMax()
-        val totalFatigueNorm = totalFatiguePerSetValues.normalizeMinMax()
-        val maxPercentLoadNorm = maxPercentLoadValues.normalizeMinMax()
-        val maxVolumeNorm = maxVolumeValues.normalizeMinMax()
-        val maxRepsNorm = maxRepsValues.normalizeMinMax()
+        val totalFatigueNorm = totalFatigueValues.normalizeMinMax()
 
-        val scores = solutions.mapIndexed { index, _ ->
-            maxFatigueNorm[index] + totalFatigueNorm[index] + maxPercentLoadNorm[index] + maxVolumeNorm[index] + maxRepsNorm[index]
+        val scores = List(solutions.size) { index ->
+            totalFatigueNorm[index]
         }
 
         val target = scores.min()
@@ -507,12 +489,11 @@ object VolumeDistributionHelper {
             val setsDeferred = weightRange.map { weight ->
                 async(Dispatchers.Default) {
                     val loadPercentage = weight / params.oneRepMax
-                    val expectedReps = ((1.0278 - loadPercentage) / 0.0278).toInt()
-                    val tolerance = 1
+                    val expectedReps = ((1.0278 - loadPercentage) / 0.0278).roundToInt()
 
                     params.repsRange
                         .filter { reps ->
-                            reps <= (expectedReps + tolerance)
+                            reps <= expectedReps
                         }
                         .map { reps ->
                             createSet(
@@ -541,41 +522,25 @@ object VolumeDistributionHelper {
         weight: Double,
         reps: Int,
         oneRepMax: Double,
-        proximityToFailure: Int = 2
     ): ExerciseSet {
         val volume = weight * reps
         val relativeIntensity = weight / oneRepMax
         val percentLoad = relativeIntensity * 100
 
-
         // Smoothed intensity multiplier
-        val intensityMultiplier = when {
-            relativeIntensity > 0.85 -> exp(2.0 + (relativeIntensity - 0.85) * 10.0)
-            else -> exp(2.0 * relativeIntensity)
-        }
+        val intensityMultiplier = 1.0 + 3.0 / (1.0 + exp(-10.0 * (relativeIntensity - 0.7)))
 
-        // Enhanced metabolic stress calculation based on rep ranges
-        val metabolicStress = when {
-            reps > 20 -> 0.5 + (reps - 20) * 0.03
-            reps > 12 -> 0.3 + (reps - 12) * 0.025
-            reps > 6 -> (reps - 6) * 0.05
-            else -> 0.0
+        // Continuous metabolic stress using logarithmic function
+        val metabolicStress = if (reps > 0) {
+            0.3 * ln(1.0 + reps / 6.0)
+        } else {
+            0.0
         }
 
         // Rep multiplier incorporating metabolic stress
         val repMultiplier = 1 + ln(1.0 + reps) + metabolicStress
 
-        // RIR multiplier with exponential scaling near failure
-        val rirMultiplier = when {
-            proximityToFailure <= 2 -> 1 + exp((2 - proximityToFailure) / 2.0)
-            else -> 1 + (10 - proximityToFailure) / 10.0
-        }
-
-        val fatigue = volume  * (
-                intensityMultiplier *
-                        repMultiplier *
-                        rirMultiplier
-                )
+        val fatigue = volume  * (intensityMultiplier * repMultiplier)
 
         return ExerciseSet(
             weight = weight,

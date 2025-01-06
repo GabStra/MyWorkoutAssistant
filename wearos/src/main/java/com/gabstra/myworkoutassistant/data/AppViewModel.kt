@@ -619,7 +619,7 @@ class AppViewModel : ViewModel() {
                 }
             }
 
-            avg1RM = (totalHistoricalSetDataList.sumOf {
+            avg1RM = (totalHistoricalSetDataList.maxOf {
                 when (it) {
                     is BodyWeightSetData -> calculateOneRepMax(
                         it.getWeight(equipment),
@@ -629,7 +629,7 @@ class AppViewModel : ViewModel() {
                     is WeightSetData -> calculateOneRepMax(it.getWeight(equipment), it.actualReps)
                     else -> 0.0
                 }
-            }) / totalHistoricalSetDataList.size
+            })
         } else {
             val exerciseSets = exercise.sets.filter { it !is RestSet }
 
@@ -649,7 +649,7 @@ class AppViewModel : ViewModel() {
                 }
             }
 
-            avg1RM = (exerciseSets.sumOf {
+            avg1RM = exerciseSets.maxOf {
                 when (it) {
                     is BodyWeightSet -> {
                         val relativeBodyWeight =
@@ -659,7 +659,7 @@ class AppViewModel : ViewModel() {
                     is WeightSet -> calculateOneRepMax(it.getWeight(equipment), it.reps)
                     else -> 0.0
                 }
-            }) / exerciseSets.size
+            }
         }
 
         if (totalVolume == 0.0 || avg1RM == 0.0) {
@@ -1095,7 +1095,7 @@ class AppViewModel : ViewModel() {
                         }
                     }
 
-                    val avgOneRepMax = (setDataList.sumOf { setData ->
+                    val avgOneRepMax = setDataList.maxOf { setData ->
                         when (setData) {
                             is BodyWeightSetData -> {
                                 calculateOneRepMax(setData.getWeight(equipment), setData.actualReps)
@@ -1107,7 +1107,7 @@ class AppViewModel : ViewModel() {
 
                             else -> throw IllegalArgumentException("Unknown set type")
                         }
-                    }) / setDataList.size
+                    }
 
                     val exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
 

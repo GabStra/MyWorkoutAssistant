@@ -187,7 +187,7 @@ fun TrendComponentProgressBarWithMarker(
                 SimpleProgressIndicator(
                     progress = 1f,
                     trackColor = MaterialTheme.colors.background,
-                    progressBarColor = MyColors.Green,
+                    progressBarColor = MyColors.Orange,
                     modifier = Modifier.height(10.dp).weight(previousRatio.toFloat()),
                 )
                 Spacer(modifier = Modifier.width(2.dp))
@@ -222,7 +222,7 @@ fun TrendComponentProgressBarWithMarker(
 
         fun formatRatio(ratio: Double): String {
             return String.format(
-                "%+.2f%%",
+                "%+.1f%%",
                 ((ratio - 1) * 100)
             ).replace(',', '.')
         }

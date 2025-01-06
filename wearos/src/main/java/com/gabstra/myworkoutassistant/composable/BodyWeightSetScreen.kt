@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -412,12 +413,7 @@ fun BodyWeightSetScreen(
             }
 
             if(historicalVolumeProgression > 0){
-                Spacer(modifier = Modifier.height(10.dp))
-                val progressColor = when {
-                    historicalVolumeProgression == previousHistoricalVolumeProgression -> Color.White
-                    historicalVolumeProgression < previousHistoricalVolumeProgression -> MyColors.Red
-                    else -> MyColors.Green
-                }
+                Spacer(modifier = Modifier.height(5.dp))
 
                 TrendComponentProgressBarWithMarker(
                     modifier = Modifier.fillMaxWidth(),
@@ -449,14 +445,14 @@ fun BodyWeightSetScreen(
                                 text = formatNumber(currentTotalVolume),
                                 style = indicatorStyle,
                                 textAlign = TextAlign.End,
-                                color = progressColor
+                                color = Color.White
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             Text(
                                 text = "kg",
                                 style = indicatorStyle.copy(fontSize = indicatorStyle.fontSize * 0.5f),
                                 modifier = Modifier.padding(bottom = 2.dp),
-                                color = progressColor,
+                                color = Color.White,
                             )
                         }
 
@@ -487,14 +483,15 @@ fun BodyWeightSetScreen(
                     }
 
                     if(state.progressionValue != null && state.progressionValue > 0) {
-                        val targetColor = if(historicalVolumeProgression > 1 && ((historicalVolumeProgression-1)*100)>=state.progressionValue) {
+                        val targetColor = if (historicalVolumeProgression > 1 &&
+                            ((historicalVolumeProgression - 1) * 100).roundToInt() >= state.progressionValue.roundToInt()) {
                             MyColors.Green
-                        }else{
+                        } else {
                             Color.White
                         }
 
                         Text(
-                            text = "Target: +${"%.2f".format(state.progressionValue).replace(",", ".")}% ",
+                            text = "Target: +${"%.1f".format(state.progressionValue).replace(",", ".")}% ",
                             style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
                             textAlign = TextAlign.Center,
                             color = targetColor

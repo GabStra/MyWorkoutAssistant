@@ -37,7 +37,7 @@ fun ExerciseIndicator(
     val numberOfElementsLeft = totalGroups - (elementsToSkip + exerciseSelection.size)
 
     // Calculate gaps and angles
-    val baseGapAngle = 1f
+    val baseGapAngle = 2f
     val size= 25f
 
     val availableAngle = 125f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
@@ -50,7 +50,7 @@ fun ExerciseIndicator(
         // Indicate skipped elements at the start
         if (elementsToSkip > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, MaterialTheme.colors.primary)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, MyColors.Orange)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -61,14 +61,14 @@ fun ExerciseIndicator(
             )
 
             if(elementsToSkip > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = MaterialTheme.colors.primary, number = elementsToSkip, transparency = 1f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = MyColors.Orange, number = elementsToSkip, transparency = 1f)
             }
             accumulatedAngle += size + baseGapAngle
         }
 
         val allSets = viewModel.setsByExerciseId[set.exerciseId] ?: listOf()
         val filteredSets = allSets.filter { it.set !is RestSet }
-        SetIndicator(accumulatedAngle+ baseGapAngle,angleForCurrentExercise -  (baseGapAngle*2), set, filteredSets, Modifier.fillMaxSize())
+        SetIndicator(accumulatedAngle + baseGapAngle,angleForCurrentExercise -  (baseGapAngle*2), set, filteredSets, Modifier.fillMaxSize())
         accumulatedAngle += angleForCurrentExercise + baseGapAngle
         // Indicate more elements available at the end
         if (areMoreElementsAvailable) {
@@ -135,7 +135,7 @@ fun SetIndicator(
         // Indicator for skipped elements
         if (elementsToSkip > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f,if(setsSelection.isEmpty()) Color.White else MyColors.Green)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f,if(setsSelection.isEmpty()) Color.White else MyColors.Orange)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -146,7 +146,7 @@ fun SetIndicator(
             )
 
             if(elementsToSkip > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = MyColors.Green, number = elementsToSkip, transparency = 1f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = MyColors.Orange, number = elementsToSkip, transparency = 1f)
             }
 
             accumulatedAngle += (if(elementsToSkip == 1) angleForSet else indicatorSize) + baseGapAngle
@@ -161,7 +161,7 @@ fun SetIndicator(
             }
             // Draw group segment
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White else (if(markAsCompleted)  MyColors.Green else Color.DarkGray))),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White else (if(markAsCompleted)  MyColors.Orange else Color.DarkGray))),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
