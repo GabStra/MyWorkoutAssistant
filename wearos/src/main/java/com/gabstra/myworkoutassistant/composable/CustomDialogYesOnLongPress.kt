@@ -77,7 +77,7 @@ fun CustomDialogYesOnLongPress(
     fun startAutomaticCloseTimer() {
         closeDialogJob?.cancel()
         closeDialogJob = coroutineScope.launch {
-            delay(closeTimerInMillis)  // wait for 10 seconds
+            delay(closeTimerInMillis)
             handleOnAutomaticClose()
         }
     }

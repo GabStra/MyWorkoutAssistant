@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -116,16 +114,16 @@ fun WorkoutScreen(
         holdTimeInMillis = 1000
     )
 
-    val showSkipDialog by viewModel.isSkipDialogOpen.collectAsState()
+    val isCustomDialogOpen by viewModel.isCustomDialogOpen.collectAsState()
 
     CustomBackHandler(
         onSinglePress = {
             if(workoutState is WorkoutState.Finished || showWorkoutInProgressDialog) return@CustomBackHandler
             VibrateGentle(context)
-            viewModel.openSkipDialog()
+            viewModel.openCustomDialog()
             viewModel.lightScreenUp()
         }, onDoublePress = {
-            if(workoutState is WorkoutState.Finished || showSkipDialog) return@CustomBackHandler
+            if(workoutState is WorkoutState.Finished || isCustomDialogOpen) return@CustomBackHandler
             showWorkoutInProgressDialog = true
             VibrateTwice(context)
             viewModel.pauseWorkout()

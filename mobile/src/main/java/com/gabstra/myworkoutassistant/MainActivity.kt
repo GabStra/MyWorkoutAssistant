@@ -15,32 +15,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
-import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.screens.BarbellForm
 import com.gabstra.myworkoutassistant.screens.DumbbellsForm
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
@@ -57,8 +43,6 @@ import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
-import com.gabstra.myworkoutassistant.shared.SetHistoryDao
-import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -78,15 +62,9 @@ import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
-import java.time.Duration
-import java.time.Instant
-import java.time.ZoneId
-import java.time.ZoneOffset
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -249,10 +227,6 @@ fun MyWorkoutAssistantNavHost(
 
                             val newWorkoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
 
-                            fun getEquipmentById(id: UUID): Equipment? {
-                                return appBackup.WorkoutStore.equipments.find { it.id == id }
-                            }
-
                             val deleteAndInsertJob = launch {
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
@@ -270,77 +244,10 @@ fun MyWorkoutAssistantNavHost(
 
                                 setHistoryDao.insertAll(*validSetHistories.toTypedArray())
 
-                                val completedWorkoutHistories = validWorkoutHistories.filter { it.isDone }
-
-                                val setHistoriesByExerciseId = validSetHistories
-                                    .filter { setHistory ->  setHistory.exerciseId != null }
-                                    .filter { setHistory -> completedWorkoutHistories.any { wh -> wh.id == setHistory.workoutHistoryId } }
-                                    .groupBy { setHistory ->  setHistory.exerciseId }
-
-
                                 val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() }
 
                                 val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
                                 exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
-
-                                allExercises.forEach { exercise ->
-                                    if(exercise.doNotStoreHistory) return@forEach
-
-                                    val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
-
-                                    if(setHistoriesByExerciseId[exercise.id] == null) return@forEach
-                                    val setHistories = setHistoriesByExerciseId[exercise.id]!!
-
-                                    val validVolumeSetHistoriesGroups = setHistories.filter { setHistory ->
-                                        setHistory.setData is BodyWeightSetData || setHistory.setData is WeightSetData
-                                    }.groupBy { setHistory -> setHistory.workoutHistoryId }.filter { (_, setHistories) ->
-                                        setHistories.isNotEmpty()
-                                    }
-
-                                    validVolumeSetHistoriesGroups.forEach { (_, validVolumeSetHistories) ->
-                                        val setDataList = validVolumeSetHistories.filter { setHistory -> setHistory.setData !is RestSetData }.map { setHistory -> setHistory.setData }
-                                        val volume = setDataList.sumOf {
-                                            when(it) {
-                                                is BodyWeightSetData -> it.volume
-                                                is WeightSetData ->  it.volume
-                                                else -> throw IllegalArgumentException("Unknown set type")
-                                            }
-                                        }
-
-                                        val avgOneRepMax = (setDataList.sumOf {
-                                            when(it) {
-                                                is BodyWeightSetData -> calculateOneRepMax(it.getWeight(equipment), it.actualReps)
-                                                is WeightSetData -> calculateOneRepMax(it.getWeight(equipment), it.actualReps)
-                                                else -> throw IllegalArgumentException("Unknown set type")
-                                            }
-                                        }) / setDataList.size
-
-                                        val newExerciseInfo = ExerciseInfo(
-                                            id = exercise.id,
-                                            bestVolume = volume,
-                                            avgOneRepMax = avgOneRepMax
-                                        )
-                                        exerciseInfoDao.insert(newExerciseInfo)
-
-                                        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
-                                        if(exerciseInfo == null){
-                                            val newExerciseInfo = ExerciseInfo(
-                                                id = exercise.id,
-                                                bestVolume = volume,
-                                                avgOneRepMax = avgOneRepMax
-                                            )
-                                            exerciseInfoDao.insert(newExerciseInfo)
-                                        }else{
-                                            if(exerciseInfo.bestVolume < volume){
-                                                exerciseInfoDao.updateBestVolume(exercise.id,volume)
-                                            }
-
-                                            if(exerciseInfo.avgOneRepMax < avgOneRepMax){
-                                                exerciseInfoDao.updateAvgOneRepMax(exercise.id,avgOneRepMax)
-                                            }
-                                        }
-                                    }
-                                }
                             }
 
                             // Wait for the delete and insert operations to complete

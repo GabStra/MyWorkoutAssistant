@@ -70,7 +70,7 @@ object VolumeDistributionHelper {
         val percentLoad: Double,
     )
 
-    data class DistributedWorkout(
+    data class ExerciseData(
         val sets: List<ExerciseSet>,
         val totalVolume: Double,
         val totalFatigue: Double,
@@ -79,6 +79,8 @@ object VolumeDistributionHelper {
         val averageFatiguePerSet: Double,
         val averagePercentLoad: Double,
         val progressIncrease: Double,
+        val originalVolume: Double,
+        val isDeloading : Boolean
     )
 
     data class WeightExerciseParameters(
@@ -89,28 +91,39 @@ object VolumeDistributionHelper {
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
         val minimumVolume: Double,
+        val minSets: Int,
+        val maxSets: Int,
+        val isDeload : Boolean
     )
 
     private suspend fun distributeVolume(
         params: WeightExerciseParameters,
-    ): DistributedWorkout? {
+    ): ExerciseData? {
         val possibleSets = generatePossibleSets(params)
         if (possibleSets.isEmpty()) return null
 
-        val validSetCombination = findBestCombinationVariant(possibleSets, params.targetTotalVolume, params.minimumVolume)
+        val validSetCombination = findBestCombinationVariant(
+            possibleSets,
+            params.targetTotalVolume,
+            params.minimumVolume,
+            params.minSets,
+            params.maxSets
+        )
         if (validSetCombination.isEmpty()) return null
 
         val totalVolume = validSetCombination.sumOf { it.volume }
 
-        return DistributedWorkout(
+        return ExerciseData(
             sets = validSetCombination,
-            totalVolume = validSetCombination.sumOf { it.volume },
+            totalVolume = totalVolume,
             totalFatigue = validSetCombination.sumOf { it.fatigue },
             usedOneRepMax = params.oneRepMax,
             maxRepsUsed = validSetCombination.maxOf { it.reps },
             averageFatiguePerSet = validSetCombination.sumOf { it.fatigue } / validSetCombination.size,
             progressIncrease = ((totalVolume - params.originalVolume) / params.originalVolume) * 100,
-            averagePercentLoad = validSetCombination.sumOf { it.percentLoad } / validSetCombination.size
+            averagePercentLoad = validSetCombination.sumOf { it.percentLoad } / validSetCombination.size,
+            originalVolume = params.originalVolume,
+            isDeloading = params.isDeload
         )
     }
 
@@ -349,14 +362,17 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         targetVolume: Double,
         minimumVolume: Double,
+        minSets: Int,
+        maxSets: Int,
+        maxSolutions: Int = 10
     ) = coroutineScope {
-        val MAX_SETS = 5
-        val MIN_VALID_SETS = 3
-        val MAX_SOLUTIONS = 10
+        require(minSets > 0)
+        require(minSets <= maxSets)
+        require(maxSolutions > 0)
 
-        val solutions = Collections.synchronizedList(ArrayList<Solution>(MAX_SOLUTIONS))
+        val solutions = Collections.synchronizedList(ArrayList<Solution>(maxSolutions))
 
-        val maxUsefulVolumePerSet = targetVolume / MIN_VALID_SETS  // Max useful volume per set
+        val maxUsefulVolumePerSet = targetVolume / minSets  // Max useful volume per set
 
         val sortedSets = sets
             .asSequence()
@@ -367,14 +383,14 @@ object VolumeDistributionHelper {
             .sortedByDescending { it.volume }
             .toList()
 
-        if (sortedSets.size < MIN_VALID_SETS) {
+        if (sortedSets.size < minSets) {
             return@coroutineScope emptyList()
         }
 
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
             flow {
                 for (firstSetIdx in startIdx until endIdx) {
-                    if (solutions.size >= MAX_SOLUTIONS) break
+                    if (solutions.size >= maxSolutions) break
 
                     suspend fun buildCombination(
                         currentCombo: List<ExerciseSet>,
@@ -382,11 +398,11 @@ object VolumeDistributionHelper {
                         startFrom: Int,
                         depth: Int = 1
                     ) {
-                        if (depth >= MAX_SETS) return
+                        if (depth >= maxSets) return
 
                         val lastSet = currentCombo.last()
                         for (nextIdx in startFrom until sortedSets.size) {
-                            if (solutions.size >= MAX_SOLUTIONS) return
+                            if (solutions.size >= maxSolutions) return
 
                             val nextSet = sortedSets[nextIdx]
 
@@ -398,7 +414,7 @@ object VolumeDistributionHelper {
                                 val newVolume = currentVolume + nextSet.volume
 
                                 val newCombo = currentCombo + nextSet
-                                if (newCombo.size >= MIN_VALID_SETS &&
+                                if (newCombo.size >= minSets &&
                                     newVolume >= minimumVolume &&
                                     newVolume <= targetVolume) {
                                     emit(Pair(newVolume, newCombo))
@@ -434,7 +450,7 @@ object VolumeDistributionHelper {
 
         val numThreads = minOf(
             Runtime.getRuntime().availableProcessors(),
-            (sortedSets.size + MIN_VALID_SETS - 1) / MIN_VALID_SETS
+            (sortedSets.size + minSets - 1) / minSets
         )
 
         val chunkSize = (sortedSets.size + numThreads - 1) / numThreads
@@ -566,10 +582,6 @@ object VolumeDistributionHelper {
         return totalVolume * (1 + progressionRate)
     }
 
-    data class BasicExerciseSet(
-        val weight: Double,
-        val reps: Int,
-    )
 
     suspend fun generateExerciseProgression(
         totalVolume: Double,
@@ -578,40 +590,60 @@ object VolumeDistributionHelper {
         desiredIncreasePercent: Float,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
-        exerciseSets: List<BasicExerciseSet>,
-    ): DistributedWorkout? {
-        if (desiredIncreasePercent < 0) {
-            throw IllegalArgumentException("Percentage increase must be positive")
+        minSets: Int = 3,
+        maxSets: Int = 5
+    ): ExerciseData? {
+        if (desiredIncreasePercent < 1) {
+            throw IllegalArgumentException("Percentage increase must be higher or equal to 1")
         }
 
+        val minimumRequiredVolume = calculateTargetVolume(
+            totalVolume = totalVolume,
+            desiredIncreasePercent = desiredIncreasePercent,
+        )
+
         val params = WeightExerciseParameters(
-            targetTotalVolume = totalVolume * 1.0025,
+            targetTotalVolume = minimumRequiredVolume * 1.005,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
-            minimumVolume = totalVolume * 0.9975,
+            minimumVolume = minimumRequiredVolume,
             originalVolume = totalVolume,
+            minSets = minSets,
+            maxSets = maxSets,
+            isDeload = false
         )
 
-        if (desiredIncreasePercent >= 1) {
-            val minimumRequiredVolume = calculateTargetVolume(
-                totalVolume = totalVolume,
-                desiredIncreasePercent = desiredIncreasePercent,
-            )
-            val standardSolution = distributeVolume(
-                params.copy(
-                    targetTotalVolume = minimumRequiredVolume * 1.005,
-                    minimumVolume = minimumRequiredVolume
-                )
-            )
-            if (standardSolution != null) {
-                return standardSolution
-            }
-        }
+        return distributeVolume(params)
+    }
 
-        val noIncreaseSolution = distributeVolume(params)
+    suspend fun redistributeExerciseSets(
+        totalVolume: Double,
+        oneRepMax: Double,
+        availableWeights: Set<Double>,
+        upperVolumeRange: Double,
+        lowerVolumeRange: Double,
+        percentLoadRange: Pair<Double, Double>,
+        repsRange: IntRange,
+        isDeload: Boolean,
+        minSets: Int = 3,
+        maxSets: Int = 5
+    ): ExerciseData? {
+        val params = WeightExerciseParameters(
+            targetTotalVolume = upperVolumeRange,
+            oneRepMax = oneRepMax,
+            availableWeights = availableWeights,
+            percentLoadRange = percentLoadRange,
+            repsRange = repsRange,
+            minimumVolume = lowerVolumeRange,
+            originalVolume = totalVolume,
+            minSets = minSets,
+            maxSets = maxSets,
+            isDeload = isDeload
+        )
 
-        return noIncreaseSolution
+        val exerciseData = distributeVolume(params) ?: return null
+        return exerciseData.copy(progressIncrease = 0.0)
     }
 }

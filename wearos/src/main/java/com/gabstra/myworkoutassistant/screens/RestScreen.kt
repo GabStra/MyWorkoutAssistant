@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -16,8 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -33,21 +30,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.lazy.AutoCenteringParams
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
-import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
-import com.gabstra.myworkoutassistant.composable.CustomBackHandler
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
@@ -58,7 +49,6 @@ import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinim
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
-import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -208,7 +198,7 @@ fun RestScreen(
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
-    val showSkipDialog by viewModel.isSkipDialogOpen.collectAsState()
+    val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
 
     val pagerState = rememberPagerState(
         initialPage = 0,
@@ -434,15 +424,18 @@ fun RestScreen(
                 endTimer =  currentSeconds
             )
             onTimerEnd()
-            viewModel.closeSkipDialog()
+            viewModel.closeCustomDialog()
         },
         handleNoClick = {
             VibrateGentle(context)
-            viewModel.closeSkipDialog()
+            viewModel.closeCustomDialog()
             startTimerJob()
         },
-        closeTimerInMillis = 2000,
-        handleOnAutomaticClose = {},
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            viewModel.closeCustomDialog()
+            startTimerJob()
+        },
         holdTimeInMillis = 1000
     )
 }

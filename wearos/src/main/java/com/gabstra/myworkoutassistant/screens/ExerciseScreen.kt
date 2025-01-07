@@ -8,7 +8,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,52 +32,37 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
-import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
-import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
-import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
-import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
-import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
-import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 
@@ -193,12 +177,12 @@ fun PageCompleteOrSkip(
 
     val context = LocalContext.current
 
-    var showConfirmDialog by remember { mutableStateOf(false) }
+    var showSkipDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
     LaunchedEffect(updatedState) {
-        showConfirmDialog = false
+        showSkipDialog = false
         showGoBackDialog = false
     }
 
@@ -217,10 +201,10 @@ fun PageCompleteOrSkip(
         ) {
             item{
                 ButtonWithText(
-                    text = "Next",
+                    text = "Skip exercise",
                     onClick = {
                         VibrateGentle(context)
-                        showConfirmDialog = true
+                        showSkipDialog = true
                     },
                 )
             }
@@ -238,27 +222,23 @@ fun PageCompleteOrSkip(
         }
     }
 
+
     CustomDialogYesOnLongPress(
-        show = showConfirmDialog,
-        title = "Complete exercise",
-        message = "Do you want to save this data?",
+        show = showSkipDialog,
+        title = "Skip exercise",
+        message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)
-            viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false,context){
-                viewModel.upsertWorkoutRecord(updatedState.set.id)
-                viewModel.goToNextState()
-            }
-
-            showConfirmDialog=false
+            viewModel.skipExercise()
+            showSkipDialog = false
         },
         handleNoClick = {
-            showConfirmDialog = false
+            showSkipDialog = false
             VibrateGentle(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
-            showConfirmDialog = false
+            showSkipDialog = false
         },
         holdTimeInMillis = 1000
     )
@@ -266,7 +246,7 @@ fun PageCompleteOrSkip(
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
         title = "Go to previous set",
-        message = "Do you want to go back?",
+        message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)
             viewModel.goToPreviousSet()
@@ -520,7 +500,7 @@ fun ExerciseScreen(
     hearthRateChart: @Composable () -> Unit,
 ) {
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
-    val showSkipDialog by viewModel.isSkipDialogOpen.collectAsState()
+    val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
 
     val pagerState = rememberPagerState(
         initialPage = 0,
@@ -531,7 +511,7 @@ fun ExerciseScreen(
     LaunchedEffect(state.set.id) {
         pagerState.scrollToPage(1)
         allowHorizontalScrolling = true
-        viewModel.closeSkipDialog()
+        viewModel.closeCustomDialog()
     }
 
     LaunchedEffect(allowHorizontalScrolling) {
@@ -609,21 +589,26 @@ fun ExerciseScreen(
     val context = LocalContext.current
 
     CustomDialogYesOnLongPress(
-        show = showSkipDialog,
-        title = "Skip exercise",
-        message = "Do you want to skip this exercise?",
+        show = showNextDialog,
+        title = "Complete exercise",
+        message = "Do you want to save this data?",
         handleYesClick = {
             VibrateGentle(context)
-            viewModel.skipExercise()
-            viewModel.closeSkipDialog()
+            viewModel.storeSetData()
+            viewModel.pushAndStoreWorkoutData(false,context){
+                viewModel.upsertWorkoutRecord(state.set.id)
+                viewModel.goToNextState()
+            }
+
+            viewModel.closeCustomDialog()
         },
         handleNoClick = {
-            viewModel.closeSkipDialog()
+            viewModel.closeCustomDialog()
             VibrateGentle(context)
         },
-        closeTimerInMillis = 2000,
+        closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
-            viewModel.closeSkipDialog()
+            viewModel.closeCustomDialog()
         },
         holdTimeInMillis = 1000
     )

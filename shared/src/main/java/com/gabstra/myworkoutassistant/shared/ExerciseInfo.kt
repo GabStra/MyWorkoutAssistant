@@ -9,6 +9,10 @@ data class ExerciseInfo(
     @PrimaryKey(autoGenerate = false)
     val id: UUID,
     val bestVolume: Double,
-    val avgOneRepMax: Double,
+    val oneRepMax: Double,
+    val successfulSessionCounter: UInt,
+    val volumeLastSuccessfulSession: Double,
+    val sessionFailedCounter: UInt,
+    val previousSessionWasDeload: Boolean,
     val version: UInt = 0u
 )
