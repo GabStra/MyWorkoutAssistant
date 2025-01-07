@@ -15,6 +15,7 @@ import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 object ProgressionHelper {
     enum class ExerciseCategory {
@@ -87,7 +88,6 @@ object VolumeDistributionHelper {
         val availableWeights: Set<Double>,
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
-        val fatigueFactor: Float,
         val minimumVolume: Double,
     )
 
@@ -342,6 +342,7 @@ object VolumeDistributionHelper {
     data class Solution(
         val combination: List<ExerciseSet>,
         val totalFatigue: Double,
+        val volumeVariation: Double
     )
 
     private suspend fun findBestCombinationVariant(
@@ -351,35 +352,23 @@ object VolumeDistributionHelper {
     ) = coroutineScope {
         val MAX_SETS = 5
         val MIN_VALID_SETS = 3
-        val MAX_SOLUTIONS = 100
+        val MAX_SOLUTIONS = 10
 
         val solutions = Collections.synchronizedList(ArrayList<Solution>(MAX_SOLUTIONS))
 
-        // Improved initial filtering and sorting
+        val maxUsefulVolumePerSet = targetVolume / MIN_VALID_SETS  // Max useful volume per set
+
         val sortedSets = sets
             .asSequence()
             .filter { set ->
-                        set.volume * 3 <= targetVolume &&
-                        set.volume * 5 >= minimumVolume
+                set.volume < targetVolume &&
+                set.volume <= maxUsefulVolumePerSet
             }
             .sortedByDescending { it.volume }
             .toList()
 
-        // Early return if we don't have enough sets
         if (sortedSets.size < MIN_VALID_SETS) {
             return@coroutineScope emptyList()
-        }
-
-        fun calculateWeightProgression(setCombo: List<ExerciseSet>): Double {
-            return (1 until setCombo.size)
-                .map { i ->
-                    val ratio = setCombo[i].weight / setCombo[i - 1].weight
-                    when {
-                        ratio > 1.0 -> 0.0  // Penalize any volume increase
-                        ratio == 1.0 -> 1.0  // Perfect for maintaining volume
-                        else -> ratio  // Linear progression for all decreasing ratios
-                    }
-                }.average()
         }
 
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
@@ -400,13 +389,18 @@ object VolumeDistributionHelper {
                             if (solutions.size >= MAX_SOLUTIONS) return
 
                             val nextSet = sortedSets[nextIdx]
-                            val isValidSequence = (lastSet.weight > nextSet.weight || (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps)) && lastSet.fatigue >= nextSet.fatigue
+
+                            val isValidSequence = (lastSet.weight > nextSet.weight ||
+                                    (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps)) &&
+                                    lastSet.fatigue >= nextSet.fatigue
 
                             if (isValidSequence) {
                                 val newVolume = currentVolume + nextSet.volume
 
                                 val newCombo = currentCombo + nextSet
-                                if (newCombo.size >= MIN_VALID_SETS && newVolume >= minimumVolume && newVolume <= targetVolume) {
+                                if (newCombo.size >= MIN_VALID_SETS &&
+                                    newVolume >= minimumVolume &&
+                                    newVolume <= targetVolume) {
                                     emit(Pair(newVolume, newCombo))
                                 }
                                 buildCombination(newCombo, newVolume, nextIdx, depth + 1)
@@ -423,7 +417,7 @@ object VolumeDistributionHelper {
             }
                 .buffer(100)
                 .flowOn(Dispatchers.Default)
-                .collect { (volume, combo) ->
+                .collect { (totalVolume, combo) ->
                     solutions.add(
                         Solution(
                             combination = combo,
@@ -432,12 +426,12 @@ object VolumeDistributionHelper {
                                 val w = 1 + 0.2 * (i - 1)
                                 it.fatigue * w
                             },
+                            volumeVariation = combo.maxOf { it.volume } - combo.minOf { it.volume }
                         )
                     )
                 }
         }
 
-        // Optimize chunk distribution
         val numThreads = minOf(
             Runtime.getRuntime().availableProcessors(),
             (sortedSets.size + MIN_VALID_SETS - 1) / MIN_VALID_SETS
@@ -456,26 +450,30 @@ object VolumeDistributionHelper {
             }
             .awaitAll()
 
-        val totalFatigueValues = solutions.map { it.totalFatigue }
+        fun calculateCombinedScore(solutions: List<Solution>): List<Double> {
+            // Z-score normalization for better statistical properties
+            fun List<Double>.normalizeZScore(): List<Double> {
+                val mean = average()
+                val stdDev = sqrt(map { (it - mean) * (it - mean) }.average())
+                return if (stdDev == 0.0) map { 0.0 } else map { (it - mean) / stdDev }
+            }
 
-        fun List<Double>.normalizeMinMax(): List<Double> {
-            val min = minOrNull() ?: return emptyList()
-            val max = maxOrNull() ?: return emptyList()
-            val range = max - min
-            return if (range == 0.0) map { 0.0 } else map { (it - min) / range }
+            // Extract and normalize metrics
+            val fatigueNorm = solutions.map { it.totalFatigue }.normalizeZScore()
+            val variationNorm = solutions.map { it.volumeVariation }.normalizeZScore()
+
+            // Return combined scores with emphasis on volume distribution
+            return List(solutions.size) { index ->
+                fatigueNorm[index] + variationNorm[index]
+            }
         }
 
-        val totalFatigueNorm = totalFatigueValues.normalizeMinMax()
+        if(solutions.isEmpty()) return@coroutineScope emptyList()
 
-        val scores = List(solutions.size) { index ->
-            totalFatigueNorm[index]
-        }
-
-        val target = scores.min()
+        val combinationScores = calculateCombinedScore(solutions)
 
         solutions.minByOrNull {
-            val index = solutions.indexOf(it)
-            abs(scores[index] - target)
+            combinationScores[solutions.indexOf(it)]
         }?.combination ?: emptyList()
     }
 
@@ -551,36 +549,60 @@ object VolumeDistributionHelper {
         )
     }
 
-    suspend fun distributeVolumeWithMinimumIncrease(
-        currentVolume: Double,
+    fun calculateTargetVolume(
+        totalVolume: Double,
+        desiredIncreasePercent: Float
+    ): Double {
+        val baseRate = (desiredIncreasePercent / 100).toDouble()
+
+        // Volume factor using natural log to create progressive resistance
+        val volumeFactor = (1.0 / (1.0 + ln(totalVolume))).coerceIn(0.3, 1.0)
+
+        // Combined progression rate
+        val progressionRate = (baseRate * volumeFactor)
+            .coerceAtLeast(0.01)
+            .coerceAtMost(baseRate)
+
+        return totalVolume * (1 + progressionRate)
+    }
+
+    data class BasicExerciseSet(
+        val weight: Double,
+        val reps: Int,
+    )
+
+    suspend fun generateExerciseProgression(
+        totalVolume: Double,
         oneRepMax: Double,
         availableWeights: Set<Double>,
-        percentageIncrease: Float,
+        desiredIncreasePercent: Float,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
-        fatigueFactor: Float,
+        exerciseSets: List<BasicExerciseSet>,
     ): DistributedWorkout? {
-        if (percentageIncrease < 0) {
+        if (desiredIncreasePercent < 0) {
             throw IllegalArgumentException("Percentage increase must be positive")
         }
 
         val params = WeightExerciseParameters(
-            targetTotalVolume = currentVolume,
+            targetTotalVolume = totalVolume * 1.0025,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
-            fatigueFactor = fatigueFactor,
-            minimumVolume = currentVolume,
-            originalVolume = currentVolume,
+            minimumVolume = totalVolume * 0.9975,
+            originalVolume = totalVolume,
         )
 
-        if (percentageIncrease >= 1) {
-            val minimumRequiredVolume = currentVolume * (1 + (percentageIncrease / 100))
+        if (desiredIncreasePercent >= 1) {
+            val minimumRequiredVolume = calculateTargetVolume(
+                totalVolume = totalVolume,
+                desiredIncreasePercent = desiredIncreasePercent,
+            )
             val standardSolution = distributeVolume(
                 params.copy(
-                    targetTotalVolume = minimumRequiredVolume,
-                    minimumVolume = currentVolume * 1.01
+                    targetTotalVolume = minimumRequiredVolume * 1.005,
+                    minimumVolume = minimumRequiredVolume
                 )
             )
             if (standardSolution != null) {

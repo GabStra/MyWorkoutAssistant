@@ -562,8 +562,7 @@ class AppViewModel : ViewModel() {
             distributedWorkoutByExerciseIdMap[exerciseId] = distribution
         }
 
-
-       /* // Process exercises sequentially
+        /*// Process exercises sequentially
         exerciseWithWeightSets.forEach { exercise ->
             val result = processExercise(exercise)
             result?.let { (exerciseId, distribution) ->
@@ -588,6 +587,8 @@ class AppViewModel : ViewModel() {
 
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
         val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
+
+        val exerciseSets = exercise.sets.filter { it !is RestSet }
 
         var totalVolume = 0.0
         var avg1RM = 0.0
@@ -631,8 +632,6 @@ class AppViewModel : ViewModel() {
                 }
             })
         } else {
-            val exerciseSets = exercise.sets.filter { it !is RestSet }
-
             totalVolume = exerciseSets.sumOf {
                 when (it) {
                     is BodyWeightSet -> {
@@ -682,21 +681,19 @@ class AppViewModel : ViewModel() {
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
 
-        val loadPercentageRange = Pair(40.0, 93.0)
-        val repsRange = IntRange(3, 30)
+        val loadPercentageRange =
+            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) Pair(40.0, 93.0) else Pair(
+                exercise.minLoadPercent,
+                exercise.maxLoadPercent
+            )
+        val repsRange =
+            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) IntRange(3, 30) else IntRange(
+                exercise.minReps,
+                exercise.maxReps
+            )
 
-        val volumeIncreasePercent =
+        val desiredIncreasePercent =
             if (exercise.volumeIncreasePercent > 3) 3.0f else exercise.volumeIncreasePercent
-
-        val distributedWorkout = VolumeDistributionHelper.distributeVolumeWithMinimumIncrease(
-            totalVolume,
-            avg1RM,
-            availableWeights,
-            volumeIncreasePercent,
-            loadPercentageRange,
-            repsRange,
-            exercise.fatigueFactor
-        )
 
         Log.d(
             "WorkoutViewModel",
@@ -705,7 +702,26 @@ class AppViewModel : ViewModel() {
                     "%.2f",
                     avg1RM
                 ).replace(",", ".")
-            } desired increase in percentage: ${volumeIncreasePercent}% "
+            } desired increase in percentage: ${desiredIncreasePercent}% "
+        )
+
+        val distributedWorkout = VolumeDistributionHelper.generateExerciseProgression(
+            totalVolume,
+            avg1RM,
+            availableWeights,
+            desiredIncreasePercent,
+            loadPercentageRange,
+            repsRange,
+            exerciseSets.map {
+                when(it){
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                        VolumeDistributionHelper.BasicExerciseSet(it.getWeight(equipment,relativeBodyWeight),it.reps)
+                    }
+                    is WeightSet -> VolumeDistributionHelper.BasicExerciseSet(it.getWeight(equipment),it.reps)
+                    else -> throw IllegalArgumentException("Unknown exercise type")
+                }
+            }
         )
 
         if (distributedWorkout != null) {
@@ -744,7 +760,7 @@ class AppViewModel : ViewModel() {
                 "Progression found - volume $totalVolume -> ${distributedWorkout.totalVolume} +${
                     String.format(
                         "%.2f",
-                        ((distributedWorkout.totalVolume - totalVolume) / totalVolume) * 100
+                        distributedWorkout.progressIncrease
                     )
                 }% Average percentage load: ${
                     String.format(
