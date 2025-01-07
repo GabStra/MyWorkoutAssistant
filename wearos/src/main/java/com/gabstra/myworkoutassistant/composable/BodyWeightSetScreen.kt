@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -421,7 +422,7 @@ fun BodyWeightSetScreen(
                                 Icon(
                                     Icons.Filled.Star,
                                     contentDescription = "Streak",
-                                    tint = MyColors.Orange
+                                    tint = MyColors.Green
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
@@ -436,15 +437,21 @@ fun BodyWeightSetScreen(
                                 ((volumeProgression - 1) * 100) >= state.progressionValue) {
                                 MyColors.Green
                             } else {
-                                Color.White
+                                Color.DarkGray
                             }
 
-                            Text(
-                                text = "Obj: +${"%.1f".format(state.progressionValue).replace(",", ".")}% ",
-                                style = indicatorStyle,
-                                textAlign = TextAlign.Center,
-                                color = targetColor
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Target",
+                                    style = indicatorStyle,
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "Check",
+                                    tint = targetColor
+                                )
+                            }
                         }
                     }
 

@@ -186,42 +186,33 @@ fun PageCompleteOrSkip(
         showGoBackDialog = false
     }
 
-    Scaffold(
-        positionIndicator = {
-            PositionIndicator(
-                scalingLazyListState = listState
+    ScalingLazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(10.dp),
+        state = listState
+    ) {
+        item{
+            ButtonWithText(
+                text = "Skip exercise",
+                onClick = {
+                    VibrateGentle(context)
+                    showSkipDialog = true
+                },
             )
         }
-    ) {
-        ScalingLazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 10.dp, start = 20.dp, end = 20.dp),
-            state = listState
-        ) {
-            item{
-                ButtonWithText(
-                    text = "Skip exercise",
-                    onClick = {
-                        VibrateGentle(context)
-                        showSkipDialog = true
-                    },
-                )
-            }
-            item{
-                ButtonWithText(
-                    text = "Back",
-                    onClick = {
-                        VibrateGentle(context)
-                        showGoBackDialog = true
-                    },
-                    enabled = !isHistoryEmpty,
-                    backgroundColor = MaterialTheme.colors.background
-                )
-            }
+        item{
+            ButtonWithText(
+                text = "Back",
+                onClick = {
+                    VibrateGentle(context)
+                    showGoBackDialog = true
+                },
+                enabled = !isHistoryEmpty,
+                backgroundColor = MaterialTheme.colors.background
+            )
         }
     }
-
 
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
@@ -442,7 +433,7 @@ fun PageNewSets(
     ScalingLazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 10.dp, start = 20.dp, end = 20.dp),
+            .padding(10.dp),
         state = listState
     ) {
         item{
