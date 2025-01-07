@@ -19,6 +19,11 @@ class PlateCalculator {
             val steps: List<PlateStep>
         )
 
+        data class PlateChangeResult(
+            val change: PlateChange,
+            val currentPlates: List<Double>
+        )
+
         @JvmStatic
         fun calculatePlateChanges(
             plates: List<Double>,
@@ -26,7 +31,7 @@ class PlateCalculator {
             barWeight: Double,
             initialSetup: List<Double> = emptyList(),
             multiplier: Double = 2.0
-        ): List<PlateChange> {
+        ): List<PlateChangeResult>  {
             // Keep the existing plate combination calculation logic
             val plateCounts = plates.groupingBy { it }.eachCount()
             val allCombos = sets.map { weight ->
@@ -41,7 +46,7 @@ class PlateCalculator {
             // Validation check
             for (c in allCombos) {
                 if (c.isEmpty()) {
-                    throw IllegalArgumentException("No valid plate combination found for one of the target weights.")
+                    return emptyList()
                 }
             }
 
@@ -88,23 +93,26 @@ class PlateCalculator {
             chosenCombos.reverse()
 
             // Generate step-by-step changes with physical constraints
-            val changes = mutableListOf<PlateChange>()
+            val results = mutableListOf<PlateChangeResult>()
             var currentPlates = initialSetup
             for (i in sets.indices) {
                 val targetPlates = chosenCombos[i]
                 val physicalSteps = generatePhysicalSteps(currentPlates, targetPlates)
 
-                changes.add(
-                    PlateChange(
-                        from = sumPlateWeights(currentPlates) + barWeight,
-                        to = sets[i],
-                        steps = physicalSteps
+                results.add(
+                    PlateChangeResult(
+                        PlateChange(
+                            from = sumPlateWeights(currentPlates) + barWeight,
+                            to = sets[i],
+                            steps = physicalSteps
+                        ),
+                        targetPlates
                     )
                 )
                 currentPlates = targetPlates
             }
 
-            return changes
+            return results
         }
 
         private fun generateValidCombos(plateCounts: Map<Double, Int>, target: Double,multiplier: Double): List<List<Double>> {
@@ -178,74 +186,39 @@ class PlateCalculator {
             return plates.sumOf { it * 2 }
         }
 
-        private fun generatePhysicalSteps(
-            currentPlates: List<Double>,
-            targetPlates: List<Double>
-        ): List<PlateStep> {
+        fun generatePhysicalSteps(currentPlates: List<Double>, targetPlates: List<Double>): List<PlateStep> {
             val steps = mutableListOf<PlateStep>()
 
-            // Handle empty configurations
-            if (currentPlates.isEmpty() && targetPlates.isEmpty()) {
+            // If both configs are the same, no steps needed
+            if (currentPlates == targetPlates) {
                 return steps
             }
 
-            if (currentPlates.isEmpty()) {
-                return targetPlates.sortedDescending().map {
-                    PlateStep(Action.ADD, it)
-                }
-            }
+            var mutableCurrent = currentPlates.toMutableList()
 
-            if (targetPlates.isEmpty()) {
-                return currentPlates.sortedDescending().reversed().map {
-                    PlateStep(Action.REMOVE, it)
-                }
-            }
+            // Remove phase - always work from outside in
+            var i = mutableCurrent.size - 1
+            while (i >= 0) {
+                val plate = mutableCurrent[i]
+                val targetIndex = targetPlates.indexOf(plate)
 
-            // Convert to lists ordered from inner to outer
-            val current = currentPlates.sortedDescending()
-            val target = targetPlates.sortedDescending()
-
-            // Find common prefix (plates that don't need to be touched)
-            var commonPrefix = 0
-            while (commonPrefix < minOf(current.size, target.size) &&
-                current[commonPrefix] == target[commonPrefix]) {
-                commonPrefix++
-            }
-
-            // If configurations are identical, return empty steps
-            if (commonPrefix == current.size && commonPrefix == target.size) {
-                return steps
-            }
-
-            // Track plates that need to be temporarily removed and replaced
-            val platesToRestore = mutableListOf<Double>()
-            val seenPlates = mutableMapOf<Double, Int>() // Track count of each plate weight
-
-            // 1. Remove outer plates from point of difference
-            for (i in current.lastIndex downTo commonPrefix) {
-                val plate = current[i]
-                if (target.contains(plate)) {
-                    val targetCount = target.count { it == plate }
-                    val currentCount = seenPlates.getOrDefault(plate, 0)
-                    if (currentCount < targetCount) {
-                        platesToRestore.add(0, plate)
-                        seenPlates[plate] = currentCount + 1
+                if (targetIndex == -1 || targetIndex != i) {
+                    // First remove all plates from the outside up to this position
+                    for (j in mutableCurrent.size - 1 downTo i) {
+                        steps.add(PlateStep(Action.REMOVE, mutableCurrent[j]))
                     }
+                    mutableCurrent = mutableCurrent.subList(0, i).toMutableList()
                 }
-                steps.add(PlateStep(Action.REMOVE, plate))
+                i--
             }
 
-            // 2. Add new plates that aren't being restored
-            for (i in commonPrefix until target.size) {
-                val plate = target[i]
-                if (!platesToRestore.contains(plate) ||
-                    platesToRestore.count { it == plate } < target.count { it == plate }) {
-                    steps.add(PlateStep(Action.ADD, plate))
-                }
+            // Add phase - collect plates we need to add
+            val platesToAdd = targetPlates.filterIndexed { index, plate ->
+                index >= mutableCurrent.size || mutableCurrent[index] != plate
             }
 
-            // 3. Restore the saved plates in correct order
-            platesToRestore.forEach { plate ->
+            // Sort plates by weight (heaviest first) and add them
+            platesToAdd.sortedByDescending { it }.forEach { plate ->
                 steps.add(PlateStep(Action.ADD, plate))
             }
 

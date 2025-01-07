@@ -345,14 +345,14 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
         )
         Spacer(modifier = Modifier.height(10.dp))
 
-        if (equipment == null || equipment !is Barbell || updatedState.plateChange == null) {
+        if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
                 text = "NOT AVAILABLE",
                 style = MaterialTheme.typography.body1,
                 textAlign = TextAlign.Center
             )
         } else {
-            if (updatedState.plateChange.steps.isEmpty()) {
+            if (updatedState.plateChangeResult.change.steps.isEmpty()) {
                 Text(
                     text = "No changes needed",
                     modifier = Modifier.fillMaxWidth(),
@@ -366,14 +366,14 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
                         .verticalScroll(scrollState),
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    if (updatedState.plateChange.steps.isNotEmpty()) {
+                    if (updatedState.plateChangeResult.change.steps.isNotEmpty()) {
                         val style = MaterialTheme.typography.body1
                         Column(
                             modifier= Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            updatedState.plateChange.steps.forEachIndexed { index, step ->
+                            updatedState.plateChangeResult.change.steps.forEachIndexed { index, step ->
                                 Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)){
                                     Text(
                                         text = "${index+1})",

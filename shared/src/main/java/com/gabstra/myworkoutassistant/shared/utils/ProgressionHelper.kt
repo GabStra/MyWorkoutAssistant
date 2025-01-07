@@ -597,18 +597,18 @@ object VolumeDistributionHelper {
             throw IllegalArgumentException("Percentage increase must be higher or equal to 1")
         }
 
-        val minimumRequiredVolume = calculateTargetVolume(
+        /*val minimumRequiredVolume = calculateTargetVolume(
             totalVolume = totalVolume,
             desiredIncreasePercent = desiredIncreasePercent,
-        )
+        )*/
 
         val params = WeightExerciseParameters(
-            targetTotalVolume = minimumRequiredVolume * 1.005,
+            targetTotalVolume = totalVolume * 1.02,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
-            minimumVolume = minimumRequiredVolume,
+            minimumVolume = totalVolume * 1.01,
             originalVolume = totalVolume,
             minSets = minSets,
             maxSets = maxSets,

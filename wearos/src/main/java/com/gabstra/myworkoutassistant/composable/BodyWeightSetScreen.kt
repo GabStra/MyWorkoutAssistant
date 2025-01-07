@@ -397,6 +397,8 @@ fun BodyWeightSetScreen(
                 RepsRow(Modifier)
             }
 
+            val indicatorStyle = MaterialTheme.typography.body2
+
             if(volumeProgression > 0){
                 Spacer(modifier = Modifier.height(5.dp))
 
@@ -409,8 +411,6 @@ fun BodyWeightSetScreen(
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
-
-                val indicatorStyle = MaterialTheme.typography.body2
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -434,11 +434,17 @@ fun BodyWeightSetScreen(
                         }
 
                         if(state.progressionValue != null && state.progressionValue > 0) {
+                            fun Double.round(decimals: Int): Double {
+                                var multiplier = 1.0
+                                repeat(decimals) { multiplier *= 10 }
+                                return kotlin.math.round(this * multiplier) / multiplier
+                            }
+
                             val isHigherThanTarget = volumeProgression > 1 &&
-                                    ((volumeProgression - 1) * 100) >= state.progressionValue
+                                    ((volumeProgression - 1) * 100).round(2) > state.progressionValue.round(2)
 
                             val isEqualToTarget = volumeProgression > 1 &&
-                                    ((volumeProgression - 1) * 100) == state.progressionValue
+                                    ((volumeProgression - 1) * 100).round(2) == state.progressionValue.round(2)
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
@@ -463,14 +469,17 @@ fun BodyWeightSetScreen(
                             }
                         }
                     }
+                }
+            }
 
-                    if(state.isDeloading){
-                        Text(
-                            text = "DELOAD",
-                            style = indicatorStyle,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
+            if(state.isDeloading){
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically){
+                    Text(
+                        text = "DELOAD",
+                        style = indicatorStyle,
+                        textAlign = TextAlign.Center,
+                    )
                 }
             }
         }

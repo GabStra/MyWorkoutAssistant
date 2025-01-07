@@ -82,7 +82,7 @@ sealed class WorkoutState {
         var skipped: Boolean,
         val targetZone: Int? = null,
         val currentBodyWeight: Double,
-        val plateChange: PlateCalculator.Companion.PlateChange? = null,
+        val plateChangeResult: PlateCalculator.Companion.PlateChangeResult? = null,
         val progressionValue: Double? = null,
         val streak: Int,
         val isDeloading: Boolean,
@@ -1191,12 +1191,17 @@ class AppViewModel : ViewModel() {
                             val exerciseOriginalVolume = exerciseOriginalTotalVolumeById[it.key] ?: 0.0
 
                             if(volume > exerciseOriginalVolume) {
-                                exerciseInfoDao.updateSuccessfulSessionCounter(
-                                    it.key!!,
-                                    exerciseInfo.successfulSessionCounter.inc()
-                                )
-                                exerciseInfoDao.updateVolumeLastSuccessfulSession(it.key!!, volume)
-                                exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
+                                if(exerciseData != null && exerciseData.totalVolume != exerciseOriginalVolume && volume <= exerciseData.totalVolume){
+                                    exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!,0u)
+                                    exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
+                                }else{
+                                    exerciseInfoDao.updateSuccessfulSessionCounter(
+                                        it.key!!,
+                                        exerciseInfo.successfulSessionCounter.inc()
+                                    )
+                                    exerciseInfoDao.updateVolumeLastSuccessfulSession(it.key!!, volume)
+                                    exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
+                                }
                             }else if(volume == exerciseOriginalVolume){
                                 exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!,0u)
                                 exerciseInfoDao.updateSessionFailedCounter(it.key!!,0u)
@@ -1356,7 +1361,7 @@ class AppViewModel : ViewModel() {
 
         val exerciseSets = exercise.sets.filter { it !is RestSet }
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
-        val plateChanges = mutableListOf<PlateCalculator.Companion.PlateChange>()
+        val plateChangeResults = mutableListOf<PlateCalculator.Companion.PlateChangeResult>()
         val exerciseData =
             if (exerciseDataByExerciseIdMap.containsKey(exercise.id)) exerciseDataByExerciseIdMap[exercise.id]?.first else null
 
@@ -1367,8 +1372,16 @@ class AppViewModel : ViewModel() {
             val plateWeights = equipment.availablePlates.map { it.weight }
                 .toList() + equipment.additionalPlates.map { it.weight }.toList()
             try {
-                plateChanges.addAll(
-                    PlateCalculator.calculatePlateChanges(
+               /* var lastSetState = setStates.lastOrNull()
+
+                while (lastSetState != null && (lastSetState.skipped || lastSetState.set is RestSet)) {
+                    val index = setStates.indexOf(lastSetState)
+                    lastSetState = if (index > 0) setStates[index - 1] else null
+                }
+
+                val initialSetup = lastSetState?.plateChangeResult?.currentPlates ?: emptyList()*/
+
+                plateChangeResults.addAll(PlateCalculator.calculatePlateChanges(
                         plateWeights,
                         setWeights,
                         equipment.barWeight,
@@ -1421,7 +1434,7 @@ class AppViewModel : ViewModel() {
                     }
                 }
 
-                val plateChange = plateChanges.getOrNull(exerciseSets.indexOf(set))
+                val plateChangeResult = plateChangeResults.getOrNull(exerciseSets.indexOf(set))
 
                 val setState: WorkoutState.Set = WorkoutState.Set(
                     exercise.id,
@@ -1433,7 +1446,7 @@ class AppViewModel : ViewModel() {
                     false,
                     exercise.targetZone,
                     bodyWeight.value,
-                    plateChange,
+                    plateChangeResult,
                     exerciseData?.progressIncrease,
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
                     exerciseData?.isDeloading ?: false,
