@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
@@ -433,12 +434,11 @@ fun BodyWeightSetScreen(
                         }
 
                         if(state.progressionValue != null && state.progressionValue > 0) {
-                            val targetColor = if (volumeProgression > 1 &&
-                                ((volumeProgression - 1) * 100) >= state.progressionValue) {
-                                MyColors.Green
-                            } else {
-                                Color.DarkGray
-                            }
+                            val isHigherThanTarget = volumeProgression > 1 &&
+                                    ((volumeProgression - 1) * 100) >= state.progressionValue
+
+                            val isEqualToTarget = volumeProgression > 1 &&
+                                    ((volumeProgression - 1) * 100) == state.progressionValue
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
@@ -446,11 +446,20 @@ fun BodyWeightSetScreen(
                                     style = indicatorStyle,
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = "Check",
-                                    tint = targetColor
-                                )
+
+                                if(isHigherThanTarget){
+                                    Icon(
+                                        Icons.Filled.ArrowUpward,
+                                        contentDescription = "Up",
+                                        tint = MyColors.Green
+                                    )
+                                }else{
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = "Check",
+                                        tint = if(isEqualToTarget) MyColors.Green else Color.DarkGray
+                                    )
+                                }
                             }
                         }
                     }
