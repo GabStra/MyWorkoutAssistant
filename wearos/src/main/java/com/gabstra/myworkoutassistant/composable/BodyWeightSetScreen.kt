@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import kotlinx.coroutines.Dispatchers
@@ -434,12 +435,6 @@ fun BodyWeightSetScreen(
                         }
 
                         if(state.progressionValue != null && state.progressionValue > 0) {
-                            fun Double.round(decimals: Int): Double {
-                                var multiplier = 1.0
-                                repeat(decimals) { multiplier *= 10 }
-                                return kotlin.math.round(this * multiplier) / multiplier
-                            }
-
                             val isHigherThanTarget = volumeProgression > 1 &&
                                     ((volumeProgression - 1) * 100).round(2) > state.progressionValue.round(2)
 

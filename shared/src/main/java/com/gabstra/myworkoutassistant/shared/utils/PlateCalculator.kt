@@ -97,7 +97,7 @@ class PlateCalculator {
             var currentPlates = initialSetup
             for (i in sets.indices) {
                 val targetPlates = chosenCombos[i]
-                val physicalSteps = generatePhysicalSteps(currentPlates, targetPlates)
+                val physicalSteps = generatePhysicalSteps(currentPlates.sortedDescending(), targetPlates.sortedDescending())
 
                 results.add(
                     PlateChangeResult(

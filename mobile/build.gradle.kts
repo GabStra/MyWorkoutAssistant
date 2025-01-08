@@ -1,40 +1,5 @@
 import java.util.Properties
 
-val versionPropsFile = file("version.properties.mobile")
-val versionProps = Properties()
-
-if (versionPropsFile.canRead()) {
-    versionProps.load(versionPropsFile.inputStream())
-}
-
-if (versionProps.isEmpty) {
-    println("versionProps is empty. No properties were loaded.")
-} else {
-    versionProps.forEach { key, value ->
-        println("$key: $value")
-    }
-}
-
-// Keep the oldVersionCode unchanged
-val oldVersionCode = versionProps["VERSION_CODE"].toString().toInt()
-
-val oldVersionName = versionProps["VERSION_NAME"].toString()
-val versionComponents = oldVersionName.split(".")
-val majorVersion = versionComponents[0].toInt()
-val minorVersion = versionComponents[1].toInt()
-// Increment the patch version, or set to 1 if it's not explicitly set
-val patchVersion = if (versionComponents.size > 2) versionComponents[2].toInt() + 1 else 1
-
-// Construct the new version name with the incremented patch version
-val newVersionName = "$majorVersion.$minorVersion.$patchVersion"
-
-println("NEW VERSION_CODE $newVersionName")
-
-// Update the properties file with the new version name
-// Note: We are not updating the VERSION_CODE here, only the VERSION_NAME
-versionProps["VERSION_NAME"] = newVersionName
-versionProps.store(versionPropsFile.writer(), null)
-
 plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.0"
     id("com.android.application")
@@ -70,8 +35,8 @@ android {
         applicationId = "com.gabstra.myworkoutassistant"
         minSdk = 34
         targetSdk = 34
-        versionCode = oldVersionCode
-        versionName = newVersionName
+        versionCode = 1
+        versionName = "1"
         vectorDrawables {
             useSupportLibrary = true
         }

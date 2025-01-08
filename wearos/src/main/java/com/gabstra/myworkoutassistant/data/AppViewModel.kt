@@ -252,7 +252,7 @@ class AppViewModel : ViewModel() {
 
     public val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
 
-    val exerciseOriginalTotalVolumeById : MutableMap<UUID, Double> = mutableMapOf()
+    val exerciseOriginalTotalVolumeById: MutableMap<UUID, Double> = mutableMapOf()
 
     val exerciseDataByExerciseIdMap: MutableMap<UUID, Pair<VolumeDistributionHelper.ExerciseData?, Boolean>?> =
         mutableMapOf()
@@ -601,7 +601,7 @@ class AppViewModel : ViewModel() {
         var totalVolume = 0.0
         var maxOneRepMax = 0.0
 
-        if(exerciseInfo == null || exerciseInfo.volumeLastSuccessfulSession == 0.0 || exerciseInfo.oneRepMax == 0.0){
+        if (exerciseInfo == null || exerciseInfo.volumeLastSuccessfulSession == 0.0 || exerciseInfo.oneRepMax == 0.0) {
             val totalHistoricalSetDataList = when (exercise.exerciseType) {
                 ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
                 ExerciseType.BODY_WEIGHT -> getHistoricalSetsDataByExerciseId<BodyWeightSetData>(
@@ -628,7 +628,11 @@ class AppViewModel : ViewModel() {
                             it.actualReps
                         )
 
-                        is WeightSetData -> calculateOneRepMax(it.getWeight(equipment), it.actualReps)
+                        is WeightSetData -> calculateOneRepMax(
+                            it.getWeight(equipment),
+                            it.actualReps
+                        )
+
                         else -> 0.0
                     }
                 })
@@ -656,12 +660,13 @@ class AppViewModel : ViewModel() {
                                 bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                             calculateOneRepMax(it.getWeight(equipment, relativeBodyWeight), it.reps)
                         }
+
                         is WeightSet -> calculateOneRepMax(it.getWeight(equipment), it.reps)
                         else -> 0.0
                     }
                 }
             }
-        }else{
+        } else {
             totalVolume = exerciseInfo.volumeLastSuccessfulSession
             maxOneRepMax = exerciseInfo.oneRepMax
         }
@@ -673,7 +678,8 @@ class AppViewModel : ViewModel() {
 
         exerciseOriginalTotalVolumeById[exercise.id] = totalVolume
 
-        val shouldDeload = exerciseInfo != null && (exerciseInfo.sessionFailedCounter >= 2u || exerciseInfo.successfulSessionCounter >= 7u)
+        val shouldDeload =
+            exerciseInfo != null && (exerciseInfo.sessionFailedCounter >= 2u || exerciseInfo.successfulSessionCounter >= 7u)
 
         val availableWeights = when (exercise.exerciseType) {
             ExerciseType.WEIGHT -> exercise.equipmentId?.let { getEquipmentById(it)!!.calculatePossibleCombinations() }
@@ -717,7 +723,7 @@ class AppViewModel : ViewModel() {
 
         var exerciseData: ExerciseData? = null
 
-        if(shouldDeload){
+        if (shouldDeload) {
             exerciseData = VolumeDistributionHelper.redistributeExerciseSets(
                 totalVolume,
                 maxOneRepMax,
@@ -728,7 +734,7 @@ class AppViewModel : ViewModel() {
                 repsRange,
                 true,
             )
-        }else{
+        } else {
             exerciseData = VolumeDistributionHelper.generateExerciseProgression(
                 totalVolume,
                 maxOneRepMax,
@@ -738,7 +744,7 @@ class AppViewModel : ViewModel() {
                 repsRange,
             )
 
-            if(exerciseData == null){
+            if (exerciseData == null) {
                 exerciseData = VolumeDistributionHelper.redistributeExerciseSets(
                     totalVolume,
                     maxOneRepMax,
@@ -1125,7 +1131,8 @@ class AppViewModel : ViewModel() {
                     exerciseHistoriesByExerciseId.filter { it.value.any { it.setData is BodyWeightSetData || it.setData is WeightSetData } }
 
                 exerciseHistoriesSetsByExerciseId.forEach { it ->
-                    val exerciseData = if (exerciseDataByExerciseIdMap.containsKey(it.key)) exerciseDataByExerciseIdMap[it.key]?.first else null
+                    val exerciseData =
+                        if (exerciseDataByExerciseIdMap.containsKey(it.key)) exerciseDataByExerciseIdMap[it.key]?.first else null
 
                     val equipment = exercisesById[it.key]?.equipmentId?.let { equipmentId ->
                         getEquipmentById(equipmentId)
@@ -1140,7 +1147,7 @@ class AppViewModel : ViewModel() {
                             is WeightSetData -> it.volume
                             else -> throw IllegalArgumentException("Unknown set type")
                         }
-                    }
+                    }.round(2)
 
                     val maxOneRepMax = setDataList.maxOf { setData ->
                         when (setData) {
@@ -1179,35 +1186,45 @@ class AppViewModel : ViewModel() {
                             exerciseInfoDao.updateOneRepMax(it.key!!, maxOneRepMax)
                         }
 
-                        if(exerciseInfo.previousSessionWasDeload && exerciseData?.isDeloading == false){
-                            exerciseInfoDao.updatePreviousSessionWasDeload(it.key!!,false)
+                        if (exerciseInfo.previousSessionWasDeload && exerciseData?.isDeloading == false) {
+                            exerciseInfoDao.updatePreviousSessionWasDeload(it.key!!, false)
                         }
 
-                        if(exerciseData != null && exerciseData.isDeloading){
-                            exerciseInfoDao.updatePreviousSessionWasDeload(it.key!!,true)
-                            exerciseInfoDao.updateSessionFailedCounter(it.key!!,0u)
-                            exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!,0u)
-                        }else{
-                            val exerciseOriginalVolume = exerciseOriginalTotalVolumeById[it.key] ?: 0.0
+                        if (exerciseData != null && exerciseData.isDeloading) {
+                            exerciseInfoDao.updatePreviousSessionWasDeload(it.key!!, true)
+                            exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
+                            exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
+                        } else {
+                            val exerciseOriginalVolume =
+                                exerciseOriginalTotalVolumeById[it.key]?.round(2) ?: 0.0
 
-                            if(volume > exerciseOriginalVolume) {
-                                if(exerciseData != null && exerciseData.totalVolume != exerciseOriginalVolume && volume <= exerciseData.totalVolume){
-                                    exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!,0u)
+                            if (volume > exerciseOriginalVolume) {
+                                if (exerciseData != null && exerciseData.totalVolume.round(2) != exerciseOriginalVolume.round(
+                                        2
+                                    ) && volume <= exerciseData.totalVolume.round(2)
+                                ) {
+                                    exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
                                     exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
-                                }else{
+                                } else {
                                     exerciseInfoDao.updateSuccessfulSessionCounter(
                                         it.key!!,
                                         exerciseInfo.successfulSessionCounter.inc()
                                     )
-                                    exerciseInfoDao.updateVolumeLastSuccessfulSession(it.key!!, volume)
+                                    exerciseInfoDao.updateVolumeLastSuccessfulSession(
+                                        it.key!!,
+                                        volume
+                                    )
                                     exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
                                 }
-                            }else if(volume == exerciseOriginalVolume){
-                                exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!,0u)
-                                exerciseInfoDao.updateSessionFailedCounter(it.key!!,0u)
-                            }else{
-                                exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!,0u)
-                                exerciseInfoDao.updateSessionFailedCounter(it.key!!,exerciseInfo.sessionFailedCounter.inc())
+                            } else if (volume == exerciseOriginalVolume) {
+                                exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
+                                exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
+                            } else {
+                                exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
+                                exerciseInfoDao.updateSessionFailedCounter(
+                                    it.key!!,
+                                    exerciseInfo.sessionFailedCounter.inc()
+                                )
                             }
                         }
 
@@ -1356,41 +1373,56 @@ class AppViewModel : ViewModel() {
         }
     }
 
-    private suspend fun addStatesFromExercise(exercise: Exercise) {
-        if (exercise.sets.isEmpty()) return
+    private fun getLastSetBefore(workoutState: WorkoutState): WorkoutState.Set? {
+        val index = allWorkoutStates.indexOf(workoutState)
+        if (index <= 0) return null
 
-        val exerciseSets = exercise.sets.filter { it !is RestSet }
-        val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
+        return allWorkoutStates.take(index)
+            .findLast { it is WorkoutState.Set } as? WorkoutState.Set
+    }
+
+    private fun getPlateChangeResults(
+        exercise: Exercise,
+        exerciseSets: List<Set>,
+        equipment: Equipment?,
+        initialSetup: List<Double> = emptyList()
+    ): List<PlateCalculator.Companion.PlateChangeResult> {
         val plateChangeResults = mutableListOf<PlateCalculator.Companion.PlateChangeResult>()
-        val exerciseData =
-            if (exerciseDataByExerciseIdMap.containsKey(exercise.id)) exerciseDataByExerciseIdMap[exercise.id]?.first else null
 
         if (equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT) {
             val sets = exerciseSets.filterIsInstance<WeightSet>()
             val setWeights = sets.map { it.getWeight(equipment) }.toList()
-
             val plateWeights = equipment.availablePlates.map { it.weight }
                 .toList() + equipment.additionalPlates.map { it.weight }.toList()
             try {
-               /* var lastSetState = setStates.lastOrNull()
-
-                while (lastSetState != null && (lastSetState.skipped || lastSetState.set is RestSet)) {
-                    val index = setStates.indexOf(lastSetState)
-                    lastSetState = if (index > 0) setStates[index - 1] else null
-                }
-
-                val initialSetup = lastSetState?.plateChangeResult?.currentPlates ?: emptyList()*/
-
-                plateChangeResults.addAll(PlateCalculator.calculatePlateChanges(
+                plateChangeResults.addAll(
+                    PlateCalculator.calculatePlateChanges(
                         plateWeights,
                         setWeights,
                         equipment.barWeight,
+                        initialSetup,
                         multiplier = equipment.volumeMultiplier
                     )
                 )
             } catch (_: Exception) {
             }
         }
+
+        return plateChangeResults
+    }
+
+    private suspend fun addStatesFromExercise(exercise: Exercise) {
+        if (exercise.sets.isEmpty()) return
+
+        val exerciseData =
+            if (exerciseDataByExerciseIdMap.containsKey(exercise.id)) exerciseDataByExerciseIdMap[exercise.id]?.first else null
+        val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
+        val exerciseSets = exercise.sets.filter { it !is RestSet }
+
+        //val previousWorkoutSet = getLastSetBefore(allWorkoutStates.last())
+        //val initialSetup = previousWorkoutSet?.plateChangeResult?.currentPlates ?: emptyList<Double>()
+
+        val plateChangeResults = getPlateChangeResults(exercise, exerciseSets, equipment)
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
@@ -1474,12 +1506,14 @@ class AppViewModel : ViewModel() {
         }
 
         val newState = workoutStateQueue.pollFirst()!!
-        val nextWorkoutState =  if (workoutStateQueue.isNotEmpty()) workoutStateQueue.peek()!! else null
+        val nextWorkoutState =
+            if (workoutStateQueue.isNotEmpty()) workoutStateQueue.peek()!! else null
         _workoutState.value = newState
-        if(nextWorkoutState != null) {
+        if (nextWorkoutState != null) {
             _nextWorkoutState.value = nextWorkoutState
         }
     }
+
 
     fun goToPreviousSet() {
         if (workoutStateHistory.isEmpty() || (workoutStateHistory.size == 1 && workoutStateHistory[0] === _workoutState.value)) return

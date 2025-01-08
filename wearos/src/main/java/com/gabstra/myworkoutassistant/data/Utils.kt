@@ -386,3 +386,8 @@ fun formatNumber(value: Double, unit: String? = null): String = (when {
     else -> String.format("%.1f", value)
 }.replace(",", ".").replace(".0", "") + (unit?.let { " $it" } ?: "")).trim()
 
+fun Double.round(decimals: Int): Double {
+    var multiplier = 1.0
+    repeat(decimals) { multiplier *= 10 }
+    return kotlin.math.round(this * multiplier) / multiplier
+}
