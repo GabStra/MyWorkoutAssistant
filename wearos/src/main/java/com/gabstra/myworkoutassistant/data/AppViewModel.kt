@@ -555,6 +555,7 @@ class AppViewModel : ViewModel() {
             .filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }
             .filterIsInstance<Exercise>()
 
+        /*
         // Process exercises in parallel
         val results = coroutineScope {
             exerciseWithWeightSets.map { exercise ->
@@ -567,8 +568,9 @@ class AppViewModel : ViewModel() {
         results.filterNotNull().forEach { (exerciseId, distribution) ->
             exerciseDataByExerciseIdMap[exerciseId] = distribution
         }
+        */
 
-        /*// Process exercises sequentially
+        // Process exercises sequentially
         exerciseWithWeightSets.forEach { exercise ->
             val result = processExercise(exercise)
             result?.let { (exerciseId, distribution) ->
@@ -578,9 +580,9 @@ class AppViewModel : ViewModel() {
                     else -> ""
                 } }
                 Log.d("WorkoutViewModel", "Old sets: $oldSets")
-                distributedWorkoutByExerciseIdMap[exerciseId] = distribution
+                exerciseDataByExerciseIdMap[exerciseId] = distribution
             }
-        }*/
+        }
     }
 
     // Helper function to process a single exercise

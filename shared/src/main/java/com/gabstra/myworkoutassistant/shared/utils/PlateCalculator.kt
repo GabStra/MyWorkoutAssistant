@@ -189,37 +189,65 @@ class PlateCalculator {
         fun generatePhysicalSteps(currentPlates: List<Double>, targetPlates: List<Double>): List<PlateStep> {
             val steps = mutableListOf<PlateStep>()
 
+            // If current is empty, just add all target plates
+            if (currentPlates.isEmpty()) {
+                targetPlates.forEach { plate ->
+                    steps.add(PlateStep(Action.ADD, plate))
+                }
+                return steps
+            }
+
             // If both configs are the same, no steps needed
             if (currentPlates == targetPlates) {
                 return steps
             }
 
-            var mutableCurrent = currentPlates.toMutableList()
-
-            // Remove phase - always work from outside in
-            var i = mutableCurrent.size - 1
-            while (i >= 0) {
-                val plate = mutableCurrent[i]
-                val targetIndex = targetPlates.indexOf(plate)
-
-                if (targetIndex == -1 || targetIndex != i) {
-                    // First remove all plates from the outside up to this position
-                    for (j in mutableCurrent.size - 1 downTo i) {
-                        steps.add(PlateStep(Action.REMOVE, mutableCurrent[j]))
+            var i = 0
+            while (i < currentPlates.size && i < targetPlates.size) {
+                if (currentPlates[i] != targetPlates[i]) {
+                    // Found mismatch, need to remove from here until we find a matching sequence
+                    var matchPoint = i
+                    // Look for a point where sequences match again
+                    while (matchPoint < currentPlates.size && matchPoint < targetPlates.size) {
+                        if (currentPlates[matchPoint] == targetPlates[matchPoint]) {
+                            var allMatch = true
+                            // Verify all subsequent plates match
+                            for (j in matchPoint until minOf(currentPlates.size, targetPlates.size)) {
+                                if (currentPlates[j] != targetPlates[j]) {
+                                    allMatch = false
+                                    break
+                                }
+                            }
+                            if (allMatch) break
+                        }
+                        matchPoint++
                     }
-                    mutableCurrent = mutableCurrent.subList(0, i).toMutableList()
+
+                    // Remove plates from i to matchPoint
+                    for (j in currentPlates.size - 1 downTo i) {
+                        steps.add(PlateStep(Action.REMOVE, currentPlates[j]))
+                    }
+                    // Add new plates
+                    for (j in i until targetPlates.size) {
+                        steps.add(PlateStep(Action.ADD, targetPlates[j]))
+                    }
+                    break
                 }
-                i--
+                i++
             }
 
-            // Add phase - collect plates we need to add
-            val platesToAdd = targetPlates.filterIndexed { index, plate ->
-                index >= mutableCurrent.size || mutableCurrent[index] != plate
+            // Handle case where current is longer than target
+            if (i == targetPlates.size && i < currentPlates.size) {
+                for (j in currentPlates.size - 1 downTo i) {
+                    steps.add(PlateStep(Action.REMOVE, currentPlates[j]))
+                }
             }
 
-            // Sort plates by weight (heaviest first) and add them
-            platesToAdd.sortedByDescending { it }.forEach { plate ->
-                steps.add(PlateStep(Action.ADD, plate))
+            // Handle case where target is longer than current
+            if (i == currentPlates.size && i < targetPlates.size) {
+                for (j in i until targetPlates.size) {
+                    steps.add(PlateStep(Action.ADD, targetPlates[j]))
+                }
             }
 
             return steps

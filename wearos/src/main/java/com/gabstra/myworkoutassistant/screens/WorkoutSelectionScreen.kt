@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +63,7 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
             Text(
                 text = workout.name,
                 modifier = Modifier.basicMarquee(
+                    animationMode = MarqueeAnimationMode.WhileFocused,
                     iterations = Int.MAX_VALUE,
                     initialDelayMillis = 5000
                 ),
@@ -72,6 +74,7 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
             Text(
                 text = workout.description,
                 modifier = Modifier.basicMarquee(
+                    animationMode = MarqueeAnimationMode.WhileFocused,
                     iterations = Int.MAX_VALUE,
                     initialDelayMillis = 5000
                 ),
