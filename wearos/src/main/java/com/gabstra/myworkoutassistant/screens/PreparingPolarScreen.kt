@@ -98,6 +98,7 @@ fun PreparingPolarScreen(
                 viewModel.goToNextState()
                 viewModel.setWorkoutStart()
             }
+            viewModel.lightScreenUp()
             onReady()
         }
     }
@@ -117,6 +118,7 @@ fun PreparingPolarScreen(
                         onClick = {
                             VibrateGentle(context)
                             viewModel.goToNextState()
+                            viewModel.lightScreenUp()
                             viewModel.setWorkoutStart()
                             onReady()
                         },

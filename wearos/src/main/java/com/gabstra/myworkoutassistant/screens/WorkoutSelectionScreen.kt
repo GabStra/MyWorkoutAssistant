@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -62,22 +63,14 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
         label = {
             Text(
                 text = workout.name,
-                modifier = Modifier.basicMarquee(
-                    animationMode = MarqueeAnimationMode.WhileFocused,
-                    iterations = Int.MAX_VALUE,
-                    initialDelayMillis = 5000
-                ),
-                style = MaterialTheme.typography.body2
+                style = MaterialTheme.typography.body2,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         },
         secondaryLabel = {
             Text(
                 text = workout.description,
-                modifier = Modifier.basicMarquee(
-                    animationMode = MarqueeAnimationMode.WhileFocused,
-                    iterations = Int.MAX_VALUE,
-                    initialDelayMillis = 5000
-                ),
                 style = MaterialTheme.typography.caption3,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -85,7 +78,8 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
         },
         onClick = { onItemClick() },
         modifier = Modifier
-            .size(150.dp, 50.dp)
+            .fillMaxWidth()
+            .height(50.dp)
             .padding(2.dp),
     )
 }
@@ -230,7 +224,10 @@ fun WorkoutSelectionScreen(
                     )
                 }
             } else {
-                items(sortedWorkouts) { workout ->
+                items(
+                    items = sortedWorkouts,
+                    key = { workout -> workout.id }
+                ) { workout ->
                     WorkoutListItem(workout) {
                         VibrateGentle(context)
                         navController.navigate(Screen.WorkoutDetail.route)

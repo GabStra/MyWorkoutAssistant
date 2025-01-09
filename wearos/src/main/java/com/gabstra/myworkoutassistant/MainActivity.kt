@@ -57,6 +57,8 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MyReceiver(
     private val navController: NavController,
@@ -210,10 +212,9 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
 
         LaunchedEffect(nodes){
             appViewModel.phoneNode = nodes.firstOrNull()
-        }
-
-        LaunchedEffect(Unit) {
-            appViewModel.sendAll(localContext)
+            if(appViewModel.phoneNode != null){
+                appViewModel.sendAll(localContext)
+            }
         }
 
         NavHost(

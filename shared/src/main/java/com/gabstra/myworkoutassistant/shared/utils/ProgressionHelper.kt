@@ -128,7 +128,8 @@ object VolumeDistributionHelper {
         val maxWeight: Double,
         val maxReps: Double,
         val maxSetVolume: Double,
-        val maxAverageWeight: Double
+        val maxAverageWeight: Double,
+        val weightPerRep: Double
     )
 
     private suspend fun findBestCombinationVariant(
@@ -213,7 +214,8 @@ object VolumeDistributionHelper {
                             maxReps = combo.maxOf { it.reps }.toDouble(),
                             maxSetVolume = combo.maxOf { it.volume },
                             volumeVariation = combo.maxOf { it.volume } - combo.minOf { it.volume },
-                            maxAverageWeight = combo.sumOf { it.weight } / combo.size
+                            maxAverageWeight = combo.sumOf { it.weight } / combo.size,
+                            weightPerRep = totalVolume / combo.sumOf { it.reps }
                         )
                     )
                 }
@@ -276,8 +278,10 @@ object VolumeDistributionHelper {
 
             val volumeVariationNorm = solutions.map { it.volumeVariation }.normalizeZScore()
 
+            val weightPerRepNorm = solutions.map { it.weightPerRep }.normalizeZScore()
+
             return List(solutions.size) { index ->
-                maxWeightNorm[index] + maxSetVolume[index] + abs(volumeVariationNorm[index])
+                maxWeightNorm[index] + abs(weightPerRepNorm[index]) + volumeVariationNorm[index] //maxWeightNorm[index] + maxSetVolume[index] + abs(volumeVariationNorm[index])
             }
         }
 

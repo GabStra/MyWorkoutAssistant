@@ -109,6 +109,7 @@ fun ExerciseDetail(
                 viewModel.pushAndStoreWorkoutData(false,context){
                     viewModel.upsertWorkoutRecord(updatedState.set.id)
                     viewModel.goToNextState()
+                    viewModel.lightScreenUp()
                 }
             },
             onTimerDisabled = onTimerDisabled,
@@ -125,6 +126,7 @@ fun ExerciseDetail(
                 viewModel.pushAndStoreWorkoutData(false,context){
                     viewModel.upsertWorkoutRecord(updatedState.set.id)
                     viewModel.goToNextState()
+                    viewModel.lightScreenUp()
                 }
             },
             onTimerDisabled = onTimerDisabled,
@@ -589,6 +591,7 @@ fun ExerciseScreen(
             viewModel.pushAndStoreWorkoutData(false,context){
                 viewModel.upsertWorkoutRecord(state.set.id)
                 viewModel.goToNextState()
+                viewModel.lightScreenUp()
             }
 
             viewModel.closeCustomDialog()

@@ -88,6 +88,7 @@ fun PreparingStandardScreen(
                 viewModel.setWorkoutStart()
             }
 
+            viewModel.lightScreenUp()
             onReady()
         }
     }
@@ -107,6 +108,7 @@ fun PreparingStandardScreen(
                         onClick = {
                             VibrateGentle(context)
                             viewModel.goToNextState()
+                            viewModel.lightScreenUp()
                             viewModel.setWorkoutStart()
                             onReady()
                         },
