@@ -555,7 +555,7 @@ class AppViewModel : ViewModel() {
             .filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }
             .filterIsInstance<Exercise>()
 
-        /*
+
         // Process exercises in parallel
         val results = coroutineScope {
             exerciseWithWeightSets.map { exercise ->
@@ -568,8 +568,9 @@ class AppViewModel : ViewModel() {
         results.filterNotNull().forEach { (exerciseId, distribution) ->
             exerciseDataByExerciseIdMap[exerciseId] = distribution
         }
-        */
 
+
+        /*
         // Process exercises sequentially
         exerciseWithWeightSets.forEach { exercise ->
             val result = processExercise(exercise)
@@ -583,6 +584,7 @@ class AppViewModel : ViewModel() {
                 exerciseDataByExerciseIdMap[exerciseId] = distribution
             }
         }
+        */
     }
 
     // Helper function to process a single exercise
@@ -721,16 +723,29 @@ class AppViewModel : ViewModel() {
 
 
         var exerciseData: ExerciseData? = null
+        val minWeight  = exerciseSets.minOf {
+            when (it) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    it.getWeight(equipment, relativeBodyWeight)
+                }
+
+                is WeightSet ->it.getWeight(equipment)
+                else -> throw IllegalArgumentException("Unknown set type")
+            }
+        }
 
         if (shouldDeload) {
             exerciseData = VolumeDistributionHelper.redistributeExerciseSets(
                 totalVolume,
                 maxOneRepMax,
                 availableWeights,
-                totalVolume * 0.75,
-                totalVolume * 0.7,
+                totalVolume,
+                totalVolume * 0.9,
                 loadPercentageRange,
                 repsRange,
+                minWeight * 0.7,
                 true,
             )
         } else {
@@ -740,6 +755,7 @@ class AppViewModel : ViewModel() {
                 availableWeights,
                 loadPercentageRange,
                 repsRange,
+                minWeight,
             )
 
             if (exerciseData == null) {
@@ -751,6 +767,7 @@ class AppViewModel : ViewModel() {
                     totalVolume,
                     loadPercentageRange,
                     repsRange,
+                    minWeight,
                     false,
                 )
             }

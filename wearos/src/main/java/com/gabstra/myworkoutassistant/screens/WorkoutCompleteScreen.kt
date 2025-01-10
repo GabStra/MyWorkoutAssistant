@@ -60,9 +60,6 @@ fun WorkoutCompleteScreen(
     var dataSent by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit){
-        VibrateShortImpulse(context)
-
-        cancelWorkoutInProgressNotification(context)
         if(!workout.usePolarDevice){
             hrViewModel.stopMeasuringHeartRate()
         }else{
@@ -75,9 +72,12 @@ fun WorkoutCompleteScreen(
         }
 
         val startTime = System.currentTimeMillis()
-        while (!dataSent && System.currentTimeMillis() - startTime < 10000){
+        while (!dataSent && System.currentTimeMillis() - startTime < 15000){
             delay(1000)
         }
+
+        VibrateShortImpulse(context)
+        cancelWorkoutInProgressNotification(context)
 
         navController.navigate(Screen.WorkoutSelection.route){
             popUpTo(Screen.WorkoutSelection.route) {

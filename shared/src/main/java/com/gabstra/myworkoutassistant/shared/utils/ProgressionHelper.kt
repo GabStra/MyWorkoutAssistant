@@ -84,6 +84,7 @@ object VolumeDistributionHelper {
         val minimumVolume: Double,
         val minSets: Int,
         val maxSets: Int,
+        val minWeight: Double,
         val isDeload : Boolean
     )
 
@@ -122,7 +123,7 @@ object VolumeDistributionHelper {
         minimumVolume: Double,
         minSets: Int,
         maxSets: Int,
-        maxSolutions: Int = 200
+        maxSolutions: Int = 50
     ) = coroutineScope {
         require(minSets > 0)
         require(minSets <= maxSets)
@@ -149,9 +150,9 @@ object VolumeDistributionHelper {
             currentCombo: List<ExerciseSet>,
         ): Double {
             val totalVolume = currentCombo.sumOf { it.volume }
-            val volumeDeviation = currentCombo.maxOf { it.volume } - currentCombo.minOf { it.volume }
+            //val volumeDeviation = currentCombo.maxOf { it.volume } - currentCombo.minOf { it.volume }
 
-            return (10*totalVolume) + volumeDeviation
+            return totalVolume
         }
 
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
@@ -174,9 +175,7 @@ object VolumeDistributionHelper {
                         if (remainingSetsAvailable < remainingSetsNeeded) return
 
                         // Calculate potential maximum volume by allowing repeated sets
-                        val remainingBestVolume = (0 until remainingSetsNeeded)
-                            .map { sortedSets[startFrom].volume }
-                            .sum()
+                        val remainingBestVolume = (0 until remainingSetsNeeded).sumOf { sortedSets[startFrom].volume }
 
                         // If even adding the best set repeatedly can't reach minimum volume, stop exploring
                         if (currentVolume + remainingBestVolume < minimumVolume) return
@@ -191,28 +190,33 @@ object VolumeDistributionHelper {
                             val isValidSequence = (lastSet.weight > nextSet.weight ||
                                     (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps))
 
-                            if (isValidSequence) {
-                                val newVolume = currentVolume + nextSet.volume
-                                val newCombo = currentCombo + nextSet
+                            if(!isValidSequence) continue
 
-                                // Check if we've found a valid combination
-                                if (newCombo.size >= minSets &&
-                                    newVolume >= minimumVolume &&
-                                    newVolume <= targetVolume
-                                ) {
-                                    emit(Pair(calculateScore(newCombo), newCombo))
-                                }
+                            val newVolume = currentVolume + nextSet.volume
+                            val newCombo = currentCombo + nextSet
 
-                                // Only recurse if we need more sets and can potentially improve the solution
-                                if (newCombo.size < maxSets || newVolume < minimumVolume) {
-                                    buildCombination(
-                                        newCombo,
-                                        newVolume,
-                                        nextIdx,
-                                        maxOf(0, maxSets - newCombo.size),
-                                        depth + 1
-                                    )
-                                }
+                            // Check if we've found a valid combination
+                            if (newCombo.size >= minSets &&
+                                newVolume >= minimumVolume &&
+                                newVolume <= targetVolume
+                            ) {
+                                emit(Pair(calculateScore(newCombo), newCombo))
+                            }
+
+                            if(remainingSetsAvailable - 1 > 0) {
+                                val currentRemainingBestVolume = (0 until (remainingSetsNeeded-1)).sumOf { sortedSets[nextIdx].volume }
+                                if (newVolume + currentRemainingBestVolume < minimumVolume) continue
+                            }
+
+                            // Only recurse if we need more sets and can potentially improve the solution
+                            if (newCombo.size < maxSets || newVolume < minimumVolume) {
+                                buildCombination(
+                                    newCombo,
+                                    newVolume,
+                                    nextIdx,
+                                    maxOf(0, maxSets - newCombo.size),
+                                    depth + 1
+                                )
                             }
                         }
                     }
@@ -258,7 +262,7 @@ object VolumeDistributionHelper {
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
-            val minWeight = params.oneRepMax * (40 / 100)
+            val minWeight = maxOf(params.oneRepMax * (params.percentLoadRange.first / 100), params.minWeight)
             val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
 
             val weightRange =  params.availableWeights.filter { it in minWeight..maxWeight }
@@ -270,7 +274,7 @@ object VolumeDistributionHelper {
 
                     params.repsRange
                         .filter { reps ->
-                            reps <= expectedReps
+                            reps in 3..expectedReps
                         }
                         .map { reps ->
                             createSet(
@@ -302,30 +306,13 @@ object VolumeDistributionHelper {
         )
     }
 
-    fun calculateTargetVolume(
-        totalVolume: Double,
-        desiredIncreasePercent: Float
-    ): Double {
-        val baseRate = (desiredIncreasePercent / 100).toDouble()
-
-        // Volume factor using natural log to create progressive resistance
-        val volumeFactor = (1.0 / (1.0 + ln(totalVolume))).coerceIn(0.3, 1.0)
-
-        // Combined progression rate
-        val progressionRate = (baseRate * volumeFactor)
-            .coerceAtLeast(0.01)
-            .coerceAtMost(baseRate)
-
-        return totalVolume * (1 + progressionRate)
-    }
-
-
     suspend fun generateExerciseProgression(
         totalVolume: Double,
         oneRepMax: Double,
         availableWeights: Set<Double>,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
+        minWeight: Double
     ): ExerciseData? {
         val targetVolumeIncrease = 1.025
         val minimumVolumeIncrease = 1.005
@@ -339,18 +326,14 @@ object VolumeDistributionHelper {
             minimumVolume = totalVolume * minimumVolumeIncrease,
             originalVolume = totalVolume,
             minSets = 3,
-            maxSets = 3,
-            isDeload = false
+            maxSets = 4,
+            isDeload = false,
+            minWeight = minWeight
         )
+        val result = distributeVolume(baseParams)
 
-        // Try progressively increasing sets until we find a valid progression
-        for (sets in 3..5) {
-            val params = baseParams.copy(minSets = sets, maxSets = sets)
-            val result = distributeVolume(params)
-
-            if (result != null && result.totalVolume.roundToInt() != totalVolume.roundToInt()) {
-                return result
-            }
+        if (result != null && result.totalVolume.roundToInt() != totalVolume.roundToInt()) {
+            return result
         }
 
         return null
@@ -364,6 +347,7 @@ object VolumeDistributionHelper {
         lowerVolumeRange: Double,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
+        minWeight: Double,
         isDeload: Boolean,
         minSets: Int = 3,
         maxSets: Int = 4
@@ -378,6 +362,7 @@ object VolumeDistributionHelper {
             originalVolume = totalVolume,
             minSets = minSets,
             maxSets = maxSets,
+            minWeight = minWeight,
             isDeload = isDeload
         )
 
