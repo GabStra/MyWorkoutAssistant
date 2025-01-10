@@ -10,6 +10,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
@@ -138,21 +139,25 @@ object VolumeDistributionHelper {
         minimumVolume: Double,
         minSets: Int,
         maxSets: Int,
-        maxSolutions: Int = 10
+        maxSolutions: Int = 50
     ) = coroutineScope {
         require(minSets > 0)
         require(minSets <= maxSets)
         require(maxSolutions > 0)
 
-        val solutions = Collections.synchronizedList(ArrayList<Solution>(maxSolutions))
+        // Thread-safe variables using atomic references and mutex
+        val bestComboRef = AtomicReference<List<ExerciseSet>>(emptyList())
+        val bestVolumeMutex = Mutex()
+        var bestVolume = Double.MAX_VALUE
+        val solutionsCounter = AtomicInteger(0)
 
-        val maxUsefulVolumePerSet = targetVolume / minSets  // Max useful volume per set
+        val maxUsefulVolumePerSet = targetVolume / minSets
 
         val sortedSets = sets
             .asSequence()
             .filter { set ->
                 set.volume < targetVolume &&
-                set.volume <= maxUsefulVolumePerSet
+                        set.volume <= maxUsefulVolumePerSet
             }
             .sortedByDescending { it.volume }
             .toList()
@@ -164,35 +169,65 @@ object VolumeDistributionHelper {
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
             flow {
                 for (firstSetIdx in startIdx until endIdx) {
-                    if (solutions.size >= maxSolutions) break
+                    if (solutionsCounter.get() >= maxSolutions) break
 
                     suspend fun buildCombination(
                         currentCombo: List<ExerciseSet>,
                         currentVolume: Double,
                         startFrom: Int,
+                        remainingSetsNeeded: Int,
                         depth: Int = 1
                     ) {
+                        // Early termination conditions
                         if (depth >= maxSets) return
+                        if (solutionsCounter.get() >= maxSolutions) return
+
+                        // If we can't possibly reach minimumVolume even with best remaining sets
+                        val bestPossibleVolume = currentVolume +
+                                sortedSets.subList(startFrom, minOf(startFrom + remainingSetsNeeded, sortedSets.size))
+                                    .sumOf { it.volume }
+                        if (bestPossibleVolume < minimumVolume) return
+
+                        // If we can't possibly beat the current best solution
+                        if (currentVolume >= bestVolume) return
 
                         val lastSet = currentCombo.last()
-                        for (nextIdx in startFrom until sortedSets.size) {
-                            if (solutions.size >= maxSolutions) return
+                        // Check if we have enough remaining sets to reach minSets
+                        val remainingSetsAvailable = sortedSets.size - startFrom
+                        if (remainingSetsAvailable < remainingSetsNeeded) return
 
+                        for (nextIdx in startFrom until sortedSets.size) {
                             val nextSet = sortedSets[nextIdx]
+
+                            // Early volume check - if adding this set would exceed target volume, skip
+                            if (currentVolume + nextSet.volume > targetVolume) continue
 
                             val isValidSequence = (lastSet.weight > nextSet.weight ||
                                     (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps))
 
                             if (isValidSequence) {
                                 val newVolume = currentVolume + nextSet.volume
-
                                 val newCombo = currentCombo + nextSet
+
+                                // Check if we've found a valid combination
                                 if (newCombo.size >= minSets &&
                                     newVolume >= minimumVolume &&
-                                    newVolume <= targetVolume) {
+                                    newVolume <= targetVolume &&
+                                    newVolume < bestVolume
+                                ) {
                                     emit(Pair(newVolume, newCombo))
                                 }
-                                buildCombination(newCombo, newVolume, nextIdx, depth + 1)
+
+                                // Only recurse if we need more sets and can potentially improve the solution
+                                if (newCombo.size < minSets || newVolume < minimumVolume) {
+                                    buildCombination(
+                                        newCombo,
+                                        newVolume,
+                                        nextIdx,
+                                        maxOf(0, minSets - newCombo.size),
+                                        depth + 1
+                                    )
+                                }
                             }
                         }
                     }
@@ -200,24 +235,21 @@ object VolumeDistributionHelper {
                     buildCombination(
                         listOf(sortedSets[firstSetIdx]),
                         sortedSets[firstSetIdx].volume,
-                        firstSetIdx
+                        firstSetIdx,
+                        minSets - 1
                     )
                 }
             }
                 .buffer(100)
                 .flowOn(Dispatchers.Default)
                 .collect { (totalVolume, combo) ->
-                    solutions.add(
-                        Solution(
-                            combination = combo,
-                            maxWeight = combo.maxOf { it.weight },
-                            maxReps = combo.maxOf { it.reps }.toDouble(),
-                            maxSetVolume = combo.maxOf { it.volume },
-                            volumeVariation = combo.maxOf { it.volume } - combo.minOf { it.volume },
-                            maxAverageWeight = combo.sumOf { it.weight } / combo.size,
-                            weightPerRep = totalVolume / combo.sumOf { it.reps }
-                        )
-                    )
+                    bestVolumeMutex.withLock {
+                        if (totalVolume < bestVolume) {
+                            bestVolume = totalVolume
+                            bestComboRef.set(combo)
+                            solutionsCounter.incrementAndGet()
+                        }
+                    }
                 }
         }
 
@@ -234,69 +266,16 @@ object VolumeDistributionHelper {
                     val startIdx = threadIdx * chunkSize
                     val endIdx = minOf(startIdx + chunkSize, sortedSets.size)
                     if (startIdx < endIdx) searchChunk(startIdx, endIdx)
-                    else emptyList<ExerciseSet>() to Double.NEGATIVE_INFINITY
                 }
             }
             .awaitAll()
-        /*
-        fun calculateCombinedScore(solutions: List<Solution>): List<Double> {
-            // Z-score normalization for better statistical properties
-            fun List<Double>.normalizeZScore(): List<Double> {
-                val mean = average()
-                val stdDev = sqrt(map { (it - mean) * (it - mean) }.average())
-                return if (stdDev == 0.0) map { 0.0 } else map { (it - mean) / stdDev }
-            }
 
-            // Extract and normalize metrics
-            val fatigueNorm = solutions.map { it.totalFatigue }.normalizeZScore()
-            val variationNorm = solutions.map { it.volumeVariation }.normalizeZScore()
-
-            // Return combined scores with emphasis on volume distribution
-            return List(solutions.size) { index ->
-                fatigueNorm[index] + variationNorm[index]
-            }
-        }
-        */
-
-        fun calculateCombinedScore(solutions: List<Solution>): List<Double> {
-            fun List<Double>.normalize(): List<Double> {
-                val min = minOrNull() ?: 0.0
-                val max = maxOrNull() ?: 1.0
-                val range = max - min
-                return if (range == 0.0) map { 0.0 } else map { (it - min) / range }
-            }
-
-            fun List<Double>.normalizeZScore(): List<Double> {
-                val mean = average()
-                val stdDev = sqrt(map { (it - mean) * (it - mean) }.average())
-                return if (stdDev == 0.0) map { 0.0 } else map { (it - mean) / stdDev }
-            }
-
-            // Extract and normalize metrics
-            val maxWeightNorm = solutions.map { it.maxWeight }.normalize()
-            val maxSetVolume = solutions.map { it.maxSetVolume }.normalize()
-
-            val volumeVariationNorm = solutions.map { it.volumeVariation }.normalizeZScore()
-
-            val weightPerRepNorm = solutions.map { it.weightPerRep }.normalizeZScore()
-
-            return List(solutions.size) { index ->
-                maxWeightNorm[index] + abs(weightPerRepNorm[index]) + volumeVariationNorm[index] //maxWeightNorm[index] + maxSetVolume[index] + abs(volumeVariationNorm[index])
-            }
-        }
-
-        if(solutions.isEmpty()) return@coroutineScope emptyList()
-
-        val combinationScores = calculateCombinedScore(solutions)
-
-        solutions.minByOrNull {
-            combinationScores[solutions.indexOf(it)]
-        }?.combination ?: emptyList()
+        bestComboRef.get()
     }
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
-            val minWeight = params.oneRepMax * (params.percentLoadRange.first / 100)
+            val minWeight = params.oneRepMax * (40 / 100)
             val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
 
             val weightRange =  params.availableWeights.filter { it in minWeight..maxWeight }
@@ -366,30 +345,37 @@ object VolumeDistributionHelper {
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
     ): ExerciseData? {
-        if (desiredIncreasePercent < 1) {
-            throw IllegalArgumentException("Percentage increase must be higher or equal to 1")
+        require(desiredIncreasePercent >= 1) {
+            "Percentage increase must be higher or equal to 1"
         }
 
-        /*val minimumRequiredVolume = calculateTargetVolume(
-            totalVolume = totalVolume,
-            desiredIncreasePercent = desiredIncreasePercent,
-        )*/
+        val targetVolumeIncrease = 1.05
+        val minimumVolumeIncrease = 1.005
 
-        val params = WeightExerciseParameters(
-            targetTotalVolume = totalVolume * 1.02,
+        val baseParams = WeightExerciseParameters(
+            targetTotalVolume = totalVolume * targetVolumeIncrease,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
-            minimumVolume = totalVolume * 1.01,
+            minimumVolume = totalVolume * minimumVolumeIncrease,
             originalVolume = totalVolume,
             minSets = 3,
-            maxSets = 4,
+            maxSets = 3,
             isDeload = false
         )
 
-        val result = distributeVolume(params)
-        return result ?: distributeVolume(params.copy(minSets = 5, maxSets = 5))
+        // Try progressively increasing sets until we find a valid progression
+        for (sets in 3..5) {
+            val params = baseParams.copy(minSets = sets, maxSets = sets)
+            val result = distributeVolume(params)
+
+            if (result != null && result.totalVolume.roundToInt() != totalVolume.roundToInt()) {
+                return result
+            }
+        }
+
+        return null
     }
 
     suspend fun redistributeExerciseSets(

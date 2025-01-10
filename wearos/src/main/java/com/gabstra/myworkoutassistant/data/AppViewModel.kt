@@ -1205,6 +1205,10 @@ class AppViewModel : ViewModel() {
                                         2
                                     ) && volume <= exerciseData.totalVolume.round(2)
                                 ) {
+                                    exerciseInfoDao.updateVolumeLastSuccessfulSession(
+                                        it.key!!,
+                                        volume
+                                    )
                                     exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
                                     exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
                                 } else {
