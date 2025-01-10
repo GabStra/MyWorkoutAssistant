@@ -709,17 +709,14 @@ class AppViewModel : ViewModel() {
                 exercise.maxReps
             )
 
-        val desiredIncreasePercent =
-            if (exercise.volumeIncreasePercent > 3) 3.0f else exercise.volumeIncreasePercent
-
         Log.d(
             "WorkoutViewModel",
-            "${exercise.name} (${exercise.exerciseType}) - volume $totalVolume - avg 1RM ${
+            "${exercise.name} (${exercise.exerciseType}) - volume $totalVolume - 1RM ${
                 String.format(
                     "%.2f",
                     maxOneRepMax
                 ).replace(",", ".")
-            } desired increase in percentage: ${desiredIncreasePercent}% "
+            }"
         )
 
 
@@ -741,7 +738,6 @@ class AppViewModel : ViewModel() {
                 totalVolume,
                 maxOneRepMax,
                 availableWeights,
-                desiredIncreasePercent,
                 loadPercentageRange,
                 repsRange,
             )
@@ -798,7 +794,7 @@ class AppViewModel : ViewModel() {
                         "%.2f",
                         exerciseData.progressIncrease
                     )
-                }% Average percentage load: ${
+                }% Average load: ${
                     String.format(
                         "%.2f",
                         exerciseData.averagePercentLoad
