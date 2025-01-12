@@ -180,9 +180,14 @@ object VolumeDistributionHelper {
                         // If even adding the best set repeatedly can't reach minimum volume, stop exploring
                         if (currentVolume + remainingBestVolume < minimumVolume) return
 
+                        val currentScore = calculateScore(currentCombo)
+                        if (currentScore >= bestScore.get()) return
+
                         val lastSet = currentCombo.last()
 
                         for (nextIdx in startFrom until sortedSets.size) {
+                            if (solutionsCounter.get() >= maxSolutions) return
+
                             val nextSet = sortedSets[nextIdx]
 
                             if (currentVolume + nextSet.volume > targetVolume) continue
@@ -195,15 +200,18 @@ object VolumeDistributionHelper {
                             val newVolume = currentVolume + nextSet.volume
                             val newCombo = currentCombo + nextSet
 
+                            val newScore = calculateScore(newCombo)
+                            if(newScore >= bestScore.get()) continue
+
                             // Check if we've found a valid combination
                             if (newCombo.size >= minSets &&
                                 newVolume >= minimumVolume &&
                                 newVolume <= targetVolume
                             ) {
-                                emit(Pair(calculateScore(newCombo), newCombo))
+                                emit(Pair(newScore, newCombo))
                             }
 
-                            if(remainingSetsAvailable - 1 > 0) {
+                            if((remainingSetsNeeded - 1) > 0) {
                                 val currentRemainingBestVolume = (0 until (remainingSetsNeeded-1)).sumOf { sortedSets[nextIdx].volume }
                                 if (newVolume + currentRemainingBestVolume < minimumVolume) continue
                             }
@@ -314,7 +322,7 @@ object VolumeDistributionHelper {
         repsRange: IntRange,
         minWeight: Double
     ): ExerciseData? {
-        val targetVolumeIncrease = 1.025
+        val targetVolumeIncrease = 1.05
         val minimumVolumeIncrease = 1.005
 
         val baseParams = WeightExerciseParameters(
@@ -326,14 +334,18 @@ object VolumeDistributionHelper {
             minimumVolume = totalVolume * minimumVolumeIncrease,
             originalVolume = totalVolume,
             minSets = 3,
-            maxSets = 4,
+            maxSets = 5,
             isDeload = false,
             minWeight = minWeight
         )
-        val result = distributeVolume(baseParams)
 
-        if (result != null && result.totalVolume.roundToInt() != totalVolume.roundToInt()) {
-            return result
+        for (sets in 3..5) {
+            val params = baseParams.copy(minSets = sets, maxSets = sets)
+            val result = distributeVolume(params)
+
+            if (result != null && result.totalVolume.roundToInt() != totalVolume.roundToInt()) {
+                return result
+            }
         }
 
         return null

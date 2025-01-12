@@ -65,20 +65,18 @@ fun WorkoutCompleteScreen(
         }else{
             polarViewModel.disconnectFromDevice()
         }
-
+        delay(1000)
+        VibrateShortImpulse(context)
+        cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
             dataSent = true
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
         }
+    }
 
-        val startTime = System.currentTimeMillis()
-        while (!dataSent && System.currentTimeMillis() - startTime < 15000){
-            delay(1000)
-        }
-
-        VibrateShortImpulse(context)
-        cancelWorkoutInProgressNotification(context)
-
+    LaunchedEffect(dataSent) {
+        if(!dataSent) return@LaunchedEffect
+        delay(5000)
         navController.navigate(Screen.WorkoutSelection.route){
             popUpTo(Screen.WorkoutSelection.route) {
                 inclusive = true
