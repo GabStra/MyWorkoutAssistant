@@ -122,7 +122,7 @@ object VolumeDistributionHelper {
         minimumVolume: Double,
         minSets: Int,
         maxSets: Int,
-        maxSolutions: Int = 50,
+        maxSolutions: Int = 5,
     ) = coroutineScope {
         require(minSets > 0)
         require(minSets <= maxSets)
@@ -138,7 +138,13 @@ object VolumeDistributionHelper {
             .filter { set ->
                 set.volume < targetVolume
             }
-            .sortedByDescending { it.volume } // Sort by volume to prioritize more impactful sets
+            .sortedWith(
+                compareBy(
+                    { it.volume },
+                    { -it.reps },
+                    { it.weight }
+                )
+            )
             .toList()
 
         if (sortedSets.size < minSets) {
@@ -150,14 +156,15 @@ object VolumeDistributionHelper {
         ): Double {
             val totalVolume = currentCombo.sumOf { it.volume }
             val maxWeight = currentCombo.maxOf { it.weight }
-            val volumeDeviation = currentCombo.maxOf { it.volume } - currentCombo.minOf { it.volume }
-            return totalVolume + maxWeight + volumeDeviation
+
+            return totalVolume * maxWeight
         }
 
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
             flow {
                 for (firstSetIdx in startIdx until endIdx) {
                     if (solutionsCounter.get() >= maxSolutions) break
+
 
                     suspend fun buildCombination(
                         currentCombo: List<ExerciseSet>,
@@ -173,14 +180,12 @@ object VolumeDistributionHelper {
                         val remainingSetsAvailable = sortedSets.size - startFrom
                         if (remainingSetsAvailable < remainingSetsNeeded) return
 
-                        // Calculate potential maximum volume by allowing repeated sets
-                        val remainingBestVolume = (0 until remainingSetsNeeded).sumOf { sortedSets[startFrom].volume }
+                        val remainingBestVolume = (0 until remainingSetsNeeded).sumOf { sortedSets.last().volume }
 
                         // If even adding the best set repeatedly can't reach minimum volume, stop exploring
                         if (currentVolume + remainingBestVolume < minimumVolume) return
-
                         val currentScore = calculateScore(currentCombo)
-                        if (currentScore >= bestScore.get()) return
+                        if(currentScore >= bestScore.get()) return
 
                         val lastSet = currentCombo.last()
 
@@ -191,7 +196,7 @@ object VolumeDistributionHelper {
 
                             if (currentVolume + nextSet.volume > targetVolume) continue
 
-                            val isValidSequence = (lastSet.weight > nextSet.weight ||
+                            val isValidSequence = ((lastSet.weight > nextSet.weight) ||
                                     (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps))
 
                             if(!isValidSequence) continue
@@ -200,7 +205,7 @@ object VolumeDistributionHelper {
                             val newCombo = currentCombo + nextSet
 
                             val newScore = calculateScore(newCombo)
-                            if(newScore >= bestScore.get()) continue
+                            if(newScore >= bestScore.get()) return
 
                             // Check if we've found a valid combination
                             if (newCombo.size >= minSets &&
@@ -211,7 +216,7 @@ object VolumeDistributionHelper {
                             }
 
                             if((remainingSetsNeeded - 1) > 0) {
-                                val currentRemainingBestVolume = (0 until (remainingSetsNeeded-1)).sumOf { sortedSets[nextIdx].volume }
+                                val currentRemainingBestVolume = (0 until (remainingSetsNeeded-1)).sumOf { sortedSets.last().volume }
                                 if (newVolume + currentRemainingBestVolume < minimumVolume) continue
                             }
 
