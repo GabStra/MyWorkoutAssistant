@@ -29,6 +29,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
+import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 
@@ -66,7 +67,7 @@ fun WorkoutCompleteScreen(
             polarViewModel.disconnectFromDevice()
         }
         delay(1000)
-        VibrateShortImpulse(context)
+        VibrateTwice(context)
         cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
             dataSent = true
@@ -76,7 +77,7 @@ fun WorkoutCompleteScreen(
 
     LaunchedEffect(dataSent) {
         if(!dataSent) return@LaunchedEffect
-        delay(5000)
+        delay(1000)
         navController.navigate(Screen.WorkoutSelection.route){
             popUpTo(Screen.WorkoutSelection.route) {
                 inclusive = true

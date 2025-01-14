@@ -84,7 +84,6 @@ object VolumeDistributionHelper {
         val minimumVolume: Double,
         val minSets: Int,
         val maxSets: Int,
-        val minWeight: Double,
         val isDeload : Boolean
     )
 
@@ -99,7 +98,7 @@ object VolumeDistributionHelper {
             params.targetTotalVolume,
             params.minimumVolume,
             params.minSets,
-            params.maxSets
+            params.maxSets,
         )
         if (validSetCombination.isEmpty()) return null
 
@@ -123,7 +122,7 @@ object VolumeDistributionHelper {
         minimumVolume: Double,
         minSets: Int,
         maxSets: Int,
-        maxSolutions: Int = 50
+        maxSolutions: Int = 50,
     ) = coroutineScope {
         require(minSets > 0)
         require(minSets <= maxSets)
@@ -150,9 +149,9 @@ object VolumeDistributionHelper {
             currentCombo: List<ExerciseSet>,
         ): Double {
             val totalVolume = currentCombo.sumOf { it.volume }
-            //val volumeDeviation = currentCombo.maxOf { it.volume } - currentCombo.minOf { it.volume }
-
-            return totalVolume
+            val maxWeight = currentCombo.maxOf { it.weight }
+            val volumeDeviation = currentCombo.maxOf { it.volume } - currentCombo.minOf { it.volume }
+            return totalVolume + maxWeight + volumeDeviation
         }
 
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
@@ -270,8 +269,12 @@ object VolumeDistributionHelper {
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
-            val minWeight = maxOf(params.oneRepMax * (params.percentLoadRange.first / 100), params.minWeight)
+            var minWeight = params.oneRepMax * (params.percentLoadRange.first / 100)
             val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
+
+            /*if(params.minWeight in minWeight..maxWeight){
+                minWeight = maxOf(minWeight, params.minWeight)
+            }*/
 
             val weightRange =  params.availableWeights.filter { it in minWeight..maxWeight }
 
@@ -319,8 +322,7 @@ object VolumeDistributionHelper {
         oneRepMax: Double,
         availableWeights: Set<Double>,
         percentLoadRange: Pair<Double, Double>,
-        repsRange: IntRange,
-        minWeight: Double
+        repsRange: IntRange
     ): ExerciseData? {
         val targetVolumeIncrease = 1.05
         val minimumVolumeIncrease = 1.005
@@ -335,17 +337,14 @@ object VolumeDistributionHelper {
             originalVolume = totalVolume,
             minSets = 3,
             maxSets = 5,
-            isDeload = false,
-            minWeight = minWeight
+            isDeload = false
         )
 
         for (sets in 3..5) {
             val params = baseParams.copy(minSets = sets, maxSets = sets)
             val result = distributeVolume(params)
 
-            if (result != null && result.totalVolume.roundToInt() != totalVolume.roundToInt()) {
-                return result
-            }
+            if (result != null) return result
         }
 
         return null
@@ -359,12 +358,11 @@ object VolumeDistributionHelper {
         lowerVolumeRange: Double,
         percentLoadRange: Pair<Double, Double>,
         repsRange: IntRange,
-        minWeight: Double,
         isDeload: Boolean,
         minSets: Int = 3,
-        maxSets: Int = 4
+        maxSets: Int = 5
     ): ExerciseData? {
-        val params = WeightExerciseParameters(
+        val baseParams = WeightExerciseParameters(
             targetTotalVolume = upperVolumeRange,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
@@ -373,12 +371,17 @@ object VolumeDistributionHelper {
             minimumVolume = lowerVolumeRange,
             originalVolume = totalVolume,
             minSets = minSets,
-            maxSets = maxSets,
-            minWeight = minWeight,
+            maxSets = minSets,
             isDeload = isDeload
         )
 
-        val exerciseData = distributeVolume(params) ?: return null
-        return exerciseData.copy(progressIncrease = 0.0)
+        for (sets in minSets..maxSets) {
+            val params = baseParams.copy(minSets = sets, maxSets = sets)
+            val result = distributeVolume(params)
+
+            if (result != null) return result.copy(progressIncrease = 0.0)
+        }
+
+        return null
     }
 }
