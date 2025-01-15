@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,14 +34,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -69,6 +65,10 @@ fun WeightSetScreen (
     val previousSetData = state.previousSetData as WeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
+    val isLastSet = remember(state) {
+        viewModel.setsByExerciseId[state.exerciseId]!!.last() == state
+    }
+
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
@@ -80,9 +80,7 @@ fun WeightSetScreen (
     var availableWeights by remember(exercise) { mutableStateOf<Set<Double>>(emptySet()) }
 
     LaunchedEffect(equipment) {
-        availableWeights = withContext(Dispatchers.Default) {
-            equipment?.calculatePossibleCombinations() ?: emptySet()
-        }
+        availableWeights = viewModel.getWeightByEquipment(equipment)
     }
 
     val equipmentVolumeMultiplier = remember(equipment) {
@@ -106,11 +104,6 @@ fun WeightSetScreen (
         }
     }
 
-    val totalHistoricalVolume = remember(state.exerciseId) {
-        val totalHistoricalSetDataList = viewModel.getHistoricalSetsDataByExerciseId<WeightSetData>(state.exerciseId)
-        totalHistoricalSetDataList.sumOf { it.volume }
-    }
-
     val executedVolume = remember(state.exerciseId,state.set.id) {
         val executedSetDataList = viewModel.getExecutedSetsDataByExerciseIdAndTakePriorToSetId<WeightSetData>(state.exerciseId, state.set.id)
         executedSetDataList.sumOf { it.volume}
@@ -127,6 +120,12 @@ fun WeightSetScreen (
     val currentTotalVolume by remember {
         derivedStateOf {
             currentSetData.volume + executedVolume
+        }
+    }
+
+    val previousTotalVolume by remember {
+        derivedStateOf {
+            previousSetData.volume + executedVolume
         }
     }
 
@@ -397,11 +396,6 @@ fun WeightSetScreen (
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if(availableWeights.isEmpty()){
-                CircularProgressIndicator()
-                return
-            }
-
             Row(
                 modifier =  Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -423,12 +417,18 @@ fun WeightSetScreen (
             if(volumeProgression > 0){
                 Spacer(modifier = Modifier.height(10.dp))
 
-                TrendComponentProgressBarWithMarker(
+                val progressBarColor = when {
+                    currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
+                    currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
+                    else -> Color.White
+                }
+
+                ProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),
-                    label = "Vol:",
                     ratio = volumeProgression,
                     previousRatio = executedVolumeProgression,
-                    progressBarColor = Color.White,
+                    progressBarColor = progressBarColor,
+                    showRatio = isLastSet
                 )
 
                 Spacer(modifier = Modifier.height(5.dp))
@@ -444,43 +444,13 @@ fun WeightSetScreen (
                                 Icon(
                                     Icons.Filled.Star,
                                     contentDescription = "Streak",
-                                    tint = MyColors.Green
+                                    tint = Color.Yellow
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = state.streak.toString(),
                                     style = indicatorStyle,
                                 )
-                            }
-                        }
-
-                        if(state.progressionValue != null && state.progressionValue > 0) {
-                            val isHigherThanTarget = volumeProgression > 1 &&
-                                    ((volumeProgression - 1) * 100).round(2) > state.progressionValue.round(2)
-
-                            val isEqualToTarget = volumeProgression > 1 &&
-                                    ((volumeProgression - 1) * 100).round(2) == state.progressionValue.round(2)
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Target",
-                                    style = indicatorStyle,
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-
-                                if(isHigherThanTarget){
-                                    Icon(
-                                        Icons.Filled.ArrowUpward,
-                                        contentDescription = "Up",
-                                        tint = MyColors.Green
-                                    )
-                                }else{
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = "Check",
-                                        tint = if(isEqualToTarget) MyColors.Green else Color.DarkGray
-                                    )
-                                }
                             }
                         }
                     }

@@ -1,17 +1,11 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.absoluteOffset
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -22,14 +16,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
@@ -162,203 +152,77 @@ data class MarkerData(
 
 @SuppressLint("DefaultLocale")
 @Composable
-fun TrendComponentProgressBarWithMarker(
+fun ProgressIndicator(
     modifier: Modifier = Modifier,
-    label: String,
     ratio: Double,
     previousRatio: Double = 0.0,
     progressBarColor: Color,
-    markers: List<MarkerData> = emptyList(),
-    indicatorMarker: MarkerData? = null
-) {
-
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-            textAlign = TextAlign.End
-        )
-
-        val cornerRadius = 6.dp
-        val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
-
-        Row(modifier = Modifier.height(10.dp).weight(1f).padding(horizontal = 5.dp).clip(roundedCornerShape)){
-            if(previousRatio != 0.0){
-                SimpleProgressIndicator(
-                    progress = 1f,
-                    trackColor = MaterialTheme.colors.background,
-                    progressBarColor = MyColors.Orange,
-                    modifier = Modifier.height(10.dp).weight(previousRatio.toFloat()),
-                )
-                Spacer(modifier = Modifier.width(2.dp))
-
-                val remainingRatio = ((ratio-previousRatio)/(1-previousRatio)).toFloat()
-
-                SimpleProgressIndicator(
-                    progress = remainingRatio,
-                    trackColor = MaterialTheme.colors.background,
-                    progressBarColor = progressBarColor,
-                    modifier = Modifier.height(10.dp).weight(1-(previousRatio.toFloat())),
-                )
-            }else{
-                SimpleProgressIndicator(
-                    progress = ratio.toFloat(),
-                    trackColor = MaterialTheme.colors.background,
-                    progressBarColor = progressBarColor,
-                    modifier = Modifier.height(10.dp).weight(1f),
-                )
-            }
-        }
-
-        /*
-        LinearProgressBarWithRounderBordersAndMarker(
-            progress = ratio.toFloat(),
-            modifier = Modifier.weight(1f).padding(bottom = 2.dp),
-            progressBarColor = progressBarColor,
-            markers = markers,
-            indicatorMarker = indicatorMarker
-        )
-        */
-
-        fun formatRatio(ratio: Double): String {
-            return String.format(
-                "%+.1f%%",
-                ((ratio - 1) * 100)
-            ).replace(',', '.')
-        }
-
-       if(ratio > 1.0){
-            val displayText = formatRatio(ratio)
-            Text(
-                text = displayText,
-                style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-                color = MyColors.Green
-            )
-        }
-    }
-}
-
-@Composable
-fun LinearProgressBarWithRounderBordersAndMarker(
-    modifier: Modifier,
-    progress: Float,
-    progressBarColor: Color = Color(0xFFff6700),
-    markers: List<MarkerData> = emptyList(),
-    indicatorMarker: MarkerData? = null
+    showRatio: Boolean
 ) {
     val cornerRadius = 6.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
-    val markerWidth = 30.dp
 
-    BoxWithConstraints(
-        modifier = modifier.height(34.dp),
-    ) {
+    fun formatRatio(ratio: Double): String {
+        return when {
+            ratio < 1.0 -> String.format("-%.1f", (1 - ratio)*100)
+                .replace(',', '.')
+                .replace(".0", "")
+            ratio > 1.0 -> String.format("+%.1f", (ratio - 1)*100)
+                .replace(',', '.')
+                .replace(".0", "")
+            else -> "0"
+        } + "%"
+    }
 
-        val totalWidth = maxWidth
-        val progressBarWidth = totalWidth - markerWidth
-
-        // Calculate the effective width considering the rounded corners
-        val effectiveWidth = progressBarWidth
-
-        // Progress box
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top=14.dp)
-                .align(Alignment.Center)
-        ) {
-            SimpleProgressIndicator(
-                progress = progress,
-                trackColor = MaterialTheme.colors.background,
-                progressBarColor = progressBarColor,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .padding(horizontal = markerWidth/2)
-                    .clip(roundedCornerShape)
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)){
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)){
+            Text(
+                text = "Progress",
+                style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                textAlign = TextAlign.End
             )
-        }
-
-        if(indicatorMarker!=null){
-            val adjustedMarkerPercentage = indicatorMarker.ratio.coerceIn(0.0, 1.0)
-            val markerOffset = effectiveWidth * adjustedMarkerPercentage.toFloat()
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .align(Alignment.Center)
-                    .background(Color.Transparent)
-                    .absoluteOffset(
-                        x = markerOffset,
-                    ),
-            ){
-                Column(
-                    modifier = Modifier
-                        .height(10.dp)
-                        .width(markerWidth)
-                        .background(Color.Transparent),
-                    //verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    ScalableText(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Transparent),
-                        text = indicatorMarker.text,
-                        style = MaterialTheme.typography.title1,
-                        color = indicatorMarker.textColor,
-                        textAlign = TextAlign.Center,
-                        minTextSize = 6.sp
-                    )
+            if(showRatio){
+                val displayText = formatRatio(ratio)
+                val displayColor = when {
+                    ratio > 1 -> MyColors.Green
+                    ratio < 1 -> MyColors.Red
+                    else -> Color.White
                 }
+                Text(
+                    text = displayText,
+                    style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                    color = displayColor
+                )
             }
         }
-
-        markers.forEach { marker ->
-            val adjustedMarkerPercentage = marker.ratio.coerceIn(0.0, 1.0)
-            val markerOffset = effectiveWidth * adjustedMarkerPercentage.toFloat()
-
-            // Marker box
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top=14.dp)
-                    .height(20.dp)
-                    .align(Alignment.Center)
-                    .background(Color.Transparent)
-                    .absoluteOffset(
-                        x = markerOffset,
-                    ),
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.height(10.dp).weight(1f).padding(horizontal = 5.dp)
+                    .clip(roundedCornerShape)
             ) {
-                Column(
-                    modifier = Modifier
-                        .width(markerWidth)
-                        .background(Color.Transparent),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ){
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .background(Color.Transparent)
-                    ) {
-                        val xPosition = size.width /2
-                        drawLine(
-                            color = marker.color,
-                            start = Offset(xPosition, 0f),
-                            end = Offset(xPosition, size.height),  // Leave space for text
-                            strokeWidth = 2.dp.toPx(),
-                        )
-                    }
-                    ScalableText(
-                        modifier = Modifier
-                            .fillMaxHeight(1f)
-                            .fillMaxWidth()
-                            .background(Color.Transparent),
-                        text = marker.text,
-                        style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
-                        color = marker.textColor,
-                        textAlign = TextAlign.Center,
-                        minTextSize = 6.sp
+                if (previousRatio != 0.0) {
+                    SimpleProgressIndicator(
+                        progress = 1f,
+                        trackColor = MaterialTheme.colors.background,
+                        progressBarColor = MyColors.Orange,
+                        modifier = Modifier.height(10.dp).weight(previousRatio.toFloat()),
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+
+                    val remainingRatio = ((ratio - previousRatio) / (1 - previousRatio)).toFloat()
+
+                    SimpleProgressIndicator(
+                        progress = remainingRatio,
+                        trackColor = MaterialTheme.colors.background,
+                        progressBarColor = progressBarColor,
+                        modifier = Modifier.height(10.dp).weight(1 - (previousRatio.toFloat())),
+                    )
+                } else {
+                    SimpleProgressIndicator(
+                        progress = ratio.toFloat(),
+                        trackColor = MaterialTheme.colors.background,
+                        progressBarColor = progressBarColor,
+                        modifier = Modifier.height(10.dp).weight(1f),
                     )
                 }
             }

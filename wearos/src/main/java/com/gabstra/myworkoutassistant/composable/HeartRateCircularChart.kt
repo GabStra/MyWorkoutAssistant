@@ -232,7 +232,7 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) 
         ) {
             Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {
                 drawCircle(
-                    color = fillColor,
+                    color = Color.White,
                     radius = (circleRadius / density).dp.toPx(),
                     center = center
                 )

@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -35,14 +33,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +67,10 @@ fun BodyWeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
+    val isLastSet = remember(state) {
+        viewModel.setsByExerciseId[state.exerciseId]!!.last() == state
+    }
+
     val equipment = remember(exercise) {
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
@@ -82,9 +82,7 @@ fun BodyWeightSetScreen(
     var availableWeights by remember(exercise) { mutableStateOf<Set<Double>>(emptySet()) }
 
     LaunchedEffect(equipment) {
-        availableWeights = withContext(Dispatchers.Default) {
-            equipment?.calculatePossibleCombinations() ?: emptySet()
-        }
+        availableWeights = viewModel.getWeightByEquipment(equipment)
     }
 
     val cumulativeWeight = remember(currentSetData,equipment){
@@ -117,6 +115,12 @@ fun BodyWeightSetScreen(
     val currentTotalVolume by remember {
         derivedStateOf {
             currentSetData.volume + executedVolume
+        }
+    }
+
+    val previousTotalVolume by remember {
+        derivedStateOf {
+            previousSetData.volume + executedVolume
         }
     }
 
@@ -372,11 +376,6 @@ fun BodyWeightSetScreen(
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if(equipment!=null && availableWeights.isEmpty()){
-                CircularProgressIndicator()
-                return
-            }
-
             if(availableWeights.isNotEmpty()){
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 Row(
@@ -403,12 +402,18 @@ fun BodyWeightSetScreen(
             if(volumeProgression > 0){
                 Spacer(modifier = Modifier.height(5.dp))
 
-                TrendComponentProgressBarWithMarker(
+                val progressBarColor = when {
+                    currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
+                    currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
+                    else -> Color.White
+                }
+
+                ProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),
-                    label = "Vol:",
                     ratio = volumeProgression,
                     previousRatio = executedVolumeProgression,
-                    progressBarColor = Color.White,
+                    progressBarColor = progressBarColor,
+                    showRatio = isLastSet
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -424,43 +429,13 @@ fun BodyWeightSetScreen(
                                 Icon(
                                     Icons.Filled.Star,
                                     contentDescription = "Streak",
-                                    tint = MyColors.Green
+                                    tint = Color.Yellow
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = state.streak.toString(),
                                     style = indicatorStyle,
                                 )
-                            }
-                        }
-
-                        if(state.progressionValue != null && state.progressionValue > 0) {
-                            val isHigherThanTarget = volumeProgression > 1 &&
-                                    ((volumeProgression - 1) * 100).round(2) > state.progressionValue.round(2)
-
-                            val isEqualToTarget = volumeProgression > 1 &&
-                                    ((volumeProgression - 1) * 100).round(2) == state.progressionValue.round(2)
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Target",
-                                    style = indicatorStyle,
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-
-                                if(isHigherThanTarget){
-                                    Icon(
-                                        Icons.Filled.ArrowUpward,
-                                        contentDescription = "Up",
-                                        tint = MyColors.Green
-                                    )
-                                }else{
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = "Check",
-                                        tint = if(isEqualToTarget) MyColors.Green else Color.DarkGray
-                                    )
-                                }
                             }
                         }
                     }
