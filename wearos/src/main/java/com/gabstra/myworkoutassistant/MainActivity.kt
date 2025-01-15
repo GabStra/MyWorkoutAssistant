@@ -213,7 +213,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         LaunchedEffect(nodes){
             appViewModel.phoneNode = nodes.firstOrNull()
             if(appViewModel.phoneNode != null){
-                appViewModel.sendAll(localContext)
+                //appViewModel.sendAll(localContext)
             }
         }
 

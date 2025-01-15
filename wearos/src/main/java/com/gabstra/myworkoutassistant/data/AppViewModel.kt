@@ -587,21 +587,15 @@ class AppViewModel : ViewModel() {
             exerciseDataByExerciseIdMap[exerciseId] = distribution
         }
 
-        /*
-        // Process exercises sequentially
+
+/*        // Process exercises sequentially
         exerciseWithWeightSets.forEach { exercise ->
-        val result = processExercise(exercise)
-        result?.let { (exerciseId, distribution) ->
-         val oldSets = exercise.sets.filter { it is BodyWeightSet || it is WeightSet}.joinToString { it -> when(it){
-             is BodyWeightSet -> "(${it.reps} reps x ${it.additionalWeight} kg)"
-             is WeightSet -> "(${it.reps} reps x ${it.weight} kg)"
-             else -> ""
-         } }
-         Log.d("WorkoutViewModel", "Old sets: $oldSets")
-         exerciseDataByExerciseIdMap[exerciseId] = distribution
-        }
-        }
-           */
+            val result = processExercise(exercise)
+            result?.let { (exerciseId, distribution) ->
+                exerciseDataByExerciseIdMap[exerciseId] = distribution
+            }
+        }*/
+
     }
 
     // Helper function to process a single exercise
@@ -621,19 +615,19 @@ class AppViewModel : ViewModel() {
 
         var totalVolume = 0.0
         var maxOneRepMax = 0.0
+        var currentSets = emptyList<VolumeDistributionHelper.GenericSet>()
+
+        val totalHistoricalSetDataList = when (exercise.exerciseType) {
+            ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
+            ExerciseType.BODY_WEIGHT -> getHistoricalSetsDataByExerciseId<BodyWeightSetData>(
+                exercise.id
+            )
+
+            else -> emptyList()
+        }
 
         if (exerciseInfo == null || exerciseInfo.volumeLastSuccessfulSession == 0.0 || exerciseInfo.oneRepMax == 0.0) {
-            val totalHistoricalSetDataList = when (exercise.exerciseType) {
-                ExerciseType.WEIGHT -> getHistoricalSetsDataByExerciseId<WeightSetData>(exercise.id)
-                ExerciseType.BODY_WEIGHT -> getHistoricalSetsDataByExerciseId<BodyWeightSetData>(
-                    exercise.id
-                )
-
-                else -> emptyList()
-            }
-
             if (totalHistoricalSetDataList.isNotEmpty()) {
-
                 totalVolume = totalHistoricalSetDataList.sumOf {
                     when (it) {
                         is BodyWeightSetData -> it.volume
@@ -692,6 +686,43 @@ class AppViewModel : ViewModel() {
             maxOneRepMax = exerciseInfo.oneRepMax
         }
 
+        if (totalHistoricalSetDataList.isNotEmpty()) {
+            currentSets = totalHistoricalSetDataList.map {
+                when (it) {
+                    is BodyWeightSetData -> VolumeDistributionHelper.GenericSet(
+                        it.getWeight(equipment),
+                        it.actualReps
+                    )
+                    is WeightSetData -> VolumeDistributionHelper.GenericSet(
+                        it.getWeight(equipment),
+                        it.actualReps
+                    )
+                    else -> throw IllegalArgumentException("Unknown set type")
+                }
+            }
+        }else{
+            currentSets = exerciseSets.map {
+                when (it) {
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight =
+                            bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                        VolumeDistributionHelper.GenericSet(
+                            it.getWeight(equipment, relativeBodyWeight),
+                            it.reps
+                        )
+                    }
+
+                    is WeightSet -> {
+                        VolumeDistributionHelper.GenericSet(
+                            it.getWeight(equipment),
+                            it.reps
+                        )
+                    }
+                    else -> throw IllegalArgumentException("Unknown set type")
+                }
+            }
+        }
+
         if (totalVolume == 0.0 || maxOneRepMax == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
             return null
@@ -742,23 +773,26 @@ class AppViewModel : ViewModel() {
         var exerciseData: ExerciseData? = null
 
         if (shouldDeload) {
-            exerciseData = VolumeDistributionHelper.redistributeExerciseSets(
-                totalVolume,
-                maxOneRepMax,
-                availableWeights,
-                totalVolume * 0.7,
-                totalVolume * 0.6,
-                loadPercentageRange,
-                repsRange,
-                true,
-            )
+            //TODO: Implement deloading
         } else {
+            val oldSets = currentSets.joinToString { it ->"(${it.reps} reps x ${it.weight} kg)" }
+
+            val minIntensity = currentSets.minOf { it.weight/maxOneRepMax }
+            Log.d("WorkoutViewModel", "Old sets: $oldSets  Min intensity: ${
+                String.format(
+                    "%.2f",
+                    minIntensity*100
+                ).replace(",", ".")
+            }%")
+
+
             exerciseData = VolumeDistributionHelper.generateExerciseProgression(
                 totalVolume,
                 maxOneRepMax,
                 availableWeights,
                 loadPercentageRange,
                 repsRange,
+                currentSets
             )
         }
 
@@ -795,15 +829,15 @@ class AppViewModel : ViewModel() {
             }
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - volume $totalVolume -> ${exerciseData.totalVolume} +${
+                "Progression found - volume $totalVolume -> ${exerciseData.totalVolume} Increase: ${
                     String.format(
                         "%.2f",
                         exerciseData.progressIncrease
                     )
-                }% Average load: ${
+                }% Min Intensity: ${
                     String.format(
                         "%.2f",
-                        exerciseData.averagePercentLoad
+                        exerciseData.minIntensity
                     ).replace(",", ".")
                 }%"
             )
