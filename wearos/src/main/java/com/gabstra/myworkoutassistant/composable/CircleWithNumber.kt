@@ -70,7 +70,7 @@ fun CircleWithNumber(
         ) {
             Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {
                 drawCircle(
-                    color = Color.White,
+                    color = circleColor,
                     radius = (circleRadius / density).dp.toPx(),
                     center = center
                 )
@@ -91,7 +91,7 @@ fun CircleWithNumber(
                         .fillMaxSize()
                         .padding(3.dp),
                     text = number.toString(),
-                    style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
+                    style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Bold),
                     color = textColor,
                     textAlign = TextAlign.Center,
                 )

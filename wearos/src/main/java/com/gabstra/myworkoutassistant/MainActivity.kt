@@ -26,6 +26,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -142,18 +145,6 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalHorologistApi::class)
     private lateinit var appHelper: WearDataLayerAppHelper
 
-    override fun onStart() {
-        super.onStart()
-        try{
-            val workoutStore = workoutStoreRepository.getWorkoutStore()
-            appViewModel.updateWorkoutStore(workoutStore)
-        }catch(exception: Exception){
-            Toast.makeText(this, "Failed to load workout repository", Toast.LENGTH_SHORT).show()
-        }
-
-        appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         cancelWorkoutInProgressNotification(this)
@@ -172,7 +163,7 @@ class MainActivity : ComponentActivity() {
         lateinit var myReceiver: MyReceiver
 
         setContent {
-            WearApp(dataClient, appViewModel, appHelper){ navController ->
+            WearApp(dataClient, appViewModel, appHelper, workoutStoreRepository){ navController ->
                 myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
                 val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
                 registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -189,7 +180,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
-fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearDataLayerAppHelper, onNavControllerAvailable: (NavController) -> Unit) {
+fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearDataLayerAppHelper,workoutStoreRepository: WorkoutStoreRepository, onNavControllerAvailable: (NavController) -> Unit) {
     MyWorkoutAssistantTheme {
         val navController = rememberNavController()
         val localContext = LocalContext.current
@@ -197,6 +188,20 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
         appViewModel.initWorkoutHistoryDao(localContext)
         appViewModel.initWorkoutRecordDao(localContext)
         appViewModel.initExerciseInfoDao(localContext)
+
+        var initialized by remember { mutableStateOf(false) }
+
+        LaunchedEffect(Unit) {
+            try{
+                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                appViewModel.updateWorkoutStore(workoutStore)
+            }catch(exception: Exception){
+                Toast.makeText(localContext, "Failed to load workout repository", Toast.LENGTH_SHORT).show()
+            }
+
+            appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
+            initialized = true
+        }
 
         onNavControllerAvailable(navController)
 
@@ -217,48 +222,53 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
             }
         }
 
-        NavHost(
-			navController, 
-			startDestination = Screen.WorkoutSelection.route,
-            enterTransition = {
-                fadeIn(animationSpec = tween(500))
-            },
-            exitTransition = {
-                fadeOut(animationSpec = tween(500))
-            },
-            popEnterTransition= {
-                fadeIn(animationSpec = tween(500))
-            },
-            popExitTransition = {
-                fadeOut(animationSpec = tween(500))
-            },
-		) {
-            composable(Screen.WorkoutSelection.route) {
-                WorkoutSelectionScreen(dataClient,navController, appViewModel, appHelper)
-            }
-            composable(Screen.WorkoutDetail.route) {
-                WorkoutDetailScreen(navController, appViewModel, hrViewModel)
-            }
-            composable(Screen.Workout.route) {
-                val isPaused by appViewModel.isPaused
+        if(!initialized){
+            LoadingScreen(appViewModel,"Loading workouts")
 
-                KeepOn(appViewModel,enableDimming = !isPaused){
-                    WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
+        }else{
+            NavHost(
+                navController,
+                startDestination = Screen.WorkoutSelection.route,
+                enterTransition = {
+                    fadeIn(animationSpec = tween(500))
+                },
+                exitTransition = {
+                    fadeOut(animationSpec = tween(500))
+                },
+                popEnterTransition= {
+                    fadeIn(animationSpec = tween(500))
+                },
+                popExitTransition = {
+                    fadeOut(animationSpec = tween(500))
+                },
+            ) {
+                composable(Screen.WorkoutSelection.route) {
+                    WorkoutSelectionScreen(dataClient,navController, appViewModel, appHelper)
                 }
-            }
-            composable(Screen.Loading.route) {
-                val progress by appViewModel.backupProgress
-                val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
+                composable(Screen.WorkoutDetail.route) {
+                    WorkoutDetailScreen(navController, appViewModel, hrViewModel)
+                }
+                composable(Screen.Workout.route) {
+                    val isPaused by appViewModel.isPaused
 
-                CircularProgressIndicator(
-                    progress = animatedProgress,
-                    modifier = Modifier.fillMaxSize(),
-                    strokeWidth = 4.dp,
-                    indicatorColor = MaterialTheme.colors.primary,
-                    trackColor = MaterialTheme.colors.background
-                )
+                    KeepOn(appViewModel,enableDimming = !isPaused){
+                        WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
+                    }
+                }
+                composable(Screen.Loading.route) {
+                    val progress by appViewModel.backupProgress
+                    val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
 
-                LoadingScreen(appViewModel,"Syncing with phone")
+                    CircularProgressIndicator(
+                        progress = animatedProgress,
+                        modifier = Modifier.fillMaxSize(),
+                        strokeWidth = 4.dp,
+                        indicatorColor = MaterialTheme.colors.primary,
+                        trackColor = MaterialTheme.colors.background
+                    )
+
+                    LoadingScreen(appViewModel,"Syncing with phone")
+                }
             }
         }
     }

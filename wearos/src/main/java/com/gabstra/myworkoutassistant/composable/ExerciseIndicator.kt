@@ -40,7 +40,7 @@ fun ExerciseIndicator(
     val baseGapAngle = 2f
     val size= 25f
 
-    val availableAngle = 125f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
+    val availableAngle = 125f // - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
     var angleForCurrentExercise = availableAngle / exerciseSelection.size.coerceAtLeast(1)
 
 
@@ -48,7 +48,7 @@ fun ExerciseIndicator(
         var accumulatedAngle = -60f // Starting angle
 
         // Indicate skipped elements at the start
-        if (elementsToSkip > 0) {
+        /*if (elementsToSkip > 0) {
             SegmentedProgressIndicator(
                 trackSegments = listOf(ProgressIndicatorSegment(1f, MyColors.Orange)),
                 progress = 1f,
@@ -64,14 +64,14 @@ fun ExerciseIndicator(
                 CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = MyColors.Orange, number = elementsToSkip, transparency = 1f)
             }
             accumulatedAngle += size + baseGapAngle
-        }
+        }*/
 
         val allSets = viewModel.setsByExerciseId[set.exerciseId] ?: listOf()
         val filteredSets = allSets.filter { it.set !is RestSet }
         SetIndicator(accumulatedAngle + baseGapAngle,angleForCurrentExercise -  (baseGapAngle*2), set, filteredSets, Modifier.fillMaxSize())
         accumulatedAngle += angleForCurrentExercise + baseGapAngle
         // Indicate more elements available at the end
-        if (areMoreElementsAvailable) {
+       /* if (areMoreElementsAvailable) {
 
             SegmentedProgressIndicator(
                 trackSegments = listOf(ProgressIndicatorSegment(1f, Color.DarkGray)),
@@ -87,7 +87,7 @@ fun ExerciseIndicator(
             if(numberOfElementsLeft > 1){
                 CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = Color.DarkGray, number = numberOfElementsLeft, transparency = 1f)
             }
-        }
+        }*/
     }
 }
 

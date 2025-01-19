@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.flow
@@ -15,7 +16,7 @@ object ProgressionHelper {
         ENDURANCE;
 
         companion object {
-            fun fromString(type: String): ExerciseCategory? {
+            fun fromString(type: String):  ExerciseCategory? {
                 return values().find { it.name.equals(type, ignoreCase = true) }
             }
         }
@@ -63,7 +64,6 @@ object VolumeDistributionHelper {
         val reps: Int,
         val volume: Double,
         val percentLoad: Double,
-        val fatigue: Double
     )
 
     data class ExerciseData(
@@ -79,12 +79,10 @@ object VolumeDistributionHelper {
 
     data class WeightExerciseParameters(
         val originalVolume: Double,
-        val targetTotalVolume: Double,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
         val percentLoadRange: Pair<Double, Double>,
         val repsRange: IntRange,
-        val minimumVolume: Double,
         val minSets: Int,
         val maxSets: Int,
         val isDeload : Boolean,
@@ -95,6 +93,8 @@ object VolumeDistributionHelper {
         params: WeightExerciseParameters,
     ): ExerciseData? {
         val possibleSets = generatePossibleSets(params)
+
+        //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.size}")
         if (possibleSets.isEmpty()) return null
 
         val validSetCombination = findBestProgressions(
@@ -129,10 +129,11 @@ object VolumeDistributionHelper {
         require(minSets <= maxSets)
 
         val prevVolume = currentSets.sumOf { it.weight * it.reps }
-
         // Thread-safe variables using atomic references and mutex
         val bestComboRef = AtomicReference<List<ExerciseSet>>(emptyList())
         val bestScore = AtomicReference(Double.MAX_VALUE)
+
+
 
         val sortedSets = sets
             .sortedWith(
@@ -151,13 +152,10 @@ object VolumeDistributionHelper {
         fun calculateScore(
             currentCombo: List<ExerciseSet>,
         ): Double {
-            val totalVolume = currentCombo.sumOf { it.volume }
-            val totalFatigue = currentCombo.mapIndexed { index, set ->
-                set.fatigue * (1.0 + 0.05 * index)
-            }.sum()
-            if(totalVolume < prevVolume * 1.005 || totalVolume > prevVolume * 1.01) return Double.MAX_VALUE
+            val currentTotalVolume = currentCombo.sumOf { it.volume }
+            if(currentTotalVolume < prevVolume * 1.005 || currentTotalVolume > prevVolume * 1.05) return Double.MAX_VALUE
 
-            return totalVolume + totalFatigue
+            return currentTotalVolume
         }
 
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
@@ -170,7 +168,6 @@ object VolumeDistributionHelper {
                         remainingSetsNeeded: Int,
                         depth: Int = 1
                     ) {
-                        // Early termination conditions
                         if (depth >= maxSets) return
 
                         val remainingSetsAvailable = sortedSets.size - startFrom
@@ -178,13 +175,19 @@ object VolumeDistributionHelper {
 
                         val lastSet = currentCombo.last()
 
+
+                        if(bestScore.get() < Double.MAX_VALUE){
+                            val currentScore = calculateScore(currentCombo)
+                            if(currentScore >= bestScore.get()) return
+                        }
+
                         for (nextIdx in startFrom until sortedSets.size) {
                             val nextSet = sortedSets[nextIdx]
 
                             val isValidSequence = ((lastSet.weight > nextSet.weight) ||
                                     (lastSet.weight == nextSet.weight && lastSet.reps >= nextSet.reps))
 
-                            if(!isValidSequence) continue
+                            if(!isValidSequence || nextSet.volume > lastSet.volume) continue
 
                             val newVolume = currentVolume + nextSet.volume
                             val newCombo = currentCombo + nextSet
@@ -196,6 +199,9 @@ object VolumeDistributionHelper {
                                 emit(Pair(newScore, newCombo))
                             }
 
+                            if(bestScore.get() < Double.MAX_VALUE){
+                                if(newScore >= bestScore.get()) continue
+                            }
 
                             // Only recurse if we need more sets and can potentially improve the solution
                             if (newCombo.size < maxSets) {
@@ -250,15 +256,14 @@ object VolumeDistributionHelper {
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
-            val setsMinWeight = params.currentSets.minOf { it.weight } * 0.8
+            val setsMinWeight = params.currentSets.maxOf { it.weight } * 0.8
             val setsMaxWeight = params.currentSets.maxOf { it.weight } * 1.05
 
-            val minWeight = params.oneRepMax * (params.percentLoadRange.first / 100)
             val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
 
-            val intersectionWeightRange = maxOf(setsMinWeight, minWeight)..minOf(setsMaxWeight, maxWeight)
+            val desiredMaxWeight = minOf(maxWeight, setsMaxWeight)
 
-            val weightRange =  params.availableWeights.filter { it in intersectionWeightRange }
+            val weightRange =  params.availableWeights.filter { it in setsMinWeight..desiredMaxWeight }
 
             val setsDeferred = weightRange.map { weight ->
                 async(Dispatchers.Default) {
@@ -291,14 +296,11 @@ object VolumeDistributionHelper {
         val relativeIntensity = weight / oneRepMax
         val percentLoad = relativeIntensity * 100
 
-        val fatigue = reps* relativeIntensity
-
         return ExerciseSet(
             weight = weight,
             reps = reps,
             volume = volume,
             percentLoad = percentLoad,
-            fatigue = fatigue
         )
     }
 
@@ -310,16 +312,11 @@ object VolumeDistributionHelper {
         repsRange: IntRange,
         currentSets : List<GenericSet>,
     ): ExerciseData? {
-        val targetVolumeIncrease = 1.05
-        val minimumVolumeIncrease = 1.0025
-
         val baseParams = WeightExerciseParameters(
-            targetTotalVolume = totalVolume * targetVolumeIncrease,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             percentLoadRange = percentLoadRange,
             repsRange = repsRange,
-            minimumVolume = totalVolume * minimumVolumeIncrease,
             originalVolume = totalVolume,
             minSets = 3,
             maxSets = 5,

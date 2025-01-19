@@ -39,8 +39,6 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.PositionIndicator
-import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 
 import com.gabstra.myworkoutassistant.composable.BodyWeightSetScreen
@@ -179,12 +177,12 @@ fun PageCompleteOrSkip(
 
     val context = LocalContext.current
 
-    var showSkipDialog by remember { mutableStateOf(false) }
+    var showCompleteDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
     LaunchedEffect(updatedState) {
-        showSkipDialog = false
+        showCompleteDialog = false
         showGoBackDialog = false
     }
 
@@ -196,10 +194,10 @@ fun PageCompleteOrSkip(
     ) {
         item{
             ButtonWithText(
-                text = "Skip exercise",
+                text = "Complete exercise",
                 onClick = {
                     VibrateGentle(context)
-                    showSkipDialog = true
+                    showCompleteDialog = true
                 },
             )
         }
@@ -217,21 +215,21 @@ fun PageCompleteOrSkip(
     }
 
     CustomDialogYesOnLongPress(
-        show = showSkipDialog,
-        title = "Skip exercise",
+        show = showCompleteDialog,
+        title = "Complete exercise",
         message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)
-            viewModel.skipExercise()
-            showSkipDialog = false
+            viewModel.completeExercise()
+            showCompleteDialog = false
         },
         handleNoClick = {
-            showSkipDialog = false
+            showCompleteDialog = false
             VibrateGentle(context)
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
-            showSkipDialog = false
+            showCompleteDialog = false
         },
         holdTimeInMillis = 1000
     )
@@ -583,8 +581,8 @@ fun ExerciseScreen(
 
     CustomDialogYesOnLongPress(
         show = showNextDialog,
-        title = "Complete exercise",
-        message = "Do you want to save this data?",
+        title = "Complete set",
+        message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)
             viewModel.storeSetData()

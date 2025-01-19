@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import kotlin.math.roundToInt
@@ -157,7 +158,8 @@ fun ProgressIndicator(
     ratio: Double,
     previousRatio: Double = 0.0,
     progressBarColor: Color,
-    showRatio: Boolean
+    showRatio: Boolean,
+    expectedProgress: Double?
 ) {
     val cornerRadius = 6.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
@@ -175,12 +177,24 @@ fun ProgressIndicator(
     }
 
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)){
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)){
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
             Text(
-                text = "Progress",
+                text = "Progress:",
                 style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
                 textAlign = TextAlign.End
             )
+
+            if (expectedProgress != null && !showRatio) {
+                val sign = if (expectedProgress > 0) "+" else ""
+                val text = if (expectedProgress > 0 || expectedProgress < 0)  "$sign${expectedProgress.round(2)}%" else "-"
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                    textAlign = TextAlign.End,
+                    color = Color.White
+                )
+            }
+
             if(showRatio){
                 val displayText = formatRatio(ratio)
                 val displayColor = when {

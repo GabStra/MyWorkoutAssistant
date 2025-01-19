@@ -413,7 +413,8 @@ fun BodyWeightSetScreen(
                     ratio = volumeProgression,
                     previousRatio = executedVolumeProgression,
                     progressBarColor = progressBarColor,
-                    showRatio = isLastSet
+                    showRatio = isLastSet,
+                    expectedProgress = state.progressionValue
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))

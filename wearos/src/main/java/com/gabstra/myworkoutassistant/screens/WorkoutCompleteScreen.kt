@@ -30,6 +30,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateTwice
+import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 
@@ -67,7 +68,7 @@ fun WorkoutCompleteScreen(
             polarViewModel.disconnectFromDevice()
         }
         delay(1000)
-        VibrateTwice(context)
+        VibrateTwiceAndBeep(context)
         cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
             dataSent = true

@@ -3,14 +3,11 @@ package com.gabstra.myworkoutassistant.composable
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,28 +15,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -50,13 +43,10 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
-import com.gabstra.myworkoutassistant.data.getContrastRatio
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
-import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -102,7 +92,7 @@ fun HeartRateCircularChart(
     LaunchedEffect(hr) {
         while (isActive) {
             appViewModel.registerHeartBeat(hr)
-            delay(500)
+            delay(1000)
         }
     }
 
@@ -193,19 +183,9 @@ fun HeartRateCircularChart(
 
 
 @Composable
-private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) {
+private fun RotatingIndicator(rotationAngle: Float, fillColor: Color, number: Int) {
     val density = LocalDensity.current.density
-    val circleRadius = 20f
-
-    val textColor = Color.Black
-
-    /*
-    val textColor = if (getContrastRatio(fillColor, Color.Black) > getContrastRatio(fillColor, Color.White)) {
-        Color.Black
-    } else {
-        Color.White
-    }
-    */
+    val triangleSize = 10f
 
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize()
@@ -213,11 +193,10 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) 
         val boxWidth = (constraints.maxWidth/density).dp
         val boxHeight = (constraints.maxHeight/density).dp
 
-
         val angleInRadians = Math.toRadians(rotationAngle.toDouble())
 
-        val widthOffset = (constraints.maxWidth/2) - 5
-        val heightOffset = (constraints.maxHeight/2) - 5
+        val widthOffset = (constraints.maxWidth/2) - 22
+        val heightOffset = (constraints.maxHeight/2) - 22
 
         val xRadius = ((widthOffset * cos(angleInRadians)) / density).dp
         val yRadius = ((heightOffset * sin(angleInRadians)) / density).dp
@@ -226,35 +205,39 @@ private fun RotatingCircle(rotationAngle: Float, fillColor: Color, number: Int) 
             modifier = Modifier
                 .fillMaxSize()
                 .absoluteOffset(
-                    x = (boxWidth / 2) - (circleRadius / density).dp + xRadius,
-                    y = (boxHeight / 2) - (circleRadius / density).dp + yRadius,
+                    x = (boxWidth / 2) - (triangleSize / density).dp + xRadius,
+                    y = (boxHeight / 2) - (triangleSize / density).dp + yRadius,
                 ),
         ) {
-            Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {
-                drawCircle(
-                    color = Color.White,
-                    radius = (circleRadius / density).dp.toPx(),
-                    center = center
-                )
-                drawCircle(
-                    color = Color.Black,
-                    radius = (circleRadius / density).dp.toPx(),
-                    center = center,
-                    style = Stroke(width = 3.dp.toPx())
-                )
-            }
-            Box(modifier = Modifier
-                .size((circleRadius * 2 / density).dp)
-            ){
-                ScalableText(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(3.dp),
-                    text = number.toString(),
-                    style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Medium),
-                    color = textColor,
-                    textAlign = TextAlign.Center
-                )
+            Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
+                val trianglePath = Path().apply {
+                    val height = (triangleSize * 2 / density).dp.toPx()
+                    val width = height
+
+                    // Create triangle pointing upward initially
+                    moveTo(width / 2, 0f)          // Top point
+                    lineTo(width, height * 0.866f) // Bottom right
+                    lineTo(0f, height * 0.866f)    // Bottom left
+                    close()
+                }
+
+                // Calculate rotation to point in direction of movement
+                // Add 90 degrees (π/2) because our triangle points up by default
+                // and we want it to point in the direction of travel
+                val directionAngle = angleInRadians - Math.PI / 2 + Math.PI
+
+                withTransform({
+                    rotate(
+                        degrees = Math.toDegrees(directionAngle).toFloat(),
+                        pivot = center
+                    )
+                }) {
+                    // Draw filled white triangle
+                    drawPath(
+                        path = trianglePath,
+                        color = fillColor
+                    )
+                }
             }
         }
     }
@@ -319,10 +302,11 @@ private fun HeartRateView(
             if(showHeartIcon){
                 HeartIcon(
                     modifier = Modifier.size(15.dp),
-                    tint = if (hr == 0) Color.DarkGray else MyColors.Red
+                    tint = if (hr == 0) Color.DarkGray else colorsByZone[zone]
                 )
                 Spacer(modifier = Modifier.width(5.dp))
             }
+
             Text(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
@@ -343,7 +327,7 @@ private fun HeartRateView(
         )
 
         if(hr != 0) {
-            RotatingCircle(targetRotationAngle, colorsByZone[zone],zone)
+            RotatingIndicator(targetRotationAngle, colorsByZone[zone],zone)
         }
     }
 }
