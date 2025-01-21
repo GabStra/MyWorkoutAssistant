@@ -69,6 +69,20 @@ class AppViewModel() : ViewModel() {
         _updateNotificationFlow.value = System.currentTimeMillis().toString()
     }
 
+    var checkedHealthPermission by mutableStateOf(false)
+        private set
+
+    fun setHealthPermissionsChecked() {
+        checkedHealthPermission = true
+    }
+
+    var hasHealthPermissions by mutableStateOf(false)
+        private set
+
+    fun setHealthPermissions(hasPermissions: Boolean) {
+        hasHealthPermissions = hasPermissions
+    }
+
     private val _updateMobileFlow = MutableStateFlow<String?>(null)
     val updateMobileFlow = _updateMobileFlow.asStateFlow()
 

@@ -47,7 +47,10 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -767,7 +770,7 @@ class AppViewModel : ViewModel() {
         if (shouldDeload) {
             //TODO: Implement deloading
         } else {
-            val oldSets = currentSets.joinToString { it ->"(${it.reps} reps x ${it.weight} kg)" }
+            val oldSets = currentSets.joinToString { it ->"(${it.weight} kg x ${it.reps})" }
 
             Log.d("WorkoutViewModel", "Old sets: $oldSets")
 
@@ -813,17 +816,20 @@ class AppViewModel : ViewModel() {
 
                 }
             }
+
+            val prevAverageIntensity = currentSets.map { (it.weight/maxOneRepMax)*100 }.average()
+
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - volume $totalVolume -> ${exerciseData.totalVolume} Increase: ${
+                "Progression found - Volume: $totalVolume -> ${exerciseData.totalVolume} Intensity: ${
                     String.format(
                         "%.2f",
-                        exerciseData.progressIncrease
-                    )
-                }% Intensity: ${
+                        prevAverageIntensity
+                    ).replace(",", ".")
+                }% -> ${
                     String.format(
                         "%.2f",
-                        exerciseData.minIntensity
+                        exerciseData.averageIntensity
                     ).replace(",", ".")
                 }%"
             )
@@ -985,7 +991,7 @@ class AppViewModel : ViewModel() {
     }
 
     fun registerHeartBeat(heartBeat: Int) {
-        if (heartBeat > 0) heartBeatHistory.add(heartBeat)
+        heartBeatHistory.add(heartBeat)
     }
 
     private fun updateWorkout(currentExercise: Exercise, updatedExercise: Exercise) {

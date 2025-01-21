@@ -11,6 +11,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.Interaction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -99,6 +101,8 @@ import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import kotlin.math.floor
@@ -656,54 +660,52 @@ fun WorkoutHistoryScreen(
     }
 
     val customBottomBar = @Composable {
-        DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
-            Row(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp), // Fill the width of the container
+            horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
+            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+        ) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp), // Fill the width of the container
-                horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
-                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .then(
+                        if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                    ) // Apply background color only if enabled
+                    .clickable { selectedMode = 0 }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
-                        .then(
-                            if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
-                        ) // Apply background color only if enabled
-                        .clickable { selectedMode = 0 }
-                        .padding(8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ShowChart,
-                            contentDescription = "Graphs",
-                            tint = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text("Graphs", color = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ShowChart,
+                        contentDescription = "Graphs",
+                        tint = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("Graphs", color = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
                 }
+            }
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
-                        .then(
-                            if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
-                        ) // Apply background color only if enabled
-                        .clickable { selectedMode = 1 }
-                        .padding(8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.List,
-                            contentDescription = "Sets",
-                            tint = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text("Sets", color = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
-                    }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .then(
+                        if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
+                    ) // Apply background color only if enabled
+                    .clickable { selectedMode = 1 }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.List,
+                        contentDescription = "Sets",
+                        tint = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("Sets", color = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
                 }
             }
         }
@@ -785,29 +787,43 @@ fun WorkoutHistoryScreen(
                     )
                 }
             ) {
-                DarkModeContainer(whiteOverlayAlpha = .05f, isRounded = false) {
-                    Tab(
-                        selected = false,
-                        onClick = {
-                            appViewModel.setScreenData(
-                                ScreenData.WorkoutDetail(workout.id),
-                                true
-                            )
-                        },
-                        text = { Text(text = "Overview") },
-                        selectedContentColor = Color.White.copy(alpha = .87f),
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
-                    )
-                }
-                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                    Tab(
-                        selected = true,
-                        onClick = { },
-                        text = { Text(text = "History") },
-                        selectedContentColor = Color.White.copy(alpha = .87f),
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
-                    )
-                }
+                Tab(
+                    selected = false,
+                    onClick = {
+                        appViewModel.setScreenData(
+                            ScreenData.WorkoutDetail(workout.id),
+                            true
+                        )
+                    },
+                    text = { Text(text = "Overview") },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = Color.White.copy(alpha = .3f),
+                    interactionSource = object : MutableInteractionSource {
+                        override val interactions: Flow<Interaction> = emptyFlow()
+
+                        override suspend fun emit(interaction: Interaction) {
+                            // Empty implementation
+                        }
+
+                        override fun tryEmit(interaction: Interaction): Boolean = true
+                    }
+                )
+                Tab(
+                    selected = true,
+                    onClick = { },
+                    text = { Text(text = "History") },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = Color.White.copy(alpha = .3f),
+                    interactionSource = object : MutableInteractionSource {
+                        override val interactions: Flow<Interaction> = emptyFlow()
+
+                        override suspend fun emit(interaction: Interaction) {
+                            // Empty implementation
+                        }
+
+                        override fun tryEmit(interaction: Interaction): Boolean = true
+                    }
+                )
             }
 
             if (isLoading || workoutHistories.isEmpty()) {

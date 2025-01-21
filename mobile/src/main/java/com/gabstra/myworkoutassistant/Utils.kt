@@ -190,7 +190,7 @@ fun calculateKiloCaloriesBurned(
     isMale: Boolean
 ): Double {
     if (age <= 0 || weightKg <= 0 || averageHeartRate <= 0 || durationMinutes <= 0) {
-        throw IllegalArgumentException("All input values must be positive")
+        return 0.0
     }
 
     val caloriesBurned = if (isMale) {
@@ -346,4 +346,10 @@ fun calculateVolume(weight: Double, reps: Int): Double {
 
 fun calculateOneRepMax(weight: Double, reps: Int): Double {
     return weight / (1.0278 - (0.0278 * reps))
+}
+
+fun Double.round(decimals: Int): Double {
+    var multiplier = 1.0
+    repeat(decimals) { multiplier *= 10 }
+    return kotlin.math.round(this * multiplier) / multiplier
 }

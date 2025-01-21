@@ -5,6 +5,8 @@ import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.interaction.Interaction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -77,6 +79,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -389,46 +393,45 @@ fun WorkoutDetailScreen(
             }
         },
         bottomBar = {
-            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                if (selectedWorkoutComponents.isNotEmpty()) {
+            if (selectedWorkoutComponents.isNotEmpty()) {
+                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                     editModeBottomBar()
-                } else {
-                    BottomAppBar(
-                        contentPadding = PaddingValues(0.dp),
-                        containerColor = Color.Transparent,
-                        actions = {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize(),
-                                horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                            ) {
-                                GenericButtonWithMenu(
-                                    menuItems = listOf(
-                                        MenuItem("Add Exercise") {
-                                            appViewModel.setScreenData(
-                                                ScreenData.NewExercise(
-                                                    workout.id
-                                                )
-                                            );
-                                        },
-                                        MenuItem("Add Rests Between Exercises") {
-                                            appViewModel.setScreenData(
-                                                ScreenData.NewRest(
-                                                    workout.id,
-                                                    null
-                                                )
-                                            );
-                                        }
-
-                                    ),
-                                    content = {  Text("New Exercise") }
-                                )
-                            }
-                        }
-                    )
-
                 }
+            } else {
+                BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
+                    actions = {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                        ) {
+                            GenericButtonWithMenu(
+                                menuItems = listOf(
+                                    MenuItem("Add Exercise") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewExercise(
+                                                workout.id
+                                            )
+                                        );
+                                    },
+                                    MenuItem("Add Rests Between Exercises") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewRest(
+                                                workout.id,
+                                                null
+                                            )
+                                        );
+                                    }
+
+                                ),
+                                content = {  Text("New Exercise") }
+                            )
+                        }
+                    }
+                )
             }
         },
     ) { it ->
@@ -470,38 +473,52 @@ fun WorkoutDetailScreen(
                         )
                     }
                 ) {
-                    DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                        Tab(
-                            selected = true,
-                            onClick = { },
-                            text = {
-                                Text(
-                                    text = "Overview"
-                                )
-                            },
-                            selectedContentColor = Color.White.copy(alpha = .87f),
-                            unselectedContentColor = Color.White.copy(alpha = .3f),
-                        )
-                    }
-                    DarkModeContainer(whiteOverlayAlpha = .05f, isRounded = false) {
-                        Tab(
-                            selected = false,
-                            onClick = {
-                                appViewModel.setScreenData(
-                                    ScreenData.WorkoutHistory(workout.id),
-                                    true
-                                )
-                            },
-                            text = {
-                                Text(
+                    Tab(
+                        selected = true,
+                        onClick = { },
+                        text = {
+                            Text(
+                                text = "Overview"
+                            )
+                        },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        interactionSource = object : MutableInteractionSource {
+                            override val interactions: Flow<Interaction> = emptyFlow()
 
-                                    text = "History"
-                                )
-                            },
-                            selectedContentColor = Color.White.copy(alpha = .87f),
-                            unselectedContentColor = Color.White.copy(alpha = .3f),
-                        )
-                    }
+                            override suspend fun emit(interaction: Interaction) {
+                                // Empty implementation
+                            }
+
+                            override fun tryEmit(interaction: Interaction): Boolean = true
+                        }
+                    )
+                    Tab(
+                        selected = false,
+                        onClick = {
+                            appViewModel.setScreenData(
+                                ScreenData.WorkoutHistory(workout.id),
+                                true
+                            )
+                        },
+                        text = {
+                            Text(
+
+                                text = "History"
+                            )
+                        },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        interactionSource = object : MutableInteractionSource {
+                            override val interactions: Flow<Interaction> = emptyFlow()
+
+                            override suspend fun emit(interaction: Interaction) {
+                                // Empty implementation
+                            }
+
+                            override fun tryEmit(interaction: Interaction): Boolean = true
+                        }
+                    )
                 }
 
                 Row(

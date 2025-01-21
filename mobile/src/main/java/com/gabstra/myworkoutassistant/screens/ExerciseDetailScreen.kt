@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.interaction.Interaction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -61,6 +63,8 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 @Composable
 fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
@@ -210,134 +214,135 @@ fun ExerciseDetailScreen(
             }
         },
         bottomBar = {
-            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false){
             if (selectedSets.isNotEmpty()) {
-                BottomAppBar(
-                    contentPadding = PaddingValues(0.dp),
-                    containerColor = Color.Transparent,
-                    actions = {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0),
-                                onClick = {
-                                    val currentSets = exercise.sets
-                                    val selectedComponent = selectedSets.first()
+                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false){
+                    BottomAppBar(
+                        contentPadding = PaddingValues(0.dp),
+                        containerColor = Color.Transparent,
+                        actions = {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0),
+                                    onClick = {
+                                        val currentSets = exercise.sets
+                                        val selectedComponent = selectedSets.first()
 
-                                    val selectedIndex =
-                                        currentSets.indexOfFirst { it === selectedComponent }
+                                        val selectedIndex =
+                                            currentSets.indexOfFirst { it === selectedComponent }
 
-                                    val newSets =
-                                        currentSets.toMutableList().apply {
-                                            removeAt(selectedIndex)
-                                            add(selectedIndex - 1, selectedComponent)
-                                        }
+                                        val newSets =
+                                            currentSets.toMutableList().apply {
+                                                removeAt(selectedIndex)
+                                                add(selectedIndex - 1, selectedComponent)
+                                            }
 
 
-                                    val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                    val updatedExercise = exercise.copy(sets = adjustedComponents)
+                                        val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                        val updatedExercise = exercise.copy(sets = adjustedComponents)
 
-                                    appViewModel.updateWorkoutComponent(
-                                        workout,
-                                        exercise,
-                                        updatedExercise
+                                        appViewModel.updateWorkoutComponent(
+                                            workout,
+                                            exercise,
+                                            updatedExercise
+                                        )
+
+                                        sets = newSets
+                                    }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ArrowUpward,
+                                        contentDescription = "Go Higher",
+                                        tint = Color.White.copy(alpha = .87f)
                                     )
-
-                                    sets = newSets
-                                }) {
-                                Icon(
-                                    imageVector = Icons.Filled.ArrowUpward,
-                                    contentDescription = "Go Higher",
-                                    tint = Color.White.copy(alpha = .87f)
-                                )
-                            }
-
-                            IconButton(
-                                enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1),
-                                onClick = {
-                                    val currentSets = exercise.sets
-                                    val selectedComponent = selectedSets.first()
-
-                                    val selectedIndex =
-                                        currentSets.indexOfFirst { it === selectedComponent }
-
-                                    val newSets =
-                                        currentSets.toMutableList().apply {
-                                            removeAt(selectedIndex)
-                                            add(selectedIndex + 1, selectedComponent)
-                                        }
-
-                                    val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                    val updatedExercise = exercise.copy(sets = adjustedComponents)
-
-                                    sets = newSets
-
-                                    appViewModel.updateWorkoutComponent(
-                                        workout,
-                                        exercise,
-                                        updatedExercise
-                                    )
-                                }) {
-                                Icon(
-                                    imageVector = Icons.Filled.ArrowDownward,
-                                    contentDescription = "Go Lower"
-                                    ,tint = Color.White.copy(alpha = .87f)
-                                )
-                            }
-
-                            IconButton(onClick = {
-                                val newSets = sets.filter { set ->
-                                    selectedSets.none { it === set }
                                 }
-                                sets = newSets
 
-                                val updatedExercise = exercise.copy(sets = newSets)
+                                IconButton(
+                                    enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1),
+                                    onClick = {
+                                        val currentSets = exercise.sets
+                                        val selectedComponent = selectedSets.first()
 
-                                appViewModel.updateWorkoutComponent(
-                                    workout,
-                                    exercise,
-                                    updatedExercise
-                                )
+                                        val selectedIndex =
+                                            currentSets.indexOfFirst { it === selectedComponent }
 
-                                selectedSets = emptyList()
-                                isSelectionModeActive = false
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete",
-                                            tint = Color.White.copy(alpha = .87f)
-                                )
-                            }
-                            IconButton(
-                                enabled = selectedSets.isNotEmpty(),
-                                onClick = {
-                                    selectedSets.forEach {
-                                        val newSet = when (it) {
-                                            is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
-                                            is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
-                                            is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
-                                            is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
-                                            is RestSet -> it.copy(id = java.util.UUID.randomUUID())
-                                            else -> throw IllegalArgumentException("Unknown type")
-                                        }
-                                        appViewModel.addSetToExercise(workout, exercise, newSet)
-                                        sets = sets + newSet
+                                        val newSets =
+                                            currentSets.toMutableList().apply {
+                                                removeAt(selectedIndex)
+                                                add(selectedIndex + 1, selectedComponent)
+                                            }
+
+                                        val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                        val updatedExercise = exercise.copy(sets = adjustedComponents)
+
+                                        sets = newSets
+
+                                        appViewModel.updateWorkoutComponent(
+                                            workout,
+                                            exercise,
+                                            updatedExercise
+                                        )
+                                    }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ArrowDownward,
+                                        contentDescription = "Go Lower"
+                                        ,tint = Color.White.copy(alpha = .87f)
+                                    )
+                                }
+
+                                IconButton(onClick = {
+                                    val newSets = sets.filter { set ->
+                                        selectedSets.none { it === set }
                                     }
-                                }) {
-                                val isEnabled = selectedSets.isNotEmpty()
-                                val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
-                                    alpha = .3f
-                                )
+                                    sets = newSets
 
-                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
+                                    val updatedExercise = exercise.copy(sets = newSets)
+
+                                    appViewModel.updateWorkoutComponent(
+                                        workout,
+                                        exercise,
+                                        updatedExercise
+                                    )
+
+                                    selectedSets = emptyList()
+                                    isSelectionModeActive = false
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        tint = Color.White.copy(alpha = .87f)
+                                    )
+                                }
+                                IconButton(
+                                    enabled = selectedSets.isNotEmpty(),
+                                    onClick = {
+                                        selectedSets.forEach {
+                                            val newSet = when (it) {
+                                                is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                is RestSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                else -> throw IllegalArgumentException("Unknown type")
+                                            }
+                                            appViewModel.addSetToExercise(workout, exercise, newSet)
+                                            sets = sets + newSet
+                                        }
+                                    }) {
+                                    val isEnabled = selectedSets.isNotEmpty()
+                                    val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
+                                        alpha = .3f
+                                    )
+
+                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
+                                }
                             }
                         }
-                    }
-                )
+                    )
+                }
             }else{
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
@@ -368,7 +373,7 @@ fun ExerciseDetailScreen(
                     }
                 }
             }
-            }
+
         },
     ) { it ->
         if (sets.isEmpty()) {
@@ -409,29 +414,43 @@ fun ExerciseDetailScreen(
                         )
                     }
                 ) {
-                    DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
-                        Tab(
-                            selected = true,
-                            onClick = { },
-                            text = { Text(text = "Overview") },
-                            selectedContentColor = Color.White.copy(alpha = .87f),
-                            unselectedContentColor = Color.White.copy(alpha = .3f),
-                        )
-                    }
-                    DarkModeContainer(whiteOverlayAlpha =.05f, isRounded = false) {
-                        Tab(
-                            selected = false,
-                            onClick = {
-                                appViewModel.setScreenData(
-                                    ScreenData.ExerciseHistory(workout.id, exercise.id),
-                                    true
-                                )
-                            },
-                            text = { Text(text = "History") },
-                            selectedContentColor = Color.White.copy(alpha = .87f),
-                            unselectedContentColor = Color.White.copy(alpha = .3f),
-                        )
-                    }
+                    Tab(
+                        selected = true,
+                        onClick = { },
+                        text = { Text(text = "Overview") },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        interactionSource = object : MutableInteractionSource {
+                            override val interactions: Flow<Interaction> = emptyFlow()
+
+                            override suspend fun emit(interaction: Interaction) {
+                                // Empty implementation
+                            }
+
+                            override fun tryEmit(interaction: Interaction): Boolean = true
+                        }
+                    )
+                    Tab(
+                        selected = false,
+                        onClick = {
+                            appViewModel.setScreenData(
+                                ScreenData.ExerciseHistory(workout.id, exercise.id),
+                                true
+                            )
+                        },
+                        text = { Text(text = "History") },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        interactionSource = object : MutableInteractionSource {
+                            override val interactions: Flow<Interaction> = emptyFlow()
+
+                            override suspend fun emit(interaction: Interaction) {
+                                // Empty implementation
+                            }
+
+                            override fun tryEmit(interaction: Interaction): Boolean = true
+                        }
+                    )
                 }
 
                 Row(

@@ -41,6 +41,7 @@ import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getOneRepMax
+import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -58,6 +59,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -140,7 +142,11 @@ fun ExerciseHistoryScreen(
                     if (setHistory.setData is BodyWeightSetData) {
                         val setData = setHistory.setData as BodyWeightSetData
                         volume += setData.volume
-                        oneRepMax += getOneRepMax(setData.getWeight(equipment), setData.actualReps)
+
+                        val currentOneRepMax = getOneRepMax(setData.getWeight(equipment), setData.actualReps)
+                        if(currentOneRepMax> oneRepMax){
+                            oneRepMax = currentOneRepMax
+                        }
                     }
 
                     if (setHistory.setData is TimedDurationSetData) {
@@ -157,10 +163,8 @@ fun ExerciseHistoryScreen(
                 durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
 
                 if(oneRepMax > 0){
-                    val avgOneRepMax = oneRepMax / setHistories.size
-                    oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), avgOneRepMax))
+                    oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), oneRepMax.round(2)))
                 }
-
             }
 
             if (volumes.any { it.second != 0.0 }) {
@@ -307,7 +311,7 @@ fun ExerciseHistoryScreen(
                     if (volumeEntryModel != null) {
                         StandardChart(
                             cartesianChartModel = volumeEntryModel!!,
-                            title = "Cumulative Volume over time",
+                            title = "Volume",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
                             bottomAxisValueFormatter = horizontalAxisValueFormatter
                         )
@@ -317,7 +321,7 @@ fun ExerciseHistoryScreen(
                         StandardChart(
                             cartesianChartModel = oneRepMaxEntryModel!!,
                             markerPosition = oneRepMaxMarkerTarget!!.first.toFloat(),
-                            title = "Average 1 Rep Max over time",
+                            title = "One Rep Max",
                             bottomAxisValueFormatter = horizontalAxisValueFormatter
                         )
                     }

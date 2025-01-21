@@ -40,10 +40,9 @@ import java.time.ZoneOffset
 
 @Composable
 fun HealthConnectHandler(
+    appViewModel: AppViewModel,
     healthConnectClient: HealthConnectClient,
 ) {
-    var hasAllPermissions by remember { mutableStateOf(false) }
-
     val requiredPermissions = setOf(
         HealthPermission.getWritePermission(ExerciseSessionRecord::class),
         HealthPermission.getWritePermission(HeartRateRecord::class),
@@ -56,17 +55,20 @@ fun HealthConnectHandler(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        hasAllPermissions = permissions.values.all { it }
+        val hasAllPermissions = permissions.values.all { it }
+        appViewModel.setHealthPermissions(hasAllPermissions)
     }
 
     LaunchedEffect(Unit) {
         val grantedPermissions = healthConnectClient.permissionController.getGrantedPermissions()
         val missingPermissions = requiredPermissions - grantedPermissions
 
-        hasAllPermissions = missingPermissions.isEmpty()
+        val hasAllPermissions = missingPermissions.isEmpty()
+        appViewModel.setHealthPermissions(hasAllPermissions)
+        appViewModel.setHealthPermissionsChecked()
     }
 
-    if (!hasAllPermissions) {
+    if (appViewModel.checkedHealthPermission && !appViewModel.hasHealthPermissions) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center

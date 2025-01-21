@@ -50,8 +50,10 @@ import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.cos
@@ -69,32 +71,14 @@ private fun getProgressIndicatorSegments() = listOf(
 @Composable
 fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
-    appViewModel: AppViewModel,
     hr: Int,
-    age: Int = 28,
+    age: Int,
     targetZone: Int? = null
 ) {
     val context = LocalContext.current
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
     val scope = rememberCoroutineScope()
     var alertJob by remember { mutableStateOf<Job?>(null) }
-
-    var isDataStale by remember { mutableStateOf(false) }
-
-    LaunchedEffect(hr) {
-        if (hr > 0) {
-            isDataStale = false
-            delay(5000)  // wait for 5 seconds
-            isDataStale = true
-        }
-    }
-
-    LaunchedEffect(hr) {
-        while (isActive) {
-            appViewModel.registerHeartBeat(hr)
-            delay(1000)
-        }
-    }
 
     val alertCooldown = 1000L //5 seconds in milliseconds
 
@@ -161,7 +145,6 @@ fun HeartRateCircularChart(
         }
     }
 
-
     LaunchedEffect(mhrPercentage) {
         if (mhrPercentage >= 100) {
             if(alertJob?.isActive == false){
@@ -178,7 +161,7 @@ fun HeartRateCircularChart(
         }
     }
 
-    HeartRateView(modifier, hr, isDataStale, mhrPercentage, colorsByZone)
+    HeartRateView(modifier, hr, mhrPercentage, colorsByZone)
 }
 
 
@@ -252,7 +235,6 @@ fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Floa
 private fun HeartRateView(
     modifier: Modifier,
     hr: Int,
-    isDataStale: Boolean,
     mhrPercentage: Float,
     colorsByZone: Array<Color>
 ) {
@@ -333,6 +315,7 @@ private fun HeartRateView(
 }
 
 
+@OptIn(FlowPreview::class)
 @Composable
 fun HeartRateStandard(
     modifier: Modifier = Modifier,
@@ -343,9 +326,19 @@ fun HeartRateStandard(
 ) {
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
     val hr = currentHeartRate ?: 0
-    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge, targetZone = targetZone)
+
+    LaunchedEffect(Unit) {
+        hrViewModel.heartRateBpm
+            .sample(1000L)
+            .collect { hr ->
+                hr?.let { appViewModel.registerHeartBeat(it) }
+            }
+    }
+
+    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, targetZone = targetZone)
 }
 
+@OptIn(FlowPreview::class)
 @Composable
 fun HeartRatePolar(
     modifier: Modifier = Modifier,
@@ -356,5 +349,14 @@ fun HeartRatePolar(
 ) {
     val hrData by polarViewModel.hrDataState.collectAsState()
     val hr = hrData ?: 0
-    HeartRateCircularChart(modifier = modifier,appViewModel, hr = hr, age = userAge, targetZone = targetZone)
+
+    LaunchedEffect(Unit) {
+        polarViewModel.hrDataState
+            .sample(1000L)
+            .collect { hr ->
+                hr?.let { appViewModel.registerHeartBeat(it) }
+            }
+    }
+
+    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, targetZone = targetZone)
 }

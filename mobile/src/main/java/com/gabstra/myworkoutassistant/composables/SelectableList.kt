@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
@@ -11,6 +12,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -43,10 +46,10 @@ fun <T> SelectableList(
     itemContent: @Composable (T) -> Unit,
     listState: LazyListState = rememberLazyListState()
 ) {
-    LazyColumn(
-        modifier = modifier,
+    Column(
+        modifier = modifier.verticalScroll(rememberScrollState())
     ) {
-        items(items) { item ->
+        for(item in items){
             Row(
                 modifier = Modifier.padding(end = 15.dp),
                 verticalAlignment = Alignment.CenterVertically
