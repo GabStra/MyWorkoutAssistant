@@ -146,14 +146,14 @@ object VolumeDistributionHelper {
         val bestScore = AtomicReference(Double.MAX_VALUE)
 
         val sortedSets = sets
+            .filter { it.volume >= minVolume / maxSets }
             .sortedWith(
-                compareBy(
-                    { it.volume },
-                    { -it.reps },
-                    { it.weight }
-                )
+                compareByDescending<ExerciseSet> { it.weight }
+                    .thenByDescending { it.reps }
             )
             .toList()
+
+        Log.d("WorkoutViewModel", "Sets after filtering: ${sortedSets.size}")
 
         if (sortedSets.size < minSets) {
             return@coroutineScope emptyList()
@@ -189,9 +189,16 @@ object VolumeDistributionHelper {
                     val validSets = sortedSets.filter { ((lastSet.weight > it.weight) ||
                             (lastSet.weight == it.weight && lastSet.reps >= it.reps)) && it.volume <= lastSet.volume*1.2}
 
+                    val maxVolume = validSets.maxOf { it.volume }
                     val maxPossibleVolume = currentVolume +
-                            (maxSets - currentCombo.size) * validSets.maxOf { it.volume }
+                            (maxSets - currentCombo.size) * maxVolume
                     if (maxPossibleVolume < minVolume) return
+
+                    val maxWeight = validSets.maxOf { it.weight }
+                    val maxPossibleIntensity = (currentCombo.sumOf { it.weight } +
+                            maxWeight * (maxSets - currentCombo.size)) / maxSets
+
+                    if (maxPossibleIntensity < minIntensity) return
 
                     for (nextSet in validSets) {
                         if(currentScore != Double.MAX_VALUE && bestScore.get() < Double.MAX_VALUE){
@@ -247,6 +254,33 @@ object VolumeDistributionHelper {
         bestComboRef.get()
     }
 
+    private fun calculateMinWeight(
+        minAverageWeight: Double,
+        maxSize: Int,
+        maxWeight: Double
+    ): Double? {
+        val minSumWeights = minAverageWeight * maxSize
+
+        for (k in 0..maxSize) {
+            val maxContribution = k * maxWeight
+            val remainingSets = maxSize - k
+
+            if (remainingSets == 0) {
+                if (maxContribution >= minSumWeights) return null // Fully satisfied by maxWeight
+                continue
+            }
+
+            val remainingWeightContribution = minSumWeights - maxContribution
+            val minWeight = remainingWeightContribution / remainingSets
+
+            if (minWeight <= maxWeight) {
+                return minWeight // Found a feasible minimum weight
+            }
+        }
+
+        return null // No solution exists
+    }
+
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
             val setsMinWeight = params.currentSets.maxOf { it.weight } * 0.9
@@ -254,9 +288,16 @@ object VolumeDistributionHelper {
 
             val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
 
+            val minimumViableWeight = calculateMinWeight(
+                minAverageWeight = params.currentSets.map { it.weight }.average(),
+                maxSize = params.maxSets,
+                maxWeight = maxWeight
+            ) ?: setsMinWeight
+
+            val desiredMinWeight = maxOf(minimumViableWeight, setsMinWeight)
             val desiredMaxWeight = minOf(maxWeight, setsMaxWeight)
 
-            val weightRange =  params.availableWeights.filter { it in setsMinWeight..desiredMaxWeight }
+            val weightRange =  params.availableWeights.filter { it in desiredMinWeight..desiredMaxWeight }
 
             val setsDeferred = weightRange.map { weight ->
                 async(Dispatchers.Default) {
@@ -278,6 +319,8 @@ object VolumeDistributionHelper {
             }
 
             setsDeferred.awaitAll().flatten()
+
+
         }
 
     private fun createSet(

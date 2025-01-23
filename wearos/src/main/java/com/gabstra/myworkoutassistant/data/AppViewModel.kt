@@ -574,20 +574,6 @@ class AppViewModel : ViewModel() {
             }
         }
 
-/*        // Process exercises in parallel
-        val results = coroutineScope {
-            exerciseWithWeightSets.map { exercise ->
-                async(Dispatchers.Default) {
-                    processExercise(exercise)
-                }
-            }.awaitAll()
-        }
-
-        results.filterNotNull().forEach { (exerciseId, distribution) ->
-            exerciseDataByExerciseIdMap[exerciseId] = distribution
-        }*/
-
-
         // Process exercises sequentially
         exerciseWithWeightSets.forEach { exercise ->
             val result = processExercise(exercise)
@@ -595,7 +581,6 @@ class AppViewModel : ViewModel() {
                 exerciseDataByExerciseIdMap[exerciseId] = distribution
             }
         }
-
     }
 
     // Helper function to process a single exercise
