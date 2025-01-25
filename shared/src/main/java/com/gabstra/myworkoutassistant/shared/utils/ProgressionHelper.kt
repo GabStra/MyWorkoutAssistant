@@ -255,47 +255,70 @@ object VolumeDistributionHelper {
     }
 
     private fun calculateMinWeight(
-        minAverageWeight: Double,
-        maxSize: Int,
-        maxWeight: Double
+        weights: List<Double>,
+        k: Int,
+        desiredAverage: Double
     ): Double? {
-        val minSumWeights = minAverageWeight * maxSize
+        val targetSum = k * desiredAverage
+        if (k <= 0 || weights.isEmpty()) return null
 
-        for (k in 0..maxSize) {
-            val maxContribution = k * maxWeight
-            val remainingSets = maxSize - k
+        // dp[i] will map "sum" -> "minimum weight in some subset of size i with that sum"
+        // If dp[i][sum] = null, it means no subset of size i exists with that sum.
+        val dp = List(k + 1) { HashMap<Double, Double?>() }
 
-            if (remainingSets == 0) {
-                if (maxContribution >= minSumWeights) return null // Fully satisfied by maxWeight
-                continue
-            }
+        // Base case: dp[0][0.0] = Double.POSITIVE_INFINITY
+        // (signals a valid subset of size 0 & sum 0, but "no actual min weight" yet)
+        dp[0][0.0] = Double.POSITIVE_INFINITY
 
-            val remainingWeightContribution = minSumWeights - maxContribution
-            val minWeight = remainingWeightContribution / remainingSets
+        for (i in 1..k) {
+            for ((sumVal, minW) in dp[i - 1]) {
+                if (minW == null) continue
+                // Try adding each weight w (unbounded usage)
+                for (w in weights) {
+                    val newSum = sumVal + w
+                    // Minimum weight in the new subset is the smaller of w and previous subset's min
+                    val newMinWeight = kotlin.math.min(minW, w)
 
-            if (minWeight <= maxWeight) {
-                return minWeight // Found a feasible minimum weight
+                    // Update dp[i][newSum] if:
+                    //   - it is null, or
+                    //   - we found a smaller "minimum weight" for that sum
+                    val current = dp[i][newSum]
+                    if (current == null || newMinWeight < current) {
+                        dp[i][newSum] = newMinWeight
+                    }
+                }
             }
         }
 
-        return null // No solution exists
+        // Look up dp[k][targetSum]
+        // If it's null, no subset of size k sums exactly to targetSum
+        return dp[k][targetSum]
     }
+
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
             val setsMinWeight = params.currentSets.maxOf { it.weight } * 0.9
             val setsMaxWeight = params.currentSets.maxOf { it.weight } * 1.05
 
+            Log.d("WorkoutViewModel", "Sets min weight: $setsMinWeight kg - Sets max weight: $setsMaxWeight kg")
+
             val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
 
+            val desiredMaxWeight = minOf(maxWeight, setsMaxWeight)
+
+            val availableWeights = params.availableWeights.filter { it in setsMinWeight..desiredMaxWeight }
+            val averageIntensity = params.currentSets.map { it.weight }.average()
+
             val minimumViableWeight = calculateMinWeight(
-                minAverageWeight = params.currentSets.map { it.weight }.average(),
-                maxSize = params.maxSets,
-                maxWeight = maxWeight
+                weights = availableWeights,
+                k = params.maxSets,
+                desiredAverage = averageIntensity
             ) ?: setsMinWeight
 
             val desiredMinWeight = maxOf(minimumViableWeight, setsMinWeight)
-            val desiredMaxWeight = minOf(maxWeight, setsMaxWeight)
+
+            Log.d("WorkoutViewModel", "Desired min weight: $desiredMinWeight kg - Desired max weight: $desiredMaxWeight kg")
 
             val weightRange =  params.availableWeights.filter { it in desiredMinWeight..desiredMaxWeight }
 

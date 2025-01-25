@@ -225,6 +225,14 @@ fun ProgressIndicator(
 
                     val remainingRatio = ((ratio - previousRatio) / (1 - previousRatio)).toFloat()
 
+                    if(remainingRatio > 0){
+                        SimpleProgressIndicator(
+                            progress = remainingRatio,
+                            trackColor = MaterialTheme.colors.background,
+                            progressBarColor = progressBarColor,
+                            modifier = Modifier.height(10.dp).weight(1 - (previousRatio.toFloat())),
+                        )
+                    }
                     SimpleProgressIndicator(
                         progress = remainingRatio,
                         trackColor = MaterialTheme.colors.background,
