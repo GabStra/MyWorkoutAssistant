@@ -326,40 +326,26 @@ object VolumeDistributionHelper {
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
-            // Calculate weight boundaries based on current sets
-            val currentMaxWeight = params.currentSets.maxOf { it.weight }
-            val minWeightFromCurrent = currentMaxWeight * 0.9
-            val maxWeightFromCurrent = currentMaxWeight * 1.05
-
-            // Calculate weight boundaries based on one rep max
             val maxWeightFromOrm = params.oneRepMax * (params.percentLoadRange.second / 100)
 
             // Determine viable weight range
             val averageIntensity = params.currentSets.map { it.weight }.average()
-            val minimumViableWeight = calculateMinWeight(
-                weights = params.availableWeights.filter { it <= maxWeightFromCurrent },
-                k = params.maxSets,
-                desiredAverage = averageIntensity
-            ) ?: minWeightFromCurrent
+            val sortedWeights = params.availableWeights.sorted()
 
-            // Find actual min and max weights from available weights
-            val actualMinWeight = params.availableWeights
-                .filter { it <= maxOf(minimumViableWeight, minWeightFromCurrent) }
-                .maxOrNull() ?: minWeightFromCurrent
+            // Find the closest weight to average intensity and its neighbors
+            val closestWeightIndex = sortedWeights.binarySearch {
+                it.compareTo(averageIntensity)
+            }.let { if (it < 0) -(it + 1) else it }
 
-            val actualMaxWeight = params.availableWeights
-                .filter { it >= minOf(maxWeightFromOrm, maxWeightFromCurrent) }
-                .minOrNull() ?: maxWeightFromCurrent
-
-            Log.d("WorkoutViewModel", "Weight range: $actualMinWeight kg - $actualMaxWeight kg")
-
-            // Filter available weights within our calculated range
-            val viableWeights = params.availableWeights.filter {
-                it in actualMinWeight..actualMaxWeight
-            }
+            // Get weights within 2 positions of the closest weight
+            val nearAverageWeights = sortedWeights
+                .filterIndexed { index, _ ->
+                    index in (closestWeightIndex - 2)..(closestWeightIndex + 2)
+                }
+                .filter { it <= maxWeightFromOrm }
 
             // Generate sets for each weight in parallel
-            viableWeights.map { weight ->
+            nearAverageWeights.map { weight ->
                 async(Dispatchers.Default) {
                     val loadPercentage = weight / params.oneRepMax
                     val expectedReps = ((1.0278 - loadPercentage) / 0.0278).roundToInt() + 1
