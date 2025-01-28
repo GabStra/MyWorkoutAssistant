@@ -289,11 +289,16 @@ private fun HeartRateView(
                 Spacer(modifier = Modifier.width(5.dp))
             }
 
+            val textColor = when(displayMode) {
+                0 ->  Color.White
+                else -> colorsByZone[zone]
+            }
+
             Text(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption1,
-                color = if (hr == 0) Color.DarkGray else Color.White
+                color = if (hr == 0) Color.DarkGray else textColor
             )
         }
 
@@ -308,9 +313,9 @@ private fun HeartRateView(
             trackColor = Color.DarkGray,
         )
 
-        if(hr != 0) {
+        /*if(hr != 0) {
             RotatingIndicator(targetRotationAngle, colorsByZone[zone],zone)
-        }
+        }*/
     }
 }
 

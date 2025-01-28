@@ -91,7 +91,7 @@ object VolumeDistributionHelper {
     private suspend fun getProgression(
         params: WeightExerciseParameters,
     ): ExerciseData? {
-        val possibleSets = generatePossibleSets(params)
+        var possibleSets = generatePossibleSets(params)
 
         ///val sets = possibleSets.joinToString { it ->"(${it.weight} kg x ${it.reps})" }
 
@@ -101,19 +101,43 @@ object VolumeDistributionHelper {
             return null
         }
 
-        val currentVolume = params.currentSets.sumOf { it.weight * it.reps }
+        possibleSets = possibleSets.filter { it.volume >= params.originalVolume / params.maxSets }
+
         val averageIntensity = params.currentSets.map { it.weight }.average()
 
+        val defaultValidation = { volume: Double, intensity: Double ->
+            ValidationResult(
+                shouldReturn = volume < params.originalVolume || intensity <= averageIntensity || intensity > averageIntensity * 1.025
+            )
+        }
 
-        val validSetCombination = findBestProgressions(
+
+        var validSetCombination = findBestProgressions(
             possibleSets,
             params.minSets,
             params.maxSets,
-            currentVolume,
-            averageIntensity
+            params.originalVolume,
+            averageIntensity,
+            defaultValidation
         )
         if (validSetCombination.isEmpty()){
-            //Log.d("WorkoutViewModel", "No valid combination found")
+            val justIncreaseVolumeValidation = { volume: Double, intensity: Double ->
+                ValidationResult(
+                    shouldReturn = volume <= params.originalVolume || intensity < averageIntensity
+                )
+            }
+
+            validSetCombination = findBestProgressions(
+                possibleSets,
+                params.minSets,
+                params.maxSets,
+                params.originalVolume,
+                averageIntensity,
+                justIncreaseVolumeValidation
+            )
+        }
+
+        if (validSetCombination.isEmpty()){
             return null
         }
 
@@ -131,31 +155,33 @@ object VolumeDistributionHelper {
         )
     }
 
+    data class ValidationResult(
+        val shouldReturn: Boolean,
+        val returnValue: Double = Double.MAX_VALUE
+    )
+
     private suspend fun findBestProgressions(
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
         minVolume: Double,
-        minIntensity: Double
+        minIntensity: Double,
+        validationRules: (Double, Double) -> ValidationResult
     ) = coroutineScope {
         require(minSets > 0)
         require(minSets <= maxSets)
 
-        // Thread-safe variables using atomic references and mutex
         val bestComboRef = AtomicReference<List<ExerciseSet>>(emptyList())
         val bestScore = AtomicReference(Double.MAX_VALUE)
 
         val sortedSets = sets
-            .filter { it.volume >= minVolume / maxSets }
             .sortedWith(
                 compareByDescending<ExerciseSet> { it.weight }
                     .thenByDescending { it.reps }
             )
             .toList()
 
-        Log.d("WorkoutViewModel", "Sets after filtering: ${sortedSets.size}")
-
-        if (sortedSets.size < minSets) {
+        if (sortedSets.size < minSets || sortedSets.isEmpty()) {
             return@coroutineScope emptyList()
         }
 
@@ -165,7 +191,10 @@ object VolumeDistributionHelper {
             val currentTotalVolume = currentCombo.sumOf { it.volume }
             val currentAverageIntensity = currentCombo.map { it.weight }.average()
             val intensityVariation = (currentCombo.maxOf { it.weight } - currentCombo.minOf { it.weight }) + 1
-            if(currentTotalVolume < minVolume || currentAverageIntensity <= minIntensity) return Double.MAX_VALUE
+            val validationResult = validationRules(currentTotalVolume, currentAverageIntensity)
+            if (validationResult.shouldReturn) {
+                return validationResult.returnValue
+            }
 
             return currentTotalVolume * currentAverageIntensity * intensityVariation
         }
@@ -295,55 +324,57 @@ object VolumeDistributionHelper {
         return dp[k][targetSum]
     }
 
-
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
-            val setsMinWeight = params.currentSets.maxOf { it.weight } * 0.9
-            val setsMaxWeight = params.currentSets.maxOf { it.weight } * 1.05
+            // Calculate weight boundaries based on current sets
+            val currentMaxWeight = params.currentSets.maxOf { it.weight }
+            val minWeightFromCurrent = currentMaxWeight * 0.9
+            val maxWeightFromCurrent = currentMaxWeight * 1.05
 
-            Log.d("WorkoutViewModel", "Sets min weight: $setsMinWeight kg - Sets max weight: $setsMaxWeight kg")
+            // Calculate weight boundaries based on one rep max
+            val maxWeightFromOrm = params.oneRepMax * (params.percentLoadRange.second / 100)
 
-            val maxWeight = params.oneRepMax * (params.percentLoadRange.second / 100)
-
-            val desiredMaxWeight = minOf(maxWeight, setsMaxWeight)
-
-            val availableWeights = params.availableWeights.filter { it in setsMinWeight..desiredMaxWeight }
+            // Determine viable weight range
             val averageIntensity = params.currentSets.map { it.weight }.average()
-
             val minimumViableWeight = calculateMinWeight(
-                weights = availableWeights,
+                weights = params.availableWeights.filter { it <= maxWeightFromCurrent },
                 k = params.maxSets,
                 desiredAverage = averageIntensity
-            ) ?: setsMinWeight
+            ) ?: minWeightFromCurrent
 
-            val desiredMinWeight = maxOf(minimumViableWeight, setsMinWeight)
+            // Find actual min and max weights from available weights
+            val actualMinWeight = params.availableWeights
+                .filter { it <= maxOf(minimumViableWeight, minWeightFromCurrent) }
+                .maxOrNull() ?: minWeightFromCurrent
 
-            Log.d("WorkoutViewModel", "Desired min weight: $desiredMinWeight kg - Desired max weight: $desiredMaxWeight kg")
+            val actualMaxWeight = params.availableWeights
+                .filter { it >= minOf(maxWeightFromOrm, maxWeightFromCurrent) }
+                .minOrNull() ?: maxWeightFromCurrent
 
-            val weightRange =  params.availableWeights.filter { it in desiredMinWeight..desiredMaxWeight }
+            Log.d("WorkoutViewModel", "Weight range: $actualMinWeight kg - $actualMaxWeight kg")
 
-            val setsDeferred = weightRange.map { weight ->
+            // Filter available weights within our calculated range
+            val viableWeights = params.availableWeights.filter {
+                it in actualMinWeight..actualMaxWeight
+            }
+
+            // Generate sets for each weight in parallel
+            viableWeights.map { weight ->
                 async(Dispatchers.Default) {
                     val loadPercentage = weight / params.oneRepMax
                     val expectedReps = ((1.0278 - loadPercentage) / 0.0278).roundToInt() + 1
 
                     params.repsRange
-                        .filter { reps ->
-                            reps <= expectedReps
-                        }
+                        .filter { reps -> reps <= expectedReps }
                         .map { reps ->
                             createSet(
                                 weight = weight,
                                 reps = reps,
-                                oneRepMax = params.oneRepMax,
+                                oneRepMax = params.oneRepMax
                             )
                         }
                 }
-            }
-
-            setsDeferred.awaitAll().flatten()
-
-
+            }.awaitAll().flatten()
         }
 
     private fun createSet(

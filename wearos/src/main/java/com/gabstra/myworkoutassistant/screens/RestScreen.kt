@@ -103,7 +103,7 @@ fun NextExerciseInfo(
         )
 
         Box(modifier = Modifier
-            .width(140.dp)
+            .width(150.dp)
             .clickable { marqueeEnabled = !marqueeEnabled }
             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
             contentAlignment = Alignment.Center
@@ -130,10 +130,10 @@ fun NextExerciseInfo(
                 if(index < setIndex) {
                     return@forEachIndexed
                 }
-                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = "${index + 1})",
-                        style = MaterialTheme.typography.body1,
+                        style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize*0.625f),
                         textAlign = TextAlign.Start
                     )
                     Spacer(modifier = Modifier.width(5.dp))

@@ -214,7 +214,7 @@ fun ProgressIndicator(
                 modifier = Modifier.height(10.dp).weight(1f).padding(horizontal = 5.dp)
                     .clip(roundedCornerShape)
             ) {
-                if (previousRatio != 0.0) {
+                if (previousRatio != 0.0 && previousRatio < 1f) {
                     SimpleProgressIndicator(
                         progress = 1f,
                         trackColor = MaterialTheme.colors.background,
@@ -225,14 +225,6 @@ fun ProgressIndicator(
 
                     val remainingRatio = ((ratio - previousRatio) / (1 - previousRatio)).toFloat()
 
-                    if(remainingRatio > 0){
-                        SimpleProgressIndicator(
-                            progress = remainingRatio,
-                            trackColor = MaterialTheme.colors.background,
-                            progressBarColor = progressBarColor,
-                            modifier = Modifier.height(10.dp).weight(1 - (previousRatio.toFloat())),
-                        )
-                    }
                     SimpleProgressIndicator(
                         progress = remainingRatio,
                         trackColor = MaterialTheme.colors.background,
