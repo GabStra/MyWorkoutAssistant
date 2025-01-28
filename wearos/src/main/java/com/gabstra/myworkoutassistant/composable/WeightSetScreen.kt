@@ -445,7 +445,7 @@ fun WeightSetScreen (
                                 Icon(
                                     Icons.Filled.Star,
                                     contentDescription = "Streak",
-                                    tint = Color.Yellow
+                                    tint = Color(0xFFFFD700)
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(

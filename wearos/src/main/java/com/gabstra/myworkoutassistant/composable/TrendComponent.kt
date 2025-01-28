@@ -179,20 +179,29 @@ fun ProgressIndicator(
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)){
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
             Text(
-                text = "Progress:",
+                text = "Volume:",
                 style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
                 textAlign = TextAlign.End
             )
 
-            if (expectedProgress != null && !showRatio) {
-                val sign = if (expectedProgress > 0) "+" else ""
-                val text = if (expectedProgress > 0 || expectedProgress < 0)  "$sign${expectedProgress.round(2)}%" else "-"
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-                    textAlign = TextAlign.End,
-                    color = Color.White
-                )
+            if (!showRatio) {
+                if(expectedProgress!=null){
+                    val sign = if (expectedProgress > 0) "+" else ""
+                    val text = if (expectedProgress > 0 || expectedProgress < 0)  "$sign${expectedProgress.round(2)}%" else "-"
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                        textAlign = TextAlign.End,
+                        color = Color.LightGray
+                    )
+                }else{
+                    Text(
+                        text = "X",
+                        style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                        textAlign = TextAlign.End,
+                        color = MyColors.Red
+                    )
+                }
             }
 
             if(showRatio){
