@@ -333,11 +333,10 @@ fun HeartRateStandard(
     val hr = currentHeartRate ?: 0
 
     LaunchedEffect(Unit) {
-        hrViewModel.heartRateBpm
-            .sample(1000L)
-            .collect { hr ->
-                hr?.let { appViewModel.registerHeartBeat(it) }
-            }
+        while (true) {
+            appViewModel.registerHeartBeat(hr)
+            delay(1000)
+        }
     }
 
     HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, targetZone = targetZone)
@@ -355,7 +354,7 @@ fun HeartRatePolar(
     val hrData by polarViewModel.hrDataState.collectAsState()
     val hr = hrData ?: 0
 
-    LaunchedEffect(Unit) {  // Unit as key - only launches once
+    LaunchedEffect(Unit) {
         while (true) {
             appViewModel.registerHeartBeat(hr)
             delay(1000)

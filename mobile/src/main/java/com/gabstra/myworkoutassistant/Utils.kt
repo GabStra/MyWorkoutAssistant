@@ -279,8 +279,8 @@ suspend fun sendWorkoutsToHealthConnect(
                 startZoneOffset = zoneOffset,
                 endZoneOffset = zoneOffset,
                 samples = workoutHistory.heartBeatRecords.mapIndexedNotNull { index, bpm ->
-                    val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 500))
-                    if (sampleTime.isAfter(endTime)) {
+                    val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 1000))
+                    if (sampleTime.isAfter(endTime) || bpm <= 0) {
                         null
                     } else {
                         HeartRateRecord.Sample(
