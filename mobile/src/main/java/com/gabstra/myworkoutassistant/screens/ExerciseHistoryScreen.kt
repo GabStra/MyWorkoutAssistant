@@ -92,11 +92,11 @@ fun ExerciseHistoryScreen(
         DateTimeFormatter.ofPattern("HH:mm:ss", currentLocale)
     }
 
-    val durationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+    val durationAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
         formatTime(value.toInt()/1000)
     }
 
-    val horizontalAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+    val horizontalAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
         val currentWorkoutHistory = workoutHistories[value.toInt()]
         currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
     }
@@ -330,7 +330,7 @@ fun ExerciseHistoryScreen(
                         StandardChart(
                             cartesianChartModel = durationEntryModel!!,
                             markerPosition = durationMarkerTarget!!.first.toFloat(),
-                            title = "Cumulative Duration over time",
+                            title = "Total Duration over time",
                             markerTextFormatter = { formatTime(it.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter

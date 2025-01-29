@@ -26,18 +26,18 @@ import androidx.compose.ui.unit.dp
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 @Composable
-fun CheckboxWithGreenCircle(modifier: Modifier = Modifier){
+fun CheckboxWithGreenCircle(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .size(40.dp) // Circle size
             .clip(CircleShape) // Clip the box to a circle shape
-            .background(Color(0xFFff6700)) // Green background
+            .background(Color(0xFFff6700)),
 
     ) {
         Icon(
             imageVector = Icons.Default.Check,
             contentDescription = "Checkbox",
-            tint = Color.Black, // Icon color
+            tint = Color.DarkGray, // Icon color
             modifier = Modifier.align(Alignment.Center) // Center the icon within the circle
         )
     }
@@ -75,14 +75,15 @@ fun ObjectiveProgressBar(modifier: Modifier=Modifier,progress: Float){
     Box(
         modifier = modifier // Padding around the Box
     ) {
-        // Progress bar filling 80% width of the Box
         LinearProgressBarWithRounderBorders(
             progress = progress,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.CenterStart)
         )
-
-        CheckboxWithGreenCircle(modifier = Modifier.align(Alignment.CenterEnd))
+        val isFilled = progress >= 1f
+        if(isFilled){
+            CheckboxWithGreenCircle(modifier = Modifier.align(Alignment.CenterEnd))
+        }
     }
 }

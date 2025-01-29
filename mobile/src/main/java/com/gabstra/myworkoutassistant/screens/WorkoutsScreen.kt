@@ -126,60 +126,62 @@ fun Menu(
                 contentDescription = "More"
             )
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.background)
-        ) {
-            DropdownMenuItem(
-                text = { Text("Sync with Watch") },
-                onClick = {
-                    onSyncClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Save Backup") },
-                onClick = {
-                    onBackupClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Restore Backup") },
-                onClick = {
-                    onRestoreClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    onOpenSettingsClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Sync to Health Connect") },
-                onClick = {
-                    onSyncToHealthConnectClick()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Clear partial workouts") },
-                onClick = {
-                    onClearUnfinishedWorkouts()
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Clear all histories") },
-                onClick = {
-                    onClearAllHistories()
-                    expanded = false
-                }
-            )
+        DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(MaterialTheme.colorScheme.background)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Sync with Watch") },
+                    onClick = {
+                        onSyncClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Save Backup") },
+                    onClick = {
+                        onBackupClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Restore Backup") },
+                    onClick = {
+                        onRestoreClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Settings") },
+                    onClick = {
+                        onOpenSettingsClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Sync to Health Connect") },
+                    onClick = {
+                        onSyncToHealthConnectClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Clear partial workouts") },
+                    onClick = {
+                        onClearUnfinishedWorkouts()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Clear all histories") },
+                    onClick = {
+                        onClearAllHistories()
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 

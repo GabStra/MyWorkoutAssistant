@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
@@ -188,18 +189,18 @@ fun WorkoutHistoryScreen(
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
 
     val horizontalAxisValueFormatter = remember(workoutHistories) {
-        CartesianValueFormatter { value, _, _ ->
+        CartesianValueFormatter { _, value, _->
             if(value.toInt() < 0 || value.toInt() >= workoutHistories.size) return@CartesianValueFormatter "-"
             val currentWorkoutHistory = workoutHistories[value.toInt()]
             currentWorkoutHistory.date.format(dateFormatter)
         }
     }
 
-    val durationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+    val durationAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
         formatTime(value.toInt() / 1000)
     }
 
-    val workoutDurationAxisValueFormatter = CartesianValueFormatter { value, _, _ ->
+    val workoutDurationAxisValueFormatter = CartesianValueFormatter { _, value, _->
         formatTime(value.toInt())
     }
 
@@ -391,7 +392,7 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
-                    title = "Cumulative Volume over time",
+                    title = "Total Volume over time",
                     markerPosition = volumeMarkerTarget!!.first.toFloat(),
                     bottomAxisValueFormatter = horizontalAxisValueFormatter
                 )
@@ -401,7 +402,7 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier,
                     cartesianChartModel = durationEntryModel!!,
                     markerPosition = durationMarkerTarget!!.first.toFloat(),
-                    title = "Cumulative Duration over time",
+                    title = "Total Duration over time",
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter
@@ -502,12 +503,15 @@ fun WorkoutHistoryScreen(
             }
 
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
+                val minHeartRate = selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }.min()
+
                 HeartRateChart(
                     modifier = Modifier.fillMaxWidth(),
                     cartesianChartModel = heartRateEntryModel!!,
                     title = "Heart Rate during Workout",
-                    entriesCount = selectedWorkoutHistory!!.heartBeatRecords.size,
+                    minHeartRate = minHeartRate,
                     userAge = userAge,
+                    isZoomEnabled = true
                 )
 
                 ExpandableContainer(
@@ -520,7 +524,7 @@ fun WorkoutHistoryScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            val minHeartRate = selectedWorkoutHistory!!.heartBeatRecords.min()
+                            val minHeartRate = selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }.min()
                             val maxHeartRate = selectedWorkoutHistory!!.heartBeatRecords.max()
 
                             Text(

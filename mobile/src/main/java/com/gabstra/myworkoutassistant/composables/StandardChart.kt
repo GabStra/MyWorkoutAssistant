@@ -16,34 +16,32 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLabelComponent
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottomAxis
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStartAxis
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStart
+import com.patrykandpatrick.vico.compose.cartesian.layer.point
+import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
-import com.patrykandpatrick.vico.compose.common.component.rememberLayeredComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
+
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
-import com.patrykandpatrick.vico.compose.common.of
-import com.patrykandpatrick.vico.compose.common.vicoTheme
-import com.patrykandpatrick.vico.core.cartesian.HorizontalLayout
+import com.patrykandpatrick.vico.compose.common.fill
+import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
+import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
-import com.patrykandpatrick.vico.core.cartesian.marker.CartesianMarkerValueFormatter
-import com.patrykandpatrick.vico.core.cartesian.marker.DefaultCartesianMarkerValueFormatter
+import com.patrykandpatrick.vico.core.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
-import com.patrykandpatrick.vico.core.common.Dimensions
-import com.patrykandpatrick.vico.core.common.component.TextComponent
-import com.patrykandpatrick.vico.core.common.shape.Shape
+import com.patrykandpatrick.vico.core.common.Insets
+import com.patrykandpatrick.vico.core.common.shape.CorneredShape
 
 @Composable
 fun StandardChart(
@@ -56,36 +54,29 @@ fun StandardChart(
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
 ) {
-    val indicatorFrontComponent =
-        rememberShapeComponent(Shape.Pill, Color(0xFFff6700))
-    val indicatorRearComponent = rememberShapeComponent(Shape.Pill, Color(0xFFff6700))
-    val indicator =
-        rememberLayeredComponent(
-            rear = indicatorRearComponent,
-            front = indicatorFrontComponent,
-            padding = Dimensions.of(5.dp),
-        )
+
+    val shapeComponent =  rememberShapeComponent(fill(Color(0xFFff6700)), CorneredShape.Pill)
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
             color = Color.White.copy(alpha = .87f),
-            padding = Dimensions.of(8.dp),
+            padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER
         ),
-        guideline = rememberAxisGuidelineComponent(),
+        guideline = null,
         indicatorSize = 10.dp,
-        valueFormatter = { context, targets ->
+        valueFormatter = { _, targets ->
             val target = targets.first() as LineCartesianLayerMarkerTarget
             val point = target.points.first()
             SpannableStringBuilder().apply {
                 append(
-                    markerTextFormatter?.invoke(point.entry.y),
+                    markerTextFormatter?.invoke(point.entry.y.toFloat()),
                     ForegroundColorSpan(point.color),
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
             }
         },
-        indicator = indicator
+        indicator = { _ -> shapeComponent }
     )
 
     DarkModeContainer(modifier,whiteOverlayAlpha = .1f) {
@@ -103,27 +94,35 @@ fun StandardChart(
                 CartesianChartHost(
                     modifier = Modifier.padding(10.dp),
                     zoomState = rememberVicoZoomState(zoomEnabled = isZoomEnabled),
-                    horizontalLayout = HorizontalLayout.FullWidth(
-                        unscalableStartPaddingDp = 20f,
-                        unscalableEndPaddingDp = 20f
-                    ),
                     chart = rememberCartesianChart(
-                        rememberLineCartesianLayer(spacing = 75.dp),
-                        startAxis = rememberStartAxis(valueFormatter = startAxisValueFormatter),
-                        bottomAxis = rememberBottomAxis(
+                        rememberLineCartesianLayer(
+                            LineCartesianLayer.LineProvider.series(
+                                listOf(
+                                    LineCartesianLayer.rememberLine(
+                                        fill = LineCartesianLayer.LineFill.single(fill(Color(0xFFff6700))),
+                                        areaFill = null,
+                                        pointProvider = null,
+                                    )
+                                )
+                            )
+                        ),
+                        startAxis = VerticalAxis.rememberStart(valueFormatter = startAxisValueFormatter),
+                        bottomAxis = HorizontalAxis.rememberBottom(
                             label = rememberTextComponent(
                                 color = Color.White.copy(alpha = .87f),
                                 textSize = 12.sp,
-                                padding = Dimensions.of(4.dp, 4.dp),
+                                padding = Insets(4f, 4f),
                                 textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
                             ),
                             labelRotationDegrees = -90f,
                             valueFormatter = bottomAxisValueFormatter
                         ),
-                        persistentMarkers = if (markerPosition != null) mapOf(markerPosition.toFloat() to marker) else null,
+                        persistentMarkers = if (markerPosition != null)  { _ ->
+                            marker at markerPosition.toFloat()
+                        } else null,
+                        marker = marker
                     ),
                     model = cartesianChartModel,
-                    marker = marker,
                 )
             }
         }
