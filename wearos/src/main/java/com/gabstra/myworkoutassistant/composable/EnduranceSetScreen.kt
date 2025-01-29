@@ -246,7 +246,7 @@ fun EnduranceSetScreen (
                     },
                     colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
                 ) {
-                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop",tint = Color.Black)
+                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
                 }
             }
         }
