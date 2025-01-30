@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.utils
 
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.log10
 import kotlin.math.roundToInt
 
 
@@ -18,7 +19,7 @@ object VolumeDistributionHelper {
         val totalVolume: Double,
         val usedOneRepMax: Double,
         val maxRepsUsed: Int,
-        val averageIntensity: Double,
+        val averageLoad: Double,
         val progressIncrease: Double,
         val originalVolume: Double,
     )
@@ -45,6 +46,8 @@ object VolumeDistributionHelper {
 
         possibleSets = possibleSets.filter { it.volume >= params.exerciseVolume / params.maxSets }
 
+
+
         val defaultValidation = { volume: Double, intensity: Double ->
             ValidationResult(
                 shouldReturn = volume < params.exerciseVolume || intensity <= params.averageLoad || intensity > params.averageLoad  * 1.025
@@ -56,7 +59,6 @@ object VolumeDistributionHelper {
             params.minSets,
             params.maxSets,
             params.exerciseVolume,
-            params.averageLoad,
             defaultValidation
         )
         if (validSetCombination.isEmpty()){
@@ -71,7 +73,6 @@ object VolumeDistributionHelper {
                 params.minSets,
                 params.maxSets,
                 params.exerciseVolume,
-                params.averageLoad,
                 justIncreaseVolumeValidation
             )
         }
@@ -88,7 +89,7 @@ object VolumeDistributionHelper {
             usedOneRepMax = params.oneRepMax,
             maxRepsUsed = validSetCombination.maxOf { it.reps },
             progressIncrease = ((totalVolume - params.exerciseVolume) / params.exerciseVolume) * 100,
-            averageIntensity = validSetCombination.map { it.percentLoad }.average(),
+            averageLoad = validSetCombination.map { it.weight }.average(),
             originalVolume = params.exerciseVolume,
         )
     }
@@ -103,7 +104,6 @@ object VolumeDistributionHelper {
         minSets: Int,
         maxSets: Int,
         minVolume: Double,
-        minIntensity: Double,
         validationRules: (Double, Double) -> ValidationResult
     ) = coroutineScope {
         require(minSets > 0)
@@ -128,13 +128,15 @@ object VolumeDistributionHelper {
         ): Double {
             val currentTotalVolume = currentCombo.sumOf { it.volume }
             val currentAverageIntensity = currentCombo.map { it.weight }.average()
-            val intensityVariation = (currentCombo.maxOf { it.weight } - currentCombo.minOf { it.weight }) + 1
+            val intensityVariation = ((currentCombo.maxOf { it.weight } - currentCombo.minOf { it.weight }) + 1)
+            val repsVariation = ((currentCombo.maxOf { it.reps } - currentCombo.minOf { it.reps }) + 1).toDouble()
+
             val validationResult = validationRules(currentTotalVolume, currentAverageIntensity)
             if (validationResult.shouldReturn) {
                 return validationResult.returnValue
             }
 
-            return currentTotalVolume * currentAverageIntensity * intensityVariation
+            return currentTotalVolume * currentAverageIntensity * (1 + log10(intensityVariation + 1) * 0.1) * (1 + log10(repsVariation + 1) * 0.1) * currentCombo.size
         }
 
         suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
@@ -153,19 +155,13 @@ object VolumeDistributionHelper {
 
                     val lastSet = currentCombo.last()
 
-                    val validSets = sortedSets.filter { ((lastSet.weight > it.weight) ||
-                            (lastSet.weight == it.weight && lastSet.reps >= it.reps)) && it.volume <= lastSet.volume*1.2}
+                    val validSets = sortedSets.filter { (lastSet.weight > it.weight) ||
+                            (lastSet.weight == it.weight && lastSet.reps >= it.reps)}
 
                     val maxVolume = validSets.maxOf { it.volume }
                     val maxPossibleVolume = currentVolume +
                             (maxSets - currentCombo.size) * maxVolume
                     if (maxPossibleVolume < minVolume) return
-
-                    val maxWeight = validSets.maxOf { it.weight }
-                    val maxPossibleIntensity = (currentCombo.sumOf { it.weight } +
-                            maxWeight * (maxSets - currentCombo.size)) / maxSets
-
-                    if (maxPossibleIntensity < minIntensity) return
 
                     for (nextSet in validSets) {
                         if(currentScore != Double.MAX_VALUE && bestScore.get() < Double.MAX_VALUE){

@@ -83,7 +83,6 @@ sealed class WorkoutState {
         val streak: Int,
         val isDeloading: Boolean,
         val lastSessionVolume: Double,
-        val bestAverageLoad: Double,
         val expectedProgress: Double?
     ) : WorkoutState()
 
@@ -712,7 +711,9 @@ class AppViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found"
+                "Progression found - Volume: ${exerciseProgression.originalVolume} -> ${exerciseProgression.totalVolume} Intensity: ${averageLoad} -> ${
+                    exerciseProgression.averageLoad
+                }"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to distribute volume for ${exercise.name}")
@@ -1346,44 +1347,6 @@ class AppViewModel : ViewModel() {
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
-        var bestVolume = 0.0
-        var bestAverageLoad = 0.0
-
-        if(exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT){
-            if(exerciseInfo!=null) {
-                bestVolume = exerciseInfo.bestVolume
-                bestAverageLoad = exerciseInfo.bestAverageLoad
-            }else{
-                bestVolume = exerciseSets.sumOf {
-                    when (it) {
-                        is BodyWeightSet -> {
-                            val relativeBodyWeight =
-                                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                            it.getWeight(equipment, relativeBodyWeight) * it.reps
-                        }
-
-                        is WeightSet -> {
-                            it.getWeight(equipment) * it.reps
-                        }
-
-                        else -> throw IllegalArgumentException("Unknown set type")
-                    }
-                }
-
-                bestAverageLoad = exerciseSets.map {
-                    when (it) {
-                        is BodyWeightSet -> {
-                            val relativeBodyWeight =
-                                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                            it.getWeight(equipment, relativeBodyWeight)
-                        }
-                        is WeightSet -> it.getWeight(equipment)
-                        else -> throw IllegalArgumentException("Unknown set type")
-                    }
-                }.average()
-            }
-        }
-
         for ((index, set) in exercise.sets.withIndex()) {
             if (set is RestSet) {
                 val restSet = RestSet(set.id, set.timeInSeconds)
@@ -1437,8 +1400,7 @@ class AppViewModel : ViewModel() {
                     plateChangeResult,
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
                     isDeloading ?: false,
-                    bestVolume,
-                    bestAverageLoad,
+                    exerciseProgression?.originalVolume ?: 0.0,
                     exerciseProgression?.progressIncrease
                 )
                 workoutStateQueue.addLast(setState)

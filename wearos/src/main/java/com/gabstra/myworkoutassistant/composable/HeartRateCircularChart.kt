@@ -334,7 +334,7 @@ fun HeartRateStandard(
 
     LaunchedEffect(Unit) {
         while (true) {
-            appViewModel.registerHeartBeat(hr)
+            appViewModel.registerHeartBeat(hrViewModel.heartRateBpm.value ?: 0)
             delay(1000)
         }
     }
@@ -356,7 +356,7 @@ fun HeartRatePolar(
 
     LaunchedEffect(Unit) {
         while (true) {
-            appViewModel.registerHeartBeat(hr)
+            appViewModel.registerHeartBeat(polarViewModel.hrDataState.value ?: 0)
             delay(1000)
         }
     }
