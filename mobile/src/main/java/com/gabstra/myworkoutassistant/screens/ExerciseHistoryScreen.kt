@@ -1,16 +1,20 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -117,7 +122,7 @@ fun ExerciseHistoryScreen(
             }.filter { it.isDone }.sortedBy { it.date }
 
             if (workoutHistories.isEmpty()) {
-                delay(1000)
+                delay(500)
                 isLoading = false
                 return@withContext
             }
@@ -125,6 +130,7 @@ fun ExerciseHistoryScreen(
             volumes.clear()
             durations.clear()
             oneRepMaxes.clear()
+            val equipment = exercise?.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
             for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
@@ -133,20 +139,21 @@ fun ExerciseHistoryScreen(
                 )
                 var volume = 0.0
                 var duration = 0f
-
                 var oneRepMax = 0.0
-                for (setHistory in setHistories) {
-                    val equipment = exercise?.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
+                for (setHistory in setHistories) {
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
-                        volume += setData.volume
-                        oneRepMax += getOneRepMax(setData.getWeight(equipment), setData.actualReps)
+                        volume += setData.calculateVolume(equipment)
+                        val currentOneRepMax = getOneRepMax(setData.getWeight(equipment), setData.actualReps)
+                        if(currentOneRepMax> oneRepMax){
+                            oneRepMax = currentOneRepMax
+                        }
                     }
 
                     if (setHistory.setData is BodyWeightSetData) {
                         val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.volume
+                        volume += setData.calculateVolume(equipment)
 
                         val currentOneRepMax = getOneRepMax(setData.getWeight(equipment), setData.actualReps)
                         if(currentOneRepMax> oneRepMax){
@@ -167,9 +174,8 @@ fun ExerciseHistoryScreen(
                 volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
                 durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
 
-                if(oneRepMax > 0){
-                    oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), oneRepMax.round(2)))
-                }
+                Log.d("OneRepMax", "workoutIndex: ${workoutHistories.indexOf(workoutHistory)} oneRepMax: $oneRepMax")
+                oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), oneRepMax.round(2)))
             }
 
             if (volumes.any { it.second != 0.0 }) {
@@ -205,6 +211,7 @@ fun ExerciseHistoryScreen(
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(oneRepMaxes.map { it.second }).toTypedArray()) })
             }
 
+            delay(500)
             isLoading = false
         }
     }
@@ -293,17 +300,36 @@ fun ExerciseHistoryScreen(
                 }
             }
 
-            if (isLoading || workoutHistories.isEmpty()) {
-                Card(
+            if (workoutHistories.isEmpty()) {
+                Box(
                     modifier = Modifier
-                        .padding(15.dp)
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ){
-                    Text(
+                    DarkModeContainer(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        text = if (isLoading) "Loading..." else "No history found",
-                        textAlign = TextAlign.Center
+                            .padding(15.dp),
+                        whiteOverlayAlpha = .1f
+                    ) {
+                        Text(
+                            modifier = Modifier
+                                .padding(15.dp),
+                            text = "No history found",
+                            textAlign = TextAlign.Center,
+                            color = Color.White.copy(alpha = .87f),
+                        )
+                    }
+                }
+            }else if(isLoading){
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ){
+                    CircularProgressIndicator(
+                        modifier = Modifier.width(32.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = Color.DarkGray,
                     )
                 }
             } else {
@@ -337,7 +363,7 @@ fun ExerciseHistoryScreen(
                         StandardChart(
                             cartesianChartModel = durationEntryModel!!,
                             markerPosition = durationMarkerTarget!!.first.toFloat(),
-                            title = "Total Duration over time",
+                            title = "Total duration over time",
                             markerTextFormatter = { formatTime(it.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,

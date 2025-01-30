@@ -53,6 +53,7 @@ import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
@@ -81,13 +82,14 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
                 ) {
                     Text(
                         modifier = Modifier.weight(1f),
-                        text = "Reps: ${set.reps}",
+                        text = "Weight: ${set.weight} kg",
                         color = Color.White.copy(alpha = .87f),
                         style = MaterialTheme.typography.bodyMedium,
+
                     )
                     Text(
                         modifier = Modifier.weight(1f),
-                        text = "Weight: ${set.weight} kg",
+                        text = "Reps: ${set.reps}",
                         color = Color.White.copy(alpha = .87f),
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.End
@@ -100,22 +102,21 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        modifier = Modifier.weight(1f),
-                        text = "Reps: ${set.reps}",
-                        color = Color.White.copy(alpha = .87f),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-
                     if(set.additionalWeight != 0.0){
                         Text(
                             modifier = Modifier.weight(1f),
                             text = "Weight: ${set.additionalWeight} kg",
                             color = Color.White.copy(alpha = .87f),
                             style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.End
                         )
                     }
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = "Reps: ${set.reps}",
+                        color = Color.White.copy(alpha = .87f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.End
+                    )
                 }
             }
 
@@ -166,7 +167,7 @@ fun ExerciseDetailScreen(
     var selectedSets by remember { mutableStateOf(listOf<Set>()) }
 
     var isSelectionModeActive by remember { mutableStateOf(false) }
-    var showRest by remember { mutableStateOf(true) }
+    var showRest by remember { mutableStateOf(false) }
 
     LaunchedEffect(showRest) {
         selectedSets = emptyList()
@@ -251,7 +252,7 @@ fun ExerciseDetailScreen(
                                             updatedExercise
                                         )
 
-                                        sets = newSets
+                                        sets = adjustedComponents
                                     }) {
                                     Icon(
                                         imageVector = Icons.Filled.ArrowUpward,
@@ -278,7 +279,7 @@ fun ExerciseDetailScreen(
                                         val adjustedComponents = ensureRestSeparatedBySets(newSets)
                                         val updatedExercise = exercise.copy(sets = adjustedComponents)
 
-                                        sets = newSets
+                                        sets = adjustedComponents
 
                                         appViewModel.updateWorkoutComponent(
                                             workout,
@@ -297,9 +298,11 @@ fun ExerciseDetailScreen(
                                     val newSets = sets.filter { set ->
                                         selectedSets.none { it === set }
                                     }
-                                    sets = newSets
 
-                                    val updatedExercise = exercise.copy(sets = newSets)
+                                    val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                    val updatedExercise = exercise.copy(sets = adjustedComponents)
+
+                                    sets = adjustedComponents
 
                                     appViewModel.updateWorkoutComponent(
                                         workout,
@@ -331,6 +334,19 @@ fun ExerciseDetailScreen(
                                             appViewModel.addSetToExercise(workout, exercise, newSet)
                                             sets = sets + newSet
                                         }
+
+                                        val adjustedComponents = ensureRestSeparatedBySets(sets)
+                                        val updatedExercise = exercise.copy(sets = adjustedComponents)
+
+                                        sets = adjustedComponents
+
+                                        appViewModel.updateWorkoutComponent(
+                                            workout,
+                                            exercise,
+                                            updatedExercise
+                                        )
+
+                                        selectedSets = emptyList()
                                     }) {
                                     val isEnabled = selectedSets.isNotEmpty()
                                     val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
@@ -368,6 +384,7 @@ fun ExerciseDetailScreen(
                                 }
 
                             ),
+                            enabled = exercise.exerciseType != ExerciseType.WEIGHT || (exercise.exerciseType == ExerciseType.WEIGHT && exercise.equipmentId != null),
                             content = {  Text("New Component") }
                         )
                     }

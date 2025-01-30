@@ -44,12 +44,14 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Set ${index}",
+                        text = "${index})",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = .87f),
                     )
                     when (setData) {
                         is WeightSetData -> {
+                            val repLabel = if(setData.actualReps == 1) "rep" else "reps"
+
                             val weightText = if (setData.actualWeight % 1 == 0.0) {
                                 "${setData.actualWeight.toInt()}"
                             } else {
@@ -57,20 +59,21 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                             }
 
                             Text(
-                                text = "${weightText} kg x ${setData.actualReps}",
+                                text = "${weightText} kg x ${setData.actualReps} ${repLabel}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = .87f),
                             )
                         }
 
                         is BodyWeightSetData -> {
+                            val repLabel = if(setData.actualReps == 1) "rep" else "reps"
                             val weightText = if (setData.additionalWeight % 1 == 0.0) {
                                 "${setData.additionalWeight.toInt()}"
                             } else {
                                 "${setData.additionalWeight}"
                             }
 
-                            val text = if(setData.additionalWeight != 0.0) "${weightText} kg x ${setData.actualReps}" else "${setData.actualReps}"
+                            val text = if(setData.additionalWeight != 0.0) "${weightText} kg x ${setData.actualReps} ${repLabel}" else "${setData.actualReps} ${repLabel}"
                             Text(
                                 text = text,
                                 style = MaterialTheme.typography.bodyMedium,
@@ -113,8 +116,9 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     }
                 }
             }else{
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
+                // Temporarily hide rest sets from history page
+                /*Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ){
@@ -122,16 +126,16 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         Text(
                             "Rest for: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f)
+                            color = Color.White.copy(alpha = .87f)
                         )
                     }else{
                         Text(
                             "Rest from: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .6f)
+                            color = Color.White.copy(alpha = .87f)
                         )
                     }
-                }
+                }*/
             }
         }
     }

@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.with
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -74,6 +76,7 @@ import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
+import com.gabstra.myworkoutassistant.findWorkoutComponentByIdInWorkout
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -228,17 +231,26 @@ fun WorkoutHistoryScreen(
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
 
+            val validSetHistories = setHistories.filter { it.exerciseId != null }
+
             var volume = 0.0
             var duration = 0f
-            for (setHistory in setHistories) {
+            for (setHistory in validSetHistories) {
+                val selectedExercise = findWorkoutComponentByIdInWorkout(
+                    selectedWorkout,
+                    setHistory.exerciseId!!
+                ) as Exercise
+
+                val equipment = selectedExercise?.equipmentId?.let { appViewModel.getEquipmentById(it) }
+
                 if (setHistory.setData is WeightSetData) {
                     val setData = setHistory.setData as WeightSetData
-                    volume += setData.actualReps * setData.actualWeight
+                    volume += setData.calculateVolume(equipment)
                 }
 
                 if (setHistory.setData is BodyWeightSetData) {
                     val setData = setHistory.setData as BodyWeightSetData
-                    volume += setData.actualReps
+                    volume += setData.calculateVolume(equipment)
                 }
 
                 if (setHistory.setData is TimedDurationSetData) {
@@ -306,7 +318,7 @@ fun WorkoutHistoryScreen(
             }
 
             if (workoutHistories.isEmpty()) {
-                delay(1000)
+                delay(500)
                 isLoading = false
                 return@withContext
             }
@@ -320,6 +332,7 @@ fun WorkoutHistoryScreen(
                 selectedMode = 1
             }
 
+            delay(500)
             if (selectedWorkoutHistory == null) {
                 isLoading = false
             }
@@ -329,6 +342,8 @@ fun WorkoutHistoryScreen(
 
     LaunchedEffect(selectedWorkoutHistory) {
         if (selectedWorkoutHistory == null) return@LaunchedEffect
+
+        isLoading = true
 
         zoneCounter = null
         heartRateEntryModel = null
@@ -381,6 +396,7 @@ fun WorkoutHistoryScreen(
                 isMale = true
             )
 
+            delay(500)
             isLoading = false
         }
     }
@@ -397,7 +413,7 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
-                    title = "Total Volume over time",
+                    title = "Total volume over time",
                     markerPosition = volumeMarkerTarget!!.first.toFloat(),
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     minValue = volumes.minBy { it.second }.second.toDouble()
@@ -408,7 +424,7 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier,
                     cartesianChartModel = durationEntryModel!!,
                     markerPosition = durationMarkerTarget!!.first.toFloat(),
-                    title = "Total Duration over time",
+                    title = "Total duration over time",
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -491,39 +507,11 @@ fun WorkoutHistoryScreen(
 
             workoutSelector()
 
-            if(kiloCaloriesBurned != 0.0 || !kiloCaloriesBurned.isNaN()) {
-                DarkModeContainer(whiteOverlayAlpha = .1f) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(5.dp),
-                            text = "kcal: ${kiloCaloriesBurned.toInt()}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            color = Color.White.copy(alpha = .87f)
-                        )
-                    }
-                }
-            }
-
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
                 val minHeartRate = selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }.min()
 
-                HeartRateChart(
-                    modifier = Modifier.fillMaxWidth(),
-                    cartesianChartModel = heartRateEntryModel!!,
-                    title = "Heart Rate during Workout",
-                    minHeartRate = minHeartRate,
-                    userAge = userAge,
-                    isZoomEnabled = true
-                )
-
                 ExpandableContainer(
-                    isOpen = true,
+                    isOpen = false,
                     modifier = Modifier.fillMaxWidth(),
                     isExpandable = zoneCounter != null,
                     title = { modifier ->
@@ -537,13 +525,13 @@ fun WorkoutHistoryScreen(
 
                             Text(
                                 text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
-                                Modifier.weight(1f),
+                                Modifier.weight(2f),
                                 color = Color.White.copy(alpha = .87f),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
-                            Column {
+                            Column(modifier = Modifier.weight(1f),) {
                                 Row(
-                                    modifier = Modifier.width(80.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ){
                                     Text(
@@ -559,7 +547,7 @@ fun WorkoutHistoryScreen(
                                     )
                                 }
                                 Row(
-                                    modifier = Modifier.width(80.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ){
                                     Text(
@@ -573,6 +561,24 @@ fun WorkoutHistoryScreen(
                                         color = Color.White.copy(alpha = .87f),
                                         textAlign = TextAlign.End
                                     )
+                                }
+                                if(kiloCaloriesBurned != 0.0 || !kiloCaloriesBurned.isNaN()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "kcal:",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = .87f)
+                                        )
+                                        Text(
+                                            text = "${kiloCaloriesBurned.toInt()}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = .87f),
+                                            textAlign = TextAlign.End
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -633,11 +639,20 @@ fun WorkoutHistoryScreen(
                             }
                         }
                     })
+
+                HeartRateChart(
+                    modifier = Modifier.fillMaxWidth(),
+                    cartesianChartModel = heartRateEntryModel!!,
+                    title = "Heart Rate during Workout",
+                    minHeartRate = minHeartRate,
+                    userAge = userAge,
+                    isZoomEnabled = true
+                )
             }
 
             Text(
                 modifier = Modifier.fillMaxWidth(),
-                text = "Exercise Histories",
+                text = "Exercise Histories:",
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
                 color = Color.White.copy(alpha = .87f)
@@ -649,8 +664,7 @@ fun WorkoutHistoryScreen(
                 ExpandableContainer(
                     isOpen = true,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                        .fillMaxWidth(),
                     isExpandable = setHistories.isNotEmpty(),
                     title = { m ->
                         Text(
@@ -838,32 +852,52 @@ fun WorkoutHistoryScreen(
                 )
             }
 
-            if (isLoading || workoutHistories.isEmpty()) {
-                DarkModeContainer(
+
+            if (workoutHistories.isEmpty()) {
+                Box(
                     modifier = Modifier
-                        .padding(15.dp),
-                    whiteOverlayAlpha = .1f
-                ) {
-                    Text(
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ){
+                    DarkModeContainer(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        text = if (isLoading) "Loading..." else "No history found",
-                        textAlign = TextAlign.Center,
-                        color = Color.White.copy(alpha = .87f),
-                    )
+                            .padding(15.dp),
+                        whiteOverlayAlpha = .1f
+                    ) {
+                        Text(
+                            modifier = Modifier
+                                .padding(15.dp),
+                            text = "No history found",
+                            textAlign = TextAlign.Center,
+                            color = Color.White.copy(alpha = .87f),
+                        )
+                    }
                 }
             } else {
-                AnimatedContent(
-                    targetState = selectedMode,
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                    }, label = ""
-                ) { updatedSelectedMode ->
-                    LazyColumn(Modifier.padding(end=10.dp)) {
-                        when (updatedSelectedMode) {
-                            0 -> item { graphsTabContent() }
-                            1 -> item { setsTabContent() }
+                if(isLoading){
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ){
+                        CircularProgressIndicator(
+                            modifier = Modifier.width(32.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color.DarkGray,
+                        )
+                    }
+                }else{
+                    AnimatedContent(
+                        targetState = selectedMode,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                        }, label = ""
+                    ) { updatedSelectedMode ->
+                        LazyColumn(Modifier.padding(end=10.dp)) {
+                            when (updatedSelectedMode) {
+                                0 -> item { graphsTabContent() }
+                                1 -> item { setsTabContent() }
+                            }
                         }
                     }
                 }

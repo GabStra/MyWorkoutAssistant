@@ -30,7 +30,8 @@ data class MenuItem(
 @Composable
 fun GenericButtonWithMenu(
     menuItems: List<MenuItem>,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
+    enabled: Boolean = true
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -52,7 +53,8 @@ fun GenericButtonWithMenu(
         }
         Button(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-            onClick = { showMenu = !showMenu }
+            onClick = { showMenu = !showMenu },
+            enabled = enabled
         ) {
             content()
         }

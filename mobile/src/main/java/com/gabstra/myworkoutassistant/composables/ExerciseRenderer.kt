@@ -87,12 +87,14 @@ fun ExerciseRenderer(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "Set $index",
+                                    text = "$index)",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                                 )
                                 when (set) {
                                     is WeightSet -> {
+                                        val repLabel = if(set.reps == 1) "rep" else "reps"
+
                                         val weightText = if (set.weight % 1 == 0.0) {
                                             "${set.weight.toInt()}"
                                         } else {
@@ -100,15 +102,17 @@ fun ExerciseRenderer(
                                         }
 
                                         Text(
-                                            text = "${weightText} kg x ${set.reps}",
+                                            text = "${weightText} kg x ${set.reps} ${repLabel}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                                         )
                                     }
 
                                     is BodyWeightSet -> {
+                                        val repLabel = if(set.reps == 1) "rep" else "reps"
+
                                         Text(
-                                            text = if(set.additionalWeight<=0) "${set.reps}" else "${set.additionalWeight} kg x ${set.reps}",
+                                            text = if(set.additionalWeight<=0) "${set.reps} ${repLabel}" else "${set.additionalWeight} kg x ${set.reps} ${repLabel}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                                         )

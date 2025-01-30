@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -94,14 +96,21 @@ import com.kizitonwose.calendar.core.WeekDay
 import com.kizitonwose.calendar.core.WeekDayPosition
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.CircularProgressIndicator
+import com.kizitonwose.calendar.compose.CalendarState
+import com.kizitonwose.calendar.core.CalendarDay
+import com.kizitonwose.calendar.core.DayPosition
+import com.kizitonwose.calendar.core.yearMonth
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -220,6 +229,7 @@ fun WorkoutTitle(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkoutsScreen(
@@ -237,6 +247,8 @@ fun WorkoutsScreen(
     selectedTabIndex: Int
 ) {
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
+
+    var isLoading by remember { mutableStateOf(true) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val equipments by appViewModel.equipmentsFlow.collectAsState()
@@ -302,10 +314,10 @@ fun WorkoutsScreen(
     val tabTitles = listOf("Status", "Workouts", "Equipments")
 
     var selectedDate by remember {
-        mutableStateOf<WeekDay>(
-            WeekDay(
+        mutableStateOf<CalendarDay>(
+            CalendarDay(
                 LocalDate.now(),
-                WeekDayPosition.RangeDate
+                DayPosition.InDate
             )
         )
     }
@@ -368,6 +380,7 @@ fun WorkoutsScreen(
     }
 
     LaunchedEffect(enabledWorkouts, updateMessage) {
+        isLoading = true
         groupedWorkoutsHistories =
             workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
                 enabledWorkouts.any { it.id == workoutHistory.workoutId }
@@ -385,16 +398,23 @@ fun WorkoutsScreen(
         }
 
         calculateObjectiveProgress(LocalDate.now())
+        delay(500)
+        isLoading = false
     }
 
     LaunchedEffect(selectedDate) {
         if (selectedDate == null) return@LaunchedEffect
 
+        isLoading = true
         calculateObjectiveProgress(selectedDate!!.date)
+        delay(500)
+        isLoading = false
     }
 
-    fun onDayClicked(calendarState: WeekCalendarState, day: WeekDay) {
+    fun onDayClicked(calendarState: CalendarState, day: CalendarDay) {
         if (groupedWorkoutsHistories == null || workoutById == null) return
+        isLoading = true
+
         selectedDay = day.date
         val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
 
@@ -406,9 +426,9 @@ fun WorkoutsScreen(
             emptyList()
         }
 
-        if (day.position == WeekDayPosition.OutDate) {
+        if (day.position != DayPosition.MonthDate) {
             scope.launch {
-                calendarState.scrollToWeek(day.date)
+                calendarState.scrollToMonth(selectedDay.yearMonth)
                 selectedDate = day
             }
             return
@@ -417,7 +437,7 @@ fun WorkoutsScreen(
         selectedDate = day
     }
 
-    fun highlightDay(day: WeekDay): Boolean {
+    fun highlightDay(day: CalendarDay): Boolean {
         return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
     }
 
@@ -711,7 +731,7 @@ fun WorkoutsScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(15.dp)
+                                .padding(horizontal = 15.dp)
                                 .verticalScroll(rememberScrollState()),
                         ) {
                             WorkoutsCalendar(
@@ -721,103 +741,130 @@ fun WorkoutsScreen(
                                 },
                                 shouldHighlight = { day -> highlightDay(day) }
                             )
-                            if (hasObjectives) {
-                                val currentDate = selectedDate.date
-                                val currentMonth =
-                                    currentDate.format(DateTimeFormatter.ofPattern("MMM"))
-
-                                Column(
+                            if(isLoading){
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = "Weekly progress (${
-                                            getStartOfWeek(
-                                                currentDate
-                                            ).dayOfMonth
-                                        } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        textAlign = TextAlign.Center,
-                                        color = Color.White.copy(alpha = .87f)
+                                        .fillMaxSize().padding(5.dp),
+                                    contentAlignment = Alignment.Center
+                                ){
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.width(32.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = Color.DarkGray,
                                     )
-                                    ExpandableContainer(
-                                        isOpen = true,
-                                        isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
-                                        title = { modifier ->
-                                            Row(
-                                                modifier = modifier
-                                                    .fillMaxWidth()
-                                                    .padding(10.dp)
-                                                ,
-                                                horizontalArrangement = Arrangement.Center,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = "${(objectiveProgress * 100).toInt()}%",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    textAlign = TextAlign.Center,
-                                                    color = Color.White.copy(alpha = .87f),
-                                                )
-                                                Spacer(modifier = Modifier.width(10.dp))
-                                                ObjectiveProgressBar(
-                                                    Modifier.weight(1f),
-                                                    progress = objectiveProgress.toFloat()
-                                                )
-                                            }
-                                        }, content = {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(10.dp),
-                                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                                            ){
-                                                weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
-                                                    Row(
-                                                        horizontalArrangement = Arrangement.SpaceBetween
-                                                    ) {
-                                                        Text(
-                                                            text = workout.name,
-                                                            modifier = Modifier.weight(1f),
-                                                            color = Color.White.copy(alpha = .87f),
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                        )
-                                                        Text(
-                                                            text = "${pair.first}/${pair.second}",
-                                                            color = Color.White.copy(alpha = .87f),
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        })
                                 }
+                            }else{
+                                if (hasObjectives) {
+                                    val currentDate = selectedDate.date
+                                    val currentMonth =
+                                        currentDate.format(DateTimeFormatter.ofPattern("MMM"))
 
-                            }
-                            Column(Modifier.padding(vertical = 10.dp)){
-                                if (selectedCalendarWorkouts.isNullOrEmpty()) {
-                                    Text(
-                                        text = "No workouts on this day",
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(5.dp),
-                                        textAlign = TextAlign.Center,
-                                        color = Color.White.copy(alpha = .87f),
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                } else {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            .padding(vertical = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
                                         Text(
                                             modifier = Modifier.fillMaxWidth(),
-                                            text = "Workout Histories",
+                                            text = "Weekly progress (${
+                                                getStartOfWeek(
+                                                    currentDate
+                                                ).dayOfMonth
+                                            } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
                                             style = MaterialTheme.typography.titleMedium,
                                             textAlign = TextAlign.Center,
                                             color = Color.White.copy(alpha = .87f)
                                         )
+                                        ExpandableContainer(
+                                            isOpen = false,
+                                            isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
+                                            title = { modifier ->
+                                                Row(
+                                                    modifier = modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp)
+                                                    ,
+                                                    horizontalArrangement = Arrangement.Center,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "${(objectiveProgress * 100).toInt()}%",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        textAlign = TextAlign.Center,
+                                                        color = Color.White.copy(alpha = .87f),
+                                                    )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    ObjectiveProgressBar(
+                                                        Modifier.weight(1f),
+                                                        progress = objectiveProgress.toFloat()
+                                                    )
+                                                }
+                                            }, content = {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                                ){
+                                                    weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
+                                                        Row(
+                                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                        ) {
+                                                            Text(
+                                                                text = workout.name,
+                                                                modifier = Modifier.weight(1f),
+                                                                color = Color.White.copy(alpha = .87f),
+                                                                style = MaterialTheme.typography.bodyMedium,
+                                                            )
+                                                            Text(
+                                                                text = "${pair.first}/${pair.second}",
+                                                                color = Color.White.copy(alpha = .87f),
+                                                                style = MaterialTheme.typography.bodyMedium,
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            })
+                                    }
+
+                                }
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    val currentDate = selectedDate.date
+                                    val currentMonth =
+                                        currentDate.format(DateTimeFormatter.ofPattern("MMM"))
+
+                                    Text(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        textAlign = TextAlign.Center,
+                                        color = Color.White.copy(alpha = .87f)
+                                    )
+
+                                    if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize(),
+                                            contentAlignment = Alignment.Center
+                                        ){
+                                            DarkModeContainer(
+                                                modifier = Modifier
+                                                    .padding(5.dp),
+                                                whiteOverlayAlpha = .1f
+                                            ) {
+                                                Text(
+                                                    modifier = Modifier
+                                                        .padding(15.dp),
+                                                    text = "No workouts on this day",
+                                                    textAlign = TextAlign.Center,
+                                                    color = Color.White.copy(alpha = .87f),
+                                                )
+                                            }
+                                        }
+                                    }else{
                                         selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
                                             DarkModeContainer(whiteOverlayAlpha = .1f) {
                                                 WorkoutTitle(

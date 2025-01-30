@@ -220,7 +220,14 @@ fun PageCompleteOrSkip(
         message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)
-            viewModel.completeExercise()
+
+            viewModel.storeSetData()
+            viewModel.pushAndStoreWorkoutData(false,context){
+                viewModel.completeExercise()
+                viewModel.lightScreenUp()
+            }
+
+
             showCompleteDialog = false
         },
         handleNoClick = {
@@ -241,6 +248,7 @@ fun PageCompleteOrSkip(
         handleYesClick = {
             VibrateGentle(context)
             viewModel.goToPreviousSet()
+            viewModel.lightScreenUp()
             showGoBackDialog = false
         },
         handleNoClick = {

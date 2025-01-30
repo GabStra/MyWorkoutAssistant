@@ -174,7 +174,7 @@ fun WorkoutDetailScreen(
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
-    var showRest by remember { mutableStateOf(true) }
+    var showRest by remember { mutableStateOf(false) }
 
     var isDragDisabled by remember {
         mutableStateOf(false)

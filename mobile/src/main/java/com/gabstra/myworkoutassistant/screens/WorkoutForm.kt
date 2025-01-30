@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.shared.Workout
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -19,19 +22,28 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.WorkoutTypes
+import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import java.time.LocalDate
 import java.util.Locale
 
@@ -43,8 +55,6 @@ fun WorkoutForm(
     onCancel: () -> Unit,
     workout: Workout? = null // Add workout parameter with default value null
 ) {
-
-
     // Mutable state for form fields
     val workoutNameState = remember { mutableStateOf(workout?.name ?: "") }
     val workoutDescriptionState = remember { mutableStateOf(workout?.description ?: "") }
@@ -54,14 +64,45 @@ fun WorkoutForm(
     val selectedWorkoutType = remember { mutableStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING) }
     val expanded = remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
+    Scaffold(
+        topBar = {
+            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                    title = {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            textAlign = TextAlign.Center,
+                            text = if(workout == null) "Insert Workout" else "Edit Workout"
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onCancel) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    }
+                )
+            }
+        }
     ){
+        it ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(it),
             verticalArrangement = Arrangement.Center,
         ) {
             // Workout name field

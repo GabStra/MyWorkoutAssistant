@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -104,16 +106,16 @@ fun MonthHeader(
 
 @Composable
 private fun Day(
-    day: WeekDay,
+    day: CalendarDay,
     isToday: Boolean = false,
     isSelected: Boolean = false,
     shouldHighlight: Boolean = false,
-    onClick: (WeekDay) -> Unit = {},
+    onClick: (CalendarDay) -> Unit = {},
 ) {
-    val isOutOfBounds = day.position in listOf(WeekDayPosition.InDate, WeekDayPosition.OutDate)
+    val isOutOfBounds = day.position in listOf(DayPosition.InDate, DayPosition.OutDate)
     Box(
         Modifier
-            .padding(5.dp)
+            .padding(2.dp)
             .border(
                 width = if (isSelected || isToday) 1.dp else 0.dp,
                 color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color.Green else Color.Transparent),
@@ -164,63 +166,134 @@ private fun Day(
     }
 }
 
+private val CalendarLayoutInfo.completelyVisibleMonths: List<CalendarMonth>
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    get() {
+        val visibleItemsInfo = this.visibleMonthsInfo.toMutableList()
+        return if (visibleItemsInfo.isEmpty()) {
+            emptyList()
+        } else {
+            val lastItem = visibleItemsInfo.last()
+            val viewportSize = this.viewportEndOffset + this.viewportStartOffset
+            if (lastItem.offset + lastItem.size > viewportSize) {
+                visibleItemsInfo.removeLast()
+            }
+            val firstItem = visibleItemsInfo.firstOrNull()
+            if (firstItem != null && firstItem.offset < this.viewportStartOffset) {
+                visibleItemsInfo.removeFirst()
+            }
+            visibleItemsInfo.map { it.month }
+        }
+    }
+
+@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+@Composable
+fun rememberFirstCompletelyVisibleMonth(state: CalendarState): CalendarMonth {
+    val visibleMonth = remember(state) { mutableStateOf(state.firstVisibleMonth) }
+    // Only take non-null values as null will be produced when the
+    // list is mid-scroll as no index will be completely visible.
+    LaunchedEffect(state) {
+        snapshotFlow { state.layoutInfo.completelyVisibleMonths.firstOrNull() }
+            .filterNotNull()
+            .collect { month -> visibleMonth.value = month }
+    }
+    return visibleMonth.value
+}
+
+
+@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun SimpleCalendarTitle(
-    currentDay: WeekDay,
+    calendarState: CalendarState,
+    currentMonth: YearMonth
 ) {
+    val visibleMonth = rememberFirstCompletelyVisibleMonth(calendarState)
+    val scope = rememberCoroutineScope()
+
+    val isCurrentMonth = visibleMonth.yearMonth.month == currentMonth.month && visibleMonth.yearMonth.year == currentMonth.year
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        IconButton(
+            onClick = {
+                scope.launch {
+                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
+                }
+            },
+        ) {
+            Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back",tint = Color.White)
+        }
+
         Text(
-            modifier = Modifier.fillMaxWidth(),
-            text = "${currentDay.date.dayOfMonth} ${currentDay.date.yearMonth.displayText()}",
+            modifier = Modifier.weight(1f),
+            text = visibleMonth.yearMonth.displayText(),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
             color = Color.White.copy(alpha = .87f)
         )
+
+        IconButton(
+            enabled = !isCurrentMonth,
+            onClick = {
+                scope.launch {
+                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
+                }
+            },
+        ) {
+            Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Back",tint = if(isCurrentMonth) Color.DarkGray else Color.White)
+        }
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun WorkoutsCalendar(
     modifier: Modifier = Modifier,
-    selectedDate: WeekDay,
-    onDayClicked: (WeekCalendarState,WeekDay) -> Unit,
-    shouldHighlight: (WeekDay) -> Boolean,
+    selectedDate: CalendarDay,
+    onDayClicked: (CalendarState,CalendarDay) -> Unit,
+    shouldHighlight: (CalendarDay) -> Boolean,
 ){
     val currentDay = LocalDate.now()
+    val currentMonth = remember { YearMonth.now() }
 
-    val weekCalendarState = rememberWeekCalendarState(
-        startDate = currentDay.minusMonths(12),
-        endDate = currentDay
+    val startMonth = remember { currentMonth.minusMonths(1200) }
+    val endMonth = remember { currentMonth }
+
+    val daysOfWeek = remember { daysOfWeek() }
+
+    val calendarState = rememberCalendarState(
+        startMonth = startMonth,
+        endMonth = endMonth,
+        firstVisibleMonth = currentMonth,
+        firstDayOfWeek = daysOfWeek.first(),
+        outDateStyle = OutDateStyle.EndOfGrid,
     )
-
-    val scope = rememberCoroutineScope()
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
     ){
         SimpleCalendarTitle(
-            currentDay = selectedDate,
+            calendarState = calendarState,
+            currentMonth = currentMonth
         )
         DarkModeContainer(whiteOverlayAlpha = .1f) {
-            WeekCalendar(
-                modifier = Modifier.padding(10.dp),
-                state = weekCalendarState,
+            HorizontalCalendar(
+                modifier = Modifier.padding(5.dp),
+                state = calendarState,
                 calendarScrollPaged = false,
-                userScrollEnabled = true,
+                userScrollEnabled = false,
                 dayContent = { day ->
                     Day(
                         isToday = day.date == currentDay,
                         day = day,
                         isSelected = selectedDate.date == day.date,
                         shouldHighlight = shouldHighlight(day),
-                    ) { selectedWeekDay ->
-                        onDayClicked(weekCalendarState,selectedWeekDay)
+                    ) { selectedCalendarDay ->
+                        onDayClicked(calendarState,selectedCalendarDay)
                     }
                 },
-                weekHeader = {
+                monthHeader = {
                     MonthHeader(daysOfWeek = daysOfWeek())
                 },
             )

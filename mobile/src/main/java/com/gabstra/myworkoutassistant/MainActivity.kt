@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
@@ -15,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -160,6 +162,7 @@ class MainActivity : ComponentActivity() {
 
 }
 
+@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @OptIn(FlowPreview::class)
 @Composable
 fun MyWorkoutAssistantNavHost(
@@ -645,7 +648,8 @@ fun MyWorkoutAssistantNavHost(
                         appViewModel.goBack()
                     },
                     exerciseType = parentExercise.exerciseType,
-                    viewModel = appViewModel
+                    viewModel = appViewModel,
+                    exercise = parentExercise
                 )
             }
 
@@ -826,7 +830,8 @@ fun MyWorkoutAssistantNavHost(
                     },
                     set = screenData.selectedSet,
                     exerciseType = parentExercise.exerciseType,
-                    viewModel = appViewModel
+                    viewModel = appViewModel,
+                    exercise = parentExercise
                 )
             }
 

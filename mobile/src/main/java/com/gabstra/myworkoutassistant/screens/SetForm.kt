@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
@@ -31,6 +33,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
 
@@ -54,8 +57,10 @@ fun SetForm(
     onCancel: () -> Unit,
     set: Set? = null, // Add exercise parameter with default value null
     exerciseType : ExerciseType,
+    exercise: Exercise
 ) {
     val selectedSetType = remember { mutableStateOf(getSetTypeFromExerciseType(exerciseType)) }
+    val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
 
     Column(
         modifier = Modifier
@@ -85,15 +90,24 @@ fun SetForm(
 
         when (selectedSetType.value) {
             SetType.WEIGHT_SET -> {
+                if(equipment == null){
+                    val context = LocalContext.current
+                    Toast.makeText(context, "Equipment must be assigned to the exercise first", Toast.LENGTH_LONG).show()
+                    onCancel()
+                    return
+                }
+
                 WeightSetForm(
                     onSetUpsert = onSetUpsert,
                     weightSet = set as WeightSet?,
+                    equipment = equipment!!
                 )
             }
             SetType.BODY_WEIGHT_SET -> {
                 BodyWeightSetForm(
                     onSetUpsert = onSetUpsert,
-                    bodyWeightSet = set as BodyWeightSet?
+                    bodyWeightSet = set as BodyWeightSet?,
+                    equipment = equipment
                 )
             }
             SetType.COUNTUP_SET -> {

@@ -1,11 +1,15 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -14,9 +18,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
@@ -106,373 +115,325 @@ fun ExerciseForm(
             volumeIncreasePercent.value = 5f
         }
     }
-
     val scrollState = rememberScrollState()
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(scrollState),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        // Exercise name field
-        OutlinedTextField(
-            value = nameState.value,
-            onValueChange = { nameState.value = it },
-            label = { Text("Exercise Name") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-        )
-
-        if(exercise == null){
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                Text(text = "Exercise Type:")
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = selectedExerciseType.value.name.replace('_', ' ').capitalize(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { expandedType.value = true }
-                            .padding(8.dp)
-                    )
-                    DropdownMenu(
-                        expanded = expandedType.value,
-                        onDismissRequest = { expandedType.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    ) {
-                        exerciseTypeDescriptions.forEach { ExerciseDescription ->
-                            DropdownMenuItem(
-                                onClick = {
-                                    selectedExerciseType.value = stringToExerciseType(ExerciseDescription)!!
-                                    expandedType.value = false
-                                },
-                                text = {
-                                    Text(text = ExerciseDescription)
-                                }
+    Scaffold(
+        topBar = {
+            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                    title = {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            textAlign = TextAlign.Center,
+                            text = if(exercise == null) "Insert Exercise" else "Edit Exercise"
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onCancel) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
                             )
                         }
                     }
-                }
+                )
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
         }
-
-        if(selectedExerciseType.value == ExerciseType.WEIGHT){
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+    ){
+        it ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(it)
+                .padding(horizontal = 8.dp)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            // Exercise name field
+            OutlinedTextField(
+                value = nameState.value,
+                onValueChange = { nameState.value = it },
+                label = { Text("Exercise Name") },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                Text(text = "Exercise Category:")
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = selectedExerciseCategory.value?.name?.replace('_', ' ')?.capitalize() ?: "-",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { expandedCategory.value = true }
-                            .padding(8.dp)
-                    )
-                    DropdownMenu(
-                        expanded = expandedCategory.value,
-                        onDismissRequest = { expandedCategory.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    ) {
-                        exerciseCategoryDescriptions.forEach { exerciseDescription ->
-                            DropdownMenuItem(
-                                onClick = {
-                                    val category = stringToExerciseCategory(exerciseDescription)!!
-                                    selectedExerciseCategory.value = category
-                                    updateProgressiveOverloadParameters(category)
-                                    expandedCategory.value = false
-                                },
-                                text = {
-                                    Text(text = exerciseDescription)
-                                }
-                            )
+                    .padding(8.dp),
+            )
+
+            if(exercise == null){
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                ) {
+                    Text(text = "Exercise Type:")
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = selectedExerciseType.value.name.replace('_', ' ').capitalize(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { expandedType.value = true }
+                                .padding(8.dp)
+                        )
+                        DropdownMenu(
+                            expanded = expandedType.value,
+                            onDismissRequest = { expandedType.value = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            exerciseTypeDescriptions.forEach { ExerciseDescription ->
+                                DropdownMenuItem(
+                                    onClick = {
+                                        selectedExerciseType.value = stringToExerciseType(ExerciseDescription)!!
+                                        expandedType.value = false
+                                    },
+                                    text = {
+                                        Text(text = ExerciseDescription)
+                                    }
+                                )
+                            }
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // Progressive Overload Section
-            if (selectedExerciseCategory.value != null) {
+            if(selectedExerciseType.value == ExerciseType.WEIGHT){
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                        .fillMaxWidth().padding(horizontal = 8.dp)
                 ) {
                     Text(
-                        text = "Progressive Overload Parameters",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
 
-                    if(selectedExerciseType.value == ExerciseType.WEIGHT) {
-
-                        Text(
-                            text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        RangeSlider(
-                            value = minLoadPercent.value..maxLoadPercent.value,
-                            onValueChange = { range ->
-                                minLoadPercent.value = range.start
-                                maxLoadPercent.value = range.endInclusive
-                            },
-                            valueRange = 0f..100f,
-                            steps = 98,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = "Reps Range (${minReps.value.toInt()} - ${maxReps.value.toInt()})",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        RangeSlider(
-                            value = minReps.value..maxReps.value,
-                            onValueChange = { range ->
-                                minReps.value = range.start
-                                maxReps.value = range.endInclusive
-                            },
-                            valueRange = 1f..50f,
-                            steps = 49,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp)
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            // Reset to default values for the selected category
-                            updateProgressiveOverloadParameters(selectedExerciseCategory.value)
+                    RangeSlider(
+                        value = minLoadPercent.value..maxLoadPercent.value,
+                        onValueChange = { range ->
+                            minLoadPercent.value = range.start
+                            maxLoadPercent.value = range.endInclusive
                         },
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(top = 8.dp)
-                    ) {
-                        Text("Reset to Defaults")
-                    }
+                        valueRange = 0f..100f,
+                        steps = 98,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Reps Range (${minReps.value.toInt()} - ${maxReps.value.toInt()})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    RangeSlider(
+                        value = minReps.value..maxReps.value,
+                        onValueChange = { range ->
+                            minReps.value = range.start
+                            maxReps.value = range.endInclusive
+                        },
+                        valueRange = 1f..50f,
+                        steps = 49,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                    )
                 }
             }
-        }
 
-        if(selectedExerciseType.value == ExerciseType.WEIGHT || selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
-            Text(
-                text = "Volume Increase per Session (${volumeIncreasePercent.value.toInt()}%)",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            if(selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = bodyWeightPercentage.value,
+                    onValueChange = {
+                        if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
+                            bodyWeightPercentage.value = it
+                        }
+                    },
+                    label = { Text("BodyWeight %") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
-            Slider(
-                value = volumeIncreasePercent.value,
-                onValueChange = { volumeIncreasePercent.value = it },
-                valueRange = 0f..20f,
-                steps = 19,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-            )
-        }
-
-        if(selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = bodyWeightPercentage.value,
-                onValueChange = {
-                    if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
-                        bodyWeightPercentage.value = it
-                    }
-                },
-                label = { Text("BodyWeight %") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Text(text = "Equipment:")
-            Box(modifier = Modifier.fillMaxWidth()) {
-                val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
-                Text(
-                    text = selectedEquipment?.name ?: "None",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { expandedEquipment.value = true }
-                        .padding(8.dp)
-                )
-                DropdownMenu(
-                    expanded = expandedEquipment.value,
-                    onDismissRequest = { expandedEquipment.value = false },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                ) {
-                    DropdownMenuItem(
-                        onClick = {
-                            selectedEquipmentId.value =null
-                            expandedEquipment.value = false
-                        },
-                        text = {
-                            Text(text = "None")
-                        }
+                    .padding(8.dp)
+            ) {
+                Text(text = "Equipment:")
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
+                    Text(
+                        text = selectedEquipment?.name ?: "None",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expandedEquipment.value = true }
+                            .padding(8.dp)
                     )
-                    equipments.forEach { equipment ->
+                    DropdownMenu(
+                        expanded = expandedEquipment.value,
+                        onDismissRequest = { expandedEquipment.value = false },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    ) {
                         DropdownMenuItem(
                             onClick = {
-                                selectedEquipmentId.value = equipment.id
+                                selectedEquipmentId.value =null
                                 expandedEquipment.value = false
                             },
                             text = {
-                                Text(text = equipment.name)
+                                Text(text = "None")
                             }
                         )
+                        equipments.forEach { equipment ->
+                            DropdownMenuItem(
+                                onClick = {
+                                    selectedEquipmentId.value = equipment.id
+                                    expandedEquipment.value = false
+                                },
+                                text = {
+                                    Text(text = equipment.name)
+                                }
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        val heartRateZones = listOf("None") + listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5")
-        val selectedTargetZone = remember { mutableStateOf(exercise?.targetZone) }
-        val expandedHeartRateZone = remember { mutableStateOf(false) }
+            val heartRateZones = listOf("None") + listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5")
+            val selectedTargetZone = remember { mutableStateOf(exercise?.targetZone) }
+            val expandedHeartRateZone = remember { mutableStateOf(false) }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Text(text = "Target Heart Rate Zone:")
-            Box(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = when(selectedTargetZone.value) {
-                        null -> heartRateZones[0]
-                        else -> heartRateZones[selectedTargetZone.value!!]
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { expandedHeartRateZone.value = true }
-                        .padding(8.dp)
-                )
-                DropdownMenu(
-                    expanded = expandedHeartRateZone.value,
-                    onDismissRequest = { expandedHeartRateZone.value = false },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                ) {
-                    heartRateZones.forEachIndexed { index, zone ->
-                        DropdownMenuItem(
-                            onClick = {
-                                selectedTargetZone.value = if(index == 0) null else index
-                                expandedHeartRateZone.value = false
-                            },
-                            text = {
-                                Text(text = zone)
-                            }
-                        )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            ) {
+                Text(text = "Target Heart Rate Zone:")
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = when(selectedTargetZone.value) {
+                            null -> heartRateZones[0]
+                            else -> heartRateZones[selectedTargetZone.value!!]
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expandedHeartRateZone.value = true }
+                            .padding(8.dp)
+                    )
+                    DropdownMenu(
+                        expanded = expandedHeartRateZone.value,
+                        onDismissRequest = { expandedHeartRateZone.value = false },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    ) {
+                        heartRateZones.forEachIndexed { index, zone ->
+                            DropdownMenuItem(
+                                onClick = {
+                                    selectedTargetZone.value = if(index == 0) null else index
+                                    expandedHeartRateZone.value = false
+                                },
+                                text = {
+                                    Text(text = zone)
+                                }
+                            )
+                        }
                     }
                 }
             }
-        }
 
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Checkbox(
-                checked = doNotStoreHistory.value,
-                onCheckedChange = { doNotStoreHistory.value = it },
-                enabled = allowSettingDoNotStoreHistory,
-                colors =  CheckboxDefaults.colors().copy(
-                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            ) {
+                Checkbox(
+                    checked = doNotStoreHistory.value,
+                    onCheckedChange = { doNotStoreHistory.value = it },
+                    enabled = allowSettingDoNotStoreHistory,
+                    colors =  CheckboxDefaults.colors().copy(
+                        checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    )
                 )
-            )
-            Text(text = "Do not store history")
-        }
+                Text(text = "Do not store history")
+            }
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            TextField(
-                value = notesState.value,
-                onValueChange = { notesState.value = it },
-                label = { Text("Notes") },
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 5,
-                singleLine = false
-            )
-        }
-
-        // Submit button
-        Button(
-            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-            onClick = {
-                val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()
-                val newExercise = Exercise(
-                    id = exercise?.id ?: java.util.UUID.randomUUID(),
-                    name = nameState.value.trim(),
-                    doNotStoreHistory = doNotStoreHistory.value,
-                    enabled = exercise?.enabled ?: true,
-                    sets = exercise?.sets ?: listOf(),
-                    exerciseType = selectedExerciseType.value,
-                    exerciseCategory = selectedExerciseCategory.value,
-                    minLoadPercent = minLoadPercent.value.toDouble(),
-                    maxLoadPercent = maxLoadPercent.value.toDouble(),
-                    minReps = minReps.value.toInt(),
-                    maxReps = maxReps.value.toInt(),
-                    fatigueFactor = fatigueFactor.value,
-                    volumeIncreasePercent = volumeIncreasePercent.value,
-                    notes = notesState.value.trim(),
-                    targetZone = selectedTargetZone.value,
-                    equipmentId = selectedEquipmentId.value,
-                    bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            ) {
+                TextField(
+                    value = notesState.value,
+                    onValueChange = { notesState.value = it },
+                    label = { Text("Notes") },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 5,
+                    singleLine = false
                 )
+            }
 
-                onExerciseUpsert(newExercise)
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            enabled = nameState.value.isNotBlank()
-        ) {
-            if (exercise == null) Text("Insert Exercise") else Text("Edit Exercise")
-        }
+            // Submit button
+            Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                onClick = {
+                    val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()
+                    val newExercise = Exercise(
+                        id = exercise?.id ?: java.util.UUID.randomUUID(),
+                        name = nameState.value.trim(),
+                        doNotStoreHistory = doNotStoreHistory.value,
+                        enabled = exercise?.enabled ?: true,
+                        sets = exercise?.sets ?: listOf(),
+                        exerciseType = selectedExerciseType.value,
+                        exerciseCategory = selectedExerciseCategory.value,
+                        minLoadPercent = minLoadPercent.value.toDouble(),
+                        maxLoadPercent = maxLoadPercent.value.toDouble(),
+                        minReps = minReps.value.toInt(),
+                        maxReps = maxReps.value.toInt(),
+                        fatigueFactor = fatigueFactor.value,
+                        volumeIncreasePercent = volumeIncreasePercent.value,
+                        notes = notesState.value.trim(),
+                        targetZone = selectedTargetZone.value,
+                        equipmentId = selectedEquipmentId.value,
+                        bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
+                    )
 
-        // Cancel button
-        Button(
-            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-            onClick = {
-                // Call the callback to cancel the insertion/update
-                onCancel()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Text("Cancel")
+                    onExerciseUpsert(newExercise)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                enabled = nameState.value.isNotBlank()
+            ) {
+                if (exercise == null) Text("Insert Exercise") else Text("Edit Exercise")
+            }
+
+            // Cancel button
+            Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                onClick = {
+                    // Call the callback to cancel the insertion/update
+                    onCancel()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            ) {
+                Text("Cancel")
+            }
         }
     }
 }
