@@ -106,6 +106,10 @@ fun ExerciseHistoryScreen(
 
     val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
 
+    val volumes = remember { mutableListOf<Pair<Int, Double>>() }
+    val durations = remember { mutableListOf<Pair<Int, Float>>() }
+    val oneRepMaxes = remember { mutableListOf<Pair<Int, Double>>() }
+
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             workoutHistories = workoutVersions.flatMap { workoutVersion ->
@@ -118,9 +122,10 @@ fun ExerciseHistoryScreen(
                 return@withContext
             }
 
-            val volumes = mutableListOf<Pair<Int, Double>>()
-            val durations = mutableListOf<Pair<Int, Float>>()
-            val oneRepMaxes = mutableListOf<Pair<Int, Double>>()
+            volumes.clear()
+            durations.clear()
+            oneRepMaxes.clear()
+
             for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
                     workoutHistory.id,
@@ -313,7 +318,8 @@ fun ExerciseHistoryScreen(
                             cartesianChartModel = volumeEntryModel!!,
                             title = "Volume",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                            bottomAxisValueFormatter = horizontalAxisValueFormatter
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                            minValue = volumes.minBy { it.second }.second.toDouble()
                         )
                     }
 
@@ -322,7 +328,8 @@ fun ExerciseHistoryScreen(
                             cartesianChartModel = oneRepMaxEntryModel!!,
                             markerPosition = oneRepMaxMarkerTarget!!.first.toFloat(),
                             title = "One Rep Max",
-                            bottomAxisValueFormatter = horizontalAxisValueFormatter
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                            minValue = oneRepMaxes.minBy { it.second }.second.toDouble()
                         )
                     }
 
@@ -333,7 +340,8 @@ fun ExerciseHistoryScreen(
                             title = "Total Duration over time",
                             markerTextFormatter = { formatTime(it.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
-                            bottomAxisValueFormatter = horizontalAxisValueFormatter
+                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                            minValue = durations.minBy { it.second }.second.toDouble()
                         )
                     }
                 }

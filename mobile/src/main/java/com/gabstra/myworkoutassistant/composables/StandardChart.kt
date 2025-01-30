@@ -37,6 +37,7 @@ import com.patrykandpatrick.vico.compose.common.fill
 import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
@@ -49,6 +50,7 @@ fun StandardChart(
     cartesianChartModel: CartesianChartModel,
     title: String,
     isZoomEnabled: Boolean = true,
+    minValue: Double? = null,
     markerPosition: Float? = null,
     markerTextFormatter: ((Float) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
@@ -104,7 +106,8 @@ fun StandardChart(
                                         pointProvider = null,
                                     )
                                 )
-                            )
+                            ),
+                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = minValue)
                         ),
                         startAxis = VerticalAxis.rememberStart(valueFormatter = startAxisValueFormatter),
                         bottomAxis = HorizontalAxis.rememberBottom(

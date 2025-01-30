@@ -11,6 +11,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -101,30 +102,17 @@ class DataLayerListenerService : WearableListenerService() {
                                     var workoutComponents = workout.workoutComponents
 
                                     for (exercise in exercises) {
-                                        val setById = exercise.sets.associateBy { it.id }
+                                        if(exercise.doNotStoreHistory) continue
+                                        workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
                                         val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
 
                                         for (setHistory in setHistories) {
-                                            val isExistingSet = setById.containsKey(setHistory.setId)
-
-                                            if(isExistingSet && exercise.doNotStoreHistory) continue
-
-                                            workoutComponents =
-                                                if (isExistingSet) {
-                                                    val oldSet = setById[setHistory.setId]!!
-                                                    if (!isSetDataValid(oldSet,setHistory.setData)) continue
-                                                    val newSet = getNewSetFromSetHistory(oldSet,setHistory.setData) ?: continue
-
-                                                    updateSetInExerciseRecursively(workoutComponents,exercise,oldSet,newSet)
-                                                } else {
-                                                    val newSet = getNewSetFromSetHistory(setHistory)
-                                                    addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
-                                                }
+                                            val newSet = getNewSetFromSetHistory(setHistory)
+                                            workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                                         }
                                     }
 
-                                    val newWorkout =
-                                        workout.copy(workoutComponents = workoutComponents)
+                                    val newWorkout = workout.copy(workoutComponents = workoutComponents)
                                     val updatedWorkoutStore = workoutStore.copy(
                                         workouts = updateWorkoutOld(
                                             workoutStore.workouts,

@@ -215,10 +215,15 @@ fun WorkoutHistoryScreen(
 
     var kiloCaloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
+    val volumes = remember { mutableListOf<Pair<Int, Double>>() }
+    val durations = remember { mutableListOf<Pair<Int, Float>>() }
+    val workoutDurations = remember { mutableListOf<Pair<Int, Float>>() }
+
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
-        val volumes = mutableListOf<Pair<Int, Double>>()
-        val durations = mutableListOf<Pair<Int, Float>>()
-        val workoutDurations = mutableListOf<Pair<Int, Float>>()
+        volumes.clear()
+        durations.clear()
+        workoutDurations.clear()
+
         for (workoutHistory in workoutHistories) {
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
@@ -394,7 +399,8 @@ fun WorkoutHistoryScreen(
                     cartesianChartModel = volumeEntryModel!!,
                     title = "Total Volume over time",
                     markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    minValue = volumes.minBy { it.second }.second.toDouble()
                 )
             }
             if (durationEntryModel != null) {
@@ -405,7 +411,8 @@ fun WorkoutHistoryScreen(
                     title = "Total Duration over time",
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    minValue = durations.minBy { it.second }.second.toDouble()
                 )
             }
             if (workoutDurationEntryModel != null) {
@@ -417,7 +424,8 @@ fun WorkoutHistoryScreen(
                     markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
                     markerTextFormatter = { formatTime(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter
+                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    minValue = workoutDurations.minBy { it.second }.second.toDouble()
                 )
             }
         }

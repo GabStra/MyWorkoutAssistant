@@ -133,6 +133,17 @@ class WorkoutManager {
             }
         }
 
+        fun removeSetsFromExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise): List<WorkoutComponent> {
+            return components.map { component ->
+                if (component.id == parentExercise.id) {
+                    val exercise = component as Exercise
+                    exercise.copy(sets = emptyList())
+                } else {
+                    component
+                }
+            }
+        }
+
         fun updateSetInExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, oldSet: Set, updatedSet: Set) : List<Workout> {
             return workouts.map { it ->
                 if (it == workout) {
