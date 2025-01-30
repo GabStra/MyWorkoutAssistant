@@ -28,16 +28,10 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
-import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper
-import com.gabstra.myworkoutassistant.shared.utils.ProgressionHelper.getParametersByExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
 fun ExerciseType.toReadableString(): String {
-    return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
-}
-
-fun ProgressionHelper.ExerciseCategory.toReadableString(): String {
     return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
 }
 
@@ -52,17 +46,6 @@ fun stringToExerciseType(value: String): ExerciseType? {
         it.name.equals(value.replace(' ', '_').toUpperCase(), ignoreCase = true)
     }
 }
-
-fun getExerciseCategoryDescriptions(): List<String> {
-    return ProgressionHelper.ExerciseCategory.values().map { it.toReadableString() }
-}
-
-fun stringToExerciseCategory(value: String): ProgressionHelper.ExerciseCategory? {
-    return ProgressionHelper.ExerciseCategory.values().firstOrNull {
-        it.name.equals(value.replace(' ', '_').toUpperCase(), ignoreCase = true)
-    }
-}
-
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -82,19 +65,15 @@ fun ExerciseForm(
     val exerciseTypeDescriptions = getExerciseTypeDescriptions()
     val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
 
-    val exerciseCategoryDescriptions = getExerciseCategoryDescriptions()
-    val selectedExerciseCategory = remember { mutableStateOf(exercise?.exerciseCategory) }
 
     val expandedType = remember { mutableStateOf(false) }
-    val expandedCategory = remember { mutableStateOf(false) }
+
 
     // Progressive overload state
     val minLoadPercent = remember { mutableStateOf(exercise?.minLoadPercent?.toFloat()?:65f) }
     val maxLoadPercent = remember { mutableStateOf(exercise?.maxLoadPercent?.toFloat()?:85f) }
     val minReps = remember { mutableStateOf(exercise?.minReps?.toFloat()?:6f) }
     val maxReps = remember { mutableStateOf(exercise?.maxReps?.toFloat()?:12f) }
-    val fatigueFactor = remember { mutableStateOf(exercise?.fatigueFactor?:0.1f) }
-    val volumeIncreasePercent = remember { mutableStateOf(exercise?.volumeIncreasePercent?:5f) } // Default 5% increase
 
     val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
@@ -103,18 +82,6 @@ fun ExerciseForm(
     val selectedEquipmentId = remember { mutableStateOf<UUID?>(exercise?.equipmentId) }
     val expandedEquipment = remember { mutableStateOf(false) }
 
-    // Update parameters when category changes
-    fun updateProgressiveOverloadParameters(category: ProgressionHelper.ExerciseCategory?) {
-        val parameters = category?.let { getParametersByExerciseType(it) }
-        parameters?.let {
-            minLoadPercent.value = it.percentLoadRange.first.toFloat()
-            maxLoadPercent.value = it.percentLoadRange.second.toFloat()
-            minReps.value = it.repsRange.first.toFloat()
-            maxReps.value = it.repsRange.last.toFloat()
-            fatigueFactor.value = it.fatigueFactor.toFloat()
-            volumeIncreasePercent.value = 5f
-        }
-    }
     val scrollState = rememberScrollState()
     Scaffold(
         topBar = {
@@ -398,13 +365,10 @@ fun ExerciseForm(
                         enabled = exercise?.enabled ?: true,
                         sets = exercise?.sets ?: listOf(),
                         exerciseType = selectedExerciseType.value,
-                        exerciseCategory = selectedExerciseCategory.value,
                         minLoadPercent = minLoadPercent.value.toDouble(),
                         maxLoadPercent = maxLoadPercent.value.toDouble(),
                         minReps = minReps.value.toInt(),
                         maxReps = maxReps.value.toInt(),
-                        fatigueFactor = fatigueFactor.value,
-                        volumeIncreasePercent = volumeIncreasePercent.value,
                         notes = notesState.value.trim(),
                         targetZone = selectedTargetZone.value,
                         equipmentId = selectedEquipmentId.value,

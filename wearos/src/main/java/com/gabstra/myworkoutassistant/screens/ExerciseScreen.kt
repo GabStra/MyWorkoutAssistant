@@ -194,15 +194,6 @@ fun PageCompleteOrSkip(
     ) {
         item{
             ButtonWithText(
-                text = "Complete exercise",
-                onClick = {
-                    VibrateGentle(context)
-                    showCompleteDialog = true
-                },
-            )
-        }
-        item{
-            ButtonWithText(
                 text = "Back",
                 onClick = {
                     VibrateGentle(context)

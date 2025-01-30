@@ -111,8 +111,8 @@ fun WeightSetScreen (
 
     val executedVolumeProgression by remember {
         derivedStateOf {
-            if (state.exerciseOriginalVolume != 0.0) {
-                executedVolume / state.exerciseOriginalVolume
+            if (state.lastSessionVolume != 0.0) {
+                executedVolume / state.lastSessionVolume
             } else 0.0
         }
     }
@@ -131,8 +131,8 @@ fun WeightSetScreen (
 
     val volumeProgression by remember {
         derivedStateOf {
-            if (state.exerciseOriginalVolume != 0.0) {
-                currentTotalVolume / state.exerciseOriginalVolume
+            if (state.lastSessionVolume != 0.0) {
+                currentTotalVolume / state.lastSessionVolume
             } else 0.0
         }
     }
@@ -429,7 +429,7 @@ fun WeightSetScreen (
                     previousRatio = executedVolumeProgression,
                     progressBarColor = progressBarColor,
                     showRatio = isLastSet,
-                    expectedProgress = state.progressionValue
+                    expectedProgress = state.expectedProgress
                 )
 
                 Spacer(modifier = Modifier.height(5.dp))

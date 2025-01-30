@@ -307,6 +307,7 @@ fun WorkoutHistoryScreen(
     }
 
     LaunchedEffect(workout) {
+        isLoading = true
         withContext(Dispatchers.IO) {
 
             workoutHistories = workoutVersions.flatMap { workoutVersion ->
@@ -456,6 +457,7 @@ fun WorkoutHistoryScreen(
                     onClick = {
                         val index = workoutHistories.indexOf(selectedWorkoutHistory)
                         if (index > 0) { // Check to avoid IndexOutOfBoundsException
+                            isLoading = true
                             selectedWorkoutHistory = workoutHistories[index - 1]
                         }
                     },
@@ -478,6 +480,7 @@ fun WorkoutHistoryScreen(
                     onClick = {
                         val index = workoutHistories.indexOf(selectedWorkoutHistory)
                         if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                            isLoading = true
                             selectedWorkoutHistory = workoutHistories[index + 1]
                         }
                     },

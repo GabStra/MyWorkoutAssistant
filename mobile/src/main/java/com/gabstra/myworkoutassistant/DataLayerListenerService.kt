@@ -103,8 +103,9 @@ class DataLayerListenerService : WearableListenerService() {
 
                                     for (exercise in exercises) {
                                         if(exercise.doNotStoreHistory) continue
-                                        workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
                                         val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
+
+                                        workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
 
                                         for (setHistory in setHistories) {
                                             val newSet = getNewSetFromSetHistory(setHistory)
