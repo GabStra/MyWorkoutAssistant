@@ -47,6 +47,8 @@ import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composable.ExerciseInfo
+import com.gabstra.myworkoutassistant.composable.ExerciseSetsViewer
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -161,10 +163,38 @@ fun SimplifiedHorizontalPager(
                 onScrollEnabledChange = { onScrollEnabledChange(it) },
                 exerciseTitleComposable = exerciseTitleComposable
             )
-            2 -> PageCompleteOrSkip(updatedState,viewModel)
-            3 -> PageNewSets(updatedState,viewModel)
-            4 -> PageNotes(exercise.notes)
+            2 -> PageNextSets(updatedState,viewModel)
+            3 -> PageCompleteOrSkip(updatedState,viewModel)
+            4 -> PageNewSets(updatedState,viewModel)
+            5 -> PageNotes(exercise.notes)
         }
+    }
+}
+
+@Composable
+fun PageNextSets(
+    updatedState:  WorkoutState.Set,
+    viewModel: AppViewModel
+){
+    val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(15.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            modifier = Modifier.fillMaxWidth(),
+            text = "Exercise Sets",
+            style = MaterialTheme.typography.body1,
+            textAlign = TextAlign.Center
+        )
+        ExerciseSetsViewer(
+            modifier = Modifier.fillMaxSize(),
+            viewModel = viewModel,
+            exercise = exercise,
+            currentSet = updatedState.set
+        )
     }
 }
 
@@ -331,9 +361,7 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
 
     val scrollState = rememberScrollState()
     Column(
-        modifier =
-        Modifier.fillMaxSize()
-        .padding(15.dp),
+        modifier = Modifier.fillMaxSize().padding(15.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -495,7 +523,7 @@ fun ExerciseScreen(
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
-        5
+        6
     })
 
     LaunchedEffect(state.set.id) {
@@ -530,13 +558,13 @@ fun ExerciseScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(0.dp, 10.dp, 0.dp, 10.dp),
+                    .padding(vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 val exerciseTitleComposable = @Composable{
                     Text(
                         modifier = Modifier
-                            .width(90.dp)
+                            .width(100.dp)
                             .clickable { marqueeEnabled = !marqueeEnabled }
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = exercise.name,

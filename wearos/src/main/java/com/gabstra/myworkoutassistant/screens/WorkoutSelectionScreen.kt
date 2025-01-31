@@ -89,7 +89,7 @@ fun MissingAppMessage(titleComposable: @Composable () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize().padding(10.dp)
     ) {
         titleComposable()
         Spacer(modifier = Modifier.height(15.dp))
@@ -114,7 +114,7 @@ fun MissingAgeSettingMessage(
 
     val scope = rememberCoroutineScope()
 
-    Box(modifier = Modifier.fillMaxSize(),contentAlignment = Alignment.Center){
+    Box(modifier = Modifier.fillMaxSize().padding(10.dp),contentAlignment = Alignment.Center){
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(15.dp),

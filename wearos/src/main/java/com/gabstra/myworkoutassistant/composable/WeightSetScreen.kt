@@ -256,7 +256,7 @@ fun WeightSetScreen (
     }
 
     @Composable
-    fun RepsRow(modifier: Modifier, showRepsLabel:Boolean = false) {
+    fun RepsRow(modifier: Modifier  = Modifier) {
         Row(
             modifier = modifier
                 .combinedClickable(
@@ -287,41 +287,26 @@ fun WeightSetScreen (
                     }
                 ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
         ) {
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
-                val textColor  = when {
-                    currentSetData.actualReps == previousSetData.actualReps -> Color.Unspecified
-                    currentSetData.actualReps < previousSetData.actualReps  -> MyColors.Red
-                    else -> MyColors.Green
-                }
-
-                Text(
-                    text = "${currentSetData.actualReps}",
-                    style = style,
-                    color = textColor,
-                    textAlign = TextAlign.End
-                )
-                if(showRepsLabel){
-                    Spacer(modifier = Modifier.width(3.dp))
-                    val label = if (currentSetData.actualReps == 1) "rep" else "reps"
-                    Text(
-                        text = label,
-                        style = style.copy(fontSize = style.fontSize * 0.5),
-                        modifier = Modifier.padding(bottom = 2.dp),
-                        color = textColor,
-                    )
-                }
+            val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
+            val textColor  = when {
+                currentSetData.actualReps == previousSetData.actualReps -> Color.Unspecified
+                currentSetData.actualReps < previousSetData.actualReps  -> MyColors.Red
+                else -> MyColors.Green
             }
+
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = "${currentSetData.actualReps}",
+                style = style,
+                color = textColor,
+                textAlign = TextAlign.Center
+            )
         }
     }
 
     @Composable
-    fun WeightRow(modifier: Modifier) {
+    fun WeightRow(modifier: Modifier = Modifier) {
             Row(
                 modifier = modifier
                     .combinedClickable(
@@ -351,12 +336,7 @@ fun WeightSetScreen (
                         }
                     ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
         ) {
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.Center
-            ) {
                 val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
                 val weight = currentSetData.actualWeight
 
@@ -367,6 +347,7 @@ fun WeightSetScreen (
                 }
 
                 Text(
+                    modifier = Modifier.fillMaxWidth(),
                     text = if (weight % 1 == 0.0) {
                         "${weight.toInt()}"
                     } else {
@@ -374,49 +355,47 @@ fun WeightSetScreen (
                     },
                     style = style,
                     color =  textColor,
-                    textAlign = TextAlign.End
+                    textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.width(3.dp))
-                Text(
-                    text = "kg",
-                    style = style.copy(fontSize = style.fontSize * 0.5f),
-                    modifier = Modifier.padding(bottom = 2.dp),
-                    color =  textColor,
-                )
-            }
         }
     }
 
     @SuppressLint("DefaultLocale")
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
-
         Column(
             modifier = customModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
+            val typography = MaterialTheme.typography
+            val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = "KG",
+                    style = headerStyle,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = "REPS",
+                    style = headerStyle,
+                    textAlign = TextAlign.Center
+                )
+            }
             Row(
                 modifier =  Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
             ) {
-                WeightRow(Modifier)
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = "x",
-                    style = style.copy(fontSize = style.fontSize * 0.625f),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                RepsRow(Modifier)
+                WeightRow(modifier = Modifier.weight(1f))
+                RepsRow(modifier = Modifier.weight(1f))
             }
 
-            val indicatorStyle = MaterialTheme.typography.body2
-
             if(volumeProgression > 0){
-                Spacer(modifier = Modifier.height(10.dp))
-
                 val progressBarColor = when {
                     currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
                     currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
@@ -424,7 +403,7 @@ fun WeightSetScreen (
                 }
 
                 ProgressIndicator(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
                     ratio = volumeProgression,
                     previousRatio = executedVolumeProgression,
                     progressBarColor = progressBarColor,
@@ -432,41 +411,33 @@ fun WeightSetScreen (
                     expectedProgress = state.expectedProgress
                 )
 
-                Spacer(modifier = Modifier.height(5.dp))
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.spacedBy(5.dp)){
-                        if(state.streak > 0){
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Filled.Star,
-                                    contentDescription = "Streak",
-                                    tint = Color(0xFFFFD700)
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = state.streak.toString(),
-                                    style = indicatorStyle,
-                                )
-                            }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.Center){
+                    if(state.streak > 0){
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Star,
+                                contentDescription = "Streak",
+                                tint = Color(0xFFFFD700)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = state.streak.toString(),
+                                style = headerStyle,
+                            )
                         }
+                    }
+
+                    if(state.isDeloading){
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "DELOAD",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center,
+                        )
                     }
                 }
             }
-            if(state.isDeloading){
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically){
-                    Text(
-                        text = "DELOAD",
-                        style = indicatorStyle,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
+
         }
     }
 
@@ -494,8 +465,8 @@ fun WeightSetScreen (
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        if (isRepsInEditMode) RepsRow(Modifier, showRepsLabel = true)
-                        if (isWeightInEditMode) WeightRow(Modifier)
+                        if (isRepsInEditMode) RepsRow()
+                        if (isWeightInEditMode) WeightRow()
                     }
                 }
             )
@@ -516,7 +487,8 @@ fun WeightSetScreen (
                 ) {
                     exerciseTitleComposable()
                     HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    SetScreen(customModifier = Modifier.weight(1f))
+                    SetScreen(customModifier = Modifier
+                        .weight(1f).padding(horizontal = 10.dp))
                     if (extraInfo != null) {
                         HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)

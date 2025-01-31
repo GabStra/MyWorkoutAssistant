@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -20,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.round
@@ -161,7 +163,7 @@ fun ProgressIndicator(
     showRatio: Boolean,
     expectedProgress: Double?
 ) {
-    val cornerRadius = 6.dp
+    val cornerRadius = 3.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
 
     fun formatRatio(ratio: Double): String {
@@ -177,58 +179,42 @@ fun ProgressIndicator(
     }
 
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)){
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically){
+            val style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f)
+
             Text(
-                text = "Volume:",
-                style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
+                text = "TARGET",
+                style = style,
                 textAlign = TextAlign.End
             )
 
-            if (!showRatio) {
-                if(expectedProgress!=null){
-                    val sign = if (expectedProgress > 0) "+" else ""
-                    val text = if (expectedProgress > 0 || expectedProgress < 0)  "$sign${expectedProgress.round(2)}%" else "-"
-                    Text(
-                        text = text,
-                        style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-                        textAlign = TextAlign.End,
-                        color = Color.LightGray
-                    )
-                }else{
-                    Text(
-                        text = "X",
-                        style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-                        textAlign = TextAlign.End,
-                        color = MyColors.Red
-                    )
-                }
-            }
-
-            if(showRatio){
-                val displayText = formatRatio(ratio)
-                val displayColor = when {
-                    ratio > 1 -> MyColors.Green
-                    ratio < 1 -> MyColors.Red
-                    else -> Color.White
-                }
+            if(expectedProgress!=null){
+                val sign = if (expectedProgress > 0) "+" else ""
+                val text = if (expectedProgress > 0 || expectedProgress < 0)  "$sign${expectedProgress.round(2)}%" else "-"
                 Text(
-                    text = displayText,
-                    style = MaterialTheme.typography.title2.copy(fontSize = MaterialTheme.typography.title2.fontSize * 0.625f),
-                    color = displayColor
+                    text = text,
+                    style = style,
+                    textAlign = TextAlign.End,
+                    color = MyColors.Green
+                )
+            }else{
+                Text(
+                    text = "X",
+                    style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f),
+                    textAlign = TextAlign.End,
+                    color = MyColors.Red
                 )
             }
+
         }
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Row(
-                modifier = Modifier.height(10.dp).weight(1f).padding(horizontal = 5.dp)
-                    .clip(roundedCornerShape)
-            ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)){
+            Row(modifier = Modifier.height(6.dp).weight(1f).clip(roundedCornerShape)){
                 if (previousRatio != 0.0 && previousRatio < 1f) {
                     SimpleProgressIndicator(
                         progress = 1f,
                         trackColor = MaterialTheme.colors.background,
                         progressBarColor = MyColors.Orange,
-                        modifier = Modifier.height(10.dp).weight(previousRatio.toFloat()),
+                        modifier = Modifier.fillMaxHeight().weight(previousRatio.toFloat()),
                     )
                     Spacer(modifier = Modifier.width(2.dp))
 
@@ -238,16 +224,29 @@ fun ProgressIndicator(
                         progress = remainingRatio,
                         trackColor = MaterialTheme.colors.background,
                         progressBarColor = progressBarColor,
-                        modifier = Modifier.height(10.dp).weight(1 - (previousRatio.toFloat())),
+                        modifier = Modifier.fillMaxHeight().weight(1 - (previousRatio.toFloat())),
                     )
                 } else {
                     SimpleProgressIndicator(
                         progress = ratio.toFloat(),
                         trackColor = MaterialTheme.colors.background,
                         progressBarColor = progressBarColor,
-                        modifier = Modifier.height(10.dp).weight(1f),
+                        modifier = Modifier.fillMaxHeight().weight(1f),
                     )
                 }
+            }
+            if(showRatio){
+                val displayText = formatRatio(ratio)
+                val displayColor = when {
+                    ratio > 1 -> MyColors.Green
+                    ratio < 1 -> MyColors.Red
+                    else -> Color.White
+                }
+                Text(
+                    text = displayText,
+                    style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f),
+                    color = displayColor
+                )
             }
         }
     }

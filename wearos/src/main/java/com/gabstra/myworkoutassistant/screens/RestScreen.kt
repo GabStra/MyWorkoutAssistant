@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
+import com.gabstra.myworkoutassistant.composable.ExerciseInfo
 import com.gabstra.myworkoutassistant.composable.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
@@ -66,109 +67,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun NextExerciseInfo(
-    viewModel: AppViewModel,
-    state: WorkoutState.Set,
-) {
-    val exerciseIndex = viewModel.setsByExerciseId.keys.indexOf(state.exerciseId)
-    val exerciseCount = viewModel.setsByExerciseId.keys.count()
 
-    val exercise = viewModel.exercisesById[state.exerciseId]!!
-    val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-    val setIndex = exerciseSets.indexOf(state.set)
-    var marqueeEnabled by remember { mutableStateOf(false) }
-    val exerciseSetStates = remember(state.exerciseId) { viewModel.getAllExerciseWorkoutStates(state.exerciseId).filter { it.set !is RestSet } }
-
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(190.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        val text = if(exerciseSets.count() != 1) {
-            "${exerciseIndex + 1}/${exerciseCount} - ${setIndex + 1}/${exerciseSets.count()}"
-        } else {
-            "${exerciseIndex + 1}/${exerciseCount}"
-        }
-
-        Text(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Next: $text",
-            style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
-            textAlign = TextAlign.Center
-        )
-
-        Box(modifier = Modifier
-            .width(150.dp)
-            .clickable { marqueeEnabled = !marqueeEnabled }
-            .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = exercise.name,
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.title3,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp)
-                .padding(bottom = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            exerciseSetStates.forEachIndexed { index, nextSetState ->
-                if(index < setIndex) {
-                    return@forEachIndexed
-                }
-                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "${index + 1})",
-                        style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize*0.625f),
-                        textAlign = TextAlign.Start
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Row(horizontalArrangement= Arrangement.Center) {
-                        when (nextSetState.set) {
-                            is WeightSet -> WeightSetDataViewerMinimal(
-                                modifier = Modifier,
-                                nextSetState.currentSetData as WeightSetData
-                            )
-
-                            is BodyWeightSet -> BodyWeightSetDataViewerMinimal(
-                                modifier = Modifier,
-                                nextSetState.currentSetData as BodyWeightSetData
-                            )
-
-                            is TimedDurationSet -> TimedDurationSetDataViewerMinimal(
-                                modifier = Modifier,
-                                nextSetState.currentSetData as TimedDurationSetData
-                            )
-
-                            is EnduranceSet -> EnduranceSetDataViewerMinimal(
-                                modifier = Modifier,
-                                nextSetState.currentSetData as EnduranceSetData
-                            )
-
-                            is RestSet -> {
-                                throw RuntimeException("RestSet should not be here")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -357,7 +257,7 @@ fun RestScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 textComposable()
-                                NextExerciseInfo(viewModel, nextWorkoutStateSet)
+                                ExerciseInfo(viewModel, nextWorkoutStateSet)
                             }
                         }
                         1 -> {

@@ -74,8 +74,6 @@ fun CurrentTime() {
         }
     }
 
-
-    // Display the time
     Text(
         modifier = Modifier.padding(0.dp,5.dp,0.dp,0.dp),
         textAlign = TextAlign.Center,
