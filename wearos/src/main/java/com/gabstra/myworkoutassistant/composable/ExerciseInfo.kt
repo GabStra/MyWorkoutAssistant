@@ -277,7 +277,6 @@ fun ExerciseInfo(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-
     Column(
         modifier = Modifier
             .fillMaxHeight()
@@ -285,18 +284,6 @@ fun ExerciseInfo(
         verticalArrangement = Arrangement.spacedBy(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        val text = if(exerciseSets.count() != 1) {
-            "${exerciseIndex + 1}/${exerciseCount} - ${setIndex + 1}/${exerciseSets.count()}"
-        } else {
-            "${exerciseIndex + 1}/${exerciseCount}"
-        }
-
-        Text(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Next: $text",
-            style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
-            textAlign = TextAlign.Center
-        )
 
         Box(modifier = Modifier
             .width(150.dp)

@@ -5,9 +5,14 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -20,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.gabstra.myworkoutassistant.composable.CurrentBattery
+import com.gabstra.myworkoutassistant.composable.CurrentExercise
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.composable.CurrentTime
@@ -151,9 +158,7 @@ fun WorkoutScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(10.dp),
-        contentAlignment = Alignment.TopCenter
     ) {
-        CurrentTime()
         if(isResuming){
             LoadingScreen(viewModel,"Resuming workout")
             return@Box
@@ -168,8 +173,31 @@ fun WorkoutScreen(
             targetState = workoutState,
             transitionSpec = {
                 fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-            }, label = ""
+            }, label = "",
+            contentAlignment = Alignment.TopCenter
         ) { updatedWorkoutState ->
+            if(updatedWorkoutState is WorkoutState.Set){
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(0.dp,5.dp,0.dp,0.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    CurrentExercise(viewModel,updatedWorkoutState as WorkoutState.Set)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    CurrentTime()
+                }
+            }else{
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(0.dp,5.dp,0.dp,0.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    CurrentBattery()
+                    Spacer(modifier = Modifier.width(5.dp))
+                    CurrentTime()
+                }
+            }
+
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
                     val state = updatedWorkoutState as WorkoutState.Preparing

@@ -35,13 +35,11 @@ fun CircleWithNumber(
     number: Int,
     transparency: Float = 1f
 ) {
-    val textColor =  Color.Black
-
-    /*val textColor = if (getContrastRatio(circleColor, Color.Black) > getContrastRatio(circleColor, Color.White)) {
+    val textColor = if (getContrastRatio(circleColor, Color.Black) > getContrastRatio(circleColor, Color.White)) {
         Color.Black
     } else {
         Color.White
-    }*/
+    }
 
     val density = LocalDensity.current.density
 
