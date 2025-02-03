@@ -47,12 +47,14 @@ fun EnhancedButton(
                         }
                         when {
                             event.changes.any { it.pressed } -> {
-                                launch { interactionSource.emit(PressInteraction.Press(event.changes.first().position)) }
+                                launch {
+                                    interactionSource.emit(PressInteraction.Press(event.changes.first().position))
+                                    if (enabled) onClick()
+                                }
                             }
                             event.changes.any { !it.pressed } -> {
                                 launch {
                                     interactionSource.emit(PressInteraction.Release(PressInteraction.Press(event.changes.first().position)))
-                                    if (enabled) onClick()
                                 }
                             }
                         }

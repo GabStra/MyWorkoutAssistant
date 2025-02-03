@@ -29,7 +29,9 @@ import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.zoneRanges
 import java.util.UUID
+import kotlin.math.roundToInt
 
 fun ExerciseType.toReadableString(): String {
     return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
@@ -278,9 +280,20 @@ fun ExerciseForm(
                 }
             }
 
-            val heartRateZones = listOf("None") + listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5")
-            val selectedTargetZone = remember { mutableStateOf(exercise?.targetZone) }
+            val heartRateZones = listOf("None") + listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
+            val selectedLowerBoundMaxHRPercent = remember { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
+            val selectedUpperBoundMaxHRPercent = remember { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
+
+            //get the index from zoneRanges that contains both selectedLowerBoundMaxHRPercent and selectedUpperBoundMaxHRPercent
+            val selectedTargetZone = remember(selectedLowerBoundMaxHRPercent.value,selectedUpperBoundMaxHRPercent.value) {
+                mutableStateOf(
+                    if(selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) null
+                    else zoneRanges.indexOfFirst { it.first == selectedLowerBoundMaxHRPercent.value && it.second== selectedUpperBoundMaxHRPercent.value }
+                )
+            }
+
             val expandedHeartRateZone = remember { mutableStateOf(false) }
+            val showCustomTargetZone = remember (selectedTargetZone.value) { selectedTargetZone.value!=null }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -288,11 +301,12 @@ fun ExerciseForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text(text = "Target Heart Rate Zone:")
+                Text(text = "Target HR Zone:")
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = when(selectedTargetZone.value) {
                             null -> heartRateZones[0]
+                            -1 -> heartRateZones[6]
                             else -> heartRateZones[selectedTargetZone.value!!]
                         },
                         modifier = Modifier
@@ -308,7 +322,19 @@ fun ExerciseForm(
                         heartRateZones.forEachIndexed { index, zone ->
                             DropdownMenuItem(
                                 onClick = {
-                                    selectedTargetZone.value = if(index == 0) null else index
+                                    if(index == 0){
+                                        selectedLowerBoundMaxHRPercent.value = null
+                                        selectedUpperBoundMaxHRPercent.value = null
+                                    }else if(index <= 5){
+                                        val (lowerBound, upperBound) = zoneRanges[index]
+
+                                        selectedLowerBoundMaxHRPercent.value = lowerBound
+                                        selectedUpperBoundMaxHRPercent.value = upperBound
+                                    }else{
+                                        selectedLowerBoundMaxHRPercent.value = 50f
+                                        selectedUpperBoundMaxHRPercent.value = 60f
+                                    }
+
                                     expandedHeartRateZone.value = false
                                 },
                                 text = {
@@ -320,6 +346,30 @@ fun ExerciseForm(
                 }
             }
 
+            if(showCustomTargetZone){
+                RangeSlider(
+                    value =  selectedLowerBoundMaxHRPercent.value!!..selectedUpperBoundMaxHRPercent.value!!,
+                    onValueChange = { range ->
+                        selectedLowerBoundMaxHRPercent.value = range.start.roundToInt().toFloat()
+                        selectedUpperBoundMaxHRPercent.value = range.endInclusive.roundToInt().toFloat()
+                    },
+                    valueRange = 1f..100f,
+                    steps = 99,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(text = "${selectedLowerBoundMaxHRPercent.value}%")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "-")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "${selectedUpperBoundMaxHRPercent.value}%")
+                }
+            }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -370,7 +420,8 @@ fun ExerciseForm(
                         minReps = minReps.value.toInt(),
                         maxReps = maxReps.value.toInt(),
                         notes = notesState.value.trim(),
-                        targetZone = selectedTargetZone.value,
+                        lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value,
+                        upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value,
                         equipmentId = selectedEquipmentId.value,
                         bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                     )

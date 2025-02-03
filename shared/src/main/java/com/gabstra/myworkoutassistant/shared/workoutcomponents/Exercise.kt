@@ -16,7 +16,9 @@ data class Exercise (
     val maxLoadPercent : Double,
     val minReps : Int,
     val maxReps : Int,
-    val targetZone: Int?,
+
+    val lowerBoundMaxHRPercent: Float?,
+    val upperBoundMaxHRPercent: Float?,
     val equipmentId: UUID?,
     val bodyWeightPercentage: Double?,
 ): WorkoutComponent(id,enabled)

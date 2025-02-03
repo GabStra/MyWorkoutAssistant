@@ -77,7 +77,8 @@ sealed class WorkoutState {
         var currentSetData: SetData,
         val hasNoHistory: Boolean,
         var skipped: Boolean,
-        val targetZone: Int? = null,
+        val lowerBoundMaxHRPercent: Float? = null,
+        val upperBoundMaxHRPercent: Float? = null,
         val currentBodyWeight: Double,
         val plateChangeResult: PlateCalculator.Companion.PlateChangeResult? = null,
         val streak: Int,
@@ -333,6 +334,7 @@ class AppViewModel : ViewModel() {
                 workoutHistoryDao.deleteAll()
                 setHistoryDao.deleteAll()
                 exerciseInfoDao.deleteAll()
+                workoutRecordDao.deleteAll()
             }
         }
     }
@@ -1395,7 +1397,8 @@ class AppViewModel : ViewModel() {
                     currentSetData,
                     historySet == null,
                     false,
-                    exercise.targetZone,
+                    lowerBoundMaxHRPercent = exercise.lowerBoundMaxHRPercent,
+                    upperBoundMaxHRPercent = exercise.upperBoundMaxHRPercent,
                     bodyWeight.value,
                     plateChangeResult,
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,

@@ -91,6 +91,7 @@ class MyReceiver(
                 }
 
                 if(workoutStoreJson != null || appBackupEndJson != null){
+                    appViewModel.resetWorkoutStore()
                     appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
                 }
 

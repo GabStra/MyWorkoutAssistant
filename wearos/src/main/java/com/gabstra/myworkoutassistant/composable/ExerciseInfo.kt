@@ -40,11 +40,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 
@@ -113,6 +109,7 @@ fun SetTableRow(
                 val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
 
                 Text(
+                    modifier = Modifier.weight(1f),
                     text = FormatTime(timedDurationSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
@@ -124,6 +121,7 @@ fun SetTableRow(
                 val enduranceSetData = (setState.currentSetData as EnduranceSetData)
 
                 Text(
+                    modifier = Modifier.weight(1f),
                     text = FormatTime(enduranceSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,

@@ -305,12 +305,15 @@ fun WorkoutDetailScreen(
                     IconButton(
                         enabled = selectedWorkoutComponents.isNotEmpty(),
                         onClick = {
-                            selectedWorkoutComponents.forEach {
-                                val newWorkoutComponent =
-                                    cloneWorkoutComponent(it)
-
-                                appViewModel.addWorkoutComponent(workout, newWorkoutComponent)
+                            val newWorkoutComponents = selectedWorkoutComponents.map {
+                                cloneWorkoutComponent(it)
                             }
+
+                            val updatedWorkout =
+                                workout.copy(workoutComponents = workout.workoutComponents + newWorkoutComponents)
+                            appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                            selectedWorkoutComponents = emptyList()
+
                         }) {
                         val isEnabled = selectedWorkoutComponents.isNotEmpty()
                         val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(

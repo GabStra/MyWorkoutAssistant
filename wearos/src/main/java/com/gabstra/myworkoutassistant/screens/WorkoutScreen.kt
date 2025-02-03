@@ -69,14 +69,18 @@ fun WorkoutScreen(
     }
 
     @Composable
-    fun heartRateChartComposable(targetZone: Int? = null){
+    fun heartRateChartComposable(
+        lowerBoundMaxHRPercent: Float? = null,
+        upperBoundMaxHRPercent: Float? = null
+    ){
         if(selectedWorkout.usePolarDevice){
             HeartRatePolar(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
                 polarViewModel,
                 userAge,
-                targetZone
+                lowerBoundMaxHRPercent,
+                upperBoundMaxHRPercent
             )
         }else{
             HeartRateStandard(
@@ -84,7 +88,8 @@ fun WorkoutScreen(
                 viewModel,
                 hrViewModel,
                 userAge,
-                targetZone
+                lowerBoundMaxHRPercent,
+                upperBoundMaxHRPercent
             )
         }
     }
@@ -211,7 +216,7 @@ fun WorkoutScreen(
                     ExerciseScreen(
                         viewModel,
                         state,
-                        hearthRateChart = { heartRateChartComposable(state.targetZone) }
+                        hearthRateChart = { heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent) }
                     )
                 }
                 is WorkoutState.Rest -> {

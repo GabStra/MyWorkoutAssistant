@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -28,8 +29,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -43,17 +42,18 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
+import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.cos
@@ -73,7 +73,8 @@ fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
     hr: Int,
     age: Int,
-    targetZone: Int? = null
+    lowerBoundMaxHRPercent: Float?,
+    upperBoundMaxHRPercent: Float?,
 ) {
     val context = LocalContext.current
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
@@ -93,24 +94,17 @@ fun HeartRateCircularChart(
         }
     }
 
-    if(targetZone != null) {
-        val currentZone = remember(mhrPercentage) {
-            mapPercentageToZone(mhrPercentage)
-        }
-
-        //val (lowerBound, upperBound) = remember(targetZone) { zoneRanges[targetZone] }
-        //val averageTargetPercentage = remember(lowerBound, upperBound) { (lowerBound + upperBound) / 2 }
-
-        var isInTargetZoneForTenSeconds by remember { mutableStateOf(false) }
+    if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null) {
+        var isInTargetZoneForFiveSeconds by remember { mutableStateOf(false) }
         var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
 
         var alarmJob by remember { mutableStateOf<Job?>(null) }
 
-        LaunchedEffect(currentZone) {
+        LaunchedEffect(mhrPercentage) {
             zoneTrackingJob?.cancel()
 
-            if(currentZone == targetZone) {
-                if(isInTargetZoneForTenSeconds) {
+            if(mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
+                if(isInTargetZoneForFiveSeconds) {
                     alarmJob?.cancel()
                     return@LaunchedEffect
                 }
@@ -119,14 +113,14 @@ fun HeartRateCircularChart(
                     val startTime = System.currentTimeMillis()
                     while(isActive) {
                         val timeInZone = System.currentTimeMillis() - startTime
-                        if(timeInZone >= 10000) { // 10 seconds
-                            isInTargetZoneForTenSeconds = true
+                        if(timeInZone >= 5000) { // 10 seconds
+                            isInTargetZoneForFiveSeconds = true
                             break
                         }
                         delay(100) // Check every 100ms
                     }
                 }
-            } else if(isInTargetZoneForTenSeconds) {
+            } else if(isInTargetZoneForFiveSeconds) {
                 alarmJob = scope.launch {
                     delay(5000)
                     Toast.makeText(context, "HR outside target zone", Toast.LENGTH_LONG).show()
@@ -161,14 +155,14 @@ fun HeartRateCircularChart(
         }
     }
 
-    HeartRateView(modifier, hr, mhrPercentage, colorsByZone)
+    HeartRateView(modifier, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
 }
 
 
 @Composable
-private fun RotatingIndicator(rotationAngle: Float, fillColor: Color, number: Int) {
+private fun RotatingIndicator(rotationAngle: Float, fillColor: Color) {
     val density = LocalDensity.current.density
-    val triangleSize = 10f
+    val triangleSize = 6f
 
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize()
@@ -236,7 +230,9 @@ private fun HeartRateView(
     modifier: Modifier,
     hr: Int,
     mhrPercentage: Float,
-    colorsByZone: Array<Color>
+    colorsByZone: Array<Color>,
+    lowerBoundMaxHRPercent: Float?,
+    upperBoundMaxHRPercent: Float?,
 ) {
 
     val segments = remember { getProgressIndicatorSegments() }
@@ -257,10 +253,6 @@ private fun HeartRateView(
 
     val startAngle = 115f
     val endAngle = 240f
-
-    val targetRotationAngle = remember(progress) {
-        getValueInRange(startAngle, endAngle, progress)
-    }
 
     Box(
         modifier = modifier,
@@ -313,9 +305,23 @@ private fun HeartRateView(
             trackColor = Color.DarkGray,
         )
 
-        /*if(hr != 0) {
-            RotatingIndicator(targetRotationAngle, colorsByZone[zone],zone)
-        }*/
+        Log.d("HeartRateCircularChart", "lowerBoundMaxHRPercent: $lowerBoundMaxHRPercent upperBoundMaxHRPercent: $upperBoundMaxHRPercent")
+
+        if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null){
+            val lowerBoundRotationAngle = remember {
+                val lowerBoundPercentage = mapPercentage(lowerBoundMaxHRPercent)
+                getValueInRange(startAngle, endAngle, lowerBoundPercentage)
+            }
+
+            RotatingIndicator(lowerBoundRotationAngle, MyColors.Green)
+
+            val upperBoundRotationAngle = remember {
+                val upperBoundPercentage = mapPercentage(upperBoundMaxHRPercent)
+                getValueInRange(startAngle, endAngle, upperBoundPercentage)
+            }
+
+            RotatingIndicator(upperBoundRotationAngle, MyColors.Red)
+        }
     }
 }
 
@@ -327,7 +333,8 @@ fun HeartRateStandard(
     appViewModel: AppViewModel,
     hrViewModel: SensorDataViewModel,
     userAge : Int,
-    targetZone: Int?
+    lowerBoundMaxHRPercent: Float?,
+    upperBoundMaxHRPercent: Float?,
 ) {
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
     val hr = currentHeartRate ?: 0
@@ -339,7 +346,7 @@ fun HeartRateStandard(
         }
     }
 
-    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, targetZone = targetZone)
+    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
 }
 
 @OptIn(FlowPreview::class)
@@ -349,7 +356,8 @@ fun HeartRatePolar(
     appViewModel: AppViewModel,
     polarViewModel: PolarViewModel,
     userAge : Int,
-    targetZone: Int?
+    lowerBoundMaxHRPercent: Float?,
+    upperBoundMaxHRPercent: Float?,
 ) {
     val hrData by polarViewModel.hrDataState.collectAsState()
     val hr = hrData ?: 0
@@ -361,5 +369,5 @@ fun HeartRatePolar(
         }
     }
 
-    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, targetZone = targetZone)
+    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
 }

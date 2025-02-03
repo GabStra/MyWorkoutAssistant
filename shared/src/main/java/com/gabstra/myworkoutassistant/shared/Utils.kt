@@ -302,6 +302,12 @@ fun getHeartRateFromPercentage(percentage: Float, age: Int): Int {
     return heartRate.toInt()
 }
 
+fun Double.round(decimals: Int): Double {
+    var multiplier = 1.0
+    repeat(decimals) { multiplier *= 10 }
+    return kotlin.math.round(this * multiplier) / multiplier
+}
+
 fun mapPercentage(percentage: Float): Float {
     return if (percentage <= 50) {
         percentage * 0.00332f

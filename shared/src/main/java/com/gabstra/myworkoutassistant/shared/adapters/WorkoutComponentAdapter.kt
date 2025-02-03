@@ -47,8 +47,11 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.addProperty("minReps", src.minReps)
                 jsonObject.addProperty("maxReps", src.maxReps)
 
-                if (src.targetZone != null) {
-                    jsonObject.addProperty("targetZone", src.targetZone)
+                if (src.lowerBoundMaxHRPercent != null) {
+                    jsonObject.addProperty("lowerBoundMaxHRPercent", src.lowerBoundMaxHRPercent)
+                }
+                if (src.upperBoundMaxHRPercent != null) {
+                    jsonObject.addProperty("upperBoundMaxHRPercent", src.upperBoundMaxHRPercent)
                 }
                 if (src.equipmentId != null) {
                     jsonObject.addProperty("equipmentId", src.equipmentId.toString())
@@ -130,8 +133,14 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     0
                 }
 
-                val targetZone = if (jsonObject.has("targetZone")) {
-                    jsonObject.get("targetZone").asInt
+                val lowerBoundMaxHRPercent = if (jsonObject.has("lowerBoundMaxHRPercent")) {
+                    jsonObject.get("lowerBoundMaxHRPercent").asFloat
+                } else {
+                    null
+                }
+
+                val upperBoundMaxHRPercent = if (jsonObject.has("upperBoundMaxHRPercent")) {
+                    jsonObject.get("upperBoundMaxHRPercent").asFloat
                 } else {
                     null
                 }
@@ -160,7 +169,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     maxLoadPercent,
                     minReps,
                     maxReps,
-                    targetZone,
+                    lowerBoundMaxHRPercent,
+                    upperBoundMaxHRPercent,
                     equipmentId,
                     bodyWeightPercentage
                 )
