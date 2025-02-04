@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.unit.dp
@@ -29,15 +30,14 @@ fun DarkModeContainer(
         modifier = modifier
             .background(MaterialTheme.colorScheme.background)
             .then(if (isRounded) Modifier.clip(RoundedCornerShape(10.dp)) else Modifier)
-            .drawBehind {
-                // Draw the white overlay on top of the background
-                if (whiteOverlayAlpha > 0f) {
+            .then(if(whiteOverlayAlpha > 0f) Modifier.drawWithCache {
+                onDrawBehind {
                     drawRect(
                         color = Color.White.copy(alpha = whiteOverlayAlpha),
                         size = this.size // This ensures the rectangle covers the entire Box
                     )
                 }
-            }
+            } else Modifier)
             .wrapContentSize(),
         contentAlignment = Alignment.Center,
     ) {
