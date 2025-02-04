@@ -192,7 +192,7 @@ fun RestScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 45.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -225,7 +225,6 @@ fun RestScreen(
         if (isTimerInEditMode && nextWorkoutStateSet!=null) {
             ControlButtonsVertical(
                 modifier = Modifier
-                    .wrapContentSize()
                     .clickable(
                         interactionSource = null,
                         indication = null
@@ -244,8 +243,7 @@ fun RestScreen(
                 val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
                 CustomHorizontalPager(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(15.dp),
+                        .fillMaxSize().padding(15.dp),
                     pagerState = pagerState,
                     userScrollEnabled = true
                 ) { page ->
@@ -253,11 +251,16 @@ fun RestScreen(
                         0 -> {
                             Column(
                                 modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                                verticalArrangement = Arrangement.Center,
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                textComposable()
-                                ExerciseInfo(viewModel, nextWorkoutStateSet)
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    textComposable()
+                                    ExerciseInfo(viewModel, nextWorkoutStateSet)
+                                }
                             }
                         }
                         1 -> {
@@ -265,7 +268,7 @@ fun RestScreen(
                                 Text(
                                     modifier = Modifier.fillMaxSize(),
                                     text = "Notes",
-                                    style = MaterialTheme.typography.body1,
+                                    style = MaterialTheme.typography.title3,
                                     textAlign = TextAlign.Center
                                 )
                                 val scrollState = rememberScrollState()
@@ -277,7 +280,7 @@ fun RestScreen(
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(0.dp, 25.dp, 0.dp, 25.dp)
+                                                .padding(vertical = 25.dp,)
                                                 .verticalScroll(scrollState)
                                         ) {
                                             Text(

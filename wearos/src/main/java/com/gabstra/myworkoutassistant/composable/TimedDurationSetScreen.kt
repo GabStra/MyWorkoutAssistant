@@ -276,7 +276,6 @@ fun TimedDurationSetScreen(
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ){
                 exerciseTitleComposable()
-                HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                 Box(
                     modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.Center

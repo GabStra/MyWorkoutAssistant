@@ -12,8 +12,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.FlingBehavior
 import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
@@ -42,6 +47,7 @@ import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.foundation.HierarchicalFocusCoordinator
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.HorizontalPageIndicator
+import androidx.wear.compose.material.PageIndicatorStyle
 import com.google.android.horologist.compose.pager.PageScreenIndicatorState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -93,9 +99,11 @@ fun CustomHorizontalPager(
     userScrollEnabled: Boolean = true,
     content: @Composable (Int) -> Unit
 ) {
+    val pageIndicatorState = remember(pagerState) { PageScreenIndicatorState(pagerState) }
+
     Box(modifier = modifier) {
         HorizontalPager(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().padding(bottom = 10.dp),
             state = pagerState,
             userScrollEnabled = userScrollEnabled,
         ) { page ->
@@ -103,5 +111,13 @@ fun CustomHorizontalPager(
                 content(page)
             }
         }
+
+        HorizontalPageIndicator(
+            modifier = Modifier.align(Alignment.BottomCenter),
+            indicatorStyle = PageIndicatorStyle.Linear,
+            pageIndicatorState = pageIndicatorState,
+        )
     }
 }
+
+

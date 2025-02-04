@@ -20,6 +20,8 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
@@ -29,6 +31,7 @@ import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.getNewSet
+import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -263,7 +266,7 @@ class AppViewModel : ViewModel() {
 
     private var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
 
-    private var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
+    var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
 
     val exercisesById: Map<UUID, Exercise>
         get() = selectedWorkout.value.workoutComponents
@@ -662,6 +665,21 @@ class AppViewModel : ViewModel() {
             }"
         )
 
+        val oldSets = exerciseSets.map { set ->
+            when (set) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    set.getWeight(equipment,relativeBodyWeight)
+
+                    "${ set.getWeight(equipment,relativeBodyWeight)} kg x ${set.reps}"
+                }
+                is WeightSet -> "${ set.getWeight(equipment)} kg x ${set.reps}"
+                else -> throw IllegalArgumentException("Unknown set type")
+            }
+        }
+
+        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")}")
 
         var exerciseProgression: ExerciseProgression? = null
 
@@ -1055,10 +1073,6 @@ class AppViewModel : ViewModel() {
 
                     val currentExercise = exercisesById[it.key]!!
 
-                    val validSets = currentExercise.sets.filter { set -> exerciseHistories.any { history -> history.setId == set.id } }
-                    val updatedExercise = currentExercise.copy(sets = validSets)
-                    updateWorkout(currentExercise, updatedExercise)
-
                     val equipment = currentExercise.equipmentId?.let { equipmentId ->
                         getEquipmentById(equipmentId)
                     }
@@ -1098,7 +1112,6 @@ class AppViewModel : ViewModel() {
                     }.average()
 
                     var exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
-
 
                     if (exerciseInfo == null) {
                         val newExerciseInfo = ExerciseInfo(
@@ -1163,11 +1176,30 @@ class AppViewModel : ViewModel() {
                     }
                 }
 
+                val setHistoriesByExerciseId = executedSetsHistory
+                    .filter { it.exerciseId != null }
+                    .groupBy { it.exerciseId }
+
+                val exercises = _selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+                var workoutComponents = _selectedWorkout.value.workoutComponents
+
+                for (exercise in exercises) {
+                    if(exercise.doNotStoreHistory) continue
+                    val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
+
+                    workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
+
+                    for (setHistory in setHistories) {
+                        val newSet = getNewSetFromSetHistory(setHistory)
+                        workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
+                    }
+                }
+
                 val currentWorkoutStore = workoutStoreRepository.getWorkoutStore()
                 val newWorkoutStore =
                     currentWorkoutStore.copy(workouts = currentWorkoutStore.workouts.map {
                         if (it.id == _selectedWorkout.value.id) {
-                            it.copy(workoutComponents = _selectedWorkout.value.workoutComponents)
+                            it.copy(workoutComponents = workoutComponents)
                         } else {
                             it
                         }

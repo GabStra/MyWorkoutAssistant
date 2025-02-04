@@ -218,15 +218,16 @@ fun ExerciseSetsViewer(
         if (exercise.exerciseType == ExerciseType.COUNTUP || exercise.exerciseType == ExerciseType.COUNTDOWN) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
+                    modifier = Modifier.weight(1f),
                     text = "#",
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
                 Text(
+                    modifier = Modifier.weight(1f),
                     text = "TIME",
                     style = headerStyle,
                     textAlign = TextAlign.Center
@@ -284,7 +285,6 @@ fun ExerciseInfo(
     ) {
 
         Box(modifier = Modifier
-            .width(150.dp)
             .clickable { marqueeEnabled = !marqueeEnabled }
             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
             contentAlignment = Alignment.Center

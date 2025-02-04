@@ -47,7 +47,6 @@ import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composable.ExerciseInfo
 import com.gabstra.myworkoutassistant.composable.ExerciseSetsViewer
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
@@ -164,9 +163,8 @@ fun SimplifiedHorizontalPager(
                 exerciseTitleComposable = exerciseTitleComposable
             )
             2 -> PageNextSets(updatedState,viewModel)
-            3 -> PageCompleteOrSkip(updatedState,viewModel)
-            4 -> PageNewSets(updatedState,viewModel)
-            5 -> PageNotes(exercise.notes)
+            3 -> PageNotes(exercise.notes)
+            4 -> PageButtons(updatedState,viewModel)
         }
     }
 }
@@ -179,14 +177,14 @@ fun PageNextSets(
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(15.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             modifier = Modifier.fillMaxWidth(),
-            text = "Exercise Sets",
-            style = MaterialTheme.typography.body1,
+            text = "Sets",
+            style = MaterialTheme.typography.title3,
             textAlign = TextAlign.Center
         )
         ExerciseSetsViewer(
@@ -199,7 +197,7 @@ fun PageNextSets(
 }
 
 @Composable
-fun PageCompleteOrSkip(
+fun PageButtons(
     updatedState:  WorkoutState.Set,
     viewModel: AppViewModel
 ) {
@@ -207,19 +205,25 @@ fun PageCompleteOrSkip(
 
     val context = LocalContext.current
 
-    var showCompleteDialog by remember { mutableStateOf(false) }
     var showGoBackDialog by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
+    val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
+    val exerciseSets = exercise.sets
+
+    val setIndex =  exerciseSets.indexOfFirst { it === updatedState.set }
+    val isLastSet = setIndex == exerciseSets.size - 1
+
+    val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
+    val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
+
     LaunchedEffect(updatedState) {
-        showCompleteDialog = false
         showGoBackDialog = false
     }
 
     ScalingLazyColumn(
         modifier = Modifier
-            .fillMaxSize()
-            .padding(10.dp),
+            .fillMaxSize(),
         state = listState
     ) {
         item{
@@ -233,34 +237,51 @@ fun PageCompleteOrSkip(
                 backgroundColor = MaterialTheme.colors.background
             )
         }
-    }
-
-    CustomDialogYesOnLongPress(
-        show = showCompleteDialog,
-        title = "Complete exercise",
-        message = "Do you want to proceed?",
-        handleYesClick = {
-            VibrateGentle(context)
-
-            viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false,context){
-                viewModel.completeExercise()
-                viewModel.lightScreenUp()
+        item{
+            ButtonWithText(
+                text = "Add Set",
+                onClick = {
+                    VibrateGentle(context)
+                    viewModel.storeSetData()
+                    viewModel.pushAndStoreWorkoutData(false,context){
+                        viewModel.addNewSetStandard()
+                    }
+                },
+                backgroundColor = MaterialTheme.colors.background
+            )
+        }
+        if(nextWorkoutState !is WorkoutState.Rest){
+            item{
+                ButtonWithText(
+                    text = "Add Rest",
+                    onClick = {
+                        VibrateGentle(context)
+                        viewModel.storeSetData()
+                        viewModel.pushAndStoreWorkoutData(false,context){
+                            viewModel.addNewRest()
+                        }
+                    },
+                    backgroundColor = MaterialTheme.colors.background
+                )
             }
+        }
 
-
-            showCompleteDialog = false
-        },
-        handleNoClick = {
-            showCompleteDialog = false
-            VibrateGentle(context)
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showCompleteDialog = false
-        },
-        holdTimeInMillis = 1000
-    )
+        if(isMovementSet && isLastSet){
+            item{
+                ButtonWithText(
+                    text = "Add Rest-Pause Set",
+                    onClick = {
+                        VibrateGentle(context)
+                        viewModel.storeSetData()
+                        viewModel.pushAndStoreWorkoutData(false,context){
+                            viewModel.addNewRestPauseSet()
+                        }
+                    },
+                    backgroundColor = MaterialTheme.colors.background
+                )
+            }
+        }
+    }
 
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
@@ -328,12 +349,11 @@ fun PageNotes(notes: String) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 10.dp)
     ) {
         Text(
             modifier = Modifier.fillMaxSize(),
             text = "Notes",
-            style = MaterialTheme.typography.body1,
+            style = MaterialTheme.typography.title3,
             textAlign = TextAlign.Center
         )
 
@@ -361,13 +381,13 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
 
     val scrollState = rememberScrollState()
     Column(
-        modifier = Modifier.fillMaxSize().padding(15.dp),
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             modifier = Modifier.fillMaxWidth(),
-            text = "Plates Helper",
-            style = MaterialTheme.typography.body1,
+            text = "Plates",
+            style = MaterialTheme.typography.title3,
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(10.dp))
@@ -439,76 +459,6 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
     }
 }
 
-@Composable
-fun PageNewSets(
-    updatedState:  WorkoutState.Set,
-    viewModel: AppViewModel
-){
-    val context = LocalContext.current
-
-    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
-
-    val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
-    val exerciseSets = exercise.sets
-
-    val setIndex =  exerciseSets.indexOfFirst { it === updatedState.set }
-    val isLastSet = setIndex == exerciseSets.size - 1
-
-    val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
-    val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
-
-    ScalingLazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(10.dp),
-        state = listState
-    ) {
-        item{
-            ButtonWithText(
-                text = "Add Set",
-                onClick = {
-                    VibrateGentle(context)
-                    viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false,context){
-                        viewModel.addNewSetStandard()
-                    }
-                },
-                backgroundColor = MaterialTheme.colors.background
-            )
-        }
-        if(nextWorkoutState !is WorkoutState.Rest){
-            item{
-                ButtonWithText(
-                    text = "Add Rest",
-                    onClick = {
-                        VibrateGentle(context)
-                        viewModel.storeSetData()
-                        viewModel.pushAndStoreWorkoutData(false,context){
-                            viewModel.addNewRest()
-                        }
-                    },
-                    backgroundColor = MaterialTheme.colors.background
-                )
-            }
-        }
-
-        if(isMovementSet && isLastSet){
-            item{
-                ButtonWithText(
-                    text = "Add Rest-Pause Set",
-                    onClick = {
-                        VibrateGentle(context)
-                        viewModel.storeSetData()
-                        viewModel.pushAndStoreWorkoutData(false,context){
-                            viewModel.addNewRestPauseSet()
-                        }
-                    },
-                    backgroundColor = MaterialTheme.colors.background
-                )
-            }
-        }
-    }
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -523,7 +473,7 @@ fun ExerciseScreen(
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
-        6
+        5
     })
 
     LaunchedEffect(state.set.id) {
@@ -555,38 +505,31 @@ fun ExerciseScreen(
         ) { updatedState ->
 
             val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                val exerciseTitleComposable = @Composable{
-                    Text(
-                        modifier = Modifier
-                            .width(100.dp)
-                            .clickable { marqueeEnabled = !marqueeEnabled }
-                            .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                        text = exercise.name,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                SimplifiedHorizontalPager(
-                    modifier = Modifier.fillMaxSize(),
-                    pagerState = pagerState,
-                    allowHorizontalScrolling = allowHorizontalScrolling,
-                    updatedState = updatedState,
-                    viewModel = viewModel,
-                    onScrollEnabledChange = {
-                        allowHorizontalScrolling = it
-                    },
-                    exerciseTitleComposable = exerciseTitleComposable,
+            val exerciseTitleComposable = @Composable{
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth().padding(horizontal = 5.dp)
+                        .clickable { marqueeEnabled = !marqueeEnabled }
+                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                    text = exercise.name,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.title3,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
+
+            SimplifiedHorizontalPager(
+                modifier = Modifier.fillMaxSize().padding(15.dp),
+                pagerState = pagerState,
+                allowHorizontalScrolling = allowHorizontalScrolling,
+                updatedState = updatedState,
+                viewModel = viewModel,
+                onScrollEnabledChange = {
+                    allowHorizontalScrolling = it
+                },
+                exerciseTitleComposable = exerciseTitleComposable,
+            )
         }
     }
 

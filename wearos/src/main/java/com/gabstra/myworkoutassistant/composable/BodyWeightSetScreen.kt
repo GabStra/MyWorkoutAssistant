@@ -388,7 +388,7 @@ fun BodyWeightSetScreen(
                 }
 
                 ProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     ratio = volumeProgression,
                     previousRatio = executedVolumeProgression,
                     progressBarColor = progressBarColor,
@@ -468,7 +468,6 @@ fun BodyWeightSetScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     exerciseTitleComposable()
-                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                     SetScreen(customModifier = Modifier.weight(1f).padding(horizontal = 10.dp))
                     if (extraInfo != null) {
                         HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)

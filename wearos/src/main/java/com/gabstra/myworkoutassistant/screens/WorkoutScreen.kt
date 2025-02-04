@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
+import com.gabstra.myworkoutassistant.composable.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
@@ -181,28 +182,7 @@ fun WorkoutScreen(
             }, label = "",
             contentAlignment = Alignment.TopCenter
         ) { updatedWorkoutState ->
-            if(updatedWorkoutState is WorkoutState.Set){
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(0.dp,5.dp,0.dp,0.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    CurrentExercise(viewModel,updatedWorkoutState as WorkoutState.Set)
-                    Spacer(modifier = Modifier.width(5.dp))
-                    CurrentTime()
-                }
-            }else{
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(0.dp,5.dp,0.dp,0.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    CurrentBattery()
-                    Spacer(modifier = Modifier.width(5.dp))
-                    CurrentTime()
-                }
-            }
-
+            WorkoutStateHeader(updatedWorkoutState,viewModel)
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
                     val state = updatedWorkoutState as WorkoutState.Preparing

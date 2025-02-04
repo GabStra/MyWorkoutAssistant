@@ -168,12 +168,8 @@ fun ProgressIndicator(
 
     fun formatRatio(ratio: Double): String {
         return when {
-            ratio < 1.0 -> String.format("-%.1f", (1 - ratio)*100)
-                .replace(',', '.')
-                .replace(".0", "")
-            ratio > 1.0 -> String.format("+%.1f", (ratio - 1)*100)
-                .replace(',', '.')
-                .replace(".0", "")
+            ratio < 1.0 -> ((1 - ratio)*100).round(2).toString()
+            ratio > 1.0 -> "+"+((ratio - 1)*100).round(2).toString()
             else -> "0"
         } + "%"
     }

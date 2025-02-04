@@ -373,7 +373,7 @@ fun WorkoutHistoryScreen(
                 heartRateEntryModel =
                     CartesianChartModel(LineCartesianLayerModel.build {
                         series(
-                            selectedWorkoutHistory!!.heartBeatRecords
+                            selectedWorkoutHistory!!.heartBeatRecords.map { getMaxHearthRatePercentage(it, userAge) }
                         )
                     })
             }
@@ -417,7 +417,7 @@ fun WorkoutHistoryScreen(
                     title = "Total volume over time",
                     markerPosition = volumeMarkerTarget!!.first.toFloat(),
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    minValue = volumes.minBy { it.second }.second.toDouble()
+                    minValue = if(volumes.size > 1) { volumes.minBy { it.second }.second.toDouble() } else { null}
                 )
             }
             if (durationEntryModel != null) {
@@ -429,7 +429,7 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    minValue = durations.minBy { it.second }.second.toDouble()
+                    minValue =  if(durations.size > 1) { durations.minBy { it.second }.second.toDouble() } else { null }
                 )
             }
             if (workoutDurationEntryModel != null) {
@@ -442,7 +442,7 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTime(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    minValue = workoutDurations.minBy { it.second }.second.toDouble()
+                    minValue =  if(workoutDurations.size > 1) { workoutDurations.minBy { it.second }.second.toDouble() } else { null }
                 )
             }
         }
@@ -511,8 +511,6 @@ fun WorkoutHistoryScreen(
             workoutSelector()
 
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
-                val minHeartRate = selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }.min()
-
                 ExpandableContainer(
                     isOpen = false,
                     modifier = Modifier.fillMaxWidth(),
@@ -647,9 +645,7 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier.fillMaxWidth(),
                     cartesianChartModel = heartRateEntryModel!!,
                     title = "Heart Rate during Workout",
-                    minHeartRate = minHeartRate,
                     userAge = userAge,
-                    isZoomEnabled = true
                 )
             }
 
