@@ -462,8 +462,23 @@ fun MyWorkoutAssistantNavHost(
 
                 var currentWorkout = selectedWorkout
 
+
                 while(!currentWorkout.isActive){
-                    val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                    if(currentWorkout.nextVersionId == null){
+                        Toast.makeText(context, "Active workout not found", Toast.LENGTH_SHORT).show()
+                        appViewModel.goBack()
+                        break
+                    }
+
+                    val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }
+
+                    if(nextWorkout == null){
+                        Toast.makeText(context, "Active workout not found", Toast.LENGTH_SHORT).show()
+
+                        appViewModel.goBack()
+                        break
+                    }
+
                     currentWorkout = nextWorkout
                 }
 
