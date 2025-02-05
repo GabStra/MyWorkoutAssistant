@@ -444,7 +444,7 @@ fun WeightSetScreen (
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = modifier.padding(horizontal = 15.dp)
+        modifier = modifier
     ){
         if (isRepsInEditMode || isWeightInEditMode) {
             ControlButtonsVertical(
@@ -475,23 +475,15 @@ fun WeightSetScreen (
         else
         {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ){
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    exerciseTitleComposable()
-                    SetScreen(customModifier = Modifier
-                        .weight(1f).padding(horizontal = 10.dp))
-                    if (extraInfo != null) {
-                        HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                        extraInfo(state)
-                    }
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                exerciseTitleComposable()
+                SetScreen(customModifier = Modifier
+                    .weight(1f).padding(horizontal = 10.dp))
+                if (extraInfo != null) {
+                    HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                    extraInfo(state)
                 }
             }
         }

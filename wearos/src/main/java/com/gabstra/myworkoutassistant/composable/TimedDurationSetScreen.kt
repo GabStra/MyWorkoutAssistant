@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.LocalDateTime
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -149,8 +150,12 @@ fun TimedDurationSetScreen(
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateTwiceAndBeep(context)
+            VibrateTwice(context)
             startTimerJob()
+
+            if(state.startTime == null){
+                state.startTime = LocalDateTime.now()
+            }
         }
     }
 
@@ -223,6 +228,11 @@ fun TimedDurationSetScreen(
                     onClick = {
                         VibrateGentle(context)
                         startTimerJob()
+
+                        if(state.startTime == null){
+                            state.startTime = LocalDateTime.now()
+                        }
+
                         showStartButton=false
                     },
                     colors = ButtonDefaults.buttonColors(backgroundColor = MyColors.Green)
@@ -247,6 +257,7 @@ fun TimedDurationSetScreen(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = modifier
     ) {
         if (isTimerInEditMode) {
@@ -271,7 +282,7 @@ fun TimedDurationSetScreen(
         else
         {
             Column(
-                modifier = Modifier.fillMaxSize().padding(top = 10.dp),
+                modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ){

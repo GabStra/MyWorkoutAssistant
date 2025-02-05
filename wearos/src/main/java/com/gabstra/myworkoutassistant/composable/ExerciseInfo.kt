@@ -274,23 +274,16 @@ fun ExerciseSetsViewer(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExerciseInfo(
+    modifier: Modifier,
     viewModel: AppViewModel,
     state: WorkoutState.Set,
 ) {
-    val exerciseIndex = viewModel.setsByExerciseId.keys.indexOf(state.exerciseId)
-    val exerciseCount = viewModel.setsByExerciseId.keys.count()
-
     val exercise = viewModel.exercisesById[state.exerciseId]!!
-
-    val exerciseSets = exercise.sets.filter { it !is RestSet }
-    val setIndex = exerciseSets.indexOf(state.set)
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(190.dp),
+        modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -310,10 +303,6 @@ fun ExerciseInfo(
         }
 
         ExerciseSetsViewer(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 10.dp)
-                .padding(bottom = 10.dp),
             viewModel = viewModel,
             exercise = exercise,
             currentSet = state.set

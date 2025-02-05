@@ -63,6 +63,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import java.time.LocalDateTime
 
 
 @Composable
@@ -79,43 +80,61 @@ fun ExerciseDetail(
     val context = LocalContext.current
 
     when (updatedState.set) {
-        is WeightSet -> WeightSetScreen(
-            viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
-            state = updatedState,
-            forceStopEditMode = false,
-            onEditModeDisabled = onEditModeDisabled,
-            onEditModeEnabled = onEditModeEnabled,
-            extraInfo = extraInfo,
-            exerciseTitleComposable = exerciseTitleComposable
-        )
-        is BodyWeightSet -> BodyWeightSetScreen(
-            viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
-            state = updatedState,
-            forceStopEditMode = false,
-            onEditModeDisabled = onEditModeDisabled,
-            onEditModeEnabled = onEditModeEnabled,
-            extraInfo = extraInfo,
-            exerciseTitleComposable = exerciseTitleComposable
-        )
-        is TimedDurationSet -> TimedDurationSetScreen(
-            viewModel = viewModel,
-            modifier = Modifier.fillMaxSize(),
-            state = updatedState,
-            onTimerEnd = {
-                viewModel.storeSetData()
-                viewModel.pushAndStoreWorkoutData(false,context){
-                    viewModel.upsertWorkoutRecord(updatedState.set.id)
-                    viewModel.goToNextState()
-                    viewModel.lightScreenUp()
+        is WeightSet -> {
+            LaunchedEffect(updatedState){
+                if(updatedState.startTime == null){
+                    updatedState.startTime = LocalDateTime.now()
                 }
-            },
-            onTimerDisabled = onTimerDisabled,
-            onTimerEnabled = onTimerEnabled,
-            extraInfo = extraInfo,
-            exerciseTitleComposable = exerciseTitleComposable
-        )
+            }
+
+            WeightSetScreen(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize(),
+                state = updatedState,
+                forceStopEditMode = false,
+                onEditModeDisabled = onEditModeDisabled,
+                onEditModeEnabled = onEditModeEnabled,
+                extraInfo = extraInfo,
+                exerciseTitleComposable = exerciseTitleComposable
+            )
+        }
+        is BodyWeightSet -> {
+            LaunchedEffect(updatedState){
+                if(updatedState.startTime == null){
+                    updatedState.startTime = LocalDateTime.now()
+                }
+            }
+
+            BodyWeightSetScreen(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize(),
+                state = updatedState,
+                forceStopEditMode = false,
+                onEditModeDisabled = onEditModeDisabled,
+                onEditModeEnabled = onEditModeEnabled,
+                extraInfo = extraInfo,
+                exerciseTitleComposable = exerciseTitleComposable
+            )
+        }
+        is TimedDurationSet -> {
+            TimedDurationSetScreen(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize(),
+                state = updatedState,
+                onTimerEnd = {
+                    viewModel.storeSetData()
+                    viewModel.pushAndStoreWorkoutData(false,context){
+                        viewModel.upsertWorkoutRecord(updatedState.set.id)
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                    }
+                },
+                onTimerDisabled = onTimerDisabled,
+                onTimerEnabled = onTimerEnabled,
+                extraInfo = extraInfo,
+                exerciseTitleComposable = exerciseTitleComposable
+            )
+        }
         is EnduranceSet -> EnduranceSetScreen(
             viewModel = viewModel,
             modifier = Modifier.fillMaxSize(),
@@ -188,7 +207,6 @@ fun PageNextSets(
             textAlign = TextAlign.Center
         )
         ExerciseSetsViewer(
-            modifier = Modifier.fillMaxSize(),
             viewModel = viewModel,
             exercise = exercise,
             currentSet = updatedState.set
@@ -360,7 +378,7 @@ fun PageNotes(notes: String) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp, 25.dp, 20.dp, 25.dp)
+                .padding(vertical = 25.dp)
                 .verticalScroll(scrollState)
         ) {
             Text(
@@ -508,7 +526,7 @@ fun ExerciseScreen(
             val exerciseTitleComposable = @Composable{
                 Text(
                     modifier = Modifier
-                        .fillMaxWidth().padding(horizontal = 5.dp)
+                        .fillMaxWidth().padding(horizontal = 25.dp)
                         .clickable { marqueeEnabled = !marqueeEnabled }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     text = exercise.name,
@@ -520,7 +538,7 @@ fun ExerciseScreen(
             }
 
             SimplifiedHorizontalPager(
-                modifier = Modifier.fillMaxSize().padding(15.dp),
+                modifier = Modifier.fillMaxSize().padding(20.dp),
                 pagerState = pagerState,
                 allowHorizontalScrolling = allowHorizontalScrolling,
                 updatedState = updatedState,

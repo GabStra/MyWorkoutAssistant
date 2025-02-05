@@ -65,6 +65,7 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.math.roundToInt
 
 
 sealed class WorkoutState {
@@ -79,6 +80,7 @@ sealed class WorkoutState {
         val previousSetData: SetData?,
         var currentSetData: SetData,
         val hasNoHistory: Boolean,
+        var startTime : LocalDateTime? = null,
         var skipped: Boolean,
         val lowerBoundMaxHRPercent: Float? = null,
         val upperBoundMaxHRPercent: Float? = null,
@@ -95,6 +97,7 @@ sealed class WorkoutState {
         val order: UInt,
         var currentSetData: SetData,
         val exerciseId: UUID? = null,
+        var startTime : LocalDateTime? = null,
     ) : WorkoutState()
 
     data class Finished(val startWorkoutTime: LocalDateTime) : WorkoutState()
@@ -583,6 +586,7 @@ class AppViewModel : ViewModel() {
         var exerciseVolume = 0.0
         var oneRepMax = 0.0
         var averageLoad = 0.0
+        var baselineReps = 0
 
         exerciseVolume = exerciseSets.sumOf {
             when (it) {
@@ -624,6 +628,32 @@ class AppViewModel : ViewModel() {
                 else -> throw IllegalArgumentException("Unknown set type")
             }
         }.average()
+
+
+        val reps = exerciseSets.map {
+            when (it) {
+                is BodyWeightSet -> it.reps
+                is WeightSet -> it.reps
+                else -> 0
+            }
+        }
+
+        fun calculateBaselineReps(reps: List<Int>): Int {
+            //val sortedReps = reps.sorted()
+            // val size = sortedReps.size
+
+            return reps.min()
+
+           /* return if (size % 2 == 1) {
+                // Odd number of elements: return the middle one.
+                sortedReps[size / 2]
+            } else {
+                // Even number of elements: return the average of the two middle elements.
+                ((sortedReps[size / 2 - 1] + sortedReps[size / 2]) / 2.0).roundToInt()
+            }*/
+        }
+
+        baselineReps = calculateBaselineReps(reps)
 
         if (exerciseVolume == 0.0 || oneRepMax == 0.0 || averageLoad == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
@@ -682,7 +712,7 @@ class AppViewModel : ViewModel() {
                     if (equipment is Barbell) {
                         "${(set.getWeight(equipment) - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
                     } else {
-                        "$${set.getWeight(equipment) / equipmentVolumeMultiplier} kg x ${set.reps}"
+                        "${set.getWeight(equipment) / equipmentVolumeMultiplier} kg x ${set.reps}"
                     }
                 }
                 else -> throw IllegalArgumentException("Unknown set type")
@@ -699,10 +729,12 @@ class AppViewModel : ViewModel() {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
                 exerciseVolume,
                 averageLoad,
+                baselineReps,
                 oneRepMax,
                 availableWeights,
                 maxLoadPercent,
                 repsRange,
+                minSets = exerciseSets.size
             )
         }
 
@@ -714,24 +746,24 @@ class AppViewModel : ViewModel() {
                     if (equipment is Barbell) {
                         Log.d(
                             "WorkoutViewModel",
-                            "Set ${index + 1}: ${set.reps} reps, ${(set.weight - relativeBodyWeight - equipment.barWeight) / equipmentVolumeMultiplier} kg"
+                            "Set ${index + 1}: ${(set.weight - relativeBodyWeight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
                         )
                     } else {
                         Log.d(
                             "WorkoutViewModel",
-                            "Set ${index + 1}: ${set.reps} reps, ${set.weight - relativeBodyWeight} kg"
+                            "Set ${index + 1}: ${set.weight - relativeBodyWeight} kg x ${set.reps}"
                         )
                     }
                 } else {
                     if (equipment is Barbell) {
                         Log.d(
                             "WorkoutViewModel",
-                            "Set ${index + 1}: ${set.reps} reps, ${(set.weight - equipment.barWeight) / equipmentVolumeMultiplier} kg"
+                            "Set ${index + 1}: ${(set.weight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
                         )
                     } else {
                         Log.d(
                             "WorkoutViewModel",
-                            "Set ${index + 1}: ${set.reps} reps, ${set.weight / equipmentVolumeMultiplier} kg"
+                            "Set ${index + 1}: ${set.weight / equipmentVolumeMultiplier} kg x ${set.reps}"
                         )
                     }
 
@@ -742,7 +774,7 @@ class AppViewModel : ViewModel() {
             Log.d(
                 "WorkoutViewModel",
                 "Progression found - Volume: ${exerciseProgression.originalVolume} -> ${exerciseProgression.totalVolume} Intensity: ${averageLoad} -> ${
-                    exerciseProgression.averageLoad
+                    exerciseProgression.averageIntensity
                 }"
             )
         } else {
@@ -1267,7 +1299,9 @@ class AppViewModel : ViewModel() {
                 setData = currentState.currentSetData,
                 order = currentState.order,
                 skipped = currentState.skipped,
-                exerciseId = currentState.exerciseId
+                exerciseId = currentState.exerciseId,
+                startTime = currentState.startTime!!,
+                endTime = LocalDateTime.now()
             )
 
             is WorkoutState.Rest -> SetHistory(
@@ -1276,7 +1310,9 @@ class AppViewModel : ViewModel() {
                 setData = currentState.currentSetData,
                 order = currentState.order,
                 skipped = false,
-                exerciseId = currentState.exerciseId
+                exerciseId = currentState.exerciseId,
+                startTime = currentState.startTime!!,
+                endTime = LocalDateTime.now()
             )
 
             else -> return
@@ -1438,6 +1474,7 @@ class AppViewModel : ViewModel() {
                     previousSetData,
                     currentSetData,
                     historySet == null,
+                    startTime = null,
                     false,
                     lowerBoundMaxHRPercent = exercise.lowerBoundMaxHRPercent,
                     upperBoundMaxHRPercent = exercise.upperBoundMaxHRPercent,

@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.LocalDateTime
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -211,8 +212,12 @@ fun EnduranceSetScreen (
     LaunchedEffect(set) {
         if (set.autoStart) {
             delay(500)
-            VibrateTwiceAndBeep(context)
+            VibrateTwice(context)
             startTimerJob()
+
+            if(state.startTime == null){
+                state.startTime = LocalDateTime.now()
+            }
         }
     }
 
@@ -231,6 +236,10 @@ fun EnduranceSetScreen (
                         VibrateGentle(context)
                         startTimerJob()
                         showStartButton = false
+
+                        if(state.startTime == null){
+                            state.startTime = LocalDateTime.now()
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(backgroundColor = MyColors.Green)
                 ) {
@@ -254,6 +263,7 @@ fun EnduranceSetScreen (
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = modifier
     ) {
         if (isTimerInEditMode) {
@@ -278,7 +288,7 @@ fun EnduranceSetScreen (
         else
         {
             Column(
-                modifier = Modifier.fillMaxSize().padding(top = 10.dp),
+                modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ){

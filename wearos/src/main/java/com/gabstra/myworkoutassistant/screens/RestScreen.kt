@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinim
 import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -66,8 +67,7 @@ import kotlinx.coroutines.Job
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-
+import java.time.LocalDateTime
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -158,7 +158,7 @@ fun RestScreen(
             state.currentSetData = currentSetData.copy(
                 endTimer = 0
             )
-            VibrateTwiceAndBeep(context)
+            VibrateTwice(context)
             onTimerEnd()
         }
 
@@ -170,6 +170,10 @@ fun RestScreen(
     LaunchedEffect(set.id) {
         delay(500)
         startTimerJob()
+
+        if(state.startTime == null){
+            state.startTime = LocalDateTime.now()
+        }
     }
 
     val isPaused by viewModel.isPaused
@@ -244,7 +248,7 @@ fun RestScreen(
                 CustomHorizontalPager(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(15.dp),
+                        .padding(20.dp),
                     pagerState = pagerState,
                     userScrollEnabled = true
                 ) { page ->
@@ -260,7 +264,11 @@ fun RestScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     textComposable()
-                                    ExerciseInfo(viewModel, nextWorkoutStateSet)
+                                    ExerciseInfo(
+                                        Modifier.wrapContentSize().padding(bottom = 25.dp),
+                                        viewModel,
+                                        nextWorkoutStateSet
+                                    )
                                 }
                             }
                         }
@@ -281,7 +289,7 @@ fun RestScreen(
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 25.dp,)
+                                                .padding(vertical = 25.dp)
                                                 .verticalScroll(scrollState)
                                         ) {
                                             Text(

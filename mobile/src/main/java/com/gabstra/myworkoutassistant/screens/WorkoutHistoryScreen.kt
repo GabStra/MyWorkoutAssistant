@@ -89,6 +89,7 @@ import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -108,6 +109,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import java.time.Duration
+import java.time.LocalDateTime
 import java.util.Calendar
 import kotlin.math.floor
 
@@ -221,6 +224,7 @@ fun WorkoutHistoryScreen(
     val volumes = remember { mutableListOf<Pair<Int, Double>>() }
     val durations = remember { mutableListOf<Pair<Int, Float>>() }
     val workoutDurations = remember { mutableListOf<Pair<Int, Float>>() }
+
 
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
         volumes.clear()
@@ -386,6 +390,8 @@ fun WorkoutHistoryScreen(
             setHistoriesByExerciseId = setHistories
                 .filter { it.exerciseId != null }
                 .groupBy { it.exerciseId!! }
+
+
 
             val avgHeartRate = selectedWorkoutHistory!!.heartBeatRecords.average()
 
@@ -620,9 +626,7 @@ fun WorkoutHistoryScreen(
                                         Spacer(Modifier.weight(1f))
                                         Text(
                                             text = "${(progress * 100).toInt()}% ${
-                                                formatTime(
-                                                    floor(count / 2.0).toInt()
-                                                )
+                                                formatTime(count)
                                             }",
                                             Modifier.weight(1f),
                                             style = MaterialTheme.typography.bodySmall,
@@ -664,6 +668,29 @@ fun WorkoutHistoryScreen(
                 val exercise = exerciseById[key]!!
                 val setHistories = setHistoriesByExerciseId[key]!!
 
+                val hasTarget = exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
+
+                var targetCounter = 0
+                var targetTotal = 0
+
+                LaunchedEffect(hasTarget){
+                    if(hasTarget) {
+                        targetCounter = 0
+
+                        setHistories.filter { it.setData !is RestSetData && it.startTime!= null && it.endTime != null }.forEach { setHistory ->
+                            val hrTimeOffset =  Duration.between(selectedWorkoutHistory!!.startTime,setHistory.startTime).seconds
+                            val setDuration = Duration.between(setHistory.startTime,setHistory.endTime).seconds
+
+                            val hrEntriesCount = selectedWorkoutHistory!!.heartBeatRecords.filterIndexed { index, value ->
+                                index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= exercise.lowerBoundMaxHRPercent!!.toInt() && value <= exercise.upperBoundMaxHRPercent!!.toInt()
+                            }.size
+
+                            targetCounter += hrEntriesCount
+                            targetTotal += setDuration.toInt()
+                        }
+                    }
+                }
+
                 ExpandableContainer(
                     isOpen = false,
                     modifier = Modifier
@@ -686,7 +713,58 @@ fun WorkoutHistoryScreen(
                         )
                     },
                     content = {
-                        SetHistoriesRenderer(setHistories = setHistories)
+                        if(hasTarget){
+                            Column{
+                                Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                                    var progress = targetCounter.toFloat() / targetTotal
+                                    if(progress.isNaN()) {
+                                        progress = 0f
+                                    }
+
+                                    Text(
+                                        text = "Target HR",
+                                        color = Color.White.copy(alpha = .87f),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Spacer(Modifier.height(5.dp))
+                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                        val lowHr = getHeartRateFromPercentage(exercise.lowerBoundMaxHRPercent!!, userAge)
+                                        val highHr = getHeartRateFromPercentage(exercise.upperBoundMaxHRPercent!!, userAge)
+                                        Text(
+                                            "$lowHr - $highHr bpm",
+                                            Modifier.weight(1f),
+                                            color = Color.White.copy(alpha = .6f),
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                        Spacer(Modifier.weight(1f))
+                                        Text(
+                                            text = "${(progress * 100).toInt()}% ${
+                                                formatTime(
+                                                    targetCounter
+                                                )
+                                            }",
+                                            Modifier.weight(1f),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            textAlign = TextAlign.End,
+                                            color = Color.White.copy(alpha = .6f),
+                                        )
+                                    }
+                                    Spacer(Modifier.height(5.dp))
+                                    SimpleProgressIndicator(
+                                        progress = progress,
+                                        trackColor = Color.DarkGray,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(16.dp)
+                                            .clip(RoundedCornerShape(16.dp)),
+                                        progressBarColor = Color.hsl(113f, 0.79f, 0.34f),
+                                    )
+                                }
+                                SetHistoriesRenderer(setHistories = setHistories)
+                            }
+                        }else{
+                            SetHistoriesRenderer(setHistories = setHistories)
+                        }
                     }
                 )
             }

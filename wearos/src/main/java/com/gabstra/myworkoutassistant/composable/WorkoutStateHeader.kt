@@ -1,11 +1,13 @@
 package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
@@ -53,15 +55,14 @@ fun WorkoutStateHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(0.dp,5.dp,0.dp,0.dp)
-            .combinedClickable(
-            onClick = { },
-            onLongClick = {
-                if(workoutState is WorkoutState.Preparing) return@combinedClickable
+            .height(20.dp)
+            .padding(55.dp,5.dp,55.dp,0.dp)
+            .clickable {
+                if(workoutState is WorkoutState.Preparing) return@clickable
                 displayMode = (displayMode + 1) % 2
                 VibrateGentle(context)
             }
-        ),
+        ,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {

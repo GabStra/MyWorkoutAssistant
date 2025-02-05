@@ -84,7 +84,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         is TimedDurationSetData -> {
                             if(setData.endTimer == 0) {
                                 Text(
-                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
+                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.White.copy(alpha = .87f)
                                 )
@@ -100,7 +100,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         is EnduranceSetData -> {
                             if(setData.endTimer == 0) {
                                 Text(
-                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
+                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.White.copy(alpha = .87f)
                                 )

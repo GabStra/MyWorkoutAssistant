@@ -4,6 +4,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -265,13 +266,10 @@ private fun HeartRateView(
                 .width(60.dp)
                 .height(20.dp)
                 .padding(top = 5.dp)
-                .combinedClickable(
-                    onClick = { },
-                    onLongClick = {
-                        displayMode = (displayMode + 1) % 3
-                        VibrateGentle(context)
-                    }
-                )
+                .clickable {
+                    displayMode = (displayMode + 1) % 3
+                    VibrateGentle(context)
+                }
         ) {
             if(showHeartIcon){
                 HeartIcon(
