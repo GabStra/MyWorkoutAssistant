@@ -59,7 +59,7 @@ fun ExerciseRenderer(
         }
     }else{
         ExpandableContainer(
-            isOpen = true,
+            isOpen = false,
             modifier = modifier,
             isExpandable = true,
             title = { m ->

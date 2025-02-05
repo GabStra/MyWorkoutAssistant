@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
@@ -125,12 +126,10 @@ fun Menu(
 }
 
 
-
-
 @Composable
 fun WorkoutComponentRenderer(
     workoutComponent: WorkoutComponent,
-    showRest:Boolean,
+    showRest: Boolean,
     appViewModel: AppViewModel
 ) {
     when (workoutComponent) {
@@ -141,23 +140,28 @@ fun WorkoutComponentRenderer(
         )
 
         is Rest ->
-            DarkModeContainer(whiteOverlayAlpha = .1f) {
-                Row(
-                    modifier = Modifier.padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        modifier = Modifier.weight(1f),
-                        text = "Rest for: "+ formatTime(workoutComponent.timeInSeconds),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
-                        textAlign = TextAlign.Center
-                    )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DarkModeContainer(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
+                    Row(
+                        modifier = Modifier.padding(15.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Rest for: " + formatTime(workoutComponent.timeInSeconds),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
 
-        }
+    }
 }
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -212,8 +216,10 @@ fun WorkoutDetailScreen(
                                     add(selectedIndex - 1, selectedComponent)
                                 }
 
-                            val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
-                            val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
+                            val adjustedComponents =
+                                ensureRestSeparatedByExercises(newWorkoutComponents)
+                            val updatedWorkout =
+                                workout.copy(workoutComponents = adjustedComponents)
                             appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         }) {
                         Icon(
@@ -237,14 +243,15 @@ fun WorkoutDetailScreen(
                                     add(selectedIndex + 1, selectedComponent)
                                 }
 
-                            val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
-                            val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
+                            val adjustedComponents =
+                                ensureRestSeparatedByExercises(newWorkoutComponents)
+                            val updatedWorkout =
+                                workout.copy(workoutComponents = adjustedComponents)
                             appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         }) {
                         Icon(
                             imageVector = Icons.Filled.ArrowDownward,
-                            contentDescription = "Go Lower"
-                            ,tint = Color.White.copy(alpha = .87f)
+                            contentDescription = "Go Lower", tint = Color.White.copy(alpha = .87f)
                         )
                     }
                     if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
@@ -316,11 +323,16 @@ fun WorkoutDetailScreen(
 
                         }) {
                         val isEnabled = selectedWorkoutComponents.isNotEmpty()
-                        val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
-                            alpha = .3f
-                        )
+                        val color =
+                            if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
+                                alpha = .3f
+                            )
 
-                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy",
+                            tint = color
+                        )
                     }
                     IconButton(onClick = {
                         val newWorkoutComponents = workout.workoutComponents.filter { item ->
@@ -332,8 +344,10 @@ fun WorkoutDetailScreen(
                         selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
 
-                        val selectedExerciseIds = selectedWorkoutComponents.toList().filterIsInstance<Exercise>().map { it.id }
-                        if(selectedExerciseIds.isNotEmpty()){
+                        val selectedExerciseIds =
+                            selectedWorkoutComponents.toList().filterIsInstance<Exercise>()
+                                .map { it.id }
+                        if (selectedExerciseIds.isNotEmpty()) {
                             scope.launch {
                                 withContext(Dispatchers.IO) {
                                     selectedExerciseIds.forEach {
@@ -344,7 +358,11 @@ fun WorkoutDetailScreen(
                             }
                         }
                     }) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = Color.White.copy(alpha = .87f))
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = Color.White.copy(alpha = .87f)
+                        )
                     }
                 }
             }
@@ -430,7 +448,7 @@ fun WorkoutDetailScreen(
                                     }
 
                                 ),
-                                content = {  Text("New Exercise") }
+                                content = { Text("New Exercise") }
                             )
                         }
                     }
@@ -531,19 +549,26 @@ fun WorkoutDetailScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
                 ) {
-                    Checkbox(
-                        checked = showRest,
-                        onCheckedChange = { showRest = it },
-                        colors =  CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    Row(
+                        modifier = Modifier.padding(vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Checkbox(
+                            modifier = Modifier.size(10.dp),
+                            checked = showRest,
+                            onCheckedChange = { showRest = it },
+                            colors = CheckboxDefaults.colors().copy(
+                                checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                            )
                         )
-                    )
-                    Text(text = "Show Rests")
+                        Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
 
                 GenericSelectableList(
-                    it = PaddingValues(0.dp, 5.dp),
-                    items = if(!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
+                    it = null,
+                    items = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
                     selectedItems = selectedWorkoutComponents,
                     isSelectionModeActive,
                     onItemClick = {
@@ -573,9 +598,10 @@ fun WorkoutDetailScreen(
                         selectedWorkoutComponents = newSelection
                     },
                     onOrderChange = { newWorkoutComponents ->
-                        if(!showRest) return@GenericSelectableList
+                        if (!showRest) return@GenericSelectableList
 
-                        val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
+                        val adjustedComponents =
+                            ensureRestSeparatedByExercises(newWorkoutComponents)
                         val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                     },
@@ -598,11 +624,11 @@ fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<Wor
     var lastWasExercise = false
 
     for (component in components) {
-        if(component !is Rest) {
+        if (component !is Rest) {
             adjustedComponents.add(component)
             lastWasExercise = true
-        }else{
-            if(lastWasExercise){
+        } else {
+            if (lastWasExercise) {
                 adjustedComponents.add(component)
             }
 

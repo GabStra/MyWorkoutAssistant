@@ -9,15 +9,21 @@ import android.media.ToneGenerator
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.widget.Toast
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
@@ -68,6 +74,51 @@ fun FormatTime(seconds: Int): String {
     }
 }
 
+@Composable
+fun Modifier.verticalColumnScrollbar(
+    scrollState: ScrollState,
+    width: Dp = 4.dp,
+    showScrollBarTrack: Boolean = true,
+    scrollBarTrackColor: Color = Color.Gray,
+    scrollBarColor: Color = Color.Black,
+    scrollBarCornerRadius: Float = 4f,
+    endPadding: Float = 12f
+): Modifier {
+    return drawWithContent {
+        // Draw the column's content
+        drawContent()
+        // Dimensions and calculations
+        val viewportHeight = this.size.height
+        val totalContentHeight = scrollState.maxValue.toFloat() + viewportHeight
+        val scrollValue = scrollState.value.toFloat()
+        // Compute scrollbar height and position
+
+        val visibleRatio = viewportHeight / totalContentHeight
+
+        val scrollBarHeight =
+            (viewportHeight / totalContentHeight) * viewportHeight
+        val scrollBarStartOffset =
+            (scrollValue / totalContentHeight) * viewportHeight
+        // Draw the track (optional)
+        if (showScrollBarTrack && visibleRatio < 1) {
+            drawRoundRect(
+                cornerRadius = CornerRadius(scrollBarCornerRadius),
+                color = scrollBarTrackColor,
+                topLeft = Offset(this.size.width - endPadding, 0f),
+                size = Size(width.toPx(), viewportHeight),
+            )
+        }
+
+        if(visibleRatio >= 1) return@drawWithContent
+        // Draw the scrollbar
+        drawRoundRect(
+            cornerRadius = CornerRadius(scrollBarCornerRadius),
+            color = scrollBarColor,
+            topLeft = Offset(this.size.width - endPadding, scrollBarStartOffset),
+            size = Size(width.toPx(), scrollBarHeight)
+        )
+    }
+}
 
 @OptIn(DelicateCoroutinesApi::class)
 fun VibrateHard(context: Context) {

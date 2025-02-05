@@ -672,9 +672,19 @@ class AppViewModel : ViewModel() {
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     set.getWeight(equipment,relativeBodyWeight)
 
-                    "${ set.getWeight(equipment,relativeBodyWeight)} kg x ${set.reps}"
+                    if (equipment is Barbell) {
+                        "${(set.getWeight(equipment,relativeBodyWeight) - relativeBodyWeight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
+                    } else {
+                        "${ set.getWeight(equipment,relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps}"
+                    }
                 }
-                is WeightSet -> "${ set.getWeight(equipment)} kg x ${set.reps}"
+                is WeightSet -> {
+                    if (equipment is Barbell) {
+                        "${(set.getWeight(equipment) - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
+                    } else {
+                        "$${set.getWeight(equipment) / equipmentVolumeMultiplier} kg x ${set.reps}"
+                    }
+                }
                 else -> throw IllegalArgumentException("Unknown set type")
             }
         }

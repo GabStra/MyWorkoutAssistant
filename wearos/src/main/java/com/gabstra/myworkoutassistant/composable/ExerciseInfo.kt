@@ -35,6 +35,7 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -192,7 +193,12 @@ fun ExerciseSetsViewer(
             }
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .verticalColumnScrollbar(
+                        scrollState = scrollState,
+                        scrollBarColor = Color.White,
+                        scrollBarTrackColor = Color.DarkGray
+                    )
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
@@ -235,7 +241,12 @@ fun ExerciseSetsViewer(
             }
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .verticalColumnScrollbar(
+                        scrollState = scrollState,
+                        scrollBarColor = Color.White,
+                        scrollBarTrackColor = Color.DarkGray
+                    )
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {

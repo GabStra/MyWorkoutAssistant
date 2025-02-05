@@ -345,7 +345,7 @@ fun ExerciseHistoryScreen(
                             title = "Volume",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = volumes.minBy { it.second }.second.toDouble()
+                            minValue = if(volumes.size > 1) { volumes.minBy { it.second }.second.toDouble() } else { null}
                         )
                     }
 
@@ -355,7 +355,7 @@ fun ExerciseHistoryScreen(
                             markerPosition = oneRepMaxMarkerTarget!!.first.toFloat(),
                             title = "One Rep Max",
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = oneRepMaxes.minBy { it.second }.second.toDouble()
+                            minValue = if(oneRepMaxes.size > 1) { oneRepMaxes.minBy { it.second }.second.toDouble() } else { null}
                         )
                     }
 
@@ -367,7 +367,7 @@ fun ExerciseHistoryScreen(
                             markerTextFormatter = { formatTime(it.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = durations.minBy { it.second }.second.toDouble()
+                            minValue = if(durations.size > 1) { durations.minBy { it.second }.second.toDouble() } else { null}
                         )
                     }
                 }

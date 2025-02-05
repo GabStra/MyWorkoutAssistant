@@ -239,7 +239,11 @@ fun WorkoutHistoryScreen(
                 val selectedExercise = findWorkoutComponentByIdInWorkout(
                     selectedWorkout,
                     setHistory.exerciseId!!
-                ) as Exercise
+                ) as Exercise?
+
+                if(selectedExercise == null) {
+                    continue
+                }
 
                 val equipment = selectedExercise?.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
@@ -656,14 +660,19 @@ fun WorkoutHistoryScreen(
                 textAlign = TextAlign.Center,
                 color = Color.White.copy(alpha = .87f)
             )
-            setHistoriesByExerciseId.keys.toList().forEach() { key ->
+            setHistoriesByExerciseId.keys.toList().filter { exerciseById.containsKey(it) }.forEach() { key ->
                 val exercise = exerciseById[key]!!
                 val setHistories = setHistoriesByExerciseId[key]!!
 
                 ExpandableContainer(
-                    isOpen = true,
+                    isOpen = false,
                     modifier = Modifier
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .clickable {
+                            appViewModel.setScreenData(
+                                ScreenData.ExerciseHistory(workout.id, exercise.id)
+                            )
+                        },
                     isExpandable = setHistories.isNotEmpty(),
                     title = { m ->
                         Text(

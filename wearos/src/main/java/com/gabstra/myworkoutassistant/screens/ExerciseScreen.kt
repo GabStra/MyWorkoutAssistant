@@ -493,7 +493,7 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(10.dp)
+            .padding(5.dp)
             .circleMask(),
         contentAlignment = Alignment.Center
     ) {

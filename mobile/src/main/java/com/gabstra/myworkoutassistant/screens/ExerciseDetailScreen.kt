@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -69,87 +71,132 @@ import kotlinx.coroutines.flow.emptyFlow
 
 @Composable
 fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
-    Row(
-        modifier = Modifier.padding(15.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        when (set) {
-            is WeightSet -> {
+    when (set) {
+        is WeightSet -> {
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.padding(15.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "Weight: ${set.weight} kg",
+                            color = Color.White.copy(alpha = .87f),
+                            style = MaterialTheme.typography.bodyMedium,
+
+                            )
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "Reps: ${set.reps}",
+                            color = Color.White.copy(alpha = .87f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                }
+            }
+
+        }
+
+        is BodyWeightSet -> {
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                Row(
+                    modifier = Modifier.padding(15.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        if(set.additionalWeight != 0.0){
+                            Text(
+                                modifier = Modifier.weight(1f),
+                                text = "Weight: ${set.additionalWeight} kg",
+                                color = Color.White.copy(alpha = .87f),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "Reps: ${set.reps}",
+                            color = Color.White.copy(alpha = .87f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                }
+            }
+
+        }
+
+        is EnduranceSet -> {
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                Row(
+                    modifier = Modifier.padding(15.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         modifier = Modifier.weight(1f),
-                        text = "Weight: ${set.weight} kg",
+                        text = formatTime(set.timeInMillis / 1000),
+                        textAlign = TextAlign.Center,
                         color = Color.White.copy(alpha = .87f),
                         style = MaterialTheme.typography.bodyMedium,
-
-                    )
-                    Text(
-                        modifier = Modifier.weight(1f),
-                        text = "Reps: ${set.reps}",
-                        color = Color.White.copy(alpha = .87f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.End
                     )
                 }
             }
 
-            is BodyWeightSet -> {
+        }
+
+        is TimedDurationSet -> {
+            DarkModeContainer(whiteOverlayAlpha = .1f) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.padding(15.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if(set.additionalWeight != 0.0){
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = formatTime(set.timeInMillis / 1000),
+                        textAlign = TextAlign.Center,
+                        color = Color.White.copy(alpha = .87f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+
+
+        }
+
+        is RestSet -> {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DarkModeContainer(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
+                    Row(
+                        modifier = Modifier.padding(15.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            modifier = Modifier.weight(1f),
-                            text = "Weight: ${set.additionalWeight} kg",
+                            text = "Rest for: ${formatTime(set.timeInSeconds)}",
+                            textAlign = TextAlign.Center,
                             color = Color.White.copy(alpha = .87f),
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                    Text(
-                        modifier = Modifier.weight(1f),
-                        text = "Reps: ${set.reps}",
-                        color = Color.White.copy(alpha = .87f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.End
-                    )
                 }
             }
-
-            is EnduranceSet -> {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = formatTime(set.timeInMillis / 1000),
-                    textAlign = TextAlign.Center,
-                    color = Color.White.copy(alpha = .87f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-
-            is TimedDurationSet -> {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = formatTime(set.timeInMillis / 1000),
-                    textAlign = TextAlign.Center,
-                    color = Color.White.copy(alpha = .87f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-
-            is RestSet -> {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "Rest for: ${formatTime(set.timeInSeconds)}",
-                    textAlign = TextAlign.Center,
-                    color = Color.White.copy(alpha = .87f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
         }
+
     }
 }
 
@@ -477,18 +524,25 @@ fun ExerciseDetailScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
                 ) {
-                    Checkbox(
-                        checked = showRest,
-                        onCheckedChange = { showRest = it },
-                        colors =  CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    Row(
+                        modifier = Modifier.padding(vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Checkbox(
+                            modifier = Modifier.size(10.dp),
+                            checked = showRest,
+                            onCheckedChange = { showRest = it },
+                            colors = CheckboxDefaults.colors().copy(
+                                checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                            )
                         )
-                    )
-                    Text(text = "Show Rests")
+                        Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
 
                 GenericSelectableList(
-                    it = PaddingValues(0.dp, 5.dp),
+                    it = null,
                     items =  if(!showRest) sets.filter { it !is RestSet } else sets,
                     selectedItems = selectedSets,
                     isSelectionModeActive,
@@ -515,9 +569,7 @@ fun ExerciseDetailScreen(
                     },
                     isDragDisabled = true,
                     itemContent = { it ->
-                        DarkModeContainer(whiteOverlayAlpha = .1f) {
-                            ComponentRenderer(it,appViewModel)
-                        }
+                        ComponentRenderer(it,appViewModel)
                     }
                 )
             }

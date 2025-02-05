@@ -218,7 +218,7 @@ fun RestScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(10.dp)
+            .padding(5.dp)
             .circleMask(),
         contentAlignment = Alignment.Center
     ) {
@@ -243,7 +243,8 @@ fun RestScreen(
                 val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
                 CustomHorizontalPager(
                     modifier = Modifier
-                        .fillMaxSize().padding(15.dp),
+                        .fillMaxSize()
+                        .padding(15.dp),
                     pagerState = pagerState,
                     userScrollEnabled = true
                 ) { page ->
