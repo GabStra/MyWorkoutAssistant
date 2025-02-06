@@ -809,7 +809,6 @@ fun MyWorkoutAssistantNavHost(
                 )
             }
 
-            //CURRENTLY DISABLED
             is ScreenData.EditSet -> {
                 val screenData = currentScreen as ScreenData.EditSet
                 val workouts by appViewModel.workoutsFlow.collectAsState()

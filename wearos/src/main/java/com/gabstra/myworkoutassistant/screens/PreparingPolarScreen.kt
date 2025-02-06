@@ -24,6 +24,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -111,22 +112,30 @@ fun PreparingPolarScreen(
             Text(modifier = Modifier.fillMaxWidth(),text = "Preparing\nPolar Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(15.dp))
             LoadingText(baseText =  if(deviceConnectionInfo == null) "Connecting" else "Please Wait")
-            if(canSkip && deviceConnectionInfo == null && state.dataLoaded){
-                Spacer(modifier = Modifier.height(25.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
-                    Button(
-                        onClick = {
-                            VibrateGentle(context)
-                            viewModel.goToNextState()
-                            viewModel.lightScreenUp()
-                            viewModel.setWorkoutStart()
-                            onReady()
-                        },
-                        modifier = Modifier.size(35.dp),
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
-                    ) {
-                        Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
-                    }
+            Spacer(modifier = Modifier.height(25.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .then(
+                        if(canSkip && deviceConnectionInfo == null && state.dataLoaded){
+                            Modifier
+                        }else {
+                            Modifier.alpha(0f)
+                        }
+                    ),
+                horizontalArrangement = Arrangement.Center
+            ){
+                Button(
+                    onClick = {
+                        VibrateGentle(context)
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                        viewModel.setWorkoutStart()
+                        onReady()
+                    },
+                    modifier = Modifier.size(35.dp),
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+                ) {
+                    Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
                 }
             }
         }

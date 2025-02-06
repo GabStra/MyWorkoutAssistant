@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -89,6 +90,10 @@ fun ExerciseHistoryScreen(
 
     val currentLocale = Locale.getDefault()
 
+    val volumeAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
+        formatNumber(value)
+    }
+
     val dateFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
     }
@@ -103,7 +108,7 @@ fun ExerciseHistoryScreen(
 
     val horizontalAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
         val currentWorkoutHistory = workoutHistories[value.toInt()]
-        currentWorkoutHistory.date.format(dateFormatter)+" "+currentWorkoutHistory.time.format(timeFormatter)
+        currentWorkoutHistory.date.format(dateFormatter)//+" "+currentWorkoutHistory.time.format(timeFormatter)
     }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
@@ -344,8 +349,10 @@ fun ExerciseHistoryScreen(
                             cartesianChartModel = volumeEntryModel!!,
                             title = "Volume",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                            markerTextFormatter = { formatNumber(it) },
+                            startAxisValueFormatter = volumeAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = if(volumes.size > 1) { volumes.minBy { it.second }.second.toDouble() } else { null}
+                            minValue = if(volumes.size > 1) { volumes.minBy { it.second }.second.toDouble() } else { null},
                         )
                     }
 
@@ -367,7 +374,7 @@ fun ExerciseHistoryScreen(
                             markerTextFormatter = { formatTime(it.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = if(durations.size > 1) { durations.minBy { it.second }.second.toDouble() } else { null}
+                            minValue = if(durations.size > 1) { durations.minBy { it.second }.second.toDouble() } else { null},
                         )
                     }
                 }

@@ -72,6 +72,7 @@ private fun getProgressIndicatorSegments() = listOf(
 @Composable
 fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
+    appViewModel: AppViewModel,
     hr: Int,
     age: Int,
     lowerBoundMaxHRPercent: Float?,
@@ -96,38 +97,38 @@ fun HeartRateCircularChart(
     }
 
     if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null) {
-        var isInTargetZoneForFiveSeconds by remember { mutableStateOf(false) }
+        var reachedTargetOnce by remember { mutableStateOf(false) }
         var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
-
         var alarmJob by remember { mutableStateOf<Job?>(null) }
 
         LaunchedEffect(mhrPercentage) {
-            zoneTrackingJob?.cancel()
-
             if(mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
-                if(isInTargetZoneForFiveSeconds) {
+                if(alarmJob?.isActive == true) {
                     alarmJob?.cancel()
+                }
+
+                if(zoneTrackingJob?.isActive == true) {
                     return@LaunchedEffect
                 }
 
                 zoneTrackingJob = scope.launch {
-                    val startTime = System.currentTimeMillis()
-                    while(isActive) {
-                        val timeInZone = System.currentTimeMillis() - startTime
-                        if(timeInZone >= 5000) { // 10 seconds
-                            isInTargetZoneForFiveSeconds = true
-                            break
-                        }
-                        delay(100) // Check every 100ms
-                    }
+                    delay(5000)
+                    reachedTargetOnce = true
                 }
-            } else if(isInTargetZoneForFiveSeconds) {
+            } else{
+                zoneTrackingJob?.cancel()
+
+                if(!reachedTargetOnce || alarmJob?.isActive == true) {
+                    return@LaunchedEffect
+                }
+
                 alarmJob = scope.launch {
                     delay(5000)
+                    appViewModel.lightScreenUp()
                     Toast.makeText(context, "HR outside target zone", Toast.LENGTH_LONG).show()
                     while (isActive) {
                         VibrateTwiceAndBeep(context)
-                        delay(2000)
+                        delay(2500)
                     }
                 }
             }
@@ -136,6 +137,7 @@ fun HeartRateCircularChart(
         DisposableEffect(Unit) {
             onDispose {
                 zoneTrackingJob?.cancel()
+                alarmJob?.cancel()
             }
         }
     }
@@ -303,8 +305,6 @@ private fun HeartRateView(
             trackColor = Color.DarkGray,
         )
 
-        Log.d("HeartRateCircularChart", "lowerBoundMaxHRPercent: $lowerBoundMaxHRPercent upperBoundMaxHRPercent: $upperBoundMaxHRPercent")
-
         if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null){
             val lowerBoundRotationAngle = remember {
                 val lowerBoundPercentage = mapPercentage(lowerBoundMaxHRPercent)
@@ -344,7 +344,7 @@ fun HeartRateStandard(
         }
     }
 
-    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
+    HeartRateCircularChart(modifier = modifier, appViewModel = appViewModel, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
 }
 
 @OptIn(FlowPreview::class)
@@ -367,5 +367,5 @@ fun HeartRatePolar(
         }
     }
 
-    HeartRateCircularChart(modifier = modifier, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
+    HeartRateCircularChart(modifier = modifier,  appViewModel = appViewModel, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
 }

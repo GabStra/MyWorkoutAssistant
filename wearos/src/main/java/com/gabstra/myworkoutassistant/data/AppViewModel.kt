@@ -483,7 +483,7 @@ class AppViewModel : ViewModel() {
 
 
             if (exerciseProgression != null) {
-                val distributedSets = exerciseProgression!!.sets
+                val distributedSets = exerciseProgression.sets
                 val newSets = mutableListOf<Set>()
 
                 val exerciseSets = currentExercise.sets.filter { it !is RestSet }
@@ -639,18 +639,7 @@ class AppViewModel : ViewModel() {
         }
 
         fun calculateBaselineReps(reps: List<Int>): Int {
-            //val sortedReps = reps.sorted()
-            // val size = sortedReps.size
-
             return reps.min()
-
-           /* return if (size % 2 == 1) {
-                // Odd number of elements: return the middle one.
-                sortedReps[size / 2]
-            } else {
-                // Even number of elements: return the average of the two middle elements.
-                ((sortedReps[size / 2 - 1] + sortedReps[size / 2]) / 2.0).roundToInt()
-            }*/
         }
 
         baselineReps = calculateBaselineReps(reps)

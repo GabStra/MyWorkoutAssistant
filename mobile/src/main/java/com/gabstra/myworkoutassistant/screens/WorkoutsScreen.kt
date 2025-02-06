@@ -441,6 +441,18 @@ fun WorkoutsScreen(
         return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
     }
 
+    fun getHighlightColor(day: CalendarDay): Color {
+        val workoutsDoneCount = groupedWorkoutsHistories?.get(day.date)?.size ?: 0
+
+        return when {
+            workoutsDoneCount <= 0 -> Color.Transparent
+            workoutsDoneCount == 1 -> Color.hsl(113f, 0.79f, 0.34f)  // Softer green
+            workoutsDoneCount == 2 -> Color(0xFFff6700)  // Muted orange
+            workoutsDoneCount >= 3 -> Color.hsl(9f, 0.88f, 0.45f)  // Soft red
+            else -> Color.Transparent
+        }
+    }
+
     @Composable
     fun workoutsBottomBar(){
         if (selectedWorkouts.isNotEmpty()) {
@@ -531,8 +543,9 @@ fun WorkoutsScreen(
                     }
                 )
             }
-
         }else{
+
+
             BottomAppBar(
                 contentPadding = PaddingValues(0.dp),
                 containerColor = Color.Transparent,
@@ -739,7 +752,8 @@ fun WorkoutsScreen(
                                 onDayClicked = { calendarState, day ->
                                     onDayClicked(calendarState, day)
                                 },
-                                shouldHighlight = { day -> highlightDay(day) }
+                                shouldHighlight = { day -> highlightDay(day) },
+                                getHighlightColor = { day -> getHighlightColor(day) }
                             )
                             if(isLoading){
                                 Box(

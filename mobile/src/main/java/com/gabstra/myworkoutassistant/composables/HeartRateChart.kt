@@ -173,7 +173,7 @@ fun HeartRateChart(
             getHeartRateFromPercentage(value.toFloat(),userAge).toString()
         }
 
-    val shapeComponent = rememberShapeComponent(fill(Color(0xFFff6700)), CorneredShape.Pill)
+    val shapeComponent = rememberShapeComponent(fill(Color.White), CorneredShape.Pill)
     val marker = rememberDefaultCartesianMarker(
         valueFormatter = remember {
             DefaultValueFormatter({
@@ -181,7 +181,7 @@ fun HeartRateChart(
             })
         },
         label = rememberTextComponent(
-            color = Color.White.copy(alpha = .87f),
+            color = Color.White,
             padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER
         ),
@@ -234,7 +234,7 @@ fun HeartRateChart(
                             ),
 
                             rangeProvider = CartesianLayerRangeProvider.fixed(
-                                minY = 40.0,
+                                minY = 0.0,
                                 maxY = 105.0
                             ),
                         ),
@@ -253,7 +253,7 @@ fun HeartRateChart(
                         bottomAxis = HorizontalAxis.rememberBottom(
                             guideline = null,
                             valueFormatter = bottomAxisValueFormatter,
-                            itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 60 }) }),
+                            itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),
                         marker = marker
                     ),
                     model = cartesianChartModel,

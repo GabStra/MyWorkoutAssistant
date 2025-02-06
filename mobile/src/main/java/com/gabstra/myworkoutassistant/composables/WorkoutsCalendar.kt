@@ -110,6 +110,7 @@ private fun Day(
     isToday: Boolean = false,
     isSelected: Boolean = false,
     shouldHighlight: Boolean = false,
+    highlightColor: Color,
     onClick: (CalendarDay) -> Unit = {},
 ) {
     val isOutOfBounds = day.position in listOf(DayPosition.InDate, DayPosition.OutDate)
@@ -118,7 +119,7 @@ private fun Day(
             .padding(2.dp)
             .border(
                 width = if (isSelected || isToday) 1.dp else 0.dp,
-                color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color.Green else Color.Transparent),
+                color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color(0xFF4CAF50) else Color.Transparent),
             )
     ){
         Box(
@@ -139,7 +140,7 @@ private fun Day(
                     .align(Alignment.Center)
                     .optionalClip(shape)
                     .size(30.dp)
-                    .background(if (shouldHighlight) MaterialTheme.colorScheme.primary else Color.Transparent),
+                    .background(if (shouldHighlight) highlightColor else Color.Transparent),
                 contentAlignment = Alignment.Center
             ){
                 Text(
@@ -253,6 +254,7 @@ fun WorkoutsCalendar(
     selectedDate: CalendarDay,
     onDayClicked: (CalendarState,CalendarDay) -> Unit,
     shouldHighlight: (CalendarDay) -> Boolean,
+    getHighlightColor: (CalendarDay) -> Color
 ){
     val currentDay = LocalDate.now()
     val currentMonth = remember { YearMonth.now() }
@@ -289,6 +291,7 @@ fun WorkoutsCalendar(
                         day = day,
                         isSelected = selectedDate.date == day.date,
                         shouldHighlight = shouldHighlight(day),
+                        highlightColor = getHighlightColor(day),
                     ) { selectedCalendarDay ->
                         onDayClicked(calendarState,selectedCalendarDay)
                     }

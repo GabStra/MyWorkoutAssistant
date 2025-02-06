@@ -495,6 +495,7 @@ fun ExerciseDetailScreen(
                         }
                     )
                     Tab(
+                        enabled = !exercise.doNotStoreHistory,
                         selected = false,
                         onClick = {
                             appViewModel.setScreenData(
@@ -547,15 +548,23 @@ fun ExerciseDetailScreen(
                     selectedItems = selectedSets,
                     isSelectionModeActive,
                     onItemClick = {
-                        if(it !is RestSet) return@GenericSelectableList
-
-                        appViewModel.setScreenData(
-                            ScreenData.EditRestSet(
-                                workout.id,
-                                it,
-                                exercise.id
+                        if(it is RestSet) {
+                            appViewModel.setScreenData(
+                                ScreenData.EditRestSet(
+                                    workout.id,
+                                    it,
+                                    exercise.id
+                                )
                             )
-                        )
+                        }else{
+                            appViewModel.setScreenData(
+                                ScreenData.EditSet(
+                                    workout.id,
+                                    it,
+                                    exercise.id
+                                )
+                            )
+                        }
                     },
                     onEnableSelection = { isSelectionModeActive = true },
                     onDisableSelection = { isSelectionModeActive = false },

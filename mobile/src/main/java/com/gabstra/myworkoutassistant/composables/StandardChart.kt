@@ -30,6 +30,7 @@ import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLa
 import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
+import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
@@ -41,7 +42,9 @@ import com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.core.common.Fill
 import com.patrykandpatrick.vico.core.common.Insets
+import com.patrykandpatrick.vico.core.common.component.TextComponent
 import com.patrykandpatrick.vico.core.common.shape.CorneredShape
 
 @Composable
@@ -51,28 +54,29 @@ fun StandardChart(
     title: String,
     isZoomEnabled: Boolean = true,
     minValue: Double? = null,
+    maxValue: Double? = null,
     markerPosition: Float? = null,
-    markerTextFormatter: ((Float) -> String)? = ({ it.toString() }),
+    markerTextFormatter: ((Double) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
 ) {
 
-    val shapeComponent =  rememberShapeComponent(fill(Color(0xFFff6700)), CorneredShape.Pill)
+    val shapeComponent =  rememberShapeComponent(fill(Color.White), CorneredShape.Pill)
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
-            color = Color.White.copy(alpha = .87f),
+            color = Color.White,
             padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER
         ),
-        guideline = null,
+        guideline =  rememberAxisGuidelineComponent(),
         indicatorSize = 10.dp,
         valueFormatter = { _, targets ->
             val target = targets.first() as LineCartesianLayerMarkerTarget
             val point = target.points.first()
             SpannableStringBuilder().apply {
                 append(
-                    markerTextFormatter?.invoke(point.entry.y.toFloat()),
+                    markerTextFormatter?.invoke(point.entry.y),
                     ForegroundColorSpan(point.color),
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
@@ -107,17 +111,22 @@ fun StandardChart(
                                     )
                                 )
                             ),
-                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = minValue)
+                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = minValue, maxY = maxValue)
                         ),
-                        startAxis = VerticalAxis.rememberStart(valueFormatter = startAxisValueFormatter),
+
+                        startAxis = VerticalAxis.rememberStart(
+                            valueFormatter = startAxisValueFormatter,
+                            itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }
+                        ),
                         bottomAxis = HorizontalAxis.rememberBottom(
                             label = rememberTextComponent(
                                 color = Color.White.copy(alpha = .87f),
                                 textSize = 12.sp,
                                 padding = Insets(4f, 4f),
                                 textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                                //minWidth = TextComponent.MinWidth.fixed(20f)
                             ),
-                            labelRotationDegrees = -90f,
+                            labelRotationDegrees = -45f,
                             valueFormatter = bottomAxisValueFormatter
                         ),
                         persistentMarkers = if (markerPosition != null)  { _ ->

@@ -396,3 +396,20 @@ fun compressString(data: String): ByteArray {
 fun decompressToString(data: ByteArray): String {
     return GZIPInputStream(ByteArrayInputStream(data)).bufferedReader(Charsets.UTF_8).use { it.readText() }
 }
+
+fun formatNumber(number: Double): String {
+    val suffixes = listOf("", "K", "M", "B", "T")
+    var value = number
+    var suffixIndex = 0
+
+    while (value >= 1000 && suffixIndex < suffixes.lastIndex) {
+        value /= 1000
+        suffixIndex++
+    }
+
+    return when {
+        value >= 100 -> "%.0f%s".format(value, suffixes[suffixIndex])
+        value >= 10 -> "%.1f%s".format(value, suffixes[suffixIndex])
+        else -> "%.2f%s".format(value, suffixes[suffixIndex])
+    }.replace(",",".").replace(".0", "")
+}

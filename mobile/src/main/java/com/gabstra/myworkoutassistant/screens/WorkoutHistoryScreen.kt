@@ -84,6 +84,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.colorsByZone
+import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
@@ -200,6 +201,10 @@ fun WorkoutHistoryScreen(
             val currentWorkoutHistory = workoutHistories[value.toInt()]
             currentWorkoutHistory.date.format(dateFormatter)
         }
+    }
+
+    val volumeAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
+        formatNumber(value)
     }
 
     val durationAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
@@ -426,6 +431,8 @@ fun WorkoutHistoryScreen(
                     cartesianChartModel = volumeEntryModel!!,
                     title = "Total volume over time",
                     markerPosition = volumeMarkerTarget!!.first.toFloat(),
+                    markerTextFormatter = { formatNumber(it) },
+                    startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     minValue = if(volumes.size > 1) { volumes.minBy { it.second }.second.toDouble() } else { null}
                 )
@@ -678,11 +685,14 @@ fun WorkoutHistoryScreen(
                         targetCounter = 0
 
                         setHistories.filter { it.setData !is RestSetData && it.startTime!= null && it.endTime != null }.forEach { setHistory ->
-                            val hrTimeOffset =  Duration.between(selectedWorkoutHistory!!.startTime,setHistory.startTime).seconds
+                            val hrTimeOffset =  Duration.between(selectedWorkoutHistory!!.startTime,setHistory.startTime,).seconds
                             val setDuration = Duration.between(setHistory.startTime,setHistory.endTime).seconds
 
+                            val lowHr = getHeartRateFromPercentage(exercise.lowerBoundMaxHRPercent!!, userAge)
+                            val highHr = getHeartRateFromPercentage(exercise.upperBoundMaxHRPercent!!, userAge)
+
                             val hrEntriesCount = selectedWorkoutHistory!!.heartBeatRecords.filterIndexed { index, value ->
-                                index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= exercise.lowerBoundMaxHRPercent!!.toInt() && value <= exercise.upperBoundMaxHRPercent!!.toInt()
+                                index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >=lowHr && value <= highHr
                             }.size
 
                             targetCounter += hrEntriesCount
