@@ -68,7 +68,6 @@ fun WorkoutCompleteScreen(
             polarViewModel.disconnectFromDevice()
         }
         delay(1000)
-        VibrateTwiceAndBeep(context)
         cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
             dataSent = true

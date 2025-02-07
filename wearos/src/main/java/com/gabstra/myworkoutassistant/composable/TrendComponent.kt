@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -22,6 +25,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.round
@@ -156,95 +160,28 @@ data class MarkerData(
 @SuppressLint("DefaultLocale")
 @Composable
 fun ProgressIndicator(
-    modifier: Modifier = Modifier,
+    modifier: Modifier,
     ratio: Double,
-    previousRatio: Double = 0.0,
     progressBarColor: Color,
-    showRatio: Boolean,
-    expectedProgress: Double?
 ) {
     val cornerRadius = 3.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
 
-    fun formatRatio(ratio: Double): String {
-        return when {
-            ratio < 1.0 -> ((1 - ratio)*100).round(2).toString()
-            ratio > 1.0 -> "+"+((ratio - 1)*100).round(2).toString()
-            else -> "0"
-        } + "%"
-    }
-
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)){
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically){
-            val style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f)
-
-            Text(
-                text = "TARGET",
-                style = style,
-                textAlign = TextAlign.End
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)){
+        Row(modifier = Modifier.height(6.dp).weight(1f).clip(roundedCornerShape)){
+            SimpleProgressIndicator(
+                progress = ratio.toFloat(),
+                trackColor = Color.DarkGray,
+                progressBarColor = progressBarColor,
+                modifier = Modifier.fillMaxHeight().weight(1f),
             )
-
-            if(expectedProgress!=null){
-                val sign = if (expectedProgress > 0) "+" else ""
-                val text = if (expectedProgress > 0 || expectedProgress < 0)  "$sign${expectedProgress.round(2)}%" else "-"
-                Text(
-                    text = text,
-                    style = style,
-                    textAlign = TextAlign.End,
-                    color = MyColors.Green
-                )
-            }else{
-                Text(
-                    text = "X",
-                    style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f),
-                    textAlign = TextAlign.End,
-                    color = MyColors.Red
-                )
-            }
-
         }
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)){
-            Row(modifier = Modifier.height(6.dp).weight(1f).clip(roundedCornerShape)){
-                if (previousRatio != 0.0 && previousRatio < 1f) {
-                    SimpleProgressIndicator(
-                        progress = 1f,
-                        trackColor = MaterialTheme.colors.background,
-                        progressBarColor = MyColors.Orange,
-                        modifier = Modifier.fillMaxHeight().weight(previousRatio.toFloat()),
-                    )
-                    Spacer(modifier = Modifier.width(2.dp))
-
-                    val remainingRatio = ((ratio - previousRatio) / (1 - previousRatio)).toFloat()
-
-                    SimpleProgressIndicator(
-                        progress = remainingRatio,
-                        trackColor = MaterialTheme.colors.background,
-                        progressBarColor = progressBarColor,
-                        modifier = Modifier.fillMaxHeight().weight(1 - (previousRatio.toFloat())),
-                    )
-                } else {
-                    SimpleProgressIndicator(
-                        progress = ratio.toFloat(),
-                        trackColor = MaterialTheme.colors.background,
-                        progressBarColor = progressBarColor,
-                        modifier = Modifier.fillMaxHeight().weight(1f),
-                    )
-                }
-            }
-            if(showRatio){
-                val displayText = formatRatio(ratio)
-                val displayColor = when {
-                    ratio > 1 -> MyColors.Green
-                    ratio < 1 -> MyColors.Red
-                    else -> Color.White
-                }
-                Text(
-                    text = displayText,
-                    style = MaterialTheme.typography.body1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.625f),
-                    color = displayColor
-                )
-            }
-        }
+        Icon(
+            imageVector = Icons.Filled.Check,
+            modifier = Modifier.size(20.dp),
+            contentDescription = "Streak",
+            tint = if(ratio>=1) MyColors.Green else Color.DarkGray,
+        )
     }
 }
 

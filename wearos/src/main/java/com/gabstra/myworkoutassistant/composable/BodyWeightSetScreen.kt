@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,6 +41,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import kotlinx.coroutines.Dispatchers
@@ -381,44 +384,83 @@ fun BodyWeightSetScreen(
             }
 
             if(volumeProgression > 0){
-                val progressBarColor = when {
-                    currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
-                    currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
-                    else -> Color.White
-                }
-
-                ProgressIndicator(
-                    modifier = Modifier.fillMaxWidth(),
-                    ratio = volumeProgression,
-                    previousRatio = executedVolumeProgression,
-                    progressBarColor = progressBarColor,
-                    showRatio = isLastSet,
-                    expectedProgress = state.expectedProgress
-                )
-
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.Center){
-                    if(state.streak > 0){
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.Star,
-                                contentDescription = "Streak",
-                                tint = Color(0xFFFFD700)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = state.streak.toString(),
-                                style = headerStyle,
-                            )
-                        }
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    val progressBarColor = when {
+                        currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
+                        currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
+                        else -> MyColors.Orange
                     }
 
-                    if(state.isDeloading){
-                        Spacer(modifier = Modifier.width(5.dp))
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
                         Text(
-                            text = "DELOAD",
+                            text = "EXERCISE VOLUME",
                             style = headerStyle,
-                            textAlign = TextAlign.Center,
                         )
+
+                        ProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            ratio = volumeProgression,
+                            progressBarColor = progressBarColor,
+                        )
+
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                            Text(
+                                text = "PROGRESS",
+                                style = headerStyle,
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            if(state.expectedProgress!=null){
+                                val sign = if (state.expectedProgress > 0) "+" else ""
+                                val text = if (state.expectedProgress != 0.0)  "$sign${state.expectedProgress.round(2)}%" else "-"
+                                Text(
+                                    text = text,
+                                    style = headerStyle,
+                                    textAlign = TextAlign.End,
+                                )
+                            }else{
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    modifier = Modifier.size(20.dp),
+                                    contentDescription = "X",
+                                    tint = MyColors.Red
+                                )
+                            }
+                        }
+
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.Center){
+                            if(state.streak > 0){
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Star,
+                                        modifier = Modifier.size(20.dp),
+                                        contentDescription = "Streak",
+                                        tint = Color(0xFFFFD700)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = state.streak.toString(),
+                                        style = headerStyle,
+                                    )
+                                }
+                            }
+
+                            if(state.isDeloading){
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "DELOAD",
+                                    style = MaterialTheme.typography.title3,
+                                    textAlign = TextAlign.Center,
+                                    color = MyColors.Orange
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -526,7 +526,7 @@ fun ExerciseScreen(
             val exerciseTitleComposable = @Composable{
                 Text(
                     modifier = Modifier
-                        .fillMaxWidth().padding(horizontal = 25.dp)
+                        .fillMaxWidth().padding(horizontal = 30.dp)
                         .clickable { marqueeEnabled = !marqueeEnabled }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     text = exercise.name,

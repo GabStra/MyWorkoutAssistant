@@ -37,7 +37,7 @@ fun WorkoutStateHeader(
     workoutState: WorkoutState,
     viewModel: AppViewModel
 ){
-    var displayMode by remember { mutableStateOf(0) }
+    val displayMode by viewModel.headerDisplayMode
     var duration by remember { mutableStateOf(Duration.ZERO) }
     val context = LocalContext.current
 
@@ -59,7 +59,7 @@ fun WorkoutStateHeader(
             .padding(55.dp,5.dp,55.dp,0.dp)
             .clickable {
                 if(workoutState is WorkoutState.Preparing) return@clickable
-                displayMode = (displayMode + 1) % 2
+                viewModel.switchHeaderDisplayMode()
                 VibrateGentle(context)
             }
         ,

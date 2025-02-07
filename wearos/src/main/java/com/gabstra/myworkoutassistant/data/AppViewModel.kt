@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.runtime.State
+import androidx.compose.runtime.asIntState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -310,9 +311,24 @@ class AppViewModel : ViewModel() {
         _isSkipDialogOpen.value = true
     }
 
+
     // Setter method to close dialog
     fun closeCustomDialog() {
         _isSkipDialogOpen.value = false
+    }
+
+    private val _hrDisplayMode = mutableStateOf(0)
+    val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
+
+    fun switchHrDisplayMode() {
+        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
+    }
+
+    private val _headerDisplayMode = mutableStateOf(0)
+    val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
+
+    fun switchHeaderDisplayMode() {
+        _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
     }
 
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
@@ -630,19 +646,13 @@ class AppViewModel : ViewModel() {
         }.average()
 
 
-        val reps = exerciseSets.map {
+        baselineReps = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> it.reps
                 is WeightSet -> it.reps
                 else -> 0
             }
-        }
-
-        fun calculateBaselineReps(reps: List<Int>): Int {
-            return reps.min()
-        }
-
-        baselineReps = calculateBaselineReps(reps)
+        }.min()
 
         if (exerciseVolume == 0.0 || oneRepMax == 0.0 || averageLoad == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
@@ -723,7 +733,8 @@ class AppViewModel : ViewModel() {
                 availableWeights,
                 maxLoadPercent,
                 repsRange,
-                minSets = exerciseSets.size
+                minSets = exerciseSets.size,
+                maxSets = exerciseSets.size
             )
         }
 

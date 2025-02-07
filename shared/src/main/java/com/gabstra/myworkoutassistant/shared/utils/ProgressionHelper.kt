@@ -42,17 +42,22 @@ object VolumeDistributionHelper {
     ): ExerciseProgression? {
         var possibleSets = generatePossibleSets(params)
         if (possibleSets.isEmpty()){
-            //Log.d("WorkoutViewModel", "No sets available")
             return null
         }
 
         possibleSets = possibleSets.filter { it.volume >= (params.exerciseVolume / params.maxSets)* 0.75 }
 
-        Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
+        //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
 
         val defaultValidation = { volume: Double, intensity: Double ->
             ValidationResult(
                 shouldReturn = volume < params.exerciseVolume || intensity <= params.averageIntensity || intensity > params.averageIntensity  * 1.025
+            )
+        }
+
+        val justIncreaseVolumeValidation = { volume: Double, intensity: Double ->
+            ValidationResult(
+                shouldReturn = volume <= params.exerciseVolume || intensity < params.averageIntensity
             )
         }
 
@@ -66,12 +71,6 @@ object VolumeDistributionHelper {
             defaultValidation
         )
         if (validSetCombination.isEmpty()){
-            val justIncreaseVolumeValidation = { volume: Double, intensity: Double ->
-                ValidationResult(
-                    shouldReturn = volume <= params.exerciseVolume || intensity < params.averageIntensity
-                )
-            }
-
             validSetCombination = findBestProgressions(
                 possibleSets,
                 params.minSets,
@@ -156,7 +155,7 @@ object VolumeDistributionHelper {
             }
 
             val w1 = 1.0
-            val w2  = 1.0
+            val w2 = 1.0
             val w3 = 1.0
             val w4 = 1.0
             val w5 = 1.0

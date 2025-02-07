@@ -256,20 +256,15 @@ fun RestScreen(
                         0 -> {
                             Column(
                                 modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.Center,
+                                verticalArrangement = Arrangement.spacedBy(5.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    textComposable()
-                                    ExerciseInfo(
-                                        Modifier.wrapContentSize().padding(bottom = 25.dp),
-                                        viewModel,
-                                        nextWorkoutStateSet
-                                    )
-                                }
+                                textComposable()
+                                ExerciseInfo(
+                                    Modifier.wrapContentSize().padding(bottom = 25.dp),
+                                    viewModel,
+                                    nextWorkoutStateSet
+                                )
                             }
                         }
                         1 -> {

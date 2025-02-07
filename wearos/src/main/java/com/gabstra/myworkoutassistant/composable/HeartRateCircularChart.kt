@@ -82,6 +82,8 @@ fun HeartRateCircularChart(
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
     val scope = rememberCoroutineScope()
     var alertJob by remember { mutableStateOf<Job?>(null) }
+    var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
+    var alarmJob by remember { mutableStateOf<Job?>(null) }
 
     val alertCooldown = 1000L //5 seconds in milliseconds
 
@@ -98,10 +100,11 @@ fun HeartRateCircularChart(
 
     if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null) {
         var reachedTargetOnce by remember { mutableStateOf(false) }
-        var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
-        var alarmJob by remember { mutableStateOf<Job?>(null) }
+
 
         LaunchedEffect(mhrPercentage) {
+            if(alertJob?.isActive == true) return@LaunchedEffect
+
             if(mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
                 if(alarmJob?.isActive == true) {
                     alarmJob?.cancel()
@@ -133,19 +136,14 @@ fun HeartRateCircularChart(
                 }
             }
         }
-
-        DisposableEffect(Unit) {
-            onDispose {
-                zoneTrackingJob?.cancel()
-                alarmJob?.cancel()
-            }
-        }
     }
 
     LaunchedEffect(mhrPercentage) {
         if (mhrPercentage >= 100) {
             if(alertJob?.isActive == false){
                 startAlertJob()
+                zoneTrackingJob?.cancel()
+                alarmJob?.cancel()
             }
         }else{
             alertJob?.cancel()
@@ -155,10 +153,12 @@ fun HeartRateCircularChart(
     DisposableEffect(Unit) {
         onDispose {
             alertJob?.cancel()
+            zoneTrackingJob?.cancel()
+            alarmJob?.cancel()
         }
     }
 
-    HeartRateView(modifier, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
+    HeartRateView(modifier,appViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
 }
 
 
@@ -231,6 +231,7 @@ fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Floa
 @Composable
 private fun HeartRateView(
     modifier: Modifier,
+    appViewModel: AppViewModel,
     hr: Int,
     mhrPercentage: Float,
     colorsByZone: Array<Color>,
@@ -243,12 +244,11 @@ private fun HeartRateView(
     val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
     val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
 
-    var displayMode by remember { mutableStateOf(0) }
+    val displayMode by appViewModel.hrDisplayMode
 
     val textToDisplay = when(displayMode) {
         0 -> if (hr == 0) "-" else hr.toString()
-        1 -> "Zone $zone"
-        else -> "${(mhrPercentage).toInt()}%"
+        else ->  "Zone $zone ${(mhrPercentage).toInt()}%"
     }
 
     val showHeartIcon = displayMode == 0
@@ -265,11 +265,11 @@ private fun HeartRateView(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .width(60.dp)
+                .width(90.dp)
                 .height(20.dp)
                 .padding(top = 5.dp)
                 .clickable {
-                    displayMode = (displayMode + 1) % 3
+                    appViewModel.switchHrDisplayMode()
                     VibrateGentle(context)
                 }
         ) {
