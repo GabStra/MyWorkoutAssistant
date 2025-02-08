@@ -20,10 +20,9 @@ class SensorDataRepository(
     context: Context
 ) {
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val heartBeatSensor: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_BEAT)
-        ?: sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
+    private val heartBeatSensor: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE) // ?: sensorManager.getDefaultSensor(Sensor.TYPE_HEART_BEAT)
 
-    private var lastBeatTimestamp: Long? = null
+    //private var lastBeatTimestamp: Long? = null
 
     /**
      * Checks if the device has a heart rate sensor.
@@ -51,7 +50,13 @@ class SensorDataRepository(
                 if (event?.sensor == heartBeatSensor) {
                     val value = event.values[0]
 
-                    if (event.sensor.type == Sensor.TYPE_HEART_BEAT) {
+                    if (event.sensor.type == Sensor.TYPE_HEART_RATE) {
+                        // Handle heart rate sensor data (assume value is in bpm)
+                        val bpm = value.roundToInt()
+                        trySendBlocking(MeasureMessageSensor.MeasureData(bpm))
+                    }
+
+                  /*  if (event.sensor.type == Sensor.TYPE_HEART_BEAT) {
                         val confidence = value
                         if (confidence == 1.0f) {
                             val currentTimestamp = event.timestamp
@@ -64,11 +69,7 @@ class SensorDataRepository(
 
                             lastBeatTimestamp = currentTimestamp
                         }
-                    } else if (event.sensor.type == Sensor.TYPE_HEART_RATE) {
-                        // Handle heart rate sensor data (assume value is in bpm)
-                        val bpm = value.roundToInt()
-                        trySendBlocking(MeasureMessageSensor.MeasureData(bpm))
-                    }
+                    } */
                 }
             }
 
@@ -93,6 +94,5 @@ class SensorDataRepository(
 }
 
 sealed class MeasureMessageSensor {
-    class MeasureAvailability(val availability: Boolean) : MeasureMessageSensor()
     class MeasureData(val bpm: Int) : MeasureMessageSensor()
 }
