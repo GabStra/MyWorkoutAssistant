@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
@@ -27,15 +28,17 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
         val workoutComponentType = when (src) {
             is Exercise -> "Exercise"
             is Rest -> "Rest"
+            is Superset -> "Superset"
             else -> throw RuntimeException("Unsupported workout component type")
         }
 
         jsonObject.addProperty("id", src.id.toString())
         jsonObject.addProperty("type", workoutComponentType)
-        jsonObject.addProperty("enabled", src.enabled)
+
 
         when (src) {
             is Exercise -> {
+                jsonObject.addProperty("enabled", src.enabled)
                 jsonObject.addProperty("name", src.name)
                 jsonObject.addProperty("doNotStoreHistory", src.doNotStoreHistory)
                 jsonObject.addProperty("notes", src.notes)
@@ -63,6 +66,13 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
             }
 
             is Rest -> {
+                jsonObject.addProperty("enabled", src.enabled)
+                jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
+            }
+
+            is Superset -> {
+                jsonObject.addProperty("enabled", src.enabled)
+                jsonObject.add("exercises", context.serialize(src.exercises))
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
             }
         }
@@ -78,7 +88,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
         val id = UUID.fromString(jsonObject.get("id").asString)
         val type = jsonObject.get("type").asString
 
-        val enabled = jsonObject.get("enabled").asBoolean
+
 
         val doNotStoreHistory = if (jsonObject.has("doNotStoreHistory")) {
             jsonObject.get("doNotStoreHistory").asBoolean
@@ -88,6 +98,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
 
         return when (type) {
             "Exercise" -> {
+                val enabled = jsonObject.get("enabled").asBoolean
                 val setsType = object : TypeToken<List<Set>>() {}.type
 
                 val sets: List<Set> = context.deserialize(jsonObject.get("sets"), setsType)
@@ -177,8 +188,17 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
             }
 
             "Rest" -> {
+                val enabled = jsonObject.get("enabled").asBoolean
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt
                 Rest(id, enabled, timeInSeconds)
+            }
+
+            "Superset" -> {
+                val enabled = jsonObject.get("enabled").asBoolean
+                val exercisesType = object : TypeToken<List<Exercise>>() {}.type
+                val exercises: List<Exercise> = context.deserialize(jsonObject.get("exercises"), exercisesType)
+                val timeInSeconds = jsonObject.get("timeInSeconds").asInt
+                Superset(id, enabled, exercises, timeInSeconds)
             }
 
             else -> throw RuntimeException("Unsupported workout component type")

@@ -48,6 +48,7 @@ import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.ExerciseProgression
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
@@ -275,6 +276,8 @@ class AppViewModel : ViewModel() {
     val exercisesById: Map<UUID, Exercise>
         get() = selectedWorkout.value.workoutComponents
             .filterIsInstance<Exercise>()
+            .associateBy { it.id } + selectedWorkout.value.workoutComponents
+            .filterIsInstance<Superset>().flatMap { it.exercises }
             .associateBy { it.id }
 
     val setsByExerciseId: Map<UUID, List<WorkoutState.Set>>
@@ -481,7 +484,7 @@ class AppViewModel : ViewModel() {
     }
 
     private fun applyProgressions() {
-        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
         exercises.forEach { exercise ->
             if (exercise.doNotStoreHistory) return@forEach
@@ -561,8 +564,9 @@ class AppViewModel : ViewModel() {
     private suspend fun generateProgressions() {
         exerciseProgressionByExerciseId.clear()
 
-        val exerciseWithWeightSets = selectedWorkout.value.workoutComponents
-            .filter { it.enabled && it is Exercise && (it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT) }
+        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+        val exerciseWithWeightSets = exercises
+            .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT }
             .filterIsInstance<Exercise>()
 
         exerciseWithWeightSets.map { exercise ->
@@ -733,8 +737,8 @@ class AppViewModel : ViewModel() {
                 availableWeights,
                 maxLoadPercent,
                 repsRange,
-                minSets = exerciseSets.size,
-                maxSets = exerciseSets.size
+                minSets = 3,
+                maxSets = 5
             )
         }
 
@@ -773,12 +777,12 @@ class AppViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.originalVolume} -> ${exerciseProgression.totalVolume} Intensity: ${averageLoad} -> ${
-                    exerciseProgression.averageIntensity
+                "Progression found - Volume: ${exerciseProgression.originalVolume} -> ${exerciseProgression.totalVolume} Intensity: ${averageLoad.round(2)} -> ${
+                    exerciseProgression.averageIntensity.round(2)
                 }"
             )
         } else {
-            Log.d("WorkoutViewModel", "Failed to distribute volume for ${exercise.name}")
+            Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
         }
 
         return exercise.id to Pair(exerciseProgression, shouldDeload)
@@ -1360,7 +1364,17 @@ class AppViewModel : ViewModel() {
         val workoutComponents = selectedWorkout.value.workoutComponents.filter { it.enabled }
         for ((index, workoutComponent) in workoutComponents.withIndex()) {
             when (workoutComponent) {
-                is Exercise -> addStatesFromExercise(workoutComponent)
+                is Exercise -> {
+                    val states = addStatesFromExercise(workoutComponent)
+
+                    states.forEach {
+                        workoutStateQueue.addLast(it)
+                        allWorkoutStates.add(it)
+                        if(it is WorkoutState.Set){
+                            setStates.addLast(it)
+                        }
+                    }
+                }
                 is Rest -> {
                     val restSet = RestSet(workoutComponent.id, workoutComponent.timeInSeconds)
 
@@ -1376,6 +1390,70 @@ class AppViewModel : ViewModel() {
                     )
                     workoutStateQueue.addLast(restState)
                     allWorkoutStates.add(restState)
+                }
+
+                is Superset -> {
+                    val superset = workoutComponent as Superset
+
+                    val exerciseStates = superset.exercises.map { exercise ->
+                        mutableListOf(*addStatesFromExercise(exercise).toTypedArray())
+                    }
+
+                    val count = exerciseStates.minOfOrNull { it.size }!!
+                    val states = mutableListOf<WorkoutState>()
+
+                    for (i in 0 until count) {
+                        //get the first element of each list
+
+                        val items = mutableListOf<WorkoutState>()
+
+                        for (exerciseState in exerciseStates) {
+                            if (exerciseState.isNotEmpty()) {
+                                items.add(exerciseState.first())
+                                exerciseState.removeAt(0)
+                            }
+                        }
+
+                        //check if all the items are of type WorkoutState.Set
+                        val allItemsAreSets = items.all { it is WorkoutState.Set }
+
+                        if(allItemsAreSets){
+                            states.addAll(items)
+                        }else{
+                            continue
+                        }
+
+                        if(i != count - 1){
+                            val restSet = RestSet(UUID.randomUUID(),superset.timeInSeconds)
+                            val restState = WorkoutState.Rest(
+                                set = restSet,
+                                order = (i+1).toUInt(),
+                                currentSetData = initializeSetData(RestSet(UUID.randomUUID(), superset.timeInSeconds))
+                            )
+                            states.add(restState)
+                        }
+                    }
+
+                    while(exerciseStates.any { it.isNotEmpty() }){
+                        val items = mutableListOf<WorkoutState>()
+
+                        for (exerciseState in exerciseStates) {
+                            if (exerciseState.isNotEmpty()) {
+                                items.add(exerciseState.first())
+                                exerciseState.removeAt(0)
+                            }
+                        }
+
+                        states.addAll(items)
+                    }
+
+                    states.forEach {
+                        workoutStateQueue.addLast(it)
+                        allWorkoutStates.add(it)
+                        if(it is WorkoutState.Set){
+                            setStates.addLast(it)
+                        }
+                    }
                 }
             }
         }
@@ -1411,8 +1489,10 @@ class AppViewModel : ViewModel() {
         return plateChangeResults
     }
 
-    private suspend fun addStatesFromExercise(exercise: Exercise) {
-        if (exercise.sets.isEmpty()) return
+    private suspend fun addStatesFromExercise(exercise: Exercise) : List<WorkoutState> {
+        if (exercise.sets.isEmpty()) return emptyList()
+
+        val states = mutableListOf<WorkoutState>()
 
         val progressionData =
             if (exerciseProgressionByExerciseId.containsKey(exercise.id)) exerciseProgressionByExerciseId[exercise.id] else null
@@ -1422,6 +1502,22 @@ class AppViewModel : ViewModel() {
 
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
         val exerciseSets = exercise.sets.filter { it !is RestSet }
+
+        val exerciseVolume = exerciseSets.sumOf {
+            when (it) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    it.getWeight(equipment, relativeBodyWeight) * it.reps
+                }
+
+                is WeightSet -> {
+                    it.getWeight(equipment) * it.reps
+                }
+
+                else -> 0.0
+            }
+        }
 
         val plateChangeResults = getPlateChangeResults(exercise, exerciseSets, equipment)
 
@@ -1437,8 +1533,7 @@ class AppViewModel : ViewModel() {
                     currentSetData = initializeSetData(RestSet(set.id, set.timeInSeconds)),
                     exerciseId = exercise.id
                 )
-                workoutStateQueue.addLast(restState)
-                allWorkoutStates.add(restState)
+                states.add(restState)
             } else {
                 var currentSetData = initializeSetData(set)
 
@@ -1482,14 +1577,15 @@ class AppViewModel : ViewModel() {
                     plateChangeResult,
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
                     isDeloading ?: false,
-                    exerciseProgression?.originalVolume ?: 0.0,
+                    exerciseVolume,
                     exerciseProgression?.progressIncrease
                 )
-                workoutStateQueue.addLast(setState)
-                setStates.addLast(setState)
-                allWorkoutStates.add(setState)
+
+                states.add(setState)
             }
         }
+
+        return states
     }
 
     fun setWorkoutStart() {

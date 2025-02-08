@@ -8,6 +8,7 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import java.time.LocalDate
 import java.util.UUID
@@ -54,7 +55,12 @@ class WorkoutManager {
                 if (component == oldComponent) {
                     updatedComponent
                 } else {
-                    component
+                    if(updatedComponent is Exercise && component is Superset){
+                        component.copy(exercises = updateWorkoutComponentsRecursively(component.exercises, oldComponent as Exercise, updatedComponent as Exercise) as List<Exercise>)
+                    }else{
+                        component
+                    }
+
                     /*
                     when (component) {
                         is ExerciseGroup -> component.copy(workoutComponents = updateWorkoutComponentsRecursively(component.workoutComponents, oldComponent, updatedComponent))
@@ -237,6 +243,11 @@ class WorkoutManager {
                 is Rest -> {
                     workoutComponent.copy(id = UUID.randomUUID())
                 }
+                is Superset -> {
+
+                    workoutComponent.copy(id = UUID.randomUUID())
+                }
+                else -> throw IllegalArgumentException("Unknown workout component type")
             }
         }
     }

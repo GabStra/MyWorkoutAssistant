@@ -153,8 +153,14 @@ fun ExerciseSetsViewer(
     val itemHeights = remember { mutableStateMapOf<Int, Int>() }
     val density = LocalDensity.current
 
+    val allItemsMeasured = remember(exerciseSetStates.size) { mutableStateOf(false) }
+    val measuredItems = remember(exerciseSetStates.size) { mutableStateOf(0) }
+
     // Effect to handle scrolling whenever heights are updated or setIndex changes
-    LaunchedEffect(setIndex, itemHeights) {
+    LaunchedEffect(allItemsMeasured.value, setIndex) {
+        if (!allItemsMeasured.value) {
+            return@LaunchedEffect
+        }
         // Calculate position including spacing
         val spacingHeight = with(density) { 5.dp.toPx().toInt() }
         val position = (0 until setIndex).sumOf { index ->
@@ -210,6 +216,11 @@ fun ExerciseSetsViewer(
                                 val height = coordinates.size.height
                                 if (itemHeights[index] != height) {
                                     itemHeights[index] = height
+                                    measuredItems.value++
+
+                                    if (measuredItems.value == exerciseSetStates.size) {
+                                        allItemsMeasured.value = true
+                                    }
                                 }
                             },
                         setState = nextSetState,
@@ -258,6 +269,11 @@ fun ExerciseSetsViewer(
                                 val height = coordinates.size.height
                                 if (itemHeights[index] != height) {
                                     itemHeights[index] = height
+                                    measuredItems.value++
+
+                                    if (measuredItems.value == exerciseSetStates.size) {
+                                        allItemsMeasured.value = true
+                                    }
                                 }
                             },
                         setState = nextSetState,

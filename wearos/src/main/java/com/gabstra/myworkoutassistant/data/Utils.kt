@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -401,7 +402,7 @@ fun calculateIntensity(weight: Float, oneRepMax: Float): Float {
 }
 
 fun calculateOneRepMax(weight: Double, reps: Int): Double {
-    return weight / (1.0278 - 0.0278 * reps)
+    return weight / (1.0278 - (0.0278 * reps))
 }
 
 fun calculateVolume(weight: Double, reps: Int): Double {

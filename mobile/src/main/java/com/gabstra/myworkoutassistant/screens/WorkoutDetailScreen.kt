@@ -5,6 +5,8 @@ import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -15,10 +17,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -27,6 +33,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,16 +45,19 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,18 +65,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
@@ -74,16 +87,19 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
+import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @Composable
 fun Menu(
@@ -161,6 +177,134 @@ fun WorkoutComponentRenderer(
                 }
             }
 
+        is Superset ->{
+            val superSet = workoutComponent as Superset
+
+            Column(modifier= Modifier.fillMaxWidth().border(1.dp,Color.DarkGray), verticalArrangement = Arrangement.spacedBy(5.dp)){
+                Row(
+                    modifier = Modifier.padding(15.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ){
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp)
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        text = "Super Set",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.White.copy(alpha = if (superSet.enabled) .87f else .3f),
+                    )
+                }
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    superSet.exercises.forEach { exercise ->
+                        ExerciseRenderer(
+                            exercise = exercise,
+                            showRest = showRest,
+                            appViewModel = appViewModel
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SupersetForm(
+    displayDialog: MutableState<Boolean>,
+    appViewModel: AppViewModel,
+    workout: Workout,
+) {
+    var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
+
+    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(0)) }
+    val (hours, minutes, seconds) = hms.value
+
+    if(displayDialog.value){
+        AlertDialog(
+            onDismissRequest = { displayDialog.value = false },
+            title = { Text("Add Superset") },
+            text = {
+                Column(modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ){
+
+                    Text("Rest Time Between Sets")
+                    CustomTimePicker(
+                        initialHour = hours,
+                        initialMinute = minutes,
+                        initialSecond = seconds,
+                        onTimeChange = { hour, minute, second ->
+                            hms.value = Triple(hour, minute, second)
+                        }
+                    )
+
+
+
+                    val validItems = remember {  workout.workoutComponents.filter { it is Exercise && it.enabled } }
+
+                    Text("Select at least two exercises")
+                    validItems.forEach { item ->
+                        val exercise = item as Exercise
+
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE)
+                                .clickable {
+                                    if (selectedWorkoutComponents.any { it === item }) {
+                                        selectedWorkoutComponents = selectedWorkoutComponents.filter { it !== item }
+                                    } else {
+                                        selectedWorkoutComponents = selectedWorkoutComponents + item
+                                    }
+                                },
+                            text = exercise.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = if (selectedWorkoutComponents.contains(exercise)) .87f else .3f),
+                        )
+                    }
+
+                    Text("Selected exercises:")
+                    selectedWorkoutComponents.forEach { it ->
+                        Text((it as Exercise).name)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val newSuperset = Superset(
+                            id = UUID.randomUUID(),
+                            exercises = selectedWorkoutComponents.map { it as Exercise },
+                            timeInSeconds = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
+                            enabled = true
+                        )
+
+                        val newWorkoutComponents = workout.workoutComponents.filter { item ->
+                            selectedWorkoutComponents.none { it === item }
+                        } + newSuperset
+
+                        val adjustedComponents =
+                            ensureRestSeparatedByExercises(newWorkoutComponents)
+                        val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
+                        appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                        displayDialog.value = false
+                    },
+                    enabled = selectedWorkoutComponents.size >= 2 && hms.value != Triple(0,0,0)
+                ) {
+                    Text("Create Super set")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { displayDialog.value = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -177,6 +321,8 @@ fun WorkoutDetailScreen(
 ) {
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
+
+    var displaySupersetDialog = remember { mutableStateOf(false) }
 
     var showRest by remember { mutableStateOf(false) }
 
@@ -202,7 +348,7 @@ fun WorkoutDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
-                        enabled = showRest && (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0),
+                        enabled = (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0),
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
@@ -229,7 +375,7 @@ fun WorkoutDetailScreen(
                         )
                     }
                     IconButton(
-                        enabled = showRest && (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1),
+                        enabled = (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1),
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
@@ -335,11 +481,16 @@ fun WorkoutDetailScreen(
                         )
                     }
                     IconButton(onClick = {
+                        val superSetExercises = selectedWorkoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+
                         val newWorkoutComponents = workout.workoutComponents.filter { item ->
                             selectedWorkoutComponents.none { it === item }
-                        }
+                        } + superSetExercises
 
-                        val updatedWorkout = workout.copy(workoutComponents = newWorkoutComponents)
+                        val adjustedComponents =
+                            ensureRestSeparatedByExercises(newWorkoutComponents)
+
+                        val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
@@ -445,8 +596,10 @@ fun WorkoutDetailScreen(
                                                 null
                                             )
                                         );
+                                    },
+                                    MenuItem("Add Superset") {
+                                        displaySupersetDialog.value = true
                                     }
-
                                 ),
                                 content = { Text("New Exercise") }
                             )
@@ -590,6 +743,7 @@ fun WorkoutDetailScreen(
                                     )
                                 )
                             }
+                            else -> {}
                         }
                     },
                     onEnableSelection = { isSelectionModeActive = true },
@@ -614,6 +768,8 @@ fun WorkoutDetailScreen(
                     },
                     isDragDisabled = true
                 )
+
+                SupersetForm(displaySupersetDialog, appViewModel, workout)
             }
         }
     }
@@ -629,7 +785,16 @@ fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<Wor
             lastWasExercise = true
         } else {
             if (lastWasExercise) {
-                adjustedComponents.add(component)
+                //check if the next component if exist is exercise and enabled
+                val nextComponentIndex = components.indexOf(component) + 1
+                if (nextComponentIndex < components.size) {
+                    val nextComponent = components[nextComponentIndex]
+                    if(nextComponent.enabled){
+                        adjustedComponents.add(component)
+                    }else{
+                        adjustedComponents.add(component.copy(enabled = false))
+                    }
+                }
             }
 
             lastWasExercise = false

@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
 import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
+import com.gabstra.myworkoutassistant.screens.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
@@ -776,7 +777,10 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             }
 
-                        val updatedWorkout = selectedWorkout.copy(workoutComponents = modifiedWorkoutComponents)
+                        val adjustedComponents =
+                            ensureRestSeparatedByExercises(modifiedWorkoutComponents)
+
+                        val updatedWorkout = selectedWorkout.copy(workoutComponents = adjustedComponents)
                         appViewModel.updateWorkout(selectedWorkout, updatedWorkout)
                         appViewModel.goBack()
                     },

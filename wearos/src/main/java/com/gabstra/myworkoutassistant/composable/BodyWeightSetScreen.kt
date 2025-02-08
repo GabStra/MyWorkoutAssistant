@@ -389,12 +389,6 @@ fun BodyWeightSetScreen(
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val progressBarColor = when {
-                        currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
-                        currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
-                        else -> MyColors.Orange
-                    }
-
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -403,6 +397,12 @@ fun BodyWeightSetScreen(
                             text = "EXERCISE VOLUME",
                             style = headerStyle,
                         )
+
+                        val progressBarColor = when {
+                            currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
+                            currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
+                            else -> MyColors.Orange
+                        }
 
                         ProgressIndicator(
                             modifier = Modifier.fillMaxWidth(),

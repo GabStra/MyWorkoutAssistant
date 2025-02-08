@@ -28,6 +28,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.gson.GsonBuilder
 import java.io.ByteArrayInputStream
@@ -43,6 +44,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
     val gson = GsonBuilder()
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
@@ -82,6 +84,7 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
     val gson = GsonBuilder()
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
@@ -106,6 +109,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
     val gson = GsonBuilder()
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
