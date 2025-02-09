@@ -40,7 +40,7 @@ fun ExerciseRenderer(
         sets = sets.filter { it !is RestSet }
 
     if(sets.isEmpty()){
-        DarkModeContainer(whiteOverlayAlpha = .1f) {
+        DarkModeContainer(modifier = modifier, whiteOverlayAlpha = .1f) {
             Row(
                 modifier = Modifier.padding(15.dp),
                 horizontalArrangement = Arrangement.Center,

@@ -144,6 +144,7 @@ fun Menu(
 
 @Composable
 fun WorkoutComponentRenderer(
+    workout: Workout,
     workoutComponent: WorkoutComponent,
     showRest: Boolean,
     appViewModel: AppViewModel
@@ -199,6 +200,14 @@ fun WorkoutComponentRenderer(
                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     superSet.exercises.forEach { exercise ->
                         ExerciseRenderer(
+                            modifier = Modifier.clickable {
+                                appViewModel.setScreenData(
+                                    ScreenData.ExerciseDetail(
+                                        workout.id,
+                                        exercise.id
+                                    )
+                                )
+                            },
                             exercise = exercise,
                             showRest = showRest,
                             appViewModel = appViewModel
@@ -761,6 +770,7 @@ fun WorkoutDetailScreen(
                     },
                     itemContent = { it ->
                         WorkoutComponentRenderer(
+                            workout = workout,
                             workoutComponent = it,
                             showRest = showRest,
                             appViewModel = appViewModel
