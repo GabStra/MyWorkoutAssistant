@@ -377,7 +377,7 @@ class AppViewModel : ViewModel() {
                         ?: return@forEach
                     val setHistories =
                         setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-                    val exercises = it.workoutComponents.filterIsInstance<Exercise>()
+                    val exercises = it.workoutComponents.filterIsInstance<Exercise>() + it.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
                     val exerciseInfos = exercises.mapNotNull { exercise ->
                         exerciseInfoDao.getExerciseInfoById(exercise.id)
                     }
@@ -567,7 +567,6 @@ class AppViewModel : ViewModel() {
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
         val exerciseWithWeightSets = exercises
             .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT }
-            .filterIsInstance<Exercise>()
 
         exerciseWithWeightSets.map { exercise ->
             val equipment =
@@ -876,7 +875,7 @@ class AppViewModel : ViewModel() {
 
     private suspend fun restoreExecutedSets() {
         if (_workoutRecord == null) return;
-        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
         executedSetsHistory.clear()
         exercises.filter { !it.doNotStoreHistory }.forEach { exercise ->
@@ -895,7 +894,7 @@ class AppViewModel : ViewModel() {
             .filter { it.globalId == selectedWorkout.value.globalId && it.isDone }
             .sortedByDescending { it.date }
 
-        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+        val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
         val calledIndexes = mutableListOf<Int>()
 
@@ -1226,7 +1225,7 @@ class AppViewModel : ViewModel() {
                     .filter { it.exerciseId != null }
                     .groupBy { it.exerciseId }
 
-                val exercises = _selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+                val exercises = _selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + _selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
                 var workoutComponents = _selectedWorkout.value.workoutComponents
 
                 for (exercise in exercises) {

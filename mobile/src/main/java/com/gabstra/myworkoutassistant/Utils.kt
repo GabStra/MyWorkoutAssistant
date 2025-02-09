@@ -24,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -119,6 +120,14 @@ fun findWorkoutComponentByIdInWorkout(workout: Workout, id: UUID): WorkoutCompon
     for (workoutComponent in workout.workoutComponents) {
         if (workoutComponent.id == id) {
             return workoutComponent
+        }
+
+        if(workoutComponent is Superset){
+            workoutComponent.exercises.forEach { exercise ->
+                if(exercise.id == id){
+                    return exercise
+                }
+            }
         }
     }
     return null
