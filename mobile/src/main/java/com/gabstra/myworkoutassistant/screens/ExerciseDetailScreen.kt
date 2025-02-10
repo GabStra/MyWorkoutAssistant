@@ -58,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -575,7 +576,7 @@ fun ExerciseDetailScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        modifier = Modifier
+                        modifier = Modifier.then(if(selectedEquipmentId == null) Modifier.alpha(0f) else Modifier)
                     ) {
                         Text(text = "Equipment:",style = MaterialTheme.typography.bodySmall)
                         val selectedEquipment = equipments.find { it.id == selectedEquipmentId }

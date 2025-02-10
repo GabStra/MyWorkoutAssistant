@@ -372,7 +372,6 @@ fun ExerciseHistoryScreen(
                             markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = if(durations.size > 1) { durations.minBy { value -> value.second }.second.toDouble() } else { null},
                         )
                     }
                 }
