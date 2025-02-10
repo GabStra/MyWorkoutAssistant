@@ -758,7 +758,7 @@ fun WorkoutsScreen(
                             if(isLoading){
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxSize().padding(5.dp),
+                                        .fillMaxSize().padding(10.dp),
                                     contentAlignment = Alignment.Center
                                 ){
                                     CircularProgressIndicator(

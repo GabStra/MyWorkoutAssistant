@@ -412,6 +412,7 @@ fun formatNumber(number: Double): String {
     }
 
     return when {
+        value == 0.0 -> "0"
         value >= 100 -> "%.0f%s".format(value, suffixes[suffixIndex])
         value >= 10 -> "%.1f%s".format(value, suffixes[suffixIndex])
         else -> "%.2f%s".format(value, suffixes[suffixIndex])

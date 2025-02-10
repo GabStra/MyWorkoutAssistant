@@ -179,7 +179,6 @@ fun ExerciseHistoryScreen(
                 volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
                 durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
 
-                Log.d("OneRepMax", "workoutIndex: ${workoutHistories.indexOf(workoutHistory)} oneRepMax: $oneRepMax")
                 oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), oneRepMax.round(2)))
             }
 
@@ -215,6 +214,7 @@ fun ExerciseHistoryScreen(
                 oneRepMaxEntryModel =
                     CartesianChartModel(LineCartesianLayerModel.build { series(*(oneRepMaxes.map { it.second }).toTypedArray()) })
             }
+
 
             delay(500)
             isLoading = false
@@ -349,10 +349,9 @@ fun ExerciseHistoryScreen(
                             cartesianChartModel = volumeEntryModel!!,
                             title = "Volume",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                            markerTextFormatter = { formatNumber(it) },
+                            markerTextFormatter = { value -> formatNumber(value) },
                             startAxisValueFormatter = volumeAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = if(volumes.size > 1) { volumes.minBy { it.second }.second.toDouble() } else { null},
                         )
                     }
 
@@ -360,9 +359,9 @@ fun ExerciseHistoryScreen(
                         StandardChart(
                             cartesianChartModel = oneRepMaxEntryModel!!,
                             markerPosition = oneRepMaxMarkerTarget!!.first.toFloat(),
+                            markerTextFormatter = { value -> formatNumber(value) },
                             title = "One Rep Max",
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = if(oneRepMaxes.size > 1) { oneRepMaxes.minBy { it.second }.second.toDouble() } else { null}
                         )
                     }
 
@@ -371,10 +370,10 @@ fun ExerciseHistoryScreen(
                             cartesianChartModel = durationEntryModel!!,
                             markerPosition = durationMarkerTarget!!.first.toFloat(),
                             title = "Total duration over time",
-                            markerTextFormatter = { formatTime(it.toInt()/1000) },
+                            markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                            minValue = if(durations.size > 1) { durations.minBy { it.second }.second.toDouble() } else { null},
+                            minValue = if(durations.size > 1) { durations.minBy { value -> value.second }.second.toDouble() } else { null},
                         )
                     }
                 }

@@ -636,17 +636,15 @@ class AppViewModel : ViewModel() {
             }
         }
 
-        averageLoad = exerciseSets.map {
+        val totalReps = exerciseSets.sumOf {
             when (it) {
-                is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    it.getWeight(equipment,relativeBodyWeight)
-                }
-                is WeightSet -> it.getWeight(equipment)
-                else -> throw IllegalArgumentException("Unknown set type")
+                is BodyWeightSet -> it.reps
+                is WeightSet -> it.reps
+                else -> 0
             }
-        }.average()
+        }
+
+        averageLoad = exerciseVolume / totalReps
 
 
         baselineReps = exerciseSets.map {

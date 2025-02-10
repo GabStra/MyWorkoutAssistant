@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import android.util.Log
-import com.gabstra.myworkoutassistant.shared.round
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
@@ -13,7 +11,6 @@ object VolumeDistributionHelper {
         val weight: Double,
         val reps: Int,
         val volume: Double,
-        val percentLoad: Double,
     )
 
     data class ExerciseProgression(
@@ -28,7 +25,7 @@ object VolumeDistributionHelper {
 
     data class WeightExerciseParameters(
         val exerciseVolume: Double,
-        val averageIntensity: Double,
+        val averageLoad: Double,
         val baselineReps: Int,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
@@ -64,7 +61,7 @@ object VolumeDistributionHelper {
         //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
 
         val maxWeight = possibleSets.maxOf { it.weight }
-        val intensityLimit = if(params.averageIntensity > maxWeight) maxWeight else params.averageIntensity
+        val intensityLimit = if(params.averageLoad > maxWeight) maxWeight else params.averageLoad
 
         if(validSetCombination.isEmpty()){
             validSetCombination = findBestProgressions(
@@ -72,7 +69,7 @@ object VolumeDistributionHelper {
                 params.minSets,
                 params.maxSets,
                 params.exerciseVolume,
-                params.averageIntensity,
+                params.averageLoad,
                 params.baselineReps,
                 { volume: Double, intensity: Double ->
                     ValidationResult(
@@ -86,7 +83,7 @@ object VolumeDistributionHelper {
                     params.minSets,
                     params.maxSets,
                     params.exerciseVolume,
-                    params.averageIntensity,
+                    params.averageLoad,
                     params.baselineReps,
                     { volume: Double, intensity: Double ->
                         ValidationResult(
@@ -124,7 +121,7 @@ object VolumeDistributionHelper {
         minSets: Int,
         maxSets: Int,
         previousVolume: Double,
-        previousAverageIntensity: Double,
+        previousAverageLoad: Double,
         baselineReps: Int,
         validationRules: (Double, Double) -> ValidationResult
     ) = coroutineScope {
@@ -147,18 +144,19 @@ object VolumeDistributionHelper {
 
         fun calculateScore(currentCombo: List<ExerciseSet>): Double {
             val currentTotalVolume = currentCombo.sumOf { it.volume }
-            val currentAverageIntensity = currentCombo.map { it.weight }.average()
+            val currentTotalReps = currentCombo.sumOf { it.reps }
+            val currentAverageLoad = currentTotalVolume / currentTotalReps
 
-            val validationResult = validationRules(currentTotalVolume, currentAverageIntensity)
+            val validationResult = validationRules(currentTotalVolume, currentAverageLoad)
             if (validationResult.shouldReturn) {
                 return validationResult.returnValue
             }
 
             val deltaVPercent = (currentTotalVolume / previousVolume)
-            val deltaIPercent =  (currentAverageIntensity / previousAverageIntensity)
+            val deltaLPercent =  (currentAverageLoad / previousAverageLoad)
 
-            val stdDevWeight = sqrt(currentCombo.map { (it.weight - currentAverageIntensity) * (it.weight - currentAverageIntensity) }.average())
-            val cvWeights = if (currentAverageIntensity != 0.0) stdDevWeight / currentAverageIntensity else 0.0
+            val stdDevWeight = sqrt(currentCombo.map { (it.weight - currentAverageLoad) * (it.weight - currentAverageLoad) }.average())
+            val cvWeights = if (currentAverageLoad != 0.0) stdDevWeight / currentAverageLoad else 0.0
 
             val repsList = currentCombo.map { it.reps.toDouble() }
             val meanReps = repsList.average()
@@ -177,7 +175,7 @@ object VolumeDistributionHelper {
             val w6 = 10.0
 
             return w1 * (deltaVPercent * deltaVPercent) +
-                   w2 * (deltaIPercent * deltaIPercent) +
+                   w2 * (deltaLPercent * deltaLPercent) +
                    w3 * (cvWeights * cvWeights) +
                    w4 * (cvReps * cvReps) +
                    w5 * repsPenalty +
@@ -267,12 +265,12 @@ object VolumeDistributionHelper {
             val sortedWeights = params.availableWeights.filter { it <= params.maxWeightFromOneRepMax }.sorted()
 
             val closestWeightIndex = sortedWeights.binarySearch {
-                it.compareTo(params.averageIntensity)
-            }.let { if (it < 0) -(it + 1) else it }.coerceAtMost(sortedWeights.size - 2)
+                it.compareTo(params.averageLoad)
+            }.let { if (it < 0) -(it + 1) else it }.coerceAtMost(sortedWeights.size - 1).coerceAtLeast(0)
 
             val nearAverageWeights = sortedWeights
                 .filterIndexed { index, _ ->
-                    index in (closestWeightIndex)..(closestWeightIndex+2)
+                    index in (closestWeightIndex)..(closestWeightIndex+1)
                 }
 
 
@@ -289,7 +287,6 @@ object VolumeDistributionHelper {
                             createSet(
                                 weight = weight,
                                 reps = reps,
-                                oneRepMax = params.oneRepMax
                             )
                         }
                 }
@@ -299,23 +296,19 @@ object VolumeDistributionHelper {
     private fun createSet(
         weight: Double,
         reps: Int,
-        oneRepMax: Double,
     ): ExerciseSet {
         val volume = weight * reps
-        val relativeIntensity = weight / oneRepMax
-        val percentLoad = relativeIntensity * 100
 
         return ExerciseSet(
             weight = weight,
             reps = reps,
             volume = volume,
-            percentLoad = percentLoad,
         )
     }
 
     suspend fun generateExerciseProgression(
         exerciseVolume: Double,
-        averageIntensity: Double,
+        averageLoad: Double,
         baselineReps: Int,
         oneRepMax: Double,
         availableWeights: Set<Double>,
@@ -335,7 +328,7 @@ object VolumeDistributionHelper {
             exerciseVolume = exerciseVolume,
             minSets = minSets,
             maxSets = maxSets,
-            averageIntensity =  if(averageIntensity > maxWeightFromOneRepMax) maxWeightFromOneRepMax else averageIntensity,
+            averageLoad =  if(averageLoad > maxWeightFromOneRepMax) maxWeightFromOneRepMax else averageLoad,
             baselineReps = baselineReps,
         )
 

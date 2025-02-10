@@ -434,7 +434,6 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    minValue = if(volumes.size > 1) { volumes.minBy { it.second }.second.toDouble() } else { null}
                 )
             }
             if (durationEntryModel != null) {
@@ -446,7 +445,6 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    minValue =  if(durations.size > 1) { durations.minBy { it.second }.second.toDouble() } else { null }
                 )
             }
             if (workoutDurationEntryModel != null) {
@@ -459,7 +457,6 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTime(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    minValue =  if(workoutDurations.size > 1) { workoutDurations.minBy { it.second }.second.toDouble() } else { null }
                 )
             }
         }
