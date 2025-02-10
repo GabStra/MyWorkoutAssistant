@@ -359,7 +359,6 @@ fun ExerciseHistoryScreen(
                         StandardChart(
                             cartesianChartModel = oneRepMaxEntryModel!!,
                             markerPosition = oneRepMaxMarkerTarget!!.first.toFloat(),
-                            markerTextFormatter = { value -> formatNumber(value) },
                             title = "One Rep Max",
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                         )

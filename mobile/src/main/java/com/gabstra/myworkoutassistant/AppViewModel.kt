@@ -184,7 +184,7 @@ class AppViewModel() : ViewModel() {
     }
 
     fun updateWorkout(oldWorkout: Workout, updatedWorkout: Workout) {
-        workouts = WorkoutManager.updateWorkout(workouts,oldWorkout,updatedWorkout)
+        workouts = WorkoutManager.updateWorkoutOld(workouts,oldWorkout,updatedWorkout)
     }
 
     fun updateWorkoutComponent(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {

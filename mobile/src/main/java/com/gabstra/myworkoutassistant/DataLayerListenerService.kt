@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
@@ -98,7 +99,7 @@ class DataLayerListenerService : WearableListenerService() {
                                         .filter { it.exerciseId != null }
                                         .groupBy { it.exerciseId }
 
-                                    val exercises = workout.workoutComponents.filterIsInstance<Exercise>()
+                                    val exercises = workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
                                     var workoutComponents = workout.workoutComponents
 
                                     for (exercise in exercises) {

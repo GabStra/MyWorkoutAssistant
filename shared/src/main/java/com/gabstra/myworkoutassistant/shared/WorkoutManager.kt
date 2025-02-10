@@ -21,7 +21,7 @@ class WorkoutManager {
             }
         }
 
-        fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
+       /* fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
             val newVersion = updatedWorkout.copy(
                 id = UUID.randomUUID(), // Genera un nuovo ID per la nuova versione
                 creationDate = LocalDate.now(), // Imposta la data corrente
@@ -33,20 +33,17 @@ class WorkoutManager {
             return workouts.map { workout ->
                 if (workout == oldWorkout) updatedOldWorkout else workout
             } + newVersion
-        }
+        }*/
 
         fun updateWorkoutComponent(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
             val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
             val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
-            return updateWorkout(workouts, parentWorkout, updatedWorkout)
+            return updateWorkoutOld(workouts, parentWorkout, updatedWorkout)
         }
 
         fun updateWorkoutComponentOld(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
-
             val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
-
             val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
-
             return updateWorkoutOld(workouts, parentWorkout, updatedWorkout)
         }
 
@@ -74,7 +71,7 @@ class WorkoutManager {
         fun addWorkoutComponent(workouts: List<Workout>, workout: Workout, newWorkoutComponent: WorkoutComponent): List<Workout> {
             val updatedComponents = workout.workoutComponents + newWorkoutComponent
             val updatedWorkout = workout.copy(workoutComponents = updatedComponents)
-            return updateWorkout(workouts, workout, updatedWorkout)
+            return updateWorkoutOld(workouts, workout, updatedWorkout)
         }
 
         /*
@@ -134,7 +131,11 @@ class WorkoutManager {
                     }
                     exercise.copy(sets = mutableSets.toList())
                 } else {
-                    component
+                    if(component is Superset){
+                        component.copy(exercises = addSetToExerciseRecursively(component.exercises, parentExercise, newSet, index) as List<Exercise>)
+                    }else{
+                        component
+                    }
                 }
             }
         }
@@ -145,7 +146,11 @@ class WorkoutManager {
                     val exercise = component as Exercise
                     exercise.copy(sets = emptyList())
                 } else {
-                    component
+                    if(component is Superset){
+                        component.copy(exercises = removeSetsFromExerciseRecursively(component.exercises, parentExercise) as List<Exercise>)
+                    }else{
+                        component
+                    }
                 }
             }
         }
@@ -166,7 +171,11 @@ class WorkoutManager {
                     val exercise = component as Exercise
                     exercise.copy(sets = updateSet(component.sets,oldSet,updatedSet))
                 }else{
-                    component
+                    if(component is Superset){
+                        component.copy(exercises = updateSetInExerciseRecursively(component.exercises, parentExercise, oldSet, updatedSet) as List<Exercise>)
+                    }else{
+                        component
+                    }
                 }
             }
         }
@@ -205,7 +214,11 @@ class WorkoutManager {
                         sets = component.sets.filter { set -> set != setToDelete }
                     )
                 } else {
-                    component
+                    if(component is Superset){
+                        component.copy(exercises = deleteSetRecursively(component.exercises, exercise, setToDelete) as List<Exercise>)
+                    }else{
+                        component
+                    }
                 }
             }
         }
@@ -215,7 +228,15 @@ class WorkoutManager {
                 if (it == workout) {
                     if(workoutComponentToDelete in it.workoutComponents){
                         it.copy(
-                            workoutComponents = it.workoutComponents.filter { workoutComponent -> workoutComponent != workoutComponentToDelete }  // Direct object comparison
+                            workoutComponents = it.workoutComponents.filter { workoutComponent ->
+                                workoutComponent != workoutComponentToDelete
+                             }.map {  workoutComponent ->
+                                if(workoutComponent is Superset){
+                                    workoutComponent.copy(exercises = workoutComponent.exercises.filter { exercise -> exercise != workoutComponentToDelete } as List<Exercise>)
+                                }else{
+                                    workoutComponent
+                                }
+                            }
                         )
                     }else{
                         it
@@ -244,8 +265,8 @@ class WorkoutManager {
                     workoutComponent.copy(id = UUID.randomUUID())
                 }
                 is Superset -> {
-
-                    workoutComponent.copy(id = UUID.randomUUID())
+                    val newExercises = workoutComponent.exercises.map { cloneWorkoutComponent(it) as Exercise }
+                    workoutComponent.copy(id = UUID.randomUUID(), exercises = newExercises)
                 }
                 else -> throw IllegalArgumentException("Unknown workout component type")
             }

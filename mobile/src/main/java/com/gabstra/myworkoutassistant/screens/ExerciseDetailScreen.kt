@@ -3,10 +3,13 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,6 +32,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +51,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
@@ -77,11 +84,14 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import java.util.UUID
 
 @Composable
-fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
+fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
     when (set) {
         is WeightSet -> {
+            val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+
             DarkModeContainer(whiteOverlayAlpha = .1f) {
                 Row(
                     modifier = Modifier.padding(15.dp),
@@ -92,9 +102,20 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        val text = buildString {
+                            append("Weight: ")
+                            repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
+                                append(set.weight)
+                                if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
+                                    append(" + ")
+                                }
+                            }
+                            append(" kg")
+                        }
+
                         Text(
                             modifier = Modifier.weight(1f),
-                            text = "Weight: ${set.weight} kg",
+                            text = text,
                             color = Color.White.copy(alpha = .87f),
                             style = MaterialTheme.typography.bodyMedium,
 
@@ -113,6 +134,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
         }
 
         is BodyWeightSet -> {
+
             DarkModeContainer(whiteOverlayAlpha = .1f) {
                 Row(
                     modifier = Modifier.padding(15.dp),
@@ -124,9 +146,22 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         if(set.additionalWeight != 0.0){
+                            val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+
+                            val text = buildString {
+                                append("Weight: ")
+                                repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
+                                    append(set.additionalWeight)
+                                    if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
+                                        append(" + ")
+                                    }
+                                }
+                                append(" kg")
+                            }
+
                             Text(
                                 modifier = Modifier.weight(1f),
-                                text = "Weight: ${set.additionalWeight} kg",
+                                text = text,
                                 color = Color.White.copy(alpha = .87f),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
@@ -224,6 +259,9 @@ fun ExerciseDetailScreen(
 
     var isSelectionModeActive by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(false) }
+
+    val equipments by appViewModel.equipmentsFlow.collectAsState()
+    val selectedEquipmentId = exercise?.equipmentId
 
     LaunchedEffect(showRest) {
         selectedSets = emptyList()
@@ -529,11 +567,24 @@ fun ExerciseDetailScreen(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
                 ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        modifier = Modifier
+                    ) {
+                        Text(text = "Equipment:",style = MaterialTheme.typography.bodySmall)
+                        val selectedEquipment = equipments.find { it.id == selectedEquipmentId }
+                        Text(
+                            text = selectedEquipment?.name ?: "None",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.padding(vertical = 15.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -550,6 +601,8 @@ fun ExerciseDetailScreen(
                         Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
                     }
                 }
+
+
 
                 GenericSelectableList(
                     it = null,
@@ -587,7 +640,7 @@ fun ExerciseDetailScreen(
                     },
                     isDragDisabled = true,
                     itemContent = { it ->
-                        ComponentRenderer(it,appViewModel)
+                        ComponentRenderer(it,appViewModel,exercise)
                     }
                 )
             }
