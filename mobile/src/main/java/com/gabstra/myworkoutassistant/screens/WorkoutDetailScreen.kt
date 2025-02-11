@@ -427,8 +427,11 @@ fun WorkoutDetailScreen(
                                         }
                                     }
 
+                                val adjustedComponents =
+                                    ensureRestSeparatedByExercises(updatedWorkoutComponents)
+
                                 val updatedWorkout =
-                                    workout.copy(workoutComponents = updatedWorkoutComponents)
+                                    workout.copy(workoutComponents = adjustedComponents)
                                 appViewModel.updateWorkoutOld(workout, updatedWorkout)
 
                                 selectedWorkoutComponents = emptyList()
@@ -454,8 +457,11 @@ fun WorkoutDetailScreen(
                                         }
                                     }
 
+                                val adjustedComponents =
+                                    ensureRestSeparatedByExercises(updatedWorkoutComponents)
+
                                 val updatedWorkout =
-                                    workout.copy(workoutComponents = updatedWorkoutComponents)
+                                    workout.copy(workoutComponents = adjustedComponents)
                                 appViewModel.updateWorkoutOld(workout, updatedWorkout)
                                 selectedWorkoutComponents = emptyList()
                                 isSelectionModeActive = false
@@ -578,43 +584,6 @@ fun WorkoutDetailScreen(
                 DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
                     editModeBottomBar()
                 }
-            } else {
-                BottomAppBar(
-                    contentPadding = PaddingValues(0.dp),
-                    containerColor = Color.Transparent,
-                    actions = {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                        ) {
-                            GenericButtonWithMenu(
-                                menuItems = listOf(
-                                    MenuItem("Add Exercise") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewExercise(
-                                                workout.id
-                                            )
-                                        );
-                                    },
-                                    MenuItem("Add Rests Between Exercises") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewRest(
-                                                workout.id,
-                                                null
-                                            )
-                                        );
-                                    },
-                                    MenuItem("Add Superset") {
-                                        displaySupersetDialog.value = true
-                                    }
-                                ),
-                                content = { Text("New Exercise") }
-                            )
-                        }
-                    }
-                )
             }
         },
     ) { it ->
@@ -704,6 +673,9 @@ fun WorkoutDetailScreen(
                     )
                 }
 
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(5.dp).verticalScroll(rememberScrollState())
+                ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.End,
@@ -752,6 +724,7 @@ fun WorkoutDetailScreen(
                                     )
                                 )
                             }
+
                             else -> {}
                         }
                     },
@@ -779,6 +752,42 @@ fun WorkoutDetailScreen(
                     isDragDisabled = true
                 )
 
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                    ) {
+                        GenericButtonWithMenu(
+                            menuItems = listOf(
+                                MenuItem("Add Exercise") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewExercise(
+                                            workout.id
+                                        )
+                                    );
+                                },
+                                MenuItem("Add Rests Between Exercises") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewRest(
+                                            workout.id,
+                                            null
+                                        )
+                                    );
+                                },
+                                MenuItem("Add Superset") {
+                                    displaySupersetDialog.value = true
+                                }
+                            ),
+                            content = {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "Add"
+                                )
+                            }
+                        )
+                    }
+            }
                 SupersetForm(displaySupersetDialog, appViewModel, workout)
             }
         }

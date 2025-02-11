@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
@@ -245,6 +246,9 @@ fun RestScreen(
             )
         } else if (nextWorkoutStateSet != null) {
                 val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
+                val exerciseSets =  nextExercise.sets.filter { it !is RestSet }
+                val setIndex = exerciseSets.indexOf(nextWorkoutStateSet.set)
+
                 CustomHorizontalPager(
                     modifier = Modifier
                         .fillMaxSize()
@@ -261,9 +265,14 @@ fun RestScreen(
                             ) {
                                 textComposable()
                                 ExerciseInfo(
-                                    Modifier.wrapContentSize().padding(bottom = 25.dp),
+                                    Modifier.height(85.dp),
                                     viewModel,
                                     nextWorkoutStateSet
+                                )
+                                Text(
+                                    textAlign = TextAlign.Center,
+                                    text = "${setIndex + 1}/${exerciseSets.size}",
+                                    style = MaterialTheme.typography.caption1
                                 )
                             }
                         }

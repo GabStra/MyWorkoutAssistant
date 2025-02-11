@@ -120,7 +120,6 @@ fun <T> DetailScreen(
                     },
                 items = items,
                 selection = selectedItems,
-                onSelectionChange = { newSelection -> selectedItems = newSelection },
                 itemContent = { item ->
                     Card(
                         modifier = Modifier

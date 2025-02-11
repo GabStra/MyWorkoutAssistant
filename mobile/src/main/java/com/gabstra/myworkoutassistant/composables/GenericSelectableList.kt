@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -198,7 +199,6 @@ fun <T> GenericSelectableList(
             },
         items = items,
         selection = selectedItems,
-        onSelectionChange = { newSelection ->  onSelectionChange(newSelection) },
         itemContent = { item ->
             val offsetY = remember { mutableFloatStateOf(0f) }
             val index = items.indexOf(item)
@@ -226,10 +226,9 @@ fun <T> GenericSelectableList(
                 }
 
                 if(draggedItem.value === item || !itemToRenderByIndex.value.containsKey(index)) {
-                    Box(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 5.dp)
                             .combinedClickable(
                                 onClick = {
                                     if (isSelectionModeActive) {
@@ -243,7 +242,14 @@ fun <T> GenericSelectableList(
                                         onItemClick(item)
                                     }
                                 },
-                                onLongClick = { if (!isSelectionModeActive) onEnableSelection() }
+                                onLongClick = { if (!isSelectionModeActive){
+                                    onEnableSelection()
+                                    onSelectionChange(selectedItems + item)
+                                } else{
+                                    onDisableSelection()
+                                    onSelectionChange(emptyList())
+                                }
+                                }
                             )
                             .conditionalPointerInput(item, index, offsetY)
                             .graphicsLayer {
@@ -254,7 +260,6 @@ fun <T> GenericSelectableList(
                     }
                 }
             }
-        },
-        listState
+        }
     )
 }

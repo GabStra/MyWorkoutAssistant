@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -566,84 +568,91 @@ fun ExerciseDetailScreen(
                     )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(5.dp).verticalScroll(rememberScrollState())
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        modifier = Modifier.then(if(selectedEquipmentId == null) Modifier.alpha(0f) else Modifier)
-                    ) {
-                        Text(text = "Equipment:",style = MaterialTheme.typography.bodySmall)
-                        val selectedEquipment = equipments.find { it.id == selectedEquipmentId }
-                        Text(
-                            text = selectedEquipment?.name ?: "None",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
 
                     Row(
-                        modifier = Modifier.padding(vertical = 15.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp)
                     ) {
-                        Checkbox(
-                            modifier = Modifier.size(10.dp),
-                            checked = showRest,
-                            onCheckedChange = { showRest = it },
-                            colors = CheckboxDefaults.colors().copy(
-                                checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.then(
+                                if (selectedEquipmentId == null) Modifier.alpha(
+                                    0f
+                                ) else Modifier
                             )
-                        )
-                        Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-
-
-
-                GenericSelectableList(
-                    it = null,
-                    items =  if(!showRest) sets.filter { it !is RestSet } else sets,
-                    selectedItems = selectedSets,
-                    isSelectionModeActive,
-                    onItemClick = {
-                        if(it is RestSet) {
-                            appViewModel.setScreenData(
-                                ScreenData.EditRestSet(
-                                    workout.id,
-                                    it,
-                                    exercise.id
-                                )
-                            )
-                        }else{
-                            appViewModel.setScreenData(
-                                ScreenData.EditSet(
-                                    workout.id,
-                                    it,
-                                    exercise.id
-                                )
+                        ) {
+                            Text(text = "Equipment:", style = MaterialTheme.typography.bodySmall)
+                            val selectedEquipment = equipments.find { it.id == selectedEquipmentId }
+                            Text(
+                                text = selectedEquipment?.name ?: "None",
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
-                    },
-                    onEnableSelection = { isSelectionModeActive = true },
-                    onDisableSelection = { isSelectionModeActive = false },
-                    onSelectionChange = { newSelection -> selectedSets = newSelection },
-                    onOrderChange = { newComponents ->
-                        if(!showRest) return@GenericSelectableList
-                        val adjustedComponents = ensureRestSeparatedBySets(newComponents)
-                        val updatedExercise = exercise.copy(sets = adjustedComponents)
-                        appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
-                        sets = adjustedComponents
-                    },
-                    isDragDisabled = true,
-                    itemContent = { it ->
-                        ComponentRenderer(it,appViewModel,exercise)
+
+                        Row(
+                            modifier = Modifier.padding(vertical = 15.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Checkbox(
+                                modifier = Modifier.size(10.dp),
+                                checked = showRest,
+                                onCheckedChange = { showRest = it },
+                                colors = CheckboxDefaults.colors().copy(
+                                    checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                                )
+                            )
+                            Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
-                )
+
+                    GenericSelectableList(
+                        it = null,
+                        items = if (!showRest) sets.filter { it !is RestSet } else sets,
+                        selectedItems = selectedSets,
+                        isSelectionModeActive,
+                        onItemClick = {
+                            if (it is RestSet) {
+                                appViewModel.setScreenData(
+                                    ScreenData.EditRestSet(
+                                        workout.id,
+                                        it,
+                                        exercise.id
+                                    )
+                                )
+                            } else {
+                                appViewModel.setScreenData(
+                                    ScreenData.EditSet(
+                                        workout.id,
+                                        it,
+                                        exercise.id
+                                    )
+                                )
+                            }
+                        },
+                        onEnableSelection = { isSelectionModeActive = true },
+                        onDisableSelection = { isSelectionModeActive = false },
+                        onSelectionChange = { newSelection -> selectedSets = newSelection },
+                        onOrderChange = { newComponents ->
+                            if (!showRest) return@GenericSelectableList
+                            val adjustedComponents = ensureRestSeparatedBySets(newComponents)
+                            val updatedExercise = exercise.copy(sets = adjustedComponents)
+                            appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
+                            sets = adjustedComponents
+                        },
+                        isDragDisabled = true,
+                        itemContent = { it ->
+                            ComponentRenderer(it, appViewModel, exercise)
+                        }
+                    )
+                }
             }
         }
     }

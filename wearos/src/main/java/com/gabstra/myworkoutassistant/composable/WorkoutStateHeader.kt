@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -31,6 +32,7 @@ import java.time.Duration
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
+@SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutStateHeader(
