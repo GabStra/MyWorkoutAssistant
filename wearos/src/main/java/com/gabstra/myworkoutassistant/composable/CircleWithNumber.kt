@@ -35,7 +35,7 @@ fun CircleWithNumber(
     number: Int,
     transparency: Float = 1f
 ) {
-    val textColor = Color.White
+    val textColor = Color.Black
 
     val density = LocalDensity.current.density
 
@@ -64,12 +64,12 @@ fun CircleWithNumber(
         ) {
             Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {
                 drawCircle(
-                    color = Color.Black,
+                    color = Color.White,
                     radius = (circleRadius / density).dp.toPx(),
                     center = center
                 )
                 drawCircle(
-                    color = circleColor,
+                    color = Color.Black,
                     radius = (circleRadius / density).dp.toPx(),
                     center = center,
                     style = Stroke(width = 3.dp.toPx())

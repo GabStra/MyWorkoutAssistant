@@ -349,7 +349,6 @@ fun ExerciseHistoryScreen(
                             cartesianChartModel = volumeEntryModel!!,
                             title = "Volume",
                             markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                            markerTextFormatter = { value -> formatNumber(value) },
                             startAxisValueFormatter = volumeAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                         )

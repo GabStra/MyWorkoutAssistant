@@ -431,7 +431,6 @@ fun WorkoutHistoryScreen(
                     cartesianChartModel = volumeEntryModel!!,
                     title = "Total volume over time",
                     markerPosition = volumeMarkerTarget!!.first.toFloat(),
-                    markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                 )

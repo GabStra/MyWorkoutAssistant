@@ -1500,21 +1500,22 @@ class AppViewModel : ViewModel() {
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        val exerciseVolume = exerciseSets.sumOf {
-            when (it) {
-                is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    it.getWeight(equipment, relativeBodyWeight) * it.reps
-                }
+        val exerciseVolume = exerciseProgression?.originalVolume
+            ?: exerciseSets.sumOf {
+                when (it) {
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight =
+                            bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                        it.getWeight(equipment, relativeBodyWeight) * it.reps
+                    }
 
-                is WeightSet -> {
-                    it.getWeight(equipment) * it.reps
-                }
+                    is WeightSet -> {
+                        it.getWeight(equipment) * it.reps
+                    }
 
-                else -> 0.0
+                    else -> 0.0
+                }
             }
-        }
 
         val plateChangeResults = getPlateChangeResults(exercise, exerciseSets, equipment)
 

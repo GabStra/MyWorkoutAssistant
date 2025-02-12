@@ -411,48 +411,61 @@ fun BodyWeightSetScreen(
                         )
 
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                            if(state.streak > 0){
+                                Icon(
+                                    imageVector = Icons.Filled.Star,
+                                    modifier = Modifier.size(20.dp),
+                                    contentDescription = "Streak",
+                                    tint = Color(0xFFFFD700)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = state.streak.toString(),
+                                    style = headerStyle,
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                            }
                             Text(
                                 text = "PROGRESS",
                                 style = headerStyle,
                             )
                             Spacer(modifier = Modifier.width(5.dp))
-                            if(state.expectedProgress!=null){
-                                val sign = if (state.expectedProgress > 0) "+" else ""
-                                val text = if (state.expectedProgress != 0.0)  "$sign${state.expectedProgress.round(2)}%" else "-"
+                            if(isLastSet && state.expectedProgress!=null){
+                                val progressChange = ((volumeProgression - 1.0)*100).round(2)
+                                val sign = if (progressChange > 0) "+" else ""
+                                val text = if (progressChange != 0.0)  "$sign${progressChange}%" else "-"
                                 Text(
                                     text = text,
                                     style = headerStyle,
                                     textAlign = TextAlign.End,
+                                    color = when {
+                                        progressChange > 0 -> MyColors.Green
+                                        progressChange < 0 -> MyColors.Red
+                                        else -> Color.White
+                                    }
                                 )
                             }else{
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    modifier = Modifier.size(20.dp),
-                                    contentDescription = "X",
-                                    tint = MyColors.Red
-                                )
-                            }
-                        }
-
-                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.Center){
-                            if(state.streak > 0){
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Star,
-                                        modifier = Modifier.size(20.dp),
-                                        contentDescription = "Streak",
-                                        tint = Color(0xFFFFD700)
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
+                                if(state.expectedProgress!=null){
+                                    val sign = if (state.expectedProgress > 0) "+" else ""
+                                    val text = if (state.expectedProgress != 0.0)  "$sign${state.expectedProgress.round(2)}%" else "-"
                                     Text(
-                                        text = state.streak.toString(),
+                                        text = text,
                                         style = headerStyle,
+                                        textAlign = TextAlign.End,
+                                    )
+                                }else{
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        modifier = Modifier.size(20.dp),
+                                        contentDescription = "X",
+                                        tint = MyColors.Red
                                     )
                                 }
                             }
+                        }
 
-                            if(state.isDeloading){
-                                Spacer(modifier = Modifier.width(5.dp))
+                        if(state.isDeloading){
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.Center){
                                 Text(
                                     text = "DELOAD",
                                     style = MaterialTheme.typography.title3,

@@ -73,7 +73,7 @@ object VolumeDistributionHelper {
                 params.baselineReps,
                 { volume: Double, intensity: Double ->
                     ValidationResult(
-                        shouldReturn = volume < params.exerciseVolume || intensity <= intensityLimit || intensity > intensityLimit  * 1.025
+                        shouldReturn = volume < params.exerciseVolume || volume > params.exerciseVolume * 1.01  || intensity <= intensityLimit || intensity > intensityLimit  * 1.025
                     )
                 }
             )
