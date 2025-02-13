@@ -25,3 +25,4 @@ wearos/release/wearos-release.apk
 *.aab
 *.kts
 mobile/version.properties.mobile
+.aider*

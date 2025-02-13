@@ -418,18 +418,20 @@ fun WeightSetScreen (
                         )
 
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.Star,
-                                modifier = Modifier.size(20.dp),
-                                contentDescription = "Streak",
-                                tint = Color(0xFFFFD700)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = "5",
-                                style = headerStyle,
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
+                            if(state.streak > 0){
+                                Icon(
+                                    imageVector = Icons.Filled.Star,
+                                    modifier = Modifier.size(20.dp),
+                                    contentDescription = "Streak",
+                                    tint = Color(0xFFFFD700)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = state.streak.toString(),
+                                    style = headerStyle,
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                            }
 
                             if(isLastSet && state.expectedProgress!=null){
                                 Text(

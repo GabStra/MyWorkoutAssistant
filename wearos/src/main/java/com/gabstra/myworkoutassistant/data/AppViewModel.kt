@@ -565,8 +565,8 @@ class AppViewModel : ViewModel() {
         exerciseProgressionByExerciseId.clear()
 
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-        val exerciseWithWeightSets = exercises
-            .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT }
+        val exerciseWithWeightSets = exercises.filter { it -> it.enabled }
+            .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT  }
 
         exerciseWithWeightSets.map { exercise ->
             val equipment =
@@ -660,8 +660,7 @@ class AppViewModel : ViewModel() {
             return null
         }
 
-        val shouldDeload =
-            exerciseInfo != null && exerciseInfo.sessionFailedCounter >= 2u //( || exerciseInfo.successfulSessionCounter >= 7u)
+        val shouldDeload = false // exerciseInfo != null && exerciseInfo.sessionFailedCounter >= 2u //( || exerciseInfo.successfulSessionCounter >= 7u)
 
         val availableWeights = when (exercise.exerciseType) {
             ExerciseType.WEIGHT -> exercise.equipmentId?.let { getWeightByEquipment(getEquipmentById(it)) }
@@ -724,6 +723,7 @@ class AppViewModel : ViewModel() {
         var exerciseProgression: ExerciseProgression? = null
 
         if (shouldDeload) {
+            Log.d("WorkoutViewModel", "Deloading ${exercise.name}")
             //TODO: Implement deloading
         } else {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
@@ -850,9 +850,10 @@ class AppViewModel : ViewModel() {
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
 
             val exerciseInfos =
-                selectedWorkout.value.workoutComponents.filter { it is Exercise }.mapNotNull {
-                    val exercise = it as Exercise
-                    exerciseInfoDao.getExerciseInfoById(exercise.id)
+                selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>().mapNotNull {
+                    exerciseInfoDao.getExerciseInfoById(it.id)
+                } + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }.mapNotNull {
+                    exerciseInfoDao.getExerciseInfoById(it.id)
                 }
 
             dataClient?.let {
@@ -1146,13 +1147,15 @@ class AppViewModel : ViewModel() {
                     }
 
 
-                    val averageLoad = setDataList.map {
+                    val totalReps = setDataList.sumOf {
                         when (it) {
-                            is BodyWeightSetData -> it.getWeight(equipment)
-                            is WeightSetData -> it.getWeight(equipment)
+                            is BodyWeightSetData -> it.actualReps
+                            is WeightSetData -> it.actualReps
                             else -> throw IllegalArgumentException("Unknown set type")
                         }
-                    }.average()
+                    }
+
+                    val averageLoad = volume / totalReps
 
                     var exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
 

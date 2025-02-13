@@ -423,14 +423,16 @@ fun BodyWeightSetScreen(
                                     text = state.streak.toString(),
                                     style = headerStyle,
                                 )
-                                Spacer(modifier = Modifier.width(10.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                             }
-                            Text(
-                                text = "PROGRESS",
-                                style = headerStyle,
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
+
                             if(isLastSet && state.expectedProgress!=null){
+                                Text(
+                                    text = "RESULT",
+                                    style = headerStyle,
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+
                                 val progressChange = ((volumeProgression - 1.0)*100).round(2)
                                 val sign = if (progressChange > 0) "+" else ""
                                 val text = if (progressChange != 0.0)  "$sign${progressChange}%" else "-"
@@ -445,6 +447,11 @@ fun BodyWeightSetScreen(
                                     }
                                 )
                             }else{
+                                Text(
+                                    text = "TARGET",
+                                    style = headerStyle,
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
                                 if(state.expectedProgress!=null){
                                     val sign = if (state.expectedProgress > 0) "+" else ""
                                     val text = if (state.expectedProgress != 0.0)  "$sign${state.expectedProgress.round(2)}%" else "-"
