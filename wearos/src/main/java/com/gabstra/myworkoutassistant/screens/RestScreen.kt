@@ -1,21 +1,16 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -33,37 +28,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.composable.BodyWeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
-import com.gabstra.myworkoutassistant.composable.EnduranceSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.composable.ExerciseInfo
 import com.gabstra.myworkoutassistant.composable.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
-import com.gabstra.myworkoutassistant.composable.TimedDurationSetDataViewerMinimal
-import com.gabstra.myworkoutassistant.composable.WeightSetDataViewerMinimal
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
-import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.circleMask
-import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
-import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
-import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.Job
 
 import kotlinx.coroutines.delay
@@ -79,13 +60,6 @@ fun RestScreen(
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
 ) {
-    val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
-    val nextWorkoutStateSet = if (nextWorkoutState is WorkoutState.Set) {
-        nextWorkoutState as WorkoutState.Set
-    } else {
-        null
-    }
-
     val set = state.set as RestSet
 
     val context = LocalContext.current
@@ -227,7 +201,7 @@ fun RestScreen(
             .circleMask(),
         contentAlignment = Alignment.Center
     ) {
-        if (isTimerInEditMode && nextWorkoutStateSet!=null) {
+        if (isTimerInEditMode) {
             ControlButtonsVertical(
                 modifier = Modifier
                     .clickable(
@@ -244,71 +218,21 @@ fun RestScreen(
                     textComposable()
                 }
             )
-        } else if (nextWorkoutStateSet != null) {
-                val nextExercise = viewModel.exercisesById[nextWorkoutStateSet.exerciseId]!!
-                val exerciseSets =  nextExercise.sets.filter { it !is RestSet }
-                val setIndex = exerciseSets.indexOf(nextWorkoutStateSet.set)
-
-                CustomHorizontalPager(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(20.dp),
-                    pagerState = pagerState,
-                    userScrollEnabled = true
-                ) { page ->
-                    when (page) {
-                        0 -> {
-                            Column(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(5.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                textComposable()
-                                ExerciseInfo(
-                                    Modifier.height(85.dp),
-                                    viewModel,
-                                    nextWorkoutStateSet
-                                )
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text = "${setIndex + 1}/${exerciseSets.size}",
-                                    style = MaterialTheme.typography.caption1
-                                )
-                            }
-                        }
-                        1 -> {
-                            Box {
-                                Text(
-                                    modifier = Modifier.fillMaxSize(),
-                                    text = "Notes",
-                                    style = MaterialTheme.typography.title3,
-                                    textAlign = TextAlign.Center
-                                )
-                                val scrollState = rememberScrollState()
-                                val notes = nextExercise.notes
-                                Box(
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    Row {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 25.dp)
-                                                .verticalScroll(scrollState)
-                                        ) {
-                                            Text(
-                                                text = notes.ifEmpty { "NOT AVAILABLE" },
-                                                modifier = Modifier.fillMaxWidth(),
-                                                style = MaterialTheme.typography.body1,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        } else{
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                textComposable()
+                ExerciseInfo(
+                    modifier = Modifier.fillMaxSize(),
+                    viewModel,
+                    state.nextStateSets
+                )
+            }
         }
     }
 

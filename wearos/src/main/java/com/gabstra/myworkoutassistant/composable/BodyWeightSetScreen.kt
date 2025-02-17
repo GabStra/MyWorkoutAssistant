@@ -392,6 +392,7 @@ fun BodyWeightSetScreen(
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Text(
                             text = "EXERCISE VOLUME",

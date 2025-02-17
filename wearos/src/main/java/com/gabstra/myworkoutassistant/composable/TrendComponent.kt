@@ -167,21 +167,28 @@ fun ProgressIndicator(
     val cornerRadius = 3.dp
     val roundedCornerShape: Shape = RoundedCornerShape(cornerRadius)
 
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)){
-        Row(modifier = Modifier.height(6.dp).weight(1f).clip(roundedCornerShape)){
-            SimpleProgressIndicator(
-                progress = ratio.toFloat(),
-                trackColor = Color.DarkGray,
-                progressBarColor = progressBarColor,
-                modifier = Modifier.fillMaxHeight().weight(1f),
-            )
+    Row(modifier = modifier, horizontalArrangement = Arrangement.Center){
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ){
+            Row(modifier = Modifier.height(6.dp).weight(1f).clip(roundedCornerShape)){
+                SimpleProgressIndicator(
+                    progress = ratio.toFloat(),
+                    trackColor = Color.DarkGray,
+                    progressBarColor = progressBarColor,
+                    modifier = Modifier.fillMaxHeight().weight(1f),
+                )
+            }
+            /*Icon(
+                imageVector = Icons.Filled.Check,
+                modifier = Modifier.size(20.dp),
+                contentDescription = "Streak",
+                tint = if(ratio>=1) MyColors.Green else Color.DarkGray,
+            )*/
         }
-        Icon(
-            imageVector = Icons.Filled.Check,
-            modifier = Modifier.size(20.dp),
-            contentDescription = "Streak",
-            tint = if(ratio>=1) MyColors.Green else Color.DarkGray,
-        )
     }
+
 }
 

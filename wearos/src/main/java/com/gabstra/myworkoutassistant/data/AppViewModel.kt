@@ -67,7 +67,6 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.math.roundToInt
 
 
 sealed class WorkoutState {
@@ -99,6 +98,7 @@ sealed class WorkoutState {
         val order: UInt,
         var currentSetData: SetData,
         val exerciseId: UUID? = null,
+        var nextStateSets: List<WorkoutState.Set> = emptyList(),
         var startTime : LocalDateTime? = null,
     ) : WorkoutState()
 
@@ -1362,18 +1362,14 @@ class AppViewModel : ViewModel() {
 
     private suspend fun generateWorkoutStates() {
         val workoutComponents = selectedWorkout.value.workoutComponents.filter { it.enabled }
+        val totalStates = mutableListOf<WorkoutState>()
+
+
         for ((index, workoutComponent) in workoutComponents.withIndex()) {
             when (workoutComponent) {
                 is Exercise -> {
                     val states = addStatesFromExercise(workoutComponent)
-
-                    states.forEach {
-                        workoutStateQueue.addLast(it)
-                        allWorkoutStates.add(it)
-                        if(it is WorkoutState.Set){
-                            setStates.addLast(it)
-                        }
-                    }
+                    totalStates.addAll(states)
                 }
                 is Rest -> {
                     val restSet = RestSet(workoutComponent.id, workoutComponent.timeInSeconds)
@@ -1388,8 +1384,8 @@ class AppViewModel : ViewModel() {
                             )
                         )
                     )
-                    workoutStateQueue.addLast(restState)
-                    allWorkoutStates.add(restState)
+
+                    totalStates.add(restState)
                 }
 
                 is Superset -> {
@@ -1447,14 +1443,40 @@ class AppViewModel : ViewModel() {
                         states.addAll(items)
                     }
 
-                    states.forEach {
-                        workoutStateQueue.addLast(it)
-                        allWorkoutStates.add(it)
-                        if(it is WorkoutState.Set){
-                            setStates.addLast(it)
-                        }
-                    }
+
+                    totalStates.addAll(states)
                 }
+            }
+        }
+
+        for (i in totalStates.indices) {
+            val currentState = totalStates[i]
+            if (currentState !is WorkoutState.Rest) continue
+
+            val nextSets = mutableListOf<WorkoutState.Set>()
+
+            // Look ahead until we find another Rest state or reach the end
+            var j = i + 1
+            while (j < totalStates.size) {
+                val nextState = totalStates[j]
+                if (nextState is WorkoutState.Rest) {
+                    break
+                }
+                if (nextState is WorkoutState.Set) {
+                    nextSets.add(nextState)
+                }
+                j++
+            }
+
+            // Update the Rest state with the collected nextSets
+            currentState.nextStateSets = nextSets
+        }
+
+        totalStates.forEach {
+            workoutStateQueue.addLast(it)
+            allWorkoutStates.add(it)
+            if(it is WorkoutState.Set){
+                setStates.addLast(it)
             }
         }
     }

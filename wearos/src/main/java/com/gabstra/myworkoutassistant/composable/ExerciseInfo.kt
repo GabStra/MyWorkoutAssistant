@@ -1,5 +1,10 @@
 package com.gabstra.myworkoutassistant.composable
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -11,13 +16,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,12 +43,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -43,6 +58,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import kotlinx.coroutines.launch
 
 
 @Composable
@@ -50,21 +66,21 @@ fun SetTableRow(
     modifier: Modifier = Modifier,
     setState: WorkoutState.Set,
     index: Int?,
-    showGreyedOut: Boolean = false
+    color: Color = Color.Unspecified,
 ){
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if(index != null){
+/*        if(index != null){
             Text(
                 modifier = Modifier.weight(1f),
                 text = "${index + 1}",
                 style =  MaterialTheme.typography.body1,
                 textAlign = TextAlign.Center,
-                color = if (showGreyedOut) Color.DarkGray else Color.Unspecified
+                color = color
             )
-        }
+        }*/
         when (setState.currentSetData) {
             is WeightSetData -> {
                 val weightSetData = (setState.currentSetData as WeightSetData)
@@ -73,14 +89,14 @@ fun SetTableRow(
                     text = "${weightSetData.actualWeight}",
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
-                    color = if (showGreyedOut) Color.DarkGray else Color.Unspecified
+                    color = color
                 )
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "${weightSetData.actualReps}",
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
-                    color = if (showGreyedOut) Color.DarkGray else Color.Unspecified
+                    color = color
                 )
             }
 
@@ -95,14 +111,14 @@ fun SetTableRow(
                     },
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
-                    color = if (showGreyedOut) Color.DarkGray else Color.Unspecified
+                    color = color
                 )
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "${bodyWeightSetData.actualReps}",
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
-                    color = if (showGreyedOut) Color.DarkGray else Color.Unspecified
+                    color = color
                 )
             }
 
@@ -114,7 +130,7 @@ fun SetTableRow(
                     text = FormatTime(timedDurationSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
-                    color = if (showGreyedOut) Color.DarkGray else Color.Unspecified
+                    color = color
                 )
             }
 
@@ -126,7 +142,7 @@ fun SetTableRow(
                     text = FormatTime(enduranceSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
-                    color = if (showGreyedOut) Color.DarkGray else Color.Unspecified
+                    color = color
                 )
             }
 
@@ -178,12 +194,12 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
+/*                Text(
                     modifier = Modifier.weight(1f),
                     text = "#",
                     style = headerStyle,
                     textAlign = TextAlign.Center
-                )
+                )*/
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "KG",
@@ -225,7 +241,11 @@ fun ExerciseSetsViewer(
                             },
                         setState = nextSetState,
                         index = index,
-                        showGreyedOut = index < setIndex
+                        color = when{
+                            index < setIndex -> Color.DarkGray
+                            index == setIndex -> MyColors.Orange
+                            else -> Color.Unspecified
+                        }
                     )
                 }
             }
@@ -278,7 +298,11 @@ fun ExerciseSetsViewer(
                             },
                         setState = nextSetState,
                         index = index,
-                        showGreyedOut = index < setIndex
+                        color = when{
+                            index < setIndex -> Color.DarkGray
+                            index == setIndex -> MyColors.Orange
+                            else -> Color.Unspecified
+                        }
                     )
                 }
             }
@@ -287,41 +311,96 @@ fun ExerciseSetsViewer(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExerciseInfo(
-    modifier: Modifier,
+    modifier: Modifier = Modifier,
     viewModel: AppViewModel,
-    state: WorkoutState.Set,
+    nextStateSets: List<WorkoutState.Set>,
 ) {
-    val exercise = viewModel.exercisesById[state.exerciseId]!!
-
     var marqueeEnabled by remember { mutableStateOf(false) }
+    var currentIndex by remember { mutableIntStateOf(0) }
+    var selectedStateSet by remember { mutableStateOf(nextStateSets[currentIndex]) }
 
-    Column(
+    val typography = MaterialTheme.typography
+    val style = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+    AnimatedContent(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+        targetState = selectedStateSet,
+        transitionSpec = {
+            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+        }, label = ""
+    ) { updatedStateSet ->
+        val exercise = remember(updatedStateSet) { viewModel.exercisesById[updatedStateSet.exerciseId]!! }
+        val exerciseSets = remember(updatedStateSet) {  exercise.sets.filter { it !is RestSet } }
+        val setIndex = remember(updatedStateSet) { exerciseSets.indexOf(updatedStateSet.set)  }
 
-        Box(modifier = Modifier
-            .clickable { marqueeEnabled = !marqueeEnabled }
-            .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-            contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                if (nextStateSets.size > 1) {
+                    Icon(
+                        modifier = Modifier.clickable {
+                            if (currentIndex > 0) {
+                                currentIndex--
+                                selectedStateSet = nextStateSets[currentIndex]
+                            }
+                        },
+                        imageVector = Icons.Filled.ArrowBack,
+                        contentDescription = "Previous",
+                        tint = if (currentIndex > 0) Color.White else Color.DarkGray
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { marqueeEnabled = !marqueeEnabled }
+                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = exercise.name,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.title3,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (nextStateSets.size > 1) {
+                    Icon(
+                        modifier = Modifier.clickable {
+                            if (currentIndex < nextStateSets.size - 1) {
+                                currentIndex++
+                                selectedStateSet = nextStateSets[currentIndex]
+                            }
+                        },
+                        imageVector = Icons.Filled.ArrowForward,
+                        contentDescription = "Next",
+                        tint = if (currentIndex < nextStateSets.size - 1) Color.White else Color.DarkGray
+                    )
+                }
+            }
+
+            ExerciseSetsViewer(
+                modifier =  Modifier.height(60.dp),
+                viewModel = viewModel,
+                exercise = exercise,
+                currentSet = updatedStateSet.set
+            )
+
             Text(
-                text = exercise.name,
                 textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.title3,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                text = "SET: ${setIndex + 1}/${exerciseSets.size}",
+                style = style
             )
         }
-
-        ExerciseSetsViewer(
-            viewModel = viewModel,
-            exercise = exercise,
-            currentSet = state.set
-        )
     }
 }
