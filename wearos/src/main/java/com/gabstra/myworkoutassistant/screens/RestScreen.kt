@@ -228,7 +228,9 @@ fun RestScreen(
             ) {
                 textComposable()
                 ExerciseInfo(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 5.dp),
                     viewModel,
                     state.nextStateSets
                 )

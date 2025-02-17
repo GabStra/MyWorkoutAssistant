@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
@@ -106,25 +107,22 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         val text = buildString {
-                            append("Weight: ")
+                            append("Weight (KG): ")
                             repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
                                 append(set.weight)
                                 if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
                                     append(" + ")
                                 }
                             }
-                            append(" kg")
                         }
 
                         Text(
-                            modifier = Modifier.weight(1f),
                             text = text,
                             color = Color.White.copy(alpha = .87f),
                             style = MaterialTheme.typography.bodyMedium,
 
                             )
                         Text(
-                            modifier = Modifier.weight(1f),
                             text = "Reps: ${set.reps}",
                             color = Color.White.copy(alpha = .87f),
                             style = MaterialTheme.typography.bodyMedium,
@@ -152,25 +150,22 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
                             val text = buildString {
-                                append("Weight: ")
+                                append("Weight (KG): ")
                                 repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
                                     append(set.additionalWeight)
                                     if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
                                         append(" + ")
                                     }
                                 }
-                                append(" kg")
                             }
 
                             Text(
-                                modifier = Modifier.weight(1f),
                                 text = text,
                                 color = Color.White.copy(alpha = .87f),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         Text(
-                            modifier = Modifier.weight(1f),
                             text = "Reps: ${set.reps}",
                             color = Color.White.copy(alpha = .87f),
                             style = MaterialTheme.typography.bodyMedium,
@@ -456,62 +451,10 @@ fun ExerciseDetailScreen(
                         }
                     )
                 }
-            }else{
-                BottomAppBar(
-                    contentPadding = PaddingValues(0.dp),
-                    containerColor = Color.Transparent,
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                    ){
-                        GenericButtonWithMenu(
-                            menuItems = listOf(
-                                MenuItem("Add Set") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewSet(workout.id, exercise.id)
-                                    );
-                                },
-                                MenuItem("Add Rests between sets") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewRestSet(workout.id, exercise.id)
-                                    );
-                                }
-
-                            ),
-                            enabled = exercise.exerciseType != ExerciseType.WEIGHT || (exercise.exerciseType == ExerciseType.WEIGHT && exercise.equipmentId != null),
-                            content = {  Text("New Component") }
-                        )
-                    }
-                }
             }
-
         },
     ) { it ->
-        if (sets.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(it),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                DarkModeContainer(
-                    modifier = Modifier
-                        .padding(15.dp),
-                    whiteOverlayAlpha = .1f
-                ) {
-                    Text(
-                        text = "Add a new set",
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .padding(15.dp),
-                        color = Color.White.copy(alpha = .87f),
-                    )
-                }
-            }
-        } else {
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -571,90 +514,133 @@ fun ExerciseDetailScreen(
                 Column(
                     modifier = Modifier.fillMaxSize().padding(5.dp).verticalScroll(rememberScrollState())
                 ) {
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            modifier = Modifier.then(
-                                if (selectedEquipmentId == null) Modifier.alpha(
-                                    0f
-                                ) else Modifier
-                            )
+                    if (sets.isEmpty()) {
+                        DarkModeContainer(
+                            modifier = Modifier
+                                .padding(15.dp),
+                            whiteOverlayAlpha = .1f
                         ) {
-                            Text(text = "Equipment:", style = MaterialTheme.typography.bodySmall)
-                            val selectedEquipment = equipments.find { it.id == selectedEquipmentId }
                             Text(
-                                text = selectedEquipment?.name ?: "None",
-                                style = MaterialTheme.typography.bodySmall
+                                text = "Add a new set",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .padding(15.dp),
+                                color = Color.White.copy(alpha = .87f),
                             )
                         }
-
+                    }else{
                         Row(
-                            modifier = Modifier.padding(vertical = 15.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
                         ) {
-                            Checkbox(
-                                modifier = Modifier.size(10.dp),
-                                checked = showRest,
-                                onCheckedChange = { showRest = it },
-                                colors = CheckboxDefaults.colors().copy(
-                                    checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                modifier = Modifier.then(
+                                    if (selectedEquipmentId == null) Modifier.alpha(
+                                        0f
+                                    ) else Modifier
                                 )
-                            )
-                            Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-
-                    GenericSelectableList(
-                        it = null,
-                        items = if (!showRest) sets.filter { it !is RestSet } else sets,
-                        selectedItems = selectedSets,
-                        isSelectionModeActive,
-                        onItemClick = {
-                            if (it is RestSet) {
-                                appViewModel.setScreenData(
-                                    ScreenData.EditRestSet(
-                                        workout.id,
-                                        it,
-                                        exercise.id
-                                    )
-                                )
-                            } else {
-                                appViewModel.setScreenData(
-                                    ScreenData.EditSet(
-                                        workout.id,
-                                        it,
-                                        exercise.id
-                                    )
+                            ) {
+                                Text(text = "Equipment:", style = MaterialTheme.typography.bodySmall)
+                                val selectedEquipment = equipments.find { it.id == selectedEquipmentId }
+                                Text(
+                                    text = selectedEquipment?.name ?: "None",
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
-                        },
-                        onEnableSelection = { isSelectionModeActive = true },
-                        onDisableSelection = { isSelectionModeActive = false },
-                        onSelectionChange = { newSelection -> selectedSets = newSelection },
-                        onOrderChange = { newComponents ->
-                            if (!showRest) return@GenericSelectableList
-                            val adjustedComponents = ensureRestSeparatedBySets(newComponents)
-                            val updatedExercise = exercise.copy(sets = adjustedComponents)
-                            appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
-                            sets = adjustedComponents
-                        },
-                        isDragDisabled = true,
-                        itemContent = { it ->
-                            ComponentRenderer(it, appViewModel, exercise)
+
+                            Row(
+                                modifier = Modifier.padding(vertical = 15.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Checkbox(
+                                    modifier = Modifier.size(10.dp),
+                                    checked = showRest,
+                                    onCheckedChange = { showRest = it },
+                                    colors = CheckboxDefaults.colors().copy(
+                                        checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                                    )
+                                )
+                                Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
-                    )
+
+                        GenericSelectableList(
+                            it = null,
+                            items = if (!showRest) sets.filter { it !is RestSet } else sets,
+                            selectedItems = selectedSets,
+                            isSelectionModeActive,
+                            onItemClick = {
+                                if (it is RestSet) {
+                                    appViewModel.setScreenData(
+                                        ScreenData.EditRestSet(
+                                            workout.id,
+                                            it,
+                                            exercise.id
+                                        )
+                                    )
+                                } else {
+                                    appViewModel.setScreenData(
+                                        ScreenData.EditSet(
+                                            workout.id,
+                                            it,
+                                            exercise.id
+                                        )
+                                    )
+                                }
+                            },
+                            onEnableSelection = { isSelectionModeActive = true },
+                            onDisableSelection = { isSelectionModeActive = false },
+                            onSelectionChange = { newSelection -> selectedSets = newSelection },
+                            onOrderChange = { newComponents ->
+                                if (!showRest) return@GenericSelectableList
+                                val adjustedComponents = ensureRestSeparatedBySets(newComponents)
+                                val updatedExercise = exercise.copy(sets = adjustedComponents)
+                                appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
+                                sets = adjustedComponents
+                            },
+                            isDragDisabled = true,
+                            itemContent = { it ->
+                                ComponentRenderer(it, appViewModel, exercise)
+                            }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                    ) {
+                        GenericButtonWithMenu(
+                            menuItems = listOf(
+                                MenuItem("Add Set") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewSet(workout.id, exercise.id)
+                                    );
+                                },
+                                MenuItem("Add Rests between sets") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewRestSet(workout.id, exercise.id)
+                                    );
+                                }
+                            ),
+                            content = {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "Add"
+                                )
+                            }
+                        )
+                    }
                 }
             }
-        }
+
     }
 }
 

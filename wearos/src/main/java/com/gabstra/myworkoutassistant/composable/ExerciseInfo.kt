@@ -242,9 +242,9 @@ fun ExerciseSetsViewer(
                         setState = nextSetState,
                         index = index,
                         color = when{
-                            index < setIndex -> Color.DarkGray
+                            index < setIndex -> Color.Unspecified
                             index == setIndex -> MyColors.Orange
-                            else -> Color.Unspecified
+                            else ->  Color.DarkGray
                         }
                     )
                 }
@@ -299,9 +299,9 @@ fun ExerciseSetsViewer(
                         setState = nextSetState,
                         index = index,
                         color = when{
-                            index < setIndex -> Color.DarkGray
+                            index < setIndex -> Color.Unspecified
                             index == setIndex -> MyColors.Orange
-                            else -> Color.Unspecified
+                            else ->  Color.DarkGray
                         }
                     )
                 }

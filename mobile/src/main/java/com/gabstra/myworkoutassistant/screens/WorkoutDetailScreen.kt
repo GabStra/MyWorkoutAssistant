@@ -178,15 +178,20 @@ fun WorkoutComponentRenderer(
                 }
             }
 
-        is Superset ->{
+        is Superset -> {
             val superSet = workoutComponent as Superset
 
-            Column(modifier= Modifier.fillMaxWidth().border(1.dp,Color.DarkGray), verticalArrangement = Arrangement.spacedBy(5.dp)){
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color.DarkGray),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
-                ){
+                ) {
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -197,7 +202,10 @@ fun WorkoutComponentRenderer(
                         color = Color.White.copy(alpha = if (superSet.enabled) .87f else .3f),
                     )
                 }
-                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
                     superSet.exercises.forEach { exercise ->
                         ExerciseRenderer(
                             modifier = Modifier.clickable {
@@ -230,17 +238,18 @@ fun SupersetForm(
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(0)) }
     val (hours, minutes, seconds) = hms.value
 
-    if(displayDialog.value){
+    if (displayDialog.value) {
         AlertDialog(
             onDismissRequest = { displayDialog.value = false },
             title = { Text("Add Superset") },
             text = {
-                Column(modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
-                ){
+                ) {
 
                     Text("Rest Time Between Sets")
                     CustomTimePicker(
@@ -253,8 +262,8 @@ fun SupersetForm(
                     )
 
 
-
-                    val validItems = remember {  workout.workoutComponents.filter { it is Exercise && it.enabled } }
+                    val validItems =
+                        remember { workout.workoutComponents.filter { it is Exercise && it.enabled } }
 
                     Text("Select at least two exercises")
                     validItems.forEach { item ->
@@ -266,14 +275,20 @@ fun SupersetForm(
                                 .basicMarquee(iterations = Int.MAX_VALUE)
                                 .clickable {
                                     if (selectedWorkoutComponents.any { it === item }) {
-                                        selectedWorkoutComponents = selectedWorkoutComponents.filter { it !== item }
+                                        selectedWorkoutComponents =
+                                            selectedWorkoutComponents.filter { it !== item }
                                     } else {
                                         selectedWorkoutComponents = selectedWorkoutComponents + item
                                     }
                                 },
                             text = exercise.name,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = if (selectedWorkoutComponents.contains(exercise)) .87f else .3f),
+                            color = Color.White.copy(
+                                alpha = if (selectedWorkoutComponents.contains(
+                                        exercise
+                                    )
+                                ) .87f else .3f
+                            ),
                         )
                     }
 
@@ -303,7 +318,7 @@ fun SupersetForm(
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         displayDialog.value = false
                     },
-                    enabled = selectedWorkoutComponents.size >= 2 && hms.value != Triple(0,0,0)
+                    enabled = selectedWorkoutComponents.size >= 2 && hms.value != Triple(0, 0, 0)
                 ) {
                     Text("Create Super set")
                 }
@@ -496,7 +511,9 @@ fun WorkoutDetailScreen(
                         )
                     }
                     IconButton(onClick = {
-                        val superSetExercises = selectedWorkoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+                        val superSetExercises =
+                            selectedWorkoutComponents.filterIsInstance<Superset>()
+                                .flatMap { it.exercises }
 
                         val newWorkoutComponents = workout.workoutComponents.filter { item ->
                             selectedWorkoutComponents.none { it === item }
@@ -587,28 +604,7 @@ fun WorkoutDetailScreen(
             }
         },
     ) { it ->
-        if (workout.workoutComponents.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(it),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                DarkModeContainer(
-                    modifier = Modifier
-                        .padding(15.dp),
-                    whiteOverlayAlpha = .1f
-                ) {
-                    Text(
-                        text = "Add a new workout component",
-                        textAlign = TextAlign.Center,
-                        color = Color.White.copy(alpha = .87f),
-                        modifier = Modifier
-                            .padding(15.dp)
-                    )
-                }
-            }
-        } else {
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -674,83 +670,104 @@ fun WorkoutDetailScreen(
                 }
 
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(5.dp).verticalScroll(rememberScrollState())
-                ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.End,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
+                        .fillMaxSize()
+                        .padding(5.dp)
+                        .verticalScroll(rememberScrollState())
                 ) {
-                    Row(
-                        modifier = Modifier.padding(vertical = 15.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Checkbox(
-                            modifier = Modifier.size(10.dp),
-                            checked = showRest,
-                            onCheckedChange = { showRest = it },
-                            colors = CheckboxDefaults.colors().copy(
-                                checkedCheckmarkColor = MaterialTheme.colorScheme.background
+
+                    if (workout.workoutComponents.isEmpty()) {
+                        DarkModeContainer(
+                            modifier = Modifier
+                                .padding(15.dp),
+                            whiteOverlayAlpha = .1f
+                        ) {
+                            Text(
+                                text = "Add a new workout component",
+                                textAlign = TextAlign.Center,
+                                color = Color.White.copy(alpha = .87f),
+                                modifier = Modifier
+                                    .padding(15.dp)
                             )
-                        )
-                        Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-
-                GenericSelectableList(
-                    it = null,
-                    items = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
-                    selectedItems = selectedWorkoutComponents,
-                    isSelectionModeActive,
-                    onItemClick = {
-                        when (it) {
-                            is Exercise -> {
-                                appViewModel.setScreenData(
-                                    ScreenData.ExerciseDetail(
-                                        workout.id,
-                                        it.id
-                                    )
-                                )
-                            }
-
-                            is Rest -> {
-                                appViewModel.setScreenData(
-                                    ScreenData.EditRest(
-                                        workout.id,
-                                        it
-                                    )
-                                )
-                            }
-
-                            else -> {}
                         }
-                    },
-                    onEnableSelection = { isSelectionModeActive = true },
-                    onDisableSelection = { isSelectionModeActive = false },
-                    onSelectionChange = { newSelection ->
-                        selectedWorkoutComponents = newSelection
-                    },
-                    onOrderChange = { newWorkoutComponents ->
-                        if (!showRest) return@GenericSelectableList
+                    }else{
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.End,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 15.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Checkbox(
+                                    modifier = Modifier.size(10.dp),
+                                    checked = showRest,
+                                    onCheckedChange = { showRest = it },
+                                    colors = CheckboxDefaults.colors().copy(
+                                        checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                                    )
+                                )
+                                Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
 
-                        val adjustedComponents =
-                            ensureRestSeparatedByExercises(newWorkoutComponents)
-                        val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
-                        appViewModel.updateWorkoutOld(workout, updatedWorkout)
-                    },
-                    itemContent = { it ->
-                        WorkoutComponentRenderer(
-                            workout = workout,
-                            workoutComponent = it,
-                            showRest = showRest,
-                            appViewModel = appViewModel
+                        GenericSelectableList(
+                            it = null,
+                            items = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
+                            selectedItems = selectedWorkoutComponents,
+                            isSelectionModeActive,
+                            onItemClick = {
+                                when (it) {
+                                    is Exercise -> {
+                                        appViewModel.setScreenData(
+                                            ScreenData.ExerciseDetail(
+                                                workout.id,
+                                                it.id
+                                            )
+                                        )
+                                    }
+
+                                    is Rest -> {
+                                        appViewModel.setScreenData(
+                                            ScreenData.EditRest(
+                                                workout.id,
+                                                it
+                                            )
+                                        )
+                                    }
+
+                                    else -> {}
+                                }
+                            },
+                            onEnableSelection = { isSelectionModeActive = true },
+                            onDisableSelection = { isSelectionModeActive = false },
+                            onSelectionChange = { newSelection ->
+                                selectedWorkoutComponents = newSelection
+                            },
+                            onOrderChange = { newWorkoutComponents ->
+                                if (!showRest) return@GenericSelectableList
+
+                                val adjustedComponents =
+                                    ensureRestSeparatedByExercises(newWorkoutComponents)
+                                val updatedWorkout =
+                                    workout.copy(workoutComponents = adjustedComponents)
+                                appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                            },
+                            itemContent = { it ->
+                                WorkoutComponentRenderer(
+                                    workout = workout,
+                                    workoutComponent = it,
+                                    showRest = showRest,
+                                    appViewModel = appViewModel
+                                )
+                            },
+                            isDragDisabled = true
                         )
-                    },
-                    isDragDisabled = true
-                )
+                    }
 
                     Row(
                         modifier = Modifier
@@ -787,10 +804,11 @@ fun WorkoutDetailScreen(
                             }
                         )
                     }
-            }
+                }
+
                 SupersetForm(displaySupersetDialog, appViewModel, workout)
             }
-        }
+
     }
 }
 
@@ -808,9 +826,9 @@ fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<Wor
                 val nextComponentIndex = components.indexOf(component) + 1
                 if (nextComponentIndex < components.size) {
                     val nextComponent = components[nextComponentIndex]
-                    if(nextComponent.enabled){
+                    if (nextComponent.enabled) {
                         adjustedComponents.add(component)
-                    }else{
+                    } else {
                         adjustedComponents.add(component.copy(enabled = false))
                     }
                 }

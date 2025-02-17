@@ -207,6 +207,9 @@ fun PageNextSets(
             textAlign = TextAlign.Center
         )
         ExerciseSetsViewer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 5.dp),
             viewModel = viewModel,
             exercise = exercise,
             currentSet = updatedState.set

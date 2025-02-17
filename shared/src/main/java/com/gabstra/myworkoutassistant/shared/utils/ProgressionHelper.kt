@@ -72,7 +72,7 @@ object VolumeDistributionHelper {
                 params.baselineReps,
                 { volume: Double, intensity: Double ->
                     ValidationResult(
-                        shouldReturn = volume < params.exerciseVolume * 1.005 || (volume == params.exerciseVolume && intensity == params.averageLoad),
+                        shouldReturn = volume < params.exerciseVolume * 1.005,
                     )
                 }
             )
@@ -182,7 +182,7 @@ object VolumeDistributionHelper {
 
                     val lastSet = currentCombo.last()
 
-                    val validSets = sortedSets.filter { (lastSet.weight > it.weight) ||
+                    val validSets = sortedSets.filter { (lastSet.weight > it.weight && lastSet.volume >= it.volume) ||
                             (lastSet.weight == it.weight && lastSet.reps >= it.reps)}
 
                     val maxVolume = validSets.maxOf { it.volume }

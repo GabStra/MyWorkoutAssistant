@@ -50,7 +50,7 @@ fun ExerciseIndicator(
         // Indicate skipped elements at the start
         if (elementsToSkip > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, MyColors.Orange)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.White)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -135,7 +135,7 @@ fun SetIndicator(
         // Indicator for skipped elements
         if (elementsToSkip > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f,if(setsSelection.isEmpty()) Color.White else MyColors.Orange)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f,if(setsSelection.isEmpty()) MyColors.Orange else Color.White)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -161,7 +161,7 @@ fun SetIndicator(
             }
             // Draw group segment
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White else (if(markAsCompleted)  MyColors.Orange else Color.DarkGray))),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) MyColors.Orange  else (if(markAsCompleted) Color.White else Color.DarkGray))),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,

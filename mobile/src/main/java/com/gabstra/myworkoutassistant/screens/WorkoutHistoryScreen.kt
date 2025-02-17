@@ -94,6 +94,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
@@ -167,7 +168,7 @@ fun WorkoutHistoryScreen(
     val userAge by appViewModel.userAge
 
     val exerciseById = remember(workout) {
-        workout.workoutComponents.filterIsInstance<Exercise>().associateBy { it.id }
+        (workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }).associateBy { it.id }
     }
 
     val dateFormatter = remember(currentLocale) {

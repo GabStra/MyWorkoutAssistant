@@ -64,6 +64,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
@@ -253,7 +254,7 @@ fun MyWorkoutAssistantNavHost(
 
                                 setHistoryDao.insertAll(*validSetHistories.toTypedArray())
 
-                                val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() }
+                                val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises } }
 
                                 val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
                                 exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())

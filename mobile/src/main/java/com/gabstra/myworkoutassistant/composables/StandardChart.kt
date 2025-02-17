@@ -85,6 +85,8 @@ fun StandardChart(
         indicator = { _ -> shapeComponent }
     )
 
+    cartesianChartModel.models.first().minY
+
     DarkModeContainer(modifier,whiteOverlayAlpha = .1f) {
         Column{
             Text(
@@ -111,7 +113,7 @@ fun StandardChart(
                                     )
                                 )
                             ),
-                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = minValue, maxY = maxValue)
+                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = cartesianChartModel.models.firstOrNull()?.minY, maxY = cartesianChartModel.models.firstOrNull()?.maxY)
                         ),
 
                         startAxis = VerticalAxis.rememberStart(
