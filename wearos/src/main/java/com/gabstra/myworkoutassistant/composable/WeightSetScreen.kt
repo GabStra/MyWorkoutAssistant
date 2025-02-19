@@ -431,7 +431,7 @@ fun WeightSetScreen (
                                     text = state.streak.toString(),
                                     style = headerStyle,
                                 )
-                                Spacer(modifier = Modifier.width(5.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
                             }
 
                             if(isLastSet && state.expectedProgress!=null){

@@ -70,9 +70,9 @@ object VolumeDistributionHelper {
                 params.exerciseVolume,
                 params.averageLoad,
                 params.baselineReps,
-                { volume: Double, intensity: Double ->
+                { totalVolume: Double, averageLoad: Double ->
                     ValidationResult(
-                        shouldReturn = volume < params.exerciseVolume * 1.005,
+                        shouldReturn = totalVolume < params.exerciseVolume * 1.005 || averageLoad < params.averageLoad || totalVolume > params.exerciseVolume * 1.01
                     )
                 }
             )
@@ -151,12 +151,12 @@ object VolumeDistributionHelper {
                 if (it.reps > baselineReps) (it.reps - baselineReps).toDouble() else 0.0
             }
 
-            val w1 = 1.0
-            val w2 = 1.0
-            val w3 = 1.0
-            val w4 = 1.0
-            val w5 = 1.0
-            val w6 = 10.0
+            val w1 = 100.0
+            val w2 = 100.0
+            val w3 = 100.0
+            val w4 = 10.0
+            val w5 = 10.0
+            val w6 = 10000.0
 
             return w1 * (deltaVPercent * deltaVPercent) +
                    w2 * (deltaLPercent * deltaLPercent) +

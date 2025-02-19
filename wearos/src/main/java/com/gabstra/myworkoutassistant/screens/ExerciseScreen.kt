@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +55,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
+import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -75,14 +77,14 @@ fun ExerciseDetail(
     onTimerDisabled: () -> Unit,
     onTimerEnabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
-    exerciseTitleComposable:  @Composable () -> Unit,
+    exerciseTitleComposable: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
 
     when (updatedState.set) {
         is WeightSet -> {
-            LaunchedEffect(updatedState){
-                if(updatedState.startTime == null){
+            LaunchedEffect(updatedState) {
+                if (updatedState.startTime == null) {
                     updatedState.startTime = LocalDateTime.now()
                 }
             }
@@ -98,9 +100,10 @@ fun ExerciseDetail(
                 exerciseTitleComposable = exerciseTitleComposable
             )
         }
+
         is BodyWeightSet -> {
-            LaunchedEffect(updatedState){
-                if(updatedState.startTime == null){
+            LaunchedEffect(updatedState) {
+                if (updatedState.startTime == null) {
                     updatedState.startTime = LocalDateTime.now()
                 }
             }
@@ -116,6 +119,7 @@ fun ExerciseDetail(
                 exerciseTitleComposable = exerciseTitleComposable
             )
         }
+
         is TimedDurationSet -> {
             TimedDurationSetScreen(
                 viewModel = viewModel,
@@ -123,7 +127,7 @@ fun ExerciseDetail(
                 state = updatedState,
                 onTimerEnd = {
                     viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false,context){
+                    viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.upsertWorkoutRecord(updatedState.set.id)
                         viewModel.goToNextState()
                         viewModel.lightScreenUp()
@@ -135,13 +139,14 @@ fun ExerciseDetail(
                 exerciseTitleComposable = exerciseTitleComposable
             )
         }
+
         is EnduranceSet -> EnduranceSetScreen(
             viewModel = viewModel,
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
                 viewModel.storeSetData()
-                viewModel.pushAndStoreWorkoutData(false,context){
+                viewModel.pushAndStoreWorkoutData(false, context) {
                     viewModel.upsertWorkoutRecord(updatedState.set.id)
                     viewModel.goToNextState()
                     viewModel.lightScreenUp()
@@ -152,6 +157,7 @@ fun ExerciseDetail(
             extraInfo = extraInfo,
             exerciseTitleComposable = exerciseTitleComposable
         )
+
         is RestSet -> throw IllegalStateException("Rest set should not be here")
     }
 }
@@ -161,7 +167,7 @@ fun SimplifiedHorizontalPager(
     modifier: Modifier,
     pagerState: PagerState,
     allowHorizontalScrolling: Boolean,
-    updatedState:  WorkoutState.Set,
+    updatedState: WorkoutState.Set,
     viewModel: AppViewModel,
     exerciseTitleComposable: @Composable () -> Unit,
     onScrollEnabledChange: (Boolean) -> Unit
@@ -174,25 +180,26 @@ fun SimplifiedHorizontalPager(
         userScrollEnabled = allowHorizontalScrolling,
     ) { page ->
         when (page) {
-            0 -> PagePlates(updatedState,exercise,viewModel)
+            0 -> PagePlates(updatedState, exercise, viewModel)
             1 -> PageExerciseDetail(
                 updatedState = updatedState,
                 viewModel = viewModel,
                 onScrollEnabledChange = { onScrollEnabledChange(it) },
                 exerciseTitleComposable = exerciseTitleComposable
             )
-            2 -> PageNextSets(updatedState,viewModel)
+
+            2 -> PageNextSets(updatedState, viewModel)
             3 -> PageNotes(exercise.notes)
-            4 -> PageButtons(updatedState,viewModel)
+            4 -> PageButtons(updatedState, viewModel)
         }
     }
 }
 
 @Composable
 fun PageNextSets(
-    updatedState:  WorkoutState.Set,
+    updatedState: WorkoutState.Set,
     viewModel: AppViewModel
-){
+) {
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
 
     Column(
@@ -219,7 +226,7 @@ fun PageNextSets(
 
 @Composable
 fun PageButtons(
-    updatedState:  WorkoutState.Set,
+    updatedState: WorkoutState.Set,
     viewModel: AppViewModel
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
@@ -232,7 +239,7 @@ fun PageButtons(
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
     val exerciseSets = exercise.sets
 
-    val setIndex =  exerciseSets.indexOfFirst { it === updatedState.set }
+    val setIndex = exerciseSets.indexOfFirst { it === updatedState.set }
     val isLastSet = setIndex == exerciseSets.size - 1
 
     val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
@@ -247,7 +254,7 @@ fun PageButtons(
             .fillMaxSize(),
         state = listState
     ) {
-        item{
+        item {
             ButtonWithText(
                 text = "Back",
                 onClick = {
@@ -258,27 +265,27 @@ fun PageButtons(
                 backgroundColor = MaterialTheme.colors.background
             )
         }
-        item{
+        item {
             ButtonWithText(
                 text = "Add Set",
                 onClick = {
                     VibrateGentle(context)
                     viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false,context){
+                    viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.addNewSetStandard()
                     }
                 },
                 backgroundColor = MaterialTheme.colors.background
             )
         }
-        if(nextWorkoutState !is WorkoutState.Rest){
-            item{
+        if (nextWorkoutState !is WorkoutState.Rest) {
+            item {
                 ButtonWithText(
                     text = "Add Rest",
                     onClick = {
                         VibrateGentle(context)
                         viewModel.storeSetData()
-                        viewModel.pushAndStoreWorkoutData(false,context){
+                        viewModel.pushAndStoreWorkoutData(false, context) {
                             viewModel.addNewRest()
                         }
                     },
@@ -287,14 +294,14 @@ fun PageButtons(
             }
         }
 
-        if(isMovementSet && isLastSet){
-            item{
+        if (isMovementSet && isLastSet) {
+            item {
                 ButtonWithText(
                     text = "Add Rest-Pause Set",
                     onClick = {
                         VibrateGentle(context)
                         viewModel.storeSetData()
-                        viewModel.pushAndStoreWorkoutData(false,context){
+                        viewModel.pushAndStoreWorkoutData(false, context) {
                             viewModel.addNewRestPauseSet()
                         }
                     },
@@ -328,10 +335,10 @@ fun PageButtons(
 
 @Composable
 fun PageExerciseDetail(
-    updatedState:  WorkoutState.Set,
+    updatedState: WorkoutState.Set,
     viewModel: AppViewModel,
     onScrollEnabledChange: (Boolean) -> Unit,
-    exerciseTitleComposable:  @Composable () -> Unit,
+    exerciseTitleComposable: @Composable () -> Unit,
 ) {
     /*val extraInfoComposable: @Composable (WorkoutState.Set) -> Unit = {state ->
         Row(
@@ -348,7 +355,7 @@ fun PageExerciseDetail(
         }
     }*/
 
-    if(updatedState.set is RestSet || updatedState.currentSetData is RestSetData || updatedState.previousSetData is RestSetData){
+    if (updatedState.set is RestSet || updatedState.currentSetData is RestSetData || updatedState.previousSetData is RestSetData) {
         throw IllegalStateException("Rest set should not be here")
     }
 
@@ -395,9 +402,9 @@ fun PageNotes(notes: String) {
 }
 
 @Composable
-fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: AppViewModel) {
+fun PagePlates(updatedState: WorkoutState.Set, exercise: Exercise, viewModel: AppViewModel) {
     val equipment = remember(exercise) {
-        if(exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
+        if (exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
     }
 
     val scrollState = rememberScrollState()
@@ -428,47 +435,79 @@ fun PagePlates(updatedState:  WorkoutState.Set, exercise: Exercise, viewModel: A
                     textAlign = TextAlign.Center
                 )
             } else {
-                Row(
+                val typography = MaterialTheme.typography
+                val headerStyle =
+                    remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+                Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(scrollState),
-                    horizontalArrangement = Arrangement.Center
+                        .padding(horizontal = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "#",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "PLATES",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
                     if (updatedState.plateChangeResult.change.steps.isNotEmpty()) {
                         val style = MaterialTheme.typography.body1
+
                         Column(
-                            modifier= Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalColumnScrollbar(
+                                    scrollState = scrollState,
+                                    scrollBarColor = Color.White,
+                                    scrollBarTrackColor = Color.DarkGray
+                                )
+                                .verticalScroll(scrollState),
                             verticalArrangement = Arrangement.spacedBy(5.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             updatedState.plateChangeResult.change.steps.forEachIndexed { index, step ->
-                                Row(modifier= Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)){
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text(
-                                        text = "${index+1})",
+                                        modifier = Modifier.weight(1f),
+                                        text = "${index + 1}",
                                         style = MaterialTheme.typography.body1,
-                                        textAlign = TextAlign.Start
+                                        textAlign = TextAlign.Center
                                     )
-                                    Row(modifier= Modifier.fillMaxWidth(),horizontalArrangement= Arrangement.Center, verticalAlignment = Alignment.Bottom) {
-                                        val weightText = if (step.weight % 1 == 0.0) {
-                                            "${step.weight.toInt()}"
+                                    val weightText = if (step.weight % 1 == 0.0) {
+                                        "${step.weight.toInt()}"
+                                    } else {
+                                        "${step.weight}"
+                                    }
+
+                                    val actionText =
+                                        if (step.action == PlateCalculator.Companion.Action.ADD) {
+                                            "+"
                                         } else {
-                                            "${step.weight}"
+                                            "-"
                                         }
 
-                                        val actionText = if(step.action == PlateCalculator.Companion.Action.ADD) { "+" } else { "-" }
-
-                                        Text(
-                                            text = "$actionText $weightText",
-                                            style = style,
-                                            textAlign = TextAlign.End,
-                                        )
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        Text(
-                                            text = "kg",
-                                            style = style.copy(fontSize = style.fontSize * 0.5f),
-                                            modifier = Modifier.padding(bottom = 2.dp)
-                                        )
-                                    }
+                                    Text(
+                                        modifier = Modifier.weight(1f),
+                                        text = "$actionText $weightText",
+                                        style = style,
+                                        textAlign = TextAlign.Center,
+                                    )
                                 }
                             }
                         }
@@ -494,8 +533,8 @@ fun ExerciseScreen(
     val pagerState = rememberPagerState(
         initialPage = 0,
         pageCount = {
-        5
-    })
+            5
+        })
 
     LaunchedEffect(state.set.id) {
         pagerState.scrollToPage(1)
@@ -526,10 +565,11 @@ fun ExerciseScreen(
         ) { updatedState ->
 
             val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
-            val exerciseTitleComposable = @Composable{
+            val exerciseTitleComposable = @Composable {
                 Text(
                     modifier = Modifier
-                        .fillMaxWidth().padding(horizontal = 30.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 30.dp)
                         .clickable { marqueeEnabled = !marqueeEnabled }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     text = exercise.name,
@@ -541,7 +581,9 @@ fun ExerciseScreen(
             }
 
             SimplifiedHorizontalPager(
-                modifier = Modifier.fillMaxSize().padding(20.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp),
                 pagerState = pagerState,
                 allowHorizontalScrolling = allowHorizontalScrolling,
                 updatedState = updatedState,
@@ -577,7 +619,7 @@ fun ExerciseScreen(
         handleYesClick = {
             VibrateGentle(context)
             viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false,context){
+            viewModel.pushAndStoreWorkoutData(false, context) {
                 viewModel.upsertWorkoutRecord(state.set.id)
                 viewModel.goToNextState()
                 viewModel.lightScreenUp()
