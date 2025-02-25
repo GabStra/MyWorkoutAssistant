@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
@@ -99,6 +100,8 @@ fun PreparingPolarScreen(
                 viewModel.goToNextState()
                 viewModel.setWorkoutStart()
             }
+
+            VibrateHard(context)
             viewModel.lightScreenUp()
             onReady()
         }

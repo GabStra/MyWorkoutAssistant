@@ -259,12 +259,6 @@ fun ExerciseSetsViewer(
             ) {
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "#",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    modifier = Modifier.weight(1f),
                     text = "TIME",
                     style = headerStyle,
                     textAlign = TextAlign.Center

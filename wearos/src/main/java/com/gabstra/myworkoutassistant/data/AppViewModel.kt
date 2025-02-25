@@ -605,7 +605,6 @@ class AppViewModel : ViewModel() {
         var exerciseVolume = 0.0
         var oneRepMax = 0.0
         var averageLoad = 0.0
-        var baselineReps = 0
 
         exerciseVolume = exerciseSets.sumOf {
             when (it) {
@@ -645,15 +644,6 @@ class AppViewModel : ViewModel() {
         }
 
         averageLoad = exerciseVolume / totalReps
-
-
-        baselineReps = exerciseSets.map {
-            when (it) {
-                is BodyWeightSet -> it.reps
-                is WeightSet -> it.reps
-                else -> 0
-            }
-        }.min()
 
         if (exerciseVolume == 0.0 || oneRepMax == 0.0 || averageLoad == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
@@ -729,7 +719,6 @@ class AppViewModel : ViewModel() {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
                 exerciseVolume,
                 averageLoad,
-                baselineReps,
                 oneRepMax,
                 availableWeights,
                 maxLoadPercent,

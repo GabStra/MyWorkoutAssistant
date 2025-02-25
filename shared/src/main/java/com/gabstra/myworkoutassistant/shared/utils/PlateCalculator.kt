@@ -65,7 +65,9 @@ class PlateCalculator {
                     for (k in allCombos[i - 1].indices) {
                         val comboPrev = allCombos[i - 1][k]
                         val cost = dp[i - 1][k] + countTotalChanges(comboPrev, comboCurrent)
-                        if (cost < dp[i][j]) {
+
+                        if (cost < dp[i][j] || (cost == dp[i][j] &&
+                                    comboCurrent.size < allCombos[i][parent[i][j]].size)) {
                             dp[i][j] = cost
                             parent[i][j] = k
                         }
@@ -149,7 +151,7 @@ class PlateCalculator {
             }
 
             backtrack(0, mutableListOf(), 0.0)
-            return results
+            return results.sortedBy { it.size }
         }
 
         private fun minimizeChanges(currentPlates: List<Double>, requiredPlates: List<Double>): Pair<List<Double>, List<Double>> {

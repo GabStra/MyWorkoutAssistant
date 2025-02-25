@@ -40,6 +40,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -89,6 +90,7 @@ fun PreparingStandardScreen(
                 viewModel.setWorkoutStart()
             }
 
+            VibrateHard(context)
             viewModel.lightScreenUp()
             onReady()
         }

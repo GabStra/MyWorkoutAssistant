@@ -4,7 +4,6 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -30,11 +29,9 @@ object VolumeDistributionHelper {
     data class WeightExerciseParameters(
         val exerciseVolume: Double,
         val averageLoad: Double,
-        val baselineReps: Int,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
         val maxLoadPercent: Double,
-        //val maxWeightFromOneRepMax: Double,
         val repsRange: IntRange,
         val minSets: Int,
         val maxSets: Int,
@@ -72,7 +69,6 @@ object VolumeDistributionHelper {
                 params.maxSets,
                 params.exerciseVolume,
                 params.averageLoad,
-                params.baselineReps,
                 { totalVolume: Double, averageLoad: Double ->
                     ValidationResult(
                         shouldReturn = totalVolume < params.exerciseVolume * 1.005 || totalVolume > params.exerciseVolume * 1.01 || averageLoad < params.averageLoad * .95
@@ -109,11 +105,8 @@ object VolumeDistributionHelper {
         maxSets: Int,
         previousVolume: Double,
         previousAverageLoad: Double,
-        baselineReps: Int,
         validationRules: (Double, Double) -> ValidationResult,
-        scoreThreshold: Double = 1.001,
-        weightCoefficientVariation: Double = 10.0,
-        weightRepsPenalty: Double = 10.0
+        scoreThreshold: Double = 1.0025,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
         require(minSets <= maxSets) { "Minimum sets cannot exceed maximum sets" }
@@ -128,20 +121,22 @@ object VolumeDistributionHelper {
         val mutex = Mutex()
         var bestCombination = emptyList<ExerciseSet>()
         var bestScore = Double.MAX_VALUE
-        var bestComboScore = Double.MAX_VALUE
+        var bestHomogeneityScore = Double.MAX_VALUE
 
-        fun evaluateVolumeScore(combo: List<ExerciseSet>): Double {
+        fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val totalVolume = combo.sumOf { it.volume }
             val averageLoad = if (combo.sumOf { it.reps } > 0) {
                 totalVolume / combo.sumOf { it.reps }
             } else 0.0
+
+            val loadDifference = (averageLoad - previousAverageLoad).pow(2.0)
 
             val validationResult = validationRules(totalVolume, averageLoad)
             if (validationResult.shouldReturn) {
                 return validationResult.returnValue
             }
 
-            return totalVolume * combo.size
+            return totalVolume * combo.size * (10 * (1 + loadDifference))
         }
 
         fun evaluateHomogeneityScore(combo: List<ExerciseSet>): Double {
@@ -153,11 +148,7 @@ object VolumeDistributionHelper {
             } else 0.0
             val cvVolumes = if (meanVolume > 0.0) stdDevVolume / meanVolume else 0.0
 
-            val repsPenalty = combo.sumOf {
-                if (it.reps > baselineReps) (it.reps - baselineReps).toDouble() else 0.0
-            }
-
-            return weightCoefficientVariation * cvVolumes.pow(2.0) + weightRepsPenalty * repsPenalty
+            return cvVolumes.pow(2.0)
         }
 
         suspend fun exploreCombinations(
@@ -165,15 +156,28 @@ object VolumeDistributionHelper {
             currentVolume: Double,
             depth: Int = 1
         ) {
-            if (depth >= maxSets) return
-
-            val currentScore = evaluateVolumeScore(currentCombo)
+            val currentScore = evaluateGeneralScore(currentCombo)
             if (currentScore != Double.MAX_VALUE && bestScore != Double.MAX_VALUE) {
                 if (currentScore > bestScore * scoreThreshold) return
             }
 
-            val lastSet = currentCombo.last()
+            if (currentCombo.size >= minSets) {
+                val newComboScore = evaluateHomogeneityScore(currentCombo)
 
+                mutex.withLock {
+                    val isSimilarBestScore = bestScore != Double.MAX_VALUE && currentScore >= bestScore && currentScore <= bestScore * scoreThreshold && newComboScore < bestHomogeneityScore
+
+                    if (isSimilarBestScore || currentScore < bestScore) {
+                        bestScore = currentScore
+                        bestCombination = currentCombo
+                        bestHomogeneityScore = newComboScore
+                    }
+                }
+            }
+
+            if (depth >= maxSets) return
+
+            val lastSet = currentCombo.last()
             val validSets = sortedSets.filter { candidate ->
                 (lastSet.weight > candidate.weight && lastSet.volume >= candidate.volume) ||
                         (lastSet.weight == candidate.weight && lastSet.reps >= candidate.reps)
@@ -186,29 +190,7 @@ object VolumeDistributionHelper {
             for (nextSet in validSets) {
                 val newCombo = currentCombo + nextSet
                 val newVolume = currentVolume + nextSet.volume
-
-                if (newCombo.size >= minSets) {
-                    val newScore = evaluateVolumeScore(newCombo)
-                    val newComboScore = evaluateHomogeneityScore(newCombo)
-
-                    mutex.withLock {
-                        if (bestScore != Double.MAX_VALUE && newScore <= bestScore * scoreThreshold) {
-                            if (newComboScore < bestComboScore) {
-                                bestScore = newScore
-                                bestCombination = newCombo
-                                bestComboScore = newComboScore
-                            }
-                        } else if (newScore < bestScore) {
-                            bestScore = newScore
-                            bestCombination = newCombo
-                            bestComboScore = newComboScore
-                        }
-                    }
-                }
-
-                if (newCombo.size < maxSets) {
-                    exploreCombinations(newCombo, newVolume, depth + 1)
-                }
+                exploreCombinations(newCombo, newVolume, depth + 1)
             }
         }
 
@@ -295,7 +277,6 @@ object VolumeDistributionHelper {
     suspend fun generateExerciseProgression(
         exerciseVolume: Double,
         averageLoad: Double,
-        baselineReps: Int,
         oneRepMax: Double,
         availableWeights: Set<Double>,
         maxLoadPercent: Double,
@@ -315,7 +296,6 @@ object VolumeDistributionHelper {
             minSets = minSets,
             maxSets = maxSets,
             averageLoad =  averageLoad,
-            baselineReps = baselineReps,
         )
 
         return getProgression(baseParams)

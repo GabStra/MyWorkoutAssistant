@@ -40,6 +40,7 @@ import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.composable.WorkoutStateHeader
+import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
@@ -210,6 +211,7 @@ fun WorkoutScreen(
                             viewModel.pushAndStoreWorkoutData(false,context){
                                 viewModel.goToNextState()
                                 viewModel.lightScreenUp()
+                                VibrateHard(context)
                             }
                         }
                     )
