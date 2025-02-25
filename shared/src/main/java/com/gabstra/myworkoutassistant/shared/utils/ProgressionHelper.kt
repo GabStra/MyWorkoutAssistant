@@ -2,7 +2,10 @@ package com.gabstra.myworkoutassistant.shared.utils
 
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -46,7 +49,7 @@ object VolumeDistributionHelper {
             return null
         }
 
-        //possibleSets = possibleSets.filter { it.volume >= (params.exerciseVolume / params.maxSets) * 0.75 }
+        //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
 
         val maxSetVolume = possibleSets.maxOf { it.volume }
         val maxPossibleVolume = maxSetVolume * params.maxSets
@@ -72,7 +75,7 @@ object VolumeDistributionHelper {
                 params.baselineReps,
                 { totalVolume: Double, averageLoad: Double ->
                     ValidationResult(
-                        shouldReturn = totalVolume < params.exerciseVolume * 1.005 || averageLoad < params.averageLoad || totalVolume > params.exerciseVolume * 1.01
+                        shouldReturn = totalVolume < params.exerciseVolume * 1.005 || totalVolume > params.exerciseVolume * 1.01 || averageLoad < params.averageLoad * .95
                     )
                 }
             )
@@ -107,141 +110,130 @@ object VolumeDistributionHelper {
         previousVolume: Double,
         previousAverageLoad: Double,
         baselineReps: Int,
-        validationRules: (Double, Double) -> ValidationResult
+        validationRules: (Double, Double) -> ValidationResult,
+        scoreThreshold: Double = 1.001,
+        weightCoefficientVariation: Double = 10.0,
+        weightRepsPenalty: Double = 10.0
     ) = coroutineScope {
-        require(minSets > 0)
-        require(minSets <= maxSets)
+        require(minSets > 0) { "Minimum sets must be positive" }
+        require(minSets <= maxSets) { "Minimum sets cannot exceed maximum sets" }
 
-        val bestComboRef = AtomicReference<List<ExerciseSet>>(emptyList())
-        val bestScore = AtomicReference(Double.MAX_VALUE)
+        if (sets.isEmpty()) return@coroutineScope emptyList()
 
-        val sortedSets = sets
-            .sortedWith(
-                compareByDescending<ExerciseSet> { it.weight }
-                    .thenByDescending { it.reps }
-            )
-            .toList()
+        val sortedSets = sets.sortedWith(
+            compareByDescending<ExerciseSet> { it.weight }
+                .thenByDescending { it.reps }
+        )
 
-        if (sortedSets.isEmpty()) {
-            return@coroutineScope emptyList()
-        }
+        val mutex = Mutex()
+        var bestCombination = emptyList<ExerciseSet>()
+        var bestScore = Double.MAX_VALUE
+        var bestComboScore = Double.MAX_VALUE
 
-        fun calculateScore(currentCombo: List<ExerciseSet>): Double {
-            val currentTotalVolume = currentCombo.sumOf { it.volume }
-            val currentTotalReps = currentCombo.sumOf { it.reps }
-            val currentAverageLoad = currentTotalVolume / currentTotalReps
+        fun evaluateVolumeScore(combo: List<ExerciseSet>): Double {
+            val totalVolume = combo.sumOf { it.volume }
+            val averageLoad = if (combo.sumOf { it.reps } > 0) {
+                totalVolume / combo.sumOf { it.reps }
+            } else 0.0
 
-            val validationResult = validationRules(currentTotalVolume, currentAverageLoad)
+            val validationResult = validationRules(totalVolume, averageLoad)
             if (validationResult.shouldReturn) {
                 return validationResult.returnValue
             }
 
-            val deltaVPercent = (currentTotalVolume / previousVolume)
-            val deltaLPercent =  (currentAverageLoad / previousAverageLoad)
+            return totalVolume * combo.size
+        }
 
-            val stdDevWeight = sqrt(currentCombo.map { (it.weight - currentAverageLoad) * (it.weight - currentAverageLoad) }.average())
-            val cvWeights = if (currentAverageLoad != 0.0) stdDevWeight / currentAverageLoad else 0.0
+        fun evaluateHomogeneityScore(combo: List<ExerciseSet>): Double {
+            val volumes = combo.map { it.volume }
+            val meanVolume = volumes.average()
 
-            val repsList = currentCombo.map { it.reps.toDouble() }
-            val meanReps = repsList.average()
-            val stdDevReps = sqrt(repsList.map { (it - meanReps) * (it - meanReps) }.average())
-            val cvReps = if (meanReps != 0.0) stdDevReps / meanReps else 0.0
+            val stdDevVolume = if (volumes.size > 1) {
+                sqrt(volumes.sumOf { (it - meanVolume).pow(2.0) } / volumes.size)
+            } else 0.0
+            val cvVolumes = if (meanVolume > 0.0) stdDevVolume / meanVolume else 0.0
 
-            val repsPenalty = currentCombo.sumOf {
+            val repsPenalty = combo.sumOf {
                 if (it.reps > baselineReps) (it.reps - baselineReps).toDouble() else 0.0
             }
 
-            val w1 = 100.0
-            val w2 = 100.0
-            val w3 = 100.0
-            val w4 = 10.0
-            val w5 = 10.0
-            val w6 = 10000.0
-
-            return w1 * (deltaVPercent * deltaVPercent) +
-                   w2 * (deltaLPercent * deltaLPercent) +
-                   w3 * (cvWeights * cvWeights) +
-                   w4 * (cvReps * cvReps) +
-                   w5 * repsPenalty +
-                   w6 * currentCombo.size
+            return weightCoefficientVariation * cvVolumes.pow(2.0) + weightRepsPenalty * repsPenalty
         }
 
-        suspend fun searchChunk(startIdx: Int, endIdx: Int) = coroutineScope {
-            for (firstSetIdx in startIdx until endIdx) {
-                fun buildCombination(
-                    currentCombo: List<ExerciseSet>,
-                    currentVolume: Double,
-                    depth: Int = 1
-                ) {
-                    if (depth >= maxSets) return
+        suspend fun exploreCombinations(
+            currentCombo: List<ExerciseSet>,
+            currentVolume: Double,
+            depth: Int = 1
+        ) {
+            if (depth >= maxSets) return
 
-                    val currentScore = calculateScore(currentCombo)
-                    if(currentScore != Double.MAX_VALUE && bestScore.get() < Double.MAX_VALUE){
-                        if(currentScore > bestScore.get()) return
-                    }
+            val currentScore = evaluateVolumeScore(currentCombo)
+            if (currentScore != Double.MAX_VALUE && bestScore != Double.MAX_VALUE) {
+                if (currentScore > bestScore * scoreThreshold) return
+            }
 
-                    val lastSet = currentCombo.last()
+            val lastSet = currentCombo.last()
 
-                    val validSets = sortedSets.filter { (lastSet.weight > it.weight && lastSet.volume >= it.volume) ||
-                            (lastSet.weight == it.weight && lastSet.reps >= it.reps)}
+            val validSets = sortedSets.filter { candidate ->
+                (lastSet.weight > candidate.weight && lastSet.volume >= candidate.volume) ||
+                        (lastSet.weight == candidate.weight && lastSet.reps >= candidate.reps)
+            }
 
-                    val maxVolume = validSets.maxOf { it.volume }
-                    val maxPossibleVolume = currentVolume +
-                            (maxSets - currentCombo.size) * maxVolume
-                    if (maxPossibleVolume < previousVolume) return
+            val maxRemainingVolume = validSets.maxOfOrNull { it.volume } ?: 0.0
+            val maxPossibleVolume = currentVolume + (maxSets - currentCombo.size) * maxRemainingVolume
+            if (maxPossibleVolume < previousVolume) return
 
-                    for (nextSet in validSets) {
-                        if(currentScore != Double.MAX_VALUE && bestScore.get() < Double.MAX_VALUE){
-                            if(currentScore > bestScore.get()) return
-                        }
+            for (nextSet in validSets) {
+                val newCombo = currentCombo + nextSet
+                val newVolume = currentVolume + nextSet.volume
 
-                        val newVolume = currentVolume + nextSet.volume
-                        val newCombo = currentCombo + nextSet
+                if (newCombo.size >= minSets) {
+                    val newScore = evaluateVolumeScore(newCombo)
+                    val newComboScore = evaluateHomogeneityScore(newCombo)
 
-                        if (newCombo.size >= minSets) {
-                            val newScore = calculateScore(newCombo)
-
-                            if (newScore < bestScore.get()) {
-                                bestScore.set(newScore)
-                                bestComboRef.set(newCombo)
+                    mutex.withLock {
+                        if (bestScore != Double.MAX_VALUE && newScore <= bestScore * scoreThreshold) {
+                            if (newComboScore < bestComboScore) {
+                                bestScore = newScore
+                                bestCombination = newCombo
+                                bestComboScore = newComboScore
                             }
-                        }
-
-                        if (newCombo.size < maxSets) {
-                            buildCombination(
-                                newCombo,
-                                newVolume,
-                                depth + 1
-                            )
+                        } else if (newScore < bestScore) {
+                            bestScore = newScore
+                            bestCombination = newCombo
+                            bestComboScore = newComboScore
                         }
                     }
                 }
 
-                buildCombination(
-                    listOf(sortedSets[firstSetIdx]),
-                    sortedSets[firstSetIdx].volume,
-                )
+                if (newCombo.size < maxSets) {
+                    exploreCombinations(newCombo, newVolume, depth + 1)
+                }
             }
         }
 
-        val numThreads = minOf(
-            Runtime.getRuntime().availableProcessors(),
-            (sortedSets.size + minSets - 1) / minSets
-        )
+        suspend fun processSetRange(startIdx: Int, endIdx: Int) {
+            for (firstSetIdx in startIdx until endIdx) {
+                val firstSet = sortedSets[firstSetIdx]
+                exploreCombinations(listOf(firstSet), firstSet.volume)
+            }
+        }
 
-        val chunkSize = (sortedSets.size + numThreads - 1) / numThreads
+        val processorCount = Runtime.getRuntime().availableProcessors()
+        val effectiveParallelism = minOf(processorCount, sortedSets.size)
+        val chunkSize = (sortedSets.size + effectiveParallelism - 1) / effectiveParallelism
 
-        (0 until numThreads)
+        (0 until effectiveParallelism)
             .map { threadIdx ->
                 async(Dispatchers.Default) {
                     val startIdx = threadIdx * chunkSize
                     val endIdx = minOf(startIdx + chunkSize, sortedSets.size)
-                    if (startIdx < endIdx) searchChunk(startIdx, endIdx)
+                    if (startIdx < endIdx) processSetRange(startIdx, endIdx)
                 }
             }
             .awaitAll()
 
-        bestComboRef.get()
+        return@coroutineScope bestCombination
     }
 
     private fun getNearAverageWeights(params: WeightExerciseParameters): List<Double> {
@@ -260,7 +252,7 @@ object VolumeDistributionHelper {
         }
 
         return sortedWeights.filterIndexed { index, _ ->
-            index in (closestWeightIndex - 2)..(closestWeightIndex + 1)
+            index in (closestWeightIndex - 1)..(closestWeightIndex + 1)
         }
     }
 
