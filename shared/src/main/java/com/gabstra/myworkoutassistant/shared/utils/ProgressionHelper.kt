@@ -140,15 +140,21 @@ object VolumeDistributionHelper {
         }
 
         fun evaluateHomogeneityScore(combo: List<ExerciseSet>): Double {
+            val totalVolume = combo.sumOf { it.volume }
+            val averageLoad = if (combo.sumOf { it.reps } > 0) {
+                totalVolume / combo.sumOf { it.reps }
+            } else 0.0
+
+            val loadDifference = (averageLoad - previousAverageLoad).pow(2.0)
+
             val volumes = combo.map { it.volume }
             val meanVolume = volumes.average()
-
             val stdDevVolume = if (volumes.size > 1) {
                 sqrt(volumes.sumOf { (it - meanVolume).pow(2.0) } / volumes.size)
             } else 0.0
             val cvVolumes = if (meanVolume > 0.0) stdDevVolume / meanVolume else 0.0
 
-            return cvVolumes.pow(2.0)
+            return cvVolumes.pow(2.0) * (10 * (1 + loadDifference))
         }
 
         suspend fun exploreCombinations(
