@@ -606,7 +606,7 @@ class AppViewModel : ViewModel() {
         var oneRepMax = 0.0
         var averageLoad = 0.0
 
-        exerciseVolume = exerciseSets.sumOf {
+        val setVolumes = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight =
@@ -621,6 +621,8 @@ class AppViewModel : ViewModel() {
                 else -> 0.0
             }
         }
+
+        exerciseVolume = setVolumes.sum()
 
         oneRepMax = exerciseSets.maxOf {
             when (it) {
@@ -718,13 +720,15 @@ class AppViewModel : ViewModel() {
         } else {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
                 exerciseVolume,
+                setVolumes.min(),
                 averageLoad,
                 oneRepMax,
                 availableWeights,
                 maxLoadPercent,
                 repsRange,
                 minSets = 3,
-                maxSets = 5
+                maxSets = 5,
+
             )
         }
 
