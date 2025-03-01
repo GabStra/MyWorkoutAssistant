@@ -171,7 +171,7 @@ fun RestScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 45.dp),
+                .padding(horizontal = 55.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -230,7 +230,7 @@ fun RestScreen(
                 ExerciseInfo(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 5.dp),
+                        .padding(horizontal = 10.dp),
                     viewModel,
                     state.nextStateSets
                 )

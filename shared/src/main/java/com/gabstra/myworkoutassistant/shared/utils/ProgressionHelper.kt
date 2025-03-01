@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
 import android.util.Log
+import com.gabstra.myworkoutassistant.shared.round
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -67,14 +68,13 @@ object VolumeDistributionHelper {
                 possibleSets,
                 params.minSets,
                 params.maxSets,
-                params.exerciseVolume,
                 params.averageLoadPerRep,
-                { totalVolume: Double, averageLoad: Double, minVolumePerSet: Double ->
+                { totalVolume: Double, averageLoadPerRep: Double, minVolumePerSet: Double ->
                     ValidationResult(
-                        shouldReturn = totalVolume < params.exerciseVolume * 1.005
+                        shouldReturn = totalVolume < params.exerciseVolume //* 1.005
                                 || totalVolume > params.exerciseVolume * 1.01
-                                || averageLoad < params.averageLoadPerRep
-                                || averageLoad > params.averageLoadPerRep * 1.01
+                                || averageLoadPerRep <= params.averageLoadPerRep
+                                || averageLoadPerRep > params.averageLoadPerRep * 1.01
                                 || minVolumePerSet < params.minVolumePerSet * 0.9,
                     )
                 }
@@ -86,7 +86,6 @@ object VolumeDistributionHelper {
                 possibleSets,
                 params.minSets,
                 params.maxSets,
-                params.exerciseVolume,
                 params.averageLoadPerRep,
                 { totalVolume: Double, averageLoad: Double, _ ->
                     ValidationResult(
@@ -125,8 +124,7 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
-        previousVolume: Double,
-        previousAverageLoad: Double,
+        previousAverageLoadPerSet: Double,
         validationRules: (Double, Double,Double) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
@@ -145,14 +143,14 @@ object VolumeDistributionHelper {
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val totalVolume = combo.sumOf { it.volume }
-            val averageLoad = if (combo.sumOf { it.reps } > 0) {
+            val averageLoadPerRep = if (combo.sumOf { it.reps } > 0) {
                 totalVolume / combo.sumOf { it.reps }
             } else 0.0
 
             val volumes = combo.map { it.volume }
-            val loadDifference = averageLoad - previousAverageLoad
+            val loadDifference = averageLoadPerRep - previousAverageLoadPerSet
 
-            val validationResult = validationRules(totalVolume, averageLoad,volumes.min())
+            val validationResult = validationRules(totalVolume, averageLoadPerRep,volumes.min())
             if (validationResult.shouldReturn) {
                 return validationResult.returnValue
             }
@@ -198,9 +196,11 @@ object VolumeDistributionHelper {
             val lastSet = currentCombo.last()
             val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.volume >= candidate.volume }
 
+            /*
             val maxRemainingVolume = validSets.maxOfOrNull { it.volume } ?: 0.0
             val maxPossibleVolume = currentVolume + (maxSets - currentCombo.size) * maxRemainingVolume
             if (maxPossibleVolume < previousVolume) return
+            */
 
             for (nextSet in validSets) {
                 val newCombo = currentCombo + nextSet
