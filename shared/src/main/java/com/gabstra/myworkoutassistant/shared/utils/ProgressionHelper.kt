@@ -71,9 +71,9 @@ object VolumeDistributionHelper {
                 params.averageLoadPerRep,
                 { totalVolume: Double, averageLoadPerRep: Double, minVolumePerSet: Double ->
                     ValidationResult(
-                        shouldReturn = totalVolume < params.exerciseVolume //* 1.005
+                        shouldReturn = totalVolume < params.exerciseVolume * 1.005
                                 || totalVolume > params.exerciseVolume * 1.01
-                                || averageLoadPerRep <= params.averageLoadPerRep
+                                || averageLoadPerRep < params.averageLoadPerRep
                                 || averageLoadPerRep > params.averageLoadPerRep * 1.01
                                 || minVolumePerSet < params.minVolumePerSet * 0.9,
                     )
