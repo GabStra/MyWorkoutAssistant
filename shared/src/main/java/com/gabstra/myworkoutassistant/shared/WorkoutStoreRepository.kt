@@ -14,7 +14,7 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
             workoutStore = fromJSONToWorkoutStore(jsonString)
         }
 
-        return workoutStore ?: WorkoutStore(emptyList(), emptyList(),null,0,0.0)  // Return the result or a default value
+        return workoutStore ?: WorkoutStore(emptyList(), emptyList(),null,0,0.0,0.0,0.0,0.0,0.0)  // Return the result or a default value
     }
 
     override fun saveWorkoutStore(workoutStore: WorkoutStore) {

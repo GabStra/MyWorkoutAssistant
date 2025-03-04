@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.data
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
+import androidx.annotation.FloatRange
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
 import androidx.compose.runtime.getValue
@@ -112,7 +113,11 @@ class AppViewModel : ViewModel() {
             polarDeviceId = null,
             birthDateYear = 0,
             weightKg = 0.0,
-            equipments = emptyList()
+            equipments = emptyList(),
+            volumeProgressionLowerRange = 0.0,
+            volumeProgressionUpperRange = 0.0,
+            averageLoadPerRepProgressionLowerRange = 0.0,
+            averageLoadPerRepProgressionUpperRange = 0.0
         )
     )
 
@@ -167,7 +172,11 @@ class AppViewModel : ViewModel() {
                 polarDeviceId = null,
                 birthDateYear = 0,
                 weightKg = 0.0,
-                equipments = emptyList()
+                equipments = emptyList(),
+                volumeProgressionLowerRange = 0.0,
+                volumeProgressionUpperRange = 0.0,
+                averageLoadPerRepProgressionLowerRange = 0.0,
+                averageLoadPerRepProgressionUpperRange = 0.0
             )
         )
     }
@@ -728,7 +737,8 @@ class AppViewModel : ViewModel() {
                 repsRange,
                 minSets = 3,
                 maxSets = 5,
-
+                volumeProgressionRange = FloatRange(workoutStore.volumeProgressionLowerRange, workoutStore.volumeProgressionUpperRange),
+                averageLoadPerRepProgressionRange = FloatRange(workoutStore.averageLoadPerRepProgressionLowerRange, workoutStore.averageLoadPerRepProgressionUpperRange)
             )
         }
 

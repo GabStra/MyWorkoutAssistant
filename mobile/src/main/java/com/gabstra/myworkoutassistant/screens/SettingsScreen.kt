@@ -13,6 +13,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.round
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -36,7 +38,13 @@ fun SettingsScreen(
 
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
-    val weightState = remember { mutableStateOf(workoutStore?.weightKg?.toString() ?: "") }
+    val weightState = remember { mutableStateOf(workoutStore.weightKg.toString() ?: "") }
+
+    val minVolumeProgressionState = remember { mutableStateOf(workoutStore.volumeProgressionLowerRange) }
+    val maxVolumeProgressionState = remember { mutableStateOf(workoutStore.volumeProgressionUpperRange) }
+
+    val minAverageLoadPerRepProgressionState = remember { mutableStateOf(workoutStore.averageLoadPerRepProgressionLowerRange) }
+    val maxAverageLoadPerRepProgressionState = remember { mutableStateOf(workoutStore.averageLoadPerRepProgressionUpperRange) }
 
     Box(
         modifier = Modifier
@@ -87,6 +95,42 @@ fun SettingsScreen(
                     .padding(8.dp)
             )
 
+            Text(
+                text = "Volume Progress Range (${minVolumeProgressionState.value.round(2)}% - ${maxVolumeProgressionState.value.round(2)}%)",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            )
+
+            RangeSlider(
+                value = minVolumeProgressionState.value.toFloat()..maxVolumeProgressionState.value.toFloat(),
+                onValueChange = { range ->
+                    minVolumeProgressionState.value = range.start.toDouble()
+                    maxVolumeProgressionState.value = range.endInclusive.toDouble()
+                },
+                valueRange = 0f..5f,
+                steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
+            Text(
+                text = "Average Load Progress Range (${minAverageLoadPerRepProgressionState.value.round(2)}% - ${maxAverageLoadPerRepProgressionState.value.round(2)}%)",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            )
+
+            RangeSlider(
+                value = minAverageLoadPerRepProgressionState.value.toFloat()..maxAverageLoadPerRepProgressionState.value.toFloat(),
+                onValueChange = { range ->
+                    minAverageLoadPerRepProgressionState.value = range.start.toDouble()
+                    maxAverageLoadPerRepProgressionState.value = range.endInclusive.toDouble()
+                },
+                valueRange = 0f..5f,
+                steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
             Button(
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
@@ -102,7 +146,11 @@ fun SettingsScreen(
                     val newWorkoutStore = workoutStore.copy(
                         polarDeviceId = polarDeviceIdState.value,
                         birthDateYear = birthDateYear,
-                        weightKg = weightState.value.toDoubleOrNull() ?: 0.0
+                        weightKg = weightState.value.toDoubleOrNull() ?: 0.0,
+                        volumeProgressionLowerRange = minVolumeProgressionState.value,
+                        volumeProgressionUpperRange = maxVolumeProgressionState.value,
+                        averageLoadPerRepProgressionLowerRange = minAverageLoadPerRepProgressionState.value,
+                        averageLoadPerRepProgressionUpperRange = maxAverageLoadPerRepProgressionState.value
                     )
                     onSave(newWorkoutStore)
                 },

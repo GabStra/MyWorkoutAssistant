@@ -39,6 +39,7 @@ import java.time.LocalTime
 import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
+import kotlin.math.abs
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
     val gson = GsonBuilder()
@@ -417,4 +418,8 @@ fun formatNumber(number: Double): String {
         value >= 10 -> "%.1f%s".format(value, suffixes[suffixIndex])
         else -> "%.2f%s".format(value, suffixes[suffixIndex])
     }.replace(",",".").replace(".0", "")
+}
+
+fun Double.isEqualTo(other: Double, epsilon: Double = 1e-2): Boolean {
+    return abs(this - other) < epsilon
 }

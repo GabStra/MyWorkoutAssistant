@@ -1,7 +1,8 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
 import android.util.Log
-import com.gabstra.myworkoutassistant.shared.round
+import androidx.annotation.FloatRange
+import com.gabstra.myworkoutassistant.shared.isEqualTo
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,13 +28,15 @@ object VolumeDistributionHelper {
     )
 
     data class WeightExerciseParameters(
-        val exerciseVolume: Double,
+        val currentVolume: Double,
         val minVolumePerSet: Double,
-        val averageLoadPerRep: Double,
+        val currentAverageLoadPerRep: Double,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
         val maxLoadPercent: Double,
         val repsRange: IntRange,
+        val volumeProgressionRange: FloatRange,
+        val averageLoadPerRepProgressionRange: FloatRange,
         val minSets: Int,
         val maxSets: Int,
     )
@@ -56,43 +59,30 @@ object VolumeDistributionHelper {
 
         //Log.d("WorkoutViewModel", "Max possible volume: $maxPossibleVolume Exercise volume: ${params.exerciseVolume}")
 
-        if(maxPossibleVolume < params.exerciseVolume) {
+        if(maxPossibleVolume < params.currentVolume) {
             val maxSet = possibleSets.maxByOrNull { it.volume }!!
             validSetCombination = List(params.maxSets) { maxSet }
         }
 
         //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
 
-        if(validSetCombination.isEmpty()){
-            validSetCombination = findBestProgressions(
-                possibleSets,
-                params.minSets,
-                params.maxSets,
-                params.averageLoadPerRep,
-                { totalVolume: Double, averageLoadPerRep: Double, minVolumePerSet: Double ->
-                    ValidationResult(
-                        shouldReturn = totalVolume < params.exerciseVolume * 1.005
-                                || totalVolume > params.exerciseVolume * 1.01
-                                || averageLoadPerRep < params.averageLoadPerRep
-                                || averageLoadPerRep > params.averageLoadPerRep * 1.01
-                                || minVolumePerSet < params.minVolumePerSet * 0.9,
-                    )
-                }
-            )
-        }
+        //Log.d("WorkoutViewModel", "Volume progression range: ${params.volumeProgressionRange}")
+        //Log.d("WorkoutViewModel", "Average load per rep progression range: ${params.averageLoadPerRepProgressionRange}")
 
         if(validSetCombination.isEmpty()){
             validSetCombination = findBestProgressions(
                 possibleSets,
                 params.minSets,
                 params.maxSets,
-                params.averageLoadPerRep,
-                { totalVolume: Double, averageLoad: Double, _ ->
+                params.currentAverageLoadPerRep,
+                { totalVolume: Double, averageLoadPerRep: Double, minVolumePerSet: Double ->
                     ValidationResult(
-                        shouldReturn =  totalVolume < params.exerciseVolume * .975
-                                || totalVolume > params.exerciseVolume * 1.01
-                                || averageLoad < params.averageLoadPerRep * .975
-                                || averageLoad > params.averageLoadPerRep * 1.01
+                        shouldReturn = totalVolume.isEqualTo(params.currentVolume) && averageLoadPerRep.isEqualTo(params.currentAverageLoadPerRep)
+                                || totalVolume < params.currentVolume * (1+params.volumeProgressionRange.from/100)
+                                || totalVolume > params.currentVolume * (1+params.volumeProgressionRange.to/100)
+                                || averageLoadPerRep < params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.from/100)
+                                || averageLoadPerRep > params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.to/100)
+                                // || minVolumePerSet < params.minVolumePerSet * 0.8,
                     )
                 }
             )
@@ -109,9 +99,9 @@ object VolumeDistributionHelper {
             totalVolume = totalVolume,
             usedOneRepMax = params.oneRepMax,
             maxRepsUsed = validSetCombination.maxOf { it.reps },
-            progressIncrease = ((totalVolume - params.exerciseVolume) / params.exerciseVolume) * 100,
+            progressIncrease = ((totalVolume - params.currentVolume) / params.currentVolume) * 100,
             averageIntensity = validSetCombination.map { it.weight }.average(),
-            originalVolume = params.exerciseVolume,
+            originalVolume = params.currentVolume,
         )
     }
 
@@ -168,7 +158,7 @@ object VolumeDistributionHelper {
             val loadDifferenceParam = 1 + loadDifference
             val volumeDifferenceParam = 1 + volumeDifference
 
-            return totalVolume *  (loadDifferenceParam * 10) * (volumeDifferenceParam * 10) * combo.size
+            return totalVolume * (loadDifferenceParam * 10) * (volumeDifferenceParam * 10) * (combo.size * 10)
         }
 
         suspend fun exploreCombinations(
@@ -241,9 +231,9 @@ object VolumeDistributionHelper {
         }
 
         val closestWeightIndex = when {
-            params.averageLoadPerRep.isNaN() || params.averageLoadPerRep.isInfinite() -> 0
+            params.currentAverageLoadPerRep.isNaN() || params.currentAverageLoadPerRep.isInfinite() -> 0
             else -> sortedWeights.binarySearch {
-                it.compareTo(params.averageLoadPerRep)
+                it.compareTo(params.currentAverageLoadPerRep)
             }.let { if (it < 0) -(it + 1) else it }
                 .coerceIn(0, sortedWeights.lastIndex)
         }
@@ -292,11 +282,13 @@ object VolumeDistributionHelper {
     suspend fun generateExerciseProgression(
         exerciseVolume: Double,
         minVolumePerSet: Double,
-        averageLoad: Double,
+        averageLoadPerRep: Double,
         oneRepMax: Double,
         availableWeights: Set<Double>,
         maxLoadPercent: Double,
         repsRange: IntRange,
+        volumeProgressionRange: FloatRange,
+        averageLoadPerRepProgressionRange: FloatRange,
         minSets: Int = 3,
         maxSets: Int = 5,
     ): ExerciseProgression? {
@@ -307,10 +299,12 @@ object VolumeDistributionHelper {
             minVolumePerSet = minVolumePerSet,
             maxLoadPercent = maxLoadPercent,
             repsRange = repsRange,
-            exerciseVolume = exerciseVolume,
+            currentVolume = exerciseVolume,
             minSets = minSets,
             maxSets = maxSets,
-            averageLoadPerRep =  averageLoad,
+            currentAverageLoadPerRep =  averageLoadPerRep,
+            volumeProgressionRange = volumeProgressionRange,
+            averageLoadPerRepProgressionRange = averageLoadPerRepProgressionRange,
         )
 
         return getProgression(baseParams)

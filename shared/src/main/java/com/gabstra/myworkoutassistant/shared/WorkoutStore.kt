@@ -8,4 +8,8 @@ data class WorkoutStore(
     val polarDeviceId: String? = null,
     val birthDateYear: Int,
     val weightKg: Double,
+    val volumeProgressionLowerRange: Double,
+    val volumeProgressionUpperRange: Double,
+    val averageLoadPerRepProgressionLowerRange: Double,
+    val averageLoadPerRepProgressionUpperRange: Double,
 )
