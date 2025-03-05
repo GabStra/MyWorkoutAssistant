@@ -28,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
@@ -43,13 +45,19 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.circleMask
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Job
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
+import java.util.UUID
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -282,3 +290,214 @@ fun RestScreen(
     )
 }
 
+
+@Preview(
+    device = Devices.WEAR_OS_LARGE_ROUND,
+    backgroundColor = 0xFF000000,
+    showBackground = true
+)
+@Composable
+fun RestScreenPreview() {
+    val viewModel = remember { FakeAppViewModel() }
+    val restState = viewModel.createFakeRestState()
+    
+    RestScreen(
+        viewModel = viewModel,
+        state = restState,
+        hearthRateChart = { },
+        onTimerEnd = { }
+    )
+}
+
+private val upcomingExerciseId = UUID.randomUUID()
+private val upcomingSetId = UUID.randomUUID()
+
+// Fake classes for preview
+private class FakeAppViewModel : AppViewModel() {
+    fun createFakeRestState(): WorkoutState.Rest {
+        val restSet = RestSet(
+            id = UUID.randomUUID(),
+            timeInSeconds =90,
+            isRestPause = false
+        )
+        val restSetData = RestSetData(startTimer = 60, endTimer = 60)
+
+        return WorkoutState.Rest(
+            set = restSet,
+            currentSetData = restSetData,
+            nextStateSets = listOf(
+                WorkoutState.Set(
+                    set = WeightSet(
+                        id = upcomingSetId,
+                        weight = 100.0,
+                        reps = 10
+                    ),
+                    exerciseId = upcomingExerciseId,
+                    startTime = null,
+                    currentSetData = WeightSetData(
+                        actualWeight = 100.0,
+                        actualReps = 10,
+                        volume = 1000.0
+                    ),
+                    previousSetData = null,
+                    plateChangeResult = null,
+                    order = 1u,
+                    hasNoHistory = true,
+                    skipped = false,
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null,
+                    currentBodyWeight = 65.0,
+                    streak = 1,
+                    isDeloading = false,
+                    lastSessionVolume = 1000.0,
+                    expectedProgress = null
+                )
+            ),
+            order = 1u,
+            exerciseId = UUID.randomUUID(),
+            startTime = LocalDateTime.now()
+        )
+    }
+
+    override val allWorkoutStates: MutableList<WorkoutState> = mutableListOf(
+        WorkoutState.Set(
+            set = WeightSet(
+                id = upcomingSetId,
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        ),
+        WorkoutState.Set(
+            set = WeightSet(
+                id = UUID.randomUUID(),
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        ),
+        WorkoutState.Set(
+            set = WeightSet(
+                id = UUID.randomUUID(),
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        ),
+        WorkoutState.Set(
+            set = WeightSet(
+                id = UUID.randomUUID(),
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        )
+    )
+
+    override val exercisesById = mutableMapOf<UUID, Exercise>().apply {
+        put(upcomingExerciseId, Exercise(
+            id = upcomingExerciseId,
+            name = "Bench Press",
+            equipmentId = null,
+            notes = "Sample exercise",
+            exerciseType = ExerciseType.WEIGHT,
+            sets = listOf(
+                WeightSet(
+                    id = upcomingSetId,
+                    weight = 100.0,
+                    reps = 10
+                ),
+                WeightSet(
+                    id = UUID.randomUUID(),
+                    weight = 100.0,
+                    reps = 10
+                )
+            ),
+            enabled = true,
+            doNotStoreHistory = false,
+            minLoadPercent = 0.6,
+            maxLoadPercent = .8,
+            minReps = 6,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            bodyWeightPercentage = null
+        )
+        )
+    }
+    
+    override val isPaused = mutableStateOf(false)
+    override val isCustomDialogOpen = MutableStateFlow(false)
+}

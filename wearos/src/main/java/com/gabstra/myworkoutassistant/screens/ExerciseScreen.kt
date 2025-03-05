@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -56,7 +57,9 @@ import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -159,39 +162,6 @@ fun ExerciseDetail(
         )
 
         is RestSet -> throw IllegalStateException("Rest set should not be here")
-    }
-}
-
-@Composable
-fun SimplifiedHorizontalPager(
-    modifier: Modifier,
-    pagerState: PagerState,
-    allowHorizontalScrolling: Boolean,
-    updatedState: WorkoutState.Set,
-    viewModel: AppViewModel,
-    exerciseTitleComposable: @Composable () -> Unit,
-    onScrollEnabledChange: (Boolean) -> Unit
-) {
-    val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
-
-    CustomHorizontalPager(
-        modifier = modifier,
-        pagerState = pagerState,
-        userScrollEnabled = allowHorizontalScrolling,
-    ) { page ->
-        when (page) {
-            0 -> PagePlates(updatedState, exercise, viewModel)
-            1 -> PageExerciseDetail(
-                updatedState = updatedState,
-                viewModel = viewModel,
-                onScrollEnabledChange = { onScrollEnabledChange(it) },
-                exerciseTitleComposable = exerciseTitleComposable
-            )
-
-            2 -> PageNextSets(updatedState, viewModel)
-            3 -> PageNotes(exercise.notes)
-            4 -> PageButtons(updatedState, viewModel)
-        }
     }
 }
 
@@ -519,6 +489,9 @@ fun PagePlates(updatedState: WorkoutState.Set, exercise: Exercise, viewModel: Ap
     }
 }
 
+enum class PageType {
+    PLATES, EXERCISE_DETAIL, NEXT_SETS, NOTES, BUTTONS
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -530,21 +503,52 @@ fun ExerciseScreen(
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
 
+    val exercise = viewModel.exercisesById[state.exerciseId]!!
+    val equipment = remember(exercise) {
+        if (exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
+    }
+
+    Log.d("ExerciseScreen", "Equipment: $equipment")
+
+    // Determine which pages to show based on equipment type and notes
+    val showPlatesPage = equipment != null
+            && equipment.type == EquipmentType.BARBELL
+            && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+
+    val showNotesPage = exercise.notes.isNotEmpty()
+
+    val pageTypes = remember(showPlatesPage, showNotesPage) {
+        mutableListOf<PageType>().apply {
+            if (showPlatesPage) add(PageType.PLATES)
+            add(PageType.EXERCISE_DETAIL)
+            add(PageType.NEXT_SETS)
+            if (showNotesPage) add(PageType.NOTES)
+            add(PageType.BUTTONS)
+        }
+    }
+
+    // Find index of exercise detail page to scroll to on changes
+    val exerciseDetailPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.EXERCISE_DETAIL).coerceAtLeast(0)
+    }
+
     val pagerState = rememberPagerState(
-        initialPage = 0,
+        initialPage = exerciseDetailPageIndex,
         pageCount = {
-            5
-        })
+            pageTypes.size
+        }
+    )
 
     LaunchedEffect(state.set.id) {
-        pagerState.scrollToPage(1)
+        // Navigate to the exercise detail page
+        pagerState.scrollToPage(exerciseDetailPageIndex)
         allowHorizontalScrolling = true
         viewModel.closeCustomDialog()
     }
 
-    LaunchedEffect(allowHorizontalScrolling) {
-        if (!allowHorizontalScrolling && pagerState.currentPage != 0) {
-            pagerState.scrollToPage(1)
+    LaunchedEffect(allowHorizontalScrolling, pageTypes) {
+        if (!allowHorizontalScrolling && pageTypes.getOrNull(pagerState.currentPage) == PageType.PLATES) {
+            pagerState.scrollToPage(exerciseDetailPageIndex)
         }
     }
 
@@ -564,7 +568,7 @@ fun ExerciseScreen(
             }, label = ""
         ) { updatedState ->
 
-            val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
+            val currentExercise = viewModel.exercisesById[updatedState.exerciseId]!!
             val exerciseTitleComposable = @Composable {
                 Text(
                     modifier = Modifier
@@ -572,7 +576,7 @@ fun ExerciseScreen(
                         .padding(horizontal = 30.dp)
                         .clickable { marqueeEnabled = !marqueeEnabled }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    text = exercise.name,
+                    text = currentExercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                     maxLines = 1,
@@ -580,19 +584,31 @@ fun ExerciseScreen(
                 )
             }
 
-            SimplifiedHorizontalPager(
+            CustomHorizontalPager(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(20.dp),
                 pagerState = pagerState,
-                allowHorizontalScrolling = allowHorizontalScrolling,
-                updatedState = updatedState,
-                viewModel = viewModel,
-                onScrollEnabledChange = {
-                    allowHorizontalScrolling = it
-                },
-                exerciseTitleComposable = exerciseTitleComposable,
-            )
+                userScrollEnabled = allowHorizontalScrolling,
+            ) { pageIndex ->
+                // Get the page type for the current index
+                val pageType = pageTypes[pageIndex]
+
+                when (pageType) {
+                    PageType.PLATES -> PagePlates(updatedState, currentExercise, viewModel)
+                    PageType.EXERCISE_DETAIL -> PageExerciseDetail(
+                        updatedState = updatedState,
+                        viewModel = viewModel,
+                        onScrollEnabledChange = {
+                            allowHorizontalScrolling = it
+                        },
+                        exerciseTitleComposable = exerciseTitleComposable
+                    )
+                    PageType.NEXT_SETS -> PageNextSets(updatedState, viewModel)
+                    PageType.NOTES -> PageNotes(currentExercise.notes)
+                    PageType.BUTTONS -> PageButtons(updatedState, viewModel)
+                }
+            }
         }
     }
 

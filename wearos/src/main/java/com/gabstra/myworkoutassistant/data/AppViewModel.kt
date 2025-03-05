@@ -106,7 +106,7 @@ sealed class WorkoutState {
     data class Finished(val startWorkoutTime: LocalDateTime) : WorkoutState()
 }
 
-class AppViewModel : ViewModel() {
+open class AppViewModel : ViewModel() {
     private var workoutStore by mutableStateOf(
         WorkoutStore(
             workouts = emptyList(),
@@ -126,7 +126,7 @@ class AppViewModel : ViewModel() {
     }
 
     private val _isPaused = mutableStateOf(false) // Private mutable state
-    val isPaused: State<Boolean> = _isPaused // Public read-only State access
+    open val isPaused: State<Boolean> = _isPaused // Public read-only State access
 
     fun pauseWorkout() {
         _isPaused.value = true
@@ -153,7 +153,7 @@ class AppViewModel : ViewModel() {
         _backupProgress.value = progress
     }
 
-    private val allWorkoutStates: MutableList<WorkoutState> = mutableListOf()
+    open val allWorkoutStates: MutableList<WorkoutState> = mutableListOf()
 
     var polarDeviceId: String = ""
         get() = workoutStore.polarDeviceId ?: ""
@@ -282,7 +282,7 @@ class AppViewModel : ViewModel() {
 
     var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
 
-    val exercisesById: Map<UUID, Exercise>
+    open val exercisesById: Map<UUID, Exercise>
         get() = selectedWorkout.value.workoutComponents
             .filterIsInstance<Exercise>()
             .associateBy { it.id } + selectedWorkout.value.workoutComponents
@@ -309,7 +309,7 @@ class AppViewModel : ViewModel() {
 
     private val _isSkipDialogOpen = MutableStateFlow<Boolean>(false)
 
-    val isCustomDialogOpen = _isSkipDialogOpen.asStateFlow()
+    open val isCustomDialogOpen = _isSkipDialogOpen.asStateFlow()
 
     private val _enableWorkoutNotificationFlow = MutableStateFlow<String?>(null)
     val enableWorkoutNotificationFlow = _enableWorkoutNotificationFlow.asStateFlow()
