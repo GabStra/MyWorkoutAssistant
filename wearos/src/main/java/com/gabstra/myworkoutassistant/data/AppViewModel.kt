@@ -342,6 +342,13 @@ open class AppViewModel : ViewModel() {
     fun switchHeaderDisplayMode() {
         _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
     }
+    private val _enableScreenDimming = mutableStateOf(true)
+    val enableScreenDimming: State<Boolean> = _enableScreenDimming
+ 
+    fun toggleScreenDimming() {
+        _enableScreenDimming.value = !_enableScreenDimming.value
+    }
+ 
 
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
     val lightScreenUp = _lightScreenUp.receiveAsFlow()

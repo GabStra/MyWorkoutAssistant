@@ -33,6 +33,7 @@ fun KeepOn(
     var dimmingJob by remember { mutableStateOf<Job?>(null) }
 
     val scope = rememberCoroutineScope()
+    val appDimmingEnabled by appViewModel.enableScreenDimming
 
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
@@ -42,7 +43,7 @@ fun KeepOn(
 
     fun resetDimming() {
         dimmingJob?.cancel()
-        if (!enableDimming) return
+        if (!enableDimming || !appDimmingEnabled) return
         dimmingJob = scope.launch {
             delay(dimDelay)
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF)
@@ -101,7 +102,7 @@ fun KeepOn(
         }
     }
 
-    LaunchedEffect(enableDimming) {
+    LaunchedEffect(enableDimming, appDimmingEnabled) {
         if (isDimmed && !enableDimming) {
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false

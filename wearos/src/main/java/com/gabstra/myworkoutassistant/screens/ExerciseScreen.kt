@@ -233,6 +233,20 @@ fun PageButtons(
                 },
                 enabled = !isHistoryEmpty,
                 backgroundColor = MaterialTheme.colors.background
+        )
+        }
+        item {
+            val dimmingEnabled by viewModel.enableScreenDimming
+            ButtonWithText(
+                text = if (dimmingEnabled) "Disable Dimming" else "Enable Dimming",
+                onClick = {
+                    VibrateGentle(context)
+                    viewModel.toggleScreenDimming()
+                },
+                backgroundColor = if (dimmingEnabled) 
+                    MaterialTheme.colors.background
+                else
+                    MaterialTheme.colors.primary
             )
         }
         item {
