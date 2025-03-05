@@ -384,7 +384,7 @@ fun ExerciseInfo(
             }
 
             ExerciseSetsViewer(
-                modifier =  Modifier.height(80.dp),
+                modifier =  Modifier.height(85.dp),
                 viewModel = viewModel,
                 exercise = exercise,
                 currentSet = updatedStateSet.set

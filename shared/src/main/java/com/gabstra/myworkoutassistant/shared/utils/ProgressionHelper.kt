@@ -133,32 +133,28 @@ object VolumeDistributionHelper {
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val totalVolume = combo.sumOf { it.volume }
-            val averageLoadPerRep = if (combo.sumOf { it.reps } > 0) {
-                totalVolume / combo.sumOf { it.reps }
-            } else 0.0
-
-            val volumes = combo.map { it.volume }
+            val totalReps = combo.sumOf { it.reps }
+            val averageLoadPerRep = if (totalReps > 0) totalVolume / totalReps else 0.0
             val loadDifference = averageLoadPerRep - previousAverageLoadPerSet
 
-            val validationResult = validationRules(totalVolume, averageLoadPerRep,volumes.min())
+            val validationResult = validationRules(totalVolume, averageLoadPerRep, combo.minOfOrNull { it.volume } ?: 0.0)
             if (validationResult.shouldReturn) {
                 return validationResult.returnValue
             }
 
-            val differences = mutableListOf<Double>()
-
-            for (i in 0 until volumes.size - 1) {
-                for (j in i + 1 until volumes.size) {
-                    differences.add(abs(volumes[i] - volumes[j]))
-                }
-            }
-
-            val volumeDifference = if (differences.isNotEmpty()) differences.max() else 0.0
+            val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
+            val weightDifference =  combo.maxOf { it.weight } - combo.minOf { it.weight }
 
             val loadDifferenceParam = 1 + loadDifference
             val volumeDifferenceParam = 1 + volumeDifference
+            val weightDifferenceParam = 1 + weightDifference
 
-            return totalVolume * (loadDifferenceParam * 10) * (volumeDifferenceParam * 10) * (combo.size * 10)
+            // Calculate final score
+            return totalVolume *
+                    (loadDifferenceParam * 10) *
+                    (volumeDifferenceParam * 10) *
+                    (weightDifferenceParam * 10) *
+                    (combo.size * 10)
         }
 
         suspend fun exploreCombinations(
