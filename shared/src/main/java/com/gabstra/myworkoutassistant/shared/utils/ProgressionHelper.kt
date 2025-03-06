@@ -6,7 +6,6 @@ import com.gabstra.myworkoutassistant.shared.isEqualTo
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 
@@ -15,22 +14,21 @@ object VolumeDistributionHelper {
         val weight: Double,
         val reps: Int,
         val volume: Double,
+        val intensity: Double,
+        val workload: Double
     )
 
     data class ExerciseProgression(
         val sets: List<ExerciseSet>,
-        val totalVolume: Double,
+        val workload: Double,
         val usedOneRepMax: Double,
-        val maxRepsUsed: Int,
-        val averageIntensity: Double,
         val progressIncrease: Double,
-        val originalVolume: Double,
+        val originalWorkload: Double,
     )
 
     data class WeightExerciseParameters(
-        val currentVolume: Double,
-        val minVolumePerSet: Double,
         val currentAverageLoadPerRep: Double,
+        val previousSessionWorkload: Double,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
         val maxLoadPercent: Double,
@@ -59,7 +57,7 @@ object VolumeDistributionHelper {
 
         //Log.d("WorkoutViewModel", "Max possible volume: $maxPossibleVolume Exercise volume: ${params.exerciseVolume}")
 
-        if(maxPossibleVolume < params.currentVolume) {
+        if(maxPossibleVolume < params.previousSessionWorkload) {
             val maxSet = possibleSets.maxByOrNull { it.volume }!!
             validSetCombination = List(params.maxSets) { maxSet }
         }
@@ -75,13 +73,13 @@ object VolumeDistributionHelper {
                 params.minSets,
                 params.maxSets,
                 params.currentAverageLoadPerRep,
-                { totalVolume: Double, averageLoadPerRep: Double, minVolumePerSet: Double ->
+                { currentSessionWorkload: Double,averageLoadPerRep : Double ->
                     ValidationResult(
-                        shouldReturn = totalVolume.isEqualTo(params.currentVolume) && averageLoadPerRep.isEqualTo(params.currentAverageLoadPerRep)
-                                || totalVolume < params.currentVolume * (1+params.volumeProgressionRange.from/100)
-                                || totalVolume > params.currentVolume * (1+params.volumeProgressionRange.to/100)
+                        shouldReturn = currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
+                                || currentSessionWorkload < params.previousSessionWorkload * (1+params.volumeProgressionRange.from/100)
+                                // || currentSessionWorkload > params.previousSessionWorkload * (1+params.volumeProgressionRange.to/100)
                                 || averageLoadPerRep < params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.from/100)
-                                || averageLoadPerRep > params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.to/100)
+                                // || averageLoadPerRep > params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.to/100)
                                 // || minVolumePerSet < params.minVolumePerSet * 0.8,
                     )
                 }
@@ -92,30 +90,28 @@ object VolumeDistributionHelper {
             return null
         }
 
-        val totalVolume = validSetCombination.sumOf { it.volume }
+        val currentWorkload = validSetCombination.sumOf { it.workload }
 
         return ExerciseProgression(
             sets = validSetCombination,
-            totalVolume = totalVolume,
+            workload = currentWorkload,
             usedOneRepMax = params.oneRepMax,
-            maxRepsUsed = validSetCombination.maxOf { it.reps },
-            progressIncrease = ((totalVolume - params.currentVolume) / params.currentVolume) * 100,
-            averageIntensity = validSetCombination.map { it.weight }.average(),
-            originalVolume = params.currentVolume,
+            progressIncrease = ((currentWorkload - params.previousSessionWorkload) / params.previousSessionWorkload) * 100,
+            originalWorkload = params.previousSessionWorkload,
         )
     }
 
     data class ValidationResult(
         val shouldReturn: Boolean,
         val returnValue: Double = Double.MAX_VALUE
-    )
 
+    )
     private suspend fun findBestProgressions(
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
         previousAverageLoadPerSet: Double,
-        validationRules: (Double, Double,Double) -> ValidationResult,
+        validationRules: (Double, Double) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
         require(minSets <= maxSets) { "Minimum sets cannot exceed maximum sets" }
@@ -134,27 +130,19 @@ object VolumeDistributionHelper {
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val totalVolume = combo.sumOf { it.volume }
             val totalReps = combo.sumOf { it.reps }
-            val averageLoadPerRep = if (totalReps > 0) totalVolume / totalReps else 0.0
-            val loadDifference = averageLoadPerRep - previousAverageLoadPerSet
+            val currentAverageLoadPerRep = totalVolume / totalReps
 
-            val validationResult = validationRules(totalVolume, averageLoadPerRep, combo.minOfOrNull { it.volume } ?: 0.0)
+            val currentWorkload = combo.sumOf { it.workload }
+
+            val validationResult = validationRules(currentWorkload,currentAverageLoadPerRep)
             if (validationResult.shouldReturn) {
                 return validationResult.returnValue
             }
 
             val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
-            val weightDifference =  combo.maxOf { it.weight } - combo.minOf { it.weight }
 
-            val loadDifferenceParam = 1 + loadDifference
-            val volumeDifferenceParam = 1 + volumeDifference
-            val weightDifferenceParam = 1 + weightDifference
-
-            // Calculate final score
-            return totalVolume *
-                    (loadDifferenceParam * 10) *
-                    (volumeDifferenceParam * 10) *
-                    (weightDifferenceParam * 10) *
-                    (combo.size * 10)
+            val baseScore = (currentWorkload * combo.size) * 10000
+            return baseScore + volumeDifference
         }
 
         suspend fun exploreCombinations(
@@ -247,8 +235,8 @@ object VolumeDistributionHelper {
 
             nearAverageWeights.map { weight ->
                 async(Dispatchers.Default) {
-                    val loadPercentage = weight / params.oneRepMax
-                    val expectedReps = ((1.0278 - loadPercentage) / 0.0278).roundToInt() + 1
+                    val intensity = weight / params.oneRepMax
+                    val expectedReps = ((1.0278 - intensity) / 0.0278).roundToInt() + 1
 
                     params.repsRange
                         .filter { reps -> reps <= expectedReps }
@@ -256,6 +244,7 @@ object VolumeDistributionHelper {
                             createSet(
                                 weight = weight,
                                 reps = reps,
+                                intensity = intensity
                             )
                         }
                 }
@@ -265,6 +254,7 @@ object VolumeDistributionHelper {
     private fun createSet(
         weight: Double,
         reps: Int,
+        intensity: Double
     ): ExerciseSet {
         val volume = weight * reps
 
@@ -272,11 +262,13 @@ object VolumeDistributionHelper {
             weight = weight,
             reps = reps,
             volume = volume,
+            intensity = intensity,
+            workload = volume * intensity
         )
     }
 
     suspend fun generateExerciseProgression(
-        exerciseVolume: Double,
+        exerciseWorkload: Double,
         minVolumePerSet: Double,
         averageLoadPerRep: Double,
         oneRepMax: Double,
@@ -292,10 +284,9 @@ object VolumeDistributionHelper {
         val baseParams = WeightExerciseParameters(
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
-            minVolumePerSet = minVolumePerSet,
             maxLoadPercent = maxLoadPercent,
             repsRange = repsRange,
-            currentVolume = exerciseVolume,
+            previousSessionWorkload = exerciseWorkload,
             minSets = minSets,
             maxSets = maxSets,
             currentAverageLoadPerRep =  averageLoadPerRep,

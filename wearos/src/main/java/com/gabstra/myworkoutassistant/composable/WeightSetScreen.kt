@@ -68,10 +68,6 @@ fun WeightSetScreen (
     val previousSetData = state.previousSetData as WeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
-    val isLastSet = remember(state) {
-        viewModel.setsByExerciseId[state.exerciseId]!!.last() == state
-    }
-
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
@@ -104,31 +100,6 @@ fun WeightSetScreen (
             closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
             closestWeightIndex = availableWeights.indexOf(closestWeight)
             selectedWeightIndex = closestWeightIndex
-        }
-    }
-
-    val executedVolume = remember(state.exerciseId,state.set.id) {
-        val executedSetDataList = viewModel.getExecutedSetsDataByExerciseIdAndTakePriorToSetId<WeightSetData>(state.exerciseId, state.set.id)
-        executedSetDataList.sumOf { it.volume}
-    }
-
-    val currentTotalVolume by remember {
-        derivedStateOf {
-            currentSetData.volume + executedVolume
-        }
-    }
-
-    val previousTotalVolume by remember {
-        derivedStateOf {
-            previousSetData.volume + executedVolume
-        }
-    }
-
-    val volumeProgression by remember {
-        derivedStateOf {
-            if (state.lastSessionVolume != 0.0) {
-                currentTotalVolume / state.lastSessionVolume
-            } else 0.0
         }
     }
 
@@ -388,109 +359,6 @@ fun WeightSetScreen (
             ) {
                 WeightRow(modifier = Modifier.weight(1f))
                 RepsRow(modifier = Modifier.weight(1f))
-            }
-
-            if(volumeProgression > 0){
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    val progressBarColor = when {
-                        currentTotalVolume.roundToInt() < previousTotalVolume.roundToInt() -> MyColors.Red
-                        currentTotalVolume.roundToInt() > previousTotalVolume.roundToInt() -> MyColors.Green
-                        else -> MyColors.Orange
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Text(
-                            text = "EXERCISE VOLUME",
-                            style = headerStyle,
-                        )
-
-                        ProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(),
-                            ratio = volumeProgression,
-                            progressBarColor = progressBarColor,
-                        )
-
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                            if(state.streak > 0){
-                                Icon(
-                                    imageVector = Icons.Filled.Star,
-                                    modifier = Modifier.size(20.dp),
-                                    contentDescription = "Streak",
-                                    tint = Color(0xFFFFD700)
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = state.streak.toString(),
-                                    style = headerStyle,
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                            }
-
-                            if(isLastSet && state.expectedProgress!=null){
-                                Text(
-                                    text = "RESULT",
-                                    style = headerStyle,
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-
-                                val progressChange = ((volumeProgression - 1.0)*100).round(2)
-                                val sign = if (progressChange > 0) "+" else ""
-                                val text = if (progressChange != 0.0)  "$sign${progressChange}%" else "-"
-                                Text(
-                                    text = text,
-                                    style = headerStyle,
-                                    textAlign = TextAlign.End,
-                                    color = when {
-                                        progressChange > 0 -> MyColors.Green
-                                        progressChange < 0 -> MyColors.Red
-                                        else -> Color.White
-                                    }
-                                )
-                            }else{
-                                Text(
-                                    text = "TARGET",
-                                    style = headerStyle,
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                if(state.expectedProgress!=null){
-                                    val sign = if (state.expectedProgress > 0) "+" else ""
-                                    val text = if (state.expectedProgress != 0.0)  "$sign${state.expectedProgress.round(2)}%" else "-"
-                                    Text(
-                                        text = text,
-                                        style = headerStyle,
-                                        textAlign = TextAlign.End,
-                                    )
-                                }else{
-                                    Icon(
-                                        imageVector = Icons.Filled.Close,
-                                        modifier = Modifier.size(20.dp),
-                                        contentDescription = "X",
-                                        tint = MyColors.Red
-                                    )
-                                }
-                            }
-                        }
-
-                        if(state.isDeloading){
-                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.Center){
-                                Text(
-                                    text = "DELOAD",
-                                    style = MaterialTheme.typography.title3,
-                                    textAlign = TextAlign.Center,
-                                    color = MyColors.Orange
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
     }

@@ -614,31 +614,11 @@ open class AppViewModel : ViewModel() {
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
         val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
 
-        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
-
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        var exerciseVolume = 0.0
+        var exerciseWorkload = 0.0
         var oneRepMax = 0.0
-        var averageLoad = 0.0
-
-        val setVolumes = exerciseSets.map {
-            when (it) {
-                is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    it.getWeight(equipment, relativeBodyWeight) * it.reps
-                }
-
-                is WeightSet -> {
-                    it.getWeight(equipment) * it.reps
-                }
-
-                else -> 0.0
-            }
-        }
-
-        exerciseVolume = setVolumes.sum()
+        var averageLoadPerRep = 0.0
 
         oneRepMax = exerciseSets.maxOf {
             when (it) {
@@ -653,6 +633,53 @@ open class AppViewModel : ViewModel() {
             }
         }
 
+        val setVolumes = exerciseSets.map {
+            when (it) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    val weight = it.getWeight(equipment, relativeBodyWeight)
+
+                    val volume = weight * it.reps
+                    volume
+                }
+
+                is WeightSet -> {
+                    val weight = it.getWeight(equipment)
+                    val volume = weight * it.reps
+                    volume
+                }
+
+                else -> 0.0
+            }
+        }
+
+        val exerciseVolume = setVolumes.sum()
+
+        val setWorkloads = exerciseSets.map {
+            when (it) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    val weight = it.getWeight(equipment, relativeBodyWeight)
+                    val intensity = weight / oneRepMax
+                    val volume = weight * it.reps
+                    volume * intensity
+                }
+
+                is WeightSet -> {
+                    val weight = it.getWeight(equipment)
+                    val intensity = weight / oneRepMax
+                    val volume = weight * it.reps
+                    volume * intensity
+                }
+
+                else -> 0.0
+            }
+        }
+
+        exerciseWorkload = setWorkloads.sum()
+
         val totalReps = exerciseSets.sumOf {
             when (it) {
                 is BodyWeightSet -> it.reps
@@ -661,9 +688,9 @@ open class AppViewModel : ViewModel() {
             }
         }
 
-        averageLoad = exerciseVolume / totalReps
+        averageLoadPerRep = exerciseVolume / totalReps
 
-        if (exerciseVolume == 0.0 || oneRepMax == 0.0 || averageLoad == 0.0) {
+        if (exerciseWorkload == 0.0 || oneRepMax == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
             return null
         }
@@ -694,7 +721,7 @@ open class AppViewModel : ViewModel() {
 
         Log.d(
             "WorkoutViewModel",
-            "${exercise.name} (${exercise.exerciseType}) - volume $exerciseVolume - 1RM ${
+            "${exercise.name} (${exercise.exerciseType}) - Workload ${exerciseWorkload.round(2)} - 1RM ${
                 String.format(
                     "%.2f",
                     oneRepMax
@@ -735,9 +762,9 @@ open class AppViewModel : ViewModel() {
             //TODO: Implement deloading
         } else {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
-                exerciseVolume,
-                setVolumes.min(),
-                averageLoad,
+                exerciseWorkload,
+                setWorkloads.min(),
+                averageLoadPerRep,
                 oneRepMax,
                 availableWeights,
                 maxLoadPercent,
@@ -781,11 +808,15 @@ open class AppViewModel : ViewModel() {
                 }
             }
 
+            val currentTotalVolume = exerciseProgression.sets.sumOf { it.volume }
+            val currentTotalReps = exerciseProgression.sets.sumOf { it.reps }
+
+            val currentAverageLoadPerRep = currentTotalVolume / currentTotalReps
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.originalVolume} -> ${exerciseProgression.totalVolume} Intensity: ${averageLoad.round(2)} -> ${
-                    exerciseProgression.averageIntensity.round(2)
+                "Progression found - Workload: ${exerciseProgression.originalWorkload.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%) Avg Intensity X Rep: ${averageLoadPerRep.round(2)} -> ${
+                    currentAverageLoadPerRep.round(2)
                 }"
             )
         } else {
@@ -1133,6 +1164,7 @@ open class AppViewModel : ViewModel() {
                     val setDataList =
                         exerciseHistories.filter { setHistory -> setHistory.setData !is RestSetData }
                             .map { setHistory -> setHistory.setData }
+
 
                     val volume = setDataList.sumOf {
                         when (it) {
@@ -1535,7 +1567,7 @@ open class AppViewModel : ViewModel() {
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        val exerciseVolume = exerciseProgression?.originalVolume
+        val exerciseVolume = exerciseProgression?.originalWorkload
             ?: exerciseSets.sumOf {
                 when (it) {
                     is BodyWeightSet -> {
