@@ -72,15 +72,13 @@ object VolumeDistributionHelper {
                 possibleSets,
                 params.minSets,
                 params.maxSets,
-                params.currentAverageLoadPerRep,
                 { currentSessionWorkload: Double,averageLoadPerRep : Double ->
                     ValidationResult(
                         shouldReturn = currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
                                 || currentSessionWorkload < params.previousSessionWorkload * (1+params.volumeProgressionRange.from/100)
-                                // || currentSessionWorkload > params.previousSessionWorkload * (1+params.volumeProgressionRange.to/100)
+                                || currentSessionWorkload > params.previousSessionWorkload * (1+params.volumeProgressionRange.to/100)
                                 || averageLoadPerRep < params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.from/100)
-                                // || averageLoadPerRep > params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.to/100)
-                                // || minVolumePerSet < params.minVolumePerSet * 0.8,
+                                || averageLoadPerRep > params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.to/100)
                     )
                 }
             )
@@ -110,7 +108,6 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
-        previousAverageLoadPerSet: Double,
         validationRules: (Double, Double) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
@@ -141,8 +138,9 @@ object VolumeDistributionHelper {
 
             val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
 
-            val baseScore = (currentWorkload * combo.size) * 10000
-            return baseScore + volumeDifference
+            val primaryScore = currentWorkload * combo.size
+
+            return  primaryScore * 1000 + volumeDifference / 1000
         }
 
         suspend fun exploreCombinations(
