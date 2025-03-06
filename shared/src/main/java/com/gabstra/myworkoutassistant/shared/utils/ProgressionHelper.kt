@@ -72,7 +72,10 @@ object VolumeDistributionHelper {
                 possibleSets,
                 params.minSets,
                 params.maxSets,
-                { currentSessionWorkload: Double,averageLoadPerRep : Double ->
+                { combo: List<ExerciseSet> ->
+                    val currentSessionWorkload = combo.sumOf { it.workload }
+                    val averageLoadPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
+                    val volumeDifferencePerc = (combo.maxOf { it.volume } - combo.minOf { it.volume }) / combo.maxOf { it.volume }
                     ValidationResult(
                         shouldReturn = currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
                                 || currentSessionWorkload < params.previousSessionWorkload * (1+params.volumeProgressionRange.from/100)
@@ -108,7 +111,7 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
-        validationRules: (Double, Double) -> ValidationResult,
+        validationRules: (List<ExerciseSet>) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
         require(minSets <= maxSets) { "Minimum sets cannot exceed maximum sets" }
@@ -125,22 +128,14 @@ object VolumeDistributionHelper {
         var bestScore = Double.MAX_VALUE
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
-            val totalVolume = combo.sumOf { it.volume }
-            val totalReps = combo.sumOf { it.reps }
-            val currentAverageLoadPerRep = totalVolume / totalReps
-
             val currentWorkload = combo.sumOf { it.workload }
 
-            val validationResult = validationRules(currentWorkload,currentAverageLoadPerRep)
-            if (validationResult.shouldReturn) {
-                return validationResult.returnValue
-            }
+            val validationResult = validationRules(combo)
+            if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
 
-            val primaryScore = currentWorkload * combo.size
-
-            return  primaryScore * 1000 + volumeDifference / 1000
+            return currentWorkload * combo.size * (1 + volumeDifference)
         }
 
         suspend fun exploreCombinations(
