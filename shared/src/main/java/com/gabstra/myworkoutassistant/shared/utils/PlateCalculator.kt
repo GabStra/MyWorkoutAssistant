@@ -66,10 +66,25 @@ class PlateCalculator {
                         val comboPrev = allCombos[i - 1][k]
                         val cost = dp[i - 1][k] + countTotalChanges(comboPrev, comboCurrent)
 
-                        if (cost < dp[i][j] || (cost == dp[i][j] &&
-                                    comboCurrent.size < allCombos[i][parent[i][j]].size)) {
+                        // Case 1: This cost is better than current cost
+                        if (cost < dp[i][j]) {
                             dp[i][j] = cost
                             parent[i][j] = k
+                        }
+                        // Case 2: Same cost but need to compare sizes
+                        else if (cost == dp[i][j]) {
+                            // Get size of current best combo if parent exists
+                            val currentBestComboSize = if (parent[i][j] != -1) {
+                                allCombos[i-1][parent[i][j]].size  // Changed from allCombos[i][parent[i][j]].size
+                            } else {
+                                Int.MAX_VALUE // If no parent, assume infinite size
+                            }
+
+                            // Update if new combo has smaller size
+                            if (comboPrev.size < currentBestComboSize) {  // Changed from comboCurrent.size
+                                dp[i][j] = cost
+                                parent[i][j] = k
+                            }
                         }
                     }
                 }
@@ -85,12 +100,23 @@ class PlateCalculator {
                 }
             }
 
+            if (minIndex == -1) {
+                return emptyList()
+            }
+
             // Reconstruct chosen combinations
             val chosenCombos = mutableListOf<List<Double>>()
             var idx = minIndex
             for (i in (n - 1) downTo 0) {
                 chosenCombos.add(allCombos[i][idx])
-                idx = parent[i][idx]
+                if (parent[i][idx] == -1 && i > 0) {
+                    // If we hit a -1 parent but still have sets to process,
+                    // there's a disconnection in the optimal path
+                    return emptyList()
+                }
+                if (i > 0) {
+                    idx = parent[i][idx]
+                }
             }
             chosenCombos.reverse()
 

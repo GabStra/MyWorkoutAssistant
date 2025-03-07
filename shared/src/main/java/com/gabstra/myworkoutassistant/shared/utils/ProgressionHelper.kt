@@ -30,6 +30,7 @@ object VolumeDistributionHelper {
     data class WeightExerciseParameters(
         val previousAverageIntensityPerRep: Double,
         val previousAverageWorkloadPerRep: Double,
+        val previousAverageWorkloadPerSet: Double,
         val previousSessionWorkload: Double,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
@@ -75,6 +76,7 @@ object VolumeDistributionHelper {
                 params.maxSets,
                 params.previousSessionWorkload,
                 params.previousAverageWorkloadPerRep,
+                params.previousAverageWorkloadPerSet,
                 { combo: List<ExerciseSet> ->
                     val currentSessionWorkload = combo.sumOf { it.workload }
                     ValidationResult(
@@ -112,6 +114,7 @@ object VolumeDistributionHelper {
         maxSets: Int,
         previousSessionWorkload: Double,
         previousAverageWorkloadPerRep: Double,
+        previousAverageWorkloadPerSet: Double,
         validationRules: (List<ExerciseSet>) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
@@ -133,14 +136,17 @@ object VolumeDistributionHelper {
             val currentTotalReps = combo.sumOf { it.reps }
             val currentAverageWorkloadPerRep = currentWorkload / currentTotalReps
 
+            val currentAverageWorkloadPerSet = currentWorkload / combo.size
+
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val progressScore = 1 + abs(currentWorkload - previousSessionWorkload)
-            val workloadScore = 1 + abs(currentAverageWorkloadPerRep - previousAverageWorkloadPerRep)
+            val workloadPerRepScore = 1 + abs(currentAverageWorkloadPerRep - previousAverageWorkloadPerRep)
             val workloadDifferenceScore = 1 + combo.maxOf { it.workload } - combo.minOf { it.workload }
+            val workloadPerSetScore = 1 + abs(currentAverageWorkloadPerSet - previousAverageWorkloadPerSet)
 
-            return progressScore * workloadScore * workloadDifferenceScore * combo.size
+            return progressScore * workloadPerRepScore * workloadPerSetScore * workloadDifferenceScore * combo.size
         }
 
         suspend fun exploreCombinations(
@@ -270,6 +276,7 @@ object VolumeDistributionHelper {
         minVolumePerSet: Double,
         averageLoadPerRep: Double,
         averageWorkloadPerRep: Double,
+        averageWorkloadPerSet: Double,
         oneRepMax: Double,
         availableWeights: Set<Double>,
         maxLoadPercent: Double,
@@ -289,7 +296,8 @@ object VolumeDistributionHelper {
             maxSets = maxSets,
             previousAverageIntensityPerRep =  averageLoadPerRep,
             workloadProgressionRange = workloadProgressionRange,
-            previousAverageWorkloadPerRep = averageWorkloadPerRep
+            previousAverageWorkloadPerRep = averageWorkloadPerRep,
+            previousAverageWorkloadPerSet = averageWorkloadPerSet
         )
 
         return getProgression(baseParams)

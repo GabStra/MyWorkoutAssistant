@@ -764,6 +764,7 @@ open class AppViewModel : ViewModel() {
                 setWorkloads.min(),
                 averageIntensityPerRep,
                 averageWorkloadPerRep,
+                exerciseWorkload / exerciseSets.size,
                 oneRepMax,
                 availableWeights,
                 maxLoadPercent,
@@ -1519,6 +1520,7 @@ open class AppViewModel : ViewModel() {
             val setWeights = sets.map { it.getWeight(equipment) }.toList()
             val plateWeights = equipment.availablePlates.map { it.weight }
                 .toList() + equipment.additionalPlates.map { it.weight }.toList()
+
             try {
                 plateChangeResults.addAll(
                     PlateCalculator.calculatePlateChanges(
@@ -1529,7 +1531,8 @@ open class AppViewModel : ViewModel() {
                         multiplier = equipment.volumeMultiplier
                     )
                 )
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.e("PlatesCalculator", "Error calculating plate changes", e)
             }
         }
 
@@ -1567,7 +1570,10 @@ open class AppViewModel : ViewModel() {
                 }
             }
 
+
+
         val plateChangeResults = getPlateChangeResults(exercise, exerciseSets, equipment)
+
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 

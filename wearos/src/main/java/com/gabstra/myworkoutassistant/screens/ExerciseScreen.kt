@@ -59,6 +59,7 @@ import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -386,10 +387,9 @@ fun PageNotes(notes: String) {
 }
 
 @Composable
-fun PagePlates(updatedState: WorkoutState.Set, exercise: Exercise, viewModel: AppViewModel) {
-    val equipment = remember(exercise) {
-        if (exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
-    }
+fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
+    Log.d("PagePlates", "Equipment: $equipment")
+    Log.d("PagePlates", "UpdatedState: ${updatedState.plateChangeResult }")
 
     val scrollState = rememberScrollState()
     Column(
@@ -426,7 +426,8 @@ fun PagePlates(updatedState: WorkoutState.Set, exercise: Exercise, viewModel: Ap
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 10.dp)
+                        .padding(bottom = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Row(
@@ -517,9 +518,12 @@ fun ExerciseScreen(
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
 
-    val exercise = viewModel.exercisesById[state.exerciseId]!!
+    val exercise = remember(state.exerciseId) {
+        viewModel.exercisesById[state.exerciseId]!!
+    }
+
     val equipment = remember(exercise) {
-        if (exercise.equipmentId != null) viewModel.getEquipmentById(exercise.equipmentId!!) else null
+        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
 
     Log.d("ExerciseScreen", "Equipment: $equipment")
@@ -582,7 +586,6 @@ fun ExerciseScreen(
             }, label = ""
         ) { updatedState ->
 
-            val currentExercise = viewModel.exercisesById[updatedState.exerciseId]!!
             val exerciseTitleComposable = @Composable {
                 Text(
                     modifier = Modifier
@@ -590,7 +593,7 @@ fun ExerciseScreen(
                         .padding(horizontal = 30.dp)
                         .clickable { marqueeEnabled = !marqueeEnabled }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    text = currentExercise.name,
+                    text = exercise.name,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.title3,
                     maxLines = 1,
@@ -609,7 +612,7 @@ fun ExerciseScreen(
                 val pageType = pageTypes[pageIndex]
 
                 when (pageType) {
-                    PageType.PLATES -> PagePlates(updatedState, currentExercise, viewModel)
+                    PageType.PLATES -> PagePlates(updatedState, equipment)
                     PageType.EXERCISE_DETAIL -> PageExerciseDetail(
                         updatedState = updatedState,
                         viewModel = viewModel,
@@ -619,7 +622,7 @@ fun ExerciseScreen(
                         exerciseTitleComposable = exerciseTitleComposable
                     )
                     PageType.NEXT_SETS -> PageNextSets(updatedState, viewModel)
-                    PageType.NOTES -> PageNotes(currentExercise.notes)
+                    PageType.NOTES -> PageNotes(exercise.notes)
                     PageType.BUTTONS -> PageButtons(updatedState, viewModel)
                 }
             }
