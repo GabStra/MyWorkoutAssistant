@@ -6,6 +6,7 @@ import com.gabstra.myworkoutassistant.shared.isEqualTo
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 
@@ -27,14 +28,14 @@ object VolumeDistributionHelper {
     )
 
     data class WeightExerciseParameters(
-        val currentAverageLoadPerRep: Double,
+        val previousAverageIntensityPerRep: Double,
+        val previousAverageWorkloadPerRep: Double,
         val previousSessionWorkload: Double,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
         val maxLoadPercent: Double,
         val repsRange: IntRange,
-        val volumeProgressionRange: FloatRange,
-        val averageLoadPerRepProgressionRange: FloatRange,
+        val workloadProgressionRange: FloatRange,
         val minSets: Int,
         val maxSets: Int,
     )
@@ -72,16 +73,14 @@ object VolumeDistributionHelper {
                 possibleSets,
                 params.minSets,
                 params.maxSets,
+                params.previousSessionWorkload,
+                params.previousAverageWorkloadPerRep,
                 { combo: List<ExerciseSet> ->
                     val currentSessionWorkload = combo.sumOf { it.workload }
-                    val averageLoadPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
-                    val volumeDifferencePerc = (combo.maxOf { it.volume } - combo.minOf { it.volume }) / combo.maxOf { it.volume }
                     ValidationResult(
                         shouldReturn = currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
-                                || currentSessionWorkload < params.previousSessionWorkload * (1+params.volumeProgressionRange.from/100)
-                                || currentSessionWorkload > params.previousSessionWorkload * (1+params.volumeProgressionRange.to/100)
-                                || averageLoadPerRep < params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.from/100)
-                                || averageLoadPerRep > params.currentAverageLoadPerRep * (1+params.averageLoadPerRepProgressionRange.to/100)
+                                || currentSessionWorkload < params.previousSessionWorkload * (1+params.workloadProgressionRange.from/100)
+                                || currentSessionWorkload > params.previousSessionWorkload * (1+params.workloadProgressionRange.to/100)
                     )
                 }
             )
@@ -111,6 +110,8 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
+        previousSessionWorkload: Double,
+        previousAverageWorkloadPerRep: Double,
         validationRules: (List<ExerciseSet>) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
@@ -129,13 +130,18 @@ object VolumeDistributionHelper {
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val currentWorkload = combo.sumOf { it.workload }
+            val currentAverageWorkloadPerRep = currentWorkload/ combo.sumOf { it.reps }
 
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
-            val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
+            val progressScore = 1 + abs(currentWorkload - previousSessionWorkload)
 
-            return currentWorkload * combo.size * (1 + volumeDifference)
+            val workloadScore = 1 + abs(currentAverageWorkloadPerRep - previousAverageWorkloadPerRep)
+
+            val workloadDifferenceScore = 1 + combo.maxOf { it.workload } - combo.minOf { it.workload }
+
+            return progressScore * workloadScore * workloadDifferenceScore * combo.size
         }
 
         suspend fun exploreCombinations(
@@ -208,9 +214,9 @@ object VolumeDistributionHelper {
         }
 
         val closestWeightIndex = when {
-            params.currentAverageLoadPerRep.isNaN() || params.currentAverageLoadPerRep.isInfinite() -> 0
+            params.previousAverageIntensityPerRep.isNaN() || params.previousAverageIntensityPerRep.isInfinite() -> 0
             else -> sortedWeights.binarySearch {
-                it.compareTo(params.currentAverageLoadPerRep)
+                it.compareTo(params.previousAverageIntensityPerRep)
             }.let { if (it < 0) -(it + 1) else it }
                 .coerceIn(0, sortedWeights.lastIndex)
         }
@@ -264,12 +270,12 @@ object VolumeDistributionHelper {
         exerciseWorkload: Double,
         minVolumePerSet: Double,
         averageLoadPerRep: Double,
+        averageWorkloadPerRep: Double,
         oneRepMax: Double,
         availableWeights: Set<Double>,
         maxLoadPercent: Double,
         repsRange: IntRange,
-        volumeProgressionRange: FloatRange,
-        averageLoadPerRepProgressionRange: FloatRange,
+        workloadProgressionRange: FloatRange,
         minSets: Int = 3,
         maxSets: Int = 5,
     ): ExerciseProgression? {
@@ -282,9 +288,9 @@ object VolumeDistributionHelper {
             previousSessionWorkload = exerciseWorkload,
             minSets = minSets,
             maxSets = maxSets,
-            currentAverageLoadPerRep =  averageLoadPerRep,
-            volumeProgressionRange = volumeProgressionRange,
-            averageLoadPerRepProgressionRange = averageLoadPerRepProgressionRange,
+            previousAverageIntensityPerRep =  averageLoadPerRep,
+            workloadProgressionRange = workloadProgressionRange,
+            previousAverageWorkloadPerRep = averageWorkloadPerRep
         )
 
         return getProgression(baseParams)

@@ -125,10 +125,8 @@ class AppViewModel() : ViewModel() {
         birthDateYear = 0,
         weightKg = 0.0,
         equipments = emptyList(),
-        volumeProgressionLowerRange = 0.0,
-        volumeProgressionUpperRange = 0.0,
-        averageLoadPerRepProgressionLowerRange = 0.0,
-        averageLoadPerRepProgressionUpperRange = 0.0
+        workloadProgressionLowerRange = 0.0,
+        workloadProgressionUpperRange = 0.0,
     ))
         private set
 

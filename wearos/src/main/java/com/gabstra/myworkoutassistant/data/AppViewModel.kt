@@ -114,10 +114,8 @@ open class AppViewModel : ViewModel() {
             birthDateYear = 0,
             weightKg = 0.0,
             equipments = emptyList(),
-            volumeProgressionLowerRange = 0.0,
-            volumeProgressionUpperRange = 0.0,
-            averageLoadPerRepProgressionLowerRange = 0.0,
-            averageLoadPerRepProgressionUpperRange = 0.0
+            workloadProgressionLowerRange = 0.0,
+            workloadProgressionUpperRange = 0.0
         )
     )
 
@@ -173,10 +171,8 @@ open class AppViewModel : ViewModel() {
                 birthDateYear = 0,
                 weightKg = 0.0,
                 equipments = emptyList(),
-                volumeProgressionLowerRange = 0.0,
-                volumeProgressionUpperRange = 0.0,
-                averageLoadPerRepProgressionLowerRange = 0.0,
-                averageLoadPerRepProgressionUpperRange = 0.0
+                workloadProgressionLowerRange = 0.0,
+                workloadProgressionUpperRange = 0.0
             )
         )
     }
@@ -618,7 +614,8 @@ open class AppViewModel : ViewModel() {
 
         var exerciseWorkload = 0.0
         var oneRepMax = 0.0
-        var averageLoadPerRep = 0.0
+        var averageIntensityPerRep = 0.0
+        var averageWorkloadPerRep = 0.0
 
         oneRepMax = exerciseSets.maxOf {
             when (it) {
@@ -688,7 +685,8 @@ open class AppViewModel : ViewModel() {
             }
         }
 
-        averageLoadPerRep = exerciseVolume / totalReps
+        averageIntensityPerRep = exerciseVolume / totalReps
+        averageWorkloadPerRep = exerciseWorkload / totalReps
 
         if (exerciseWorkload == 0.0 || oneRepMax == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
@@ -764,64 +762,49 @@ open class AppViewModel : ViewModel() {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
                 exerciseWorkload,
                 setWorkloads.min(),
-                averageLoadPerRep,
+                averageIntensityPerRep,
+                averageWorkloadPerRep,
                 oneRepMax,
                 availableWeights,
                 maxLoadPercent,
                 repsRange,
                 minSets = 3,
                 maxSets = 5,
-                volumeProgressionRange = FloatRange(workoutStore.volumeProgressionLowerRange, workoutStore.volumeProgressionUpperRange),
-                averageLoadPerRepProgressionRange = FloatRange(workoutStore.averageLoadPerRepProgressionLowerRange, workoutStore.averageLoadPerRepProgressionUpperRange)
+                workloadProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
             )
         }
 
         if (exerciseProgression != null) {
-            exerciseProgression.sets.forEachIndexed { index, set ->
+            val newSets = exerciseProgression.sets.mapIndexed { index, set ->
                 if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight =
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     if (equipment is Barbell) {
-                        Log.d(
-                            "WorkoutViewModel",
-                            "Set ${index + 1}: ${(set.weight - relativeBodyWeight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
-                        )
+                        "${(set.weight - relativeBodyWeight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
                     } else {
-                        Log.d(
-                            "WorkoutViewModel",
-                            "Set ${index + 1}: ${set.weight - relativeBodyWeight} kg x ${set.reps}"
-                        )
+                        "${set.weight - relativeBodyWeight} kg x ${set.reps}"
                     }
                 } else {
                     if (equipment is Barbell) {
-                        Log.d(
-                            "WorkoutViewModel",
-                            "Set ${index + 1}: ${(set.weight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
-                        )
+                        "${(set.weight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
                     } else {
-                        Log.d(
-                            "WorkoutViewModel",
-                            "Set ${index + 1}: ${set.weight / equipmentVolumeMultiplier} kg x ${set.reps}"
-                        )
+                        "${set.weight / equipmentVolumeMultiplier} kg x ${set.reps}"
                     }
 
                 }
             }
 
-            val currentTotalVolume = exerciseProgression.sets.sumOf { it.volume }
-            val currentTotalReps = exerciseProgression.sets.sumOf { it.reps }
-
-            val currentAverageLoadPerRep = currentTotalVolume / currentTotalReps
+            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")}")
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Workload: ${exerciseProgression.originalWorkload.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%) Avg Intensity X Rep: ${averageLoadPerRep.round(2)} -> ${
-                    currentAverageLoadPerRep.round(2)
-                }"
+                "Progression found - Workload: ${exerciseProgression.originalWorkload.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%)"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
         }
+
+        Log.d("WorkoutViewModel", "# =========================================================================================== #")
 
         return exercise.id to Pair(exerciseProgression, shouldDeload)
     }

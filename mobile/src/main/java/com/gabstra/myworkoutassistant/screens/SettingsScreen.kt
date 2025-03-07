@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.round
@@ -40,11 +41,9 @@ fun SettingsScreen(
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString() ?: "") }
 
-    val minVolumeProgressionState = remember { mutableStateOf(workoutStore.volumeProgressionLowerRange) }
-    val maxVolumeProgressionState = remember { mutableStateOf(workoutStore.volumeProgressionUpperRange) }
+    val minWorkloadProgressionState = remember { mutableStateOf(workoutStore.workloadProgressionLowerRange) }
+    val maxWorkloadProgressionState = remember { mutableStateOf(workoutStore.workloadProgressionUpperRange) }
 
-    val minAverageLoadPerRepProgressionState = remember { mutableStateOf(workoutStore.averageLoadPerRepProgressionLowerRange) }
-    val maxAverageLoadPerRepProgressionState = remember { mutableStateOf(workoutStore.averageLoadPerRepProgressionUpperRange) }
 
     Box(
         modifier = Modifier
@@ -96,39 +95,23 @@ fun SettingsScreen(
             )
 
             Text(
-                text = "Volume Progress Range (${minVolumeProgressionState.value.round(2)}% - ${maxVolumeProgressionState.value.round(2)}%)",
+                text = "Workload Progress Range (${minWorkloadProgressionState.value.round(2)}% - ${maxWorkloadProgressionState.value.round(2)}%)",
                 style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             )
 
             RangeSlider(
-                value = minVolumeProgressionState.value.toFloat()..maxVolumeProgressionState.value.toFloat(),
+                value = minWorkloadProgressionState.value.toFloat()..maxWorkloadProgressionState.value.toFloat(),
                 onValueChange = { range ->
-                    minVolumeProgressionState.value = range.start.toDouble()
-                    maxVolumeProgressionState.value = range.endInclusive.toDouble()
+                    minWorkloadProgressionState.value = range.start.toDouble()
+                    maxWorkloadProgressionState.value = range.endInclusive.toDouble()
                 },
                 valueRange = 0f..5f,
                 steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-
-            Text(
-                text = "Average Load Progress Range (${minAverageLoadPerRepProgressionState.value.round(2)}% - ${maxAverageLoadPerRepProgressionState.value.round(2)}%)",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-            )
-
-            RangeSlider(
-                value = minAverageLoadPerRepProgressionState.value.toFloat()..maxAverageLoadPerRepProgressionState.value.toFloat(),
-                onValueChange = { range ->
-                    minAverageLoadPerRepProgressionState.value = range.start.toDouble()
-                    maxAverageLoadPerRepProgressionState.value = range.endInclusive.toDouble()
-                },
-                valueRange = 0f..5f,
-                steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             )
 
             Button(
@@ -147,10 +130,8 @@ fun SettingsScreen(
                         polarDeviceId = polarDeviceIdState.value,
                         birthDateYear = birthDateYear,
                         weightKg = weightState.value.toDoubleOrNull() ?: 0.0,
-                        volumeProgressionLowerRange = minVolumeProgressionState.value,
-                        volumeProgressionUpperRange = maxVolumeProgressionState.value,
-                        averageLoadPerRepProgressionLowerRange = minAverageLoadPerRepProgressionState.value,
-                        averageLoadPerRepProgressionUpperRange = maxAverageLoadPerRepProgressionState.value
+                        workloadProgressionLowerRange = minWorkloadProgressionState.value,
+                        workloadProgressionUpperRange = maxWorkloadProgressionState.value
                     )
                     onSave(newWorkoutStore)
                 },
