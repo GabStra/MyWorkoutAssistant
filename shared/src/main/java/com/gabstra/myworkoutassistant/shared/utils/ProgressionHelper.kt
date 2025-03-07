@@ -130,15 +130,14 @@ object VolumeDistributionHelper {
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val currentWorkload = combo.sumOf { it.workload }
-            val currentAverageWorkloadPerRep = currentWorkload/ combo.sumOf { it.reps }
+            val currentTotalReps = combo.sumOf { it.reps }
+            val currentAverageWorkloadPerRep = currentWorkload / currentTotalReps
 
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val progressScore = 1 + abs(currentWorkload - previousSessionWorkload)
-
             val workloadScore = 1 + abs(currentAverageWorkloadPerRep - previousAverageWorkloadPerRep)
-
             val workloadDifferenceScore = 1 + combo.maxOf { it.workload } - combo.minOf { it.workload }
 
             return progressScore * workloadScore * workloadDifferenceScore * combo.size
