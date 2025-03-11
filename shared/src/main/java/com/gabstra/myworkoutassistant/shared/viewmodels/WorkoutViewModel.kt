@@ -327,6 +327,8 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
+    // region Workout Lifecycle
+    // ---------------------------------------------------------------------------------------------
     open fun resumeWorkoutFromRecord(onEnd: () -> Unit = {}) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
@@ -356,10 +358,36 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
+    open fun startWorkout() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
+                workoutStateQueue.clear()
+                workoutStateHistory.clear()
+                _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+                setStates.clear()
+                allWorkoutStates.clear()
+                weightsByEquipment.clear()
+                executedSetsHistory.clear()
+                heartBeatHistory.clear()
+                startWorkoutTime = null
+                currentWorkoutHistory = null
+                loadWorkoutHistory()
+                generateProgressions()
+                applyProgressions()
+                generateWorkoutStates()
+                _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+                triggerWorkoutNotification()
+            }
+        }
+    }
+
     public fun getAllExerciseWorkoutStates(exerciseId: UUID): List<WorkoutState.Set> {
         return allWorkoutStates.filterIsInstance<WorkoutState.Set>()
             .filter { it.exerciseId == exerciseId }
     }
+    // ---------------------------------------------------------------------------------------------
+    // endregion
 
     private fun applyProgressions() {
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
