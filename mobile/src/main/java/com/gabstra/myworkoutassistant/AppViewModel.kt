@@ -225,4 +225,13 @@ class AppViewModel() : ViewModel() {
     fun deleteWorkoutComponent(workout: Workout, workoutComponentToDelete: WorkoutComponent) {
         workouts = WorkoutManager.deleteWorkoutComponent(workouts,workout,workoutComponentToDelete)
     }
+
+    fun moveExercises(sourceWorkout: Workout, exercisesToMove: List<Exercise>, targetWorkout: Workout) {
+        workouts = WorkoutManager.moveWorkoutComponents(
+            workouts,
+            sourceWorkout,
+            exercisesToMove,
+            targetWorkout
+        )
+    }
 }

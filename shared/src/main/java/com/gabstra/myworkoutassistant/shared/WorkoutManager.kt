@@ -223,6 +223,26 @@ class WorkoutManager {
             }
         }
 
+        fun moveWorkoutComponents(sourceWorkouts: List<Workout>, sourceWorkout: Workout, componentsToMove: List<WorkoutComponent>, targetWorkout: Workout): List<Workout> {
+            // Remove from source
+            val updatedSourceWorkouts = sourceWorkouts.map { workout ->
+                if (workout == sourceWorkout) {
+                    workout.copy(workoutComponents = workout.workoutComponents.filter { it !in componentsToMove })
+                } else {
+                    workout
+                }
+            }
+            
+            // Add to target
+            return updatedSourceWorkouts.map { workout ->
+                if (workout == targetWorkout) {
+                    workout.copy(workoutComponents = workout.workoutComponents + componentsToMove)
+                } else {
+                    workout
+                }
+            }
+        }
+
         fun deleteWorkoutComponent(workouts: List<Workout>, workout: Workout, workoutComponentToDelete: WorkoutComponent) : List<Workout> {
             return workouts.map {
                 if (it == workout) {
