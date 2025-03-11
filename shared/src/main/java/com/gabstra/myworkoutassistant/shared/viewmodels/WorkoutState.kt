@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.viewmodels
 
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import java.time.LocalDateTime
 import java.util.UUID
 

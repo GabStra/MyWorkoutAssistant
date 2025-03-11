@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.data
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.runtime.State
+import androidx.compose.runtime.asIntState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +18,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -32,6 +36,32 @@ class AppViewModel : WorkoutViewModel() {
         dataClient = client
     }
 
+    private val _hrDisplayMode = mutableStateOf(0)
+    val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
+    private val _headerDisplayMode = mutableStateOf(0)
+    val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
+    private val _enableScreenDimming = mutableStateOf(true)
+    val enableScreenDimming: State<Boolean> = _enableScreenDimming
+    private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
+    val lightScreenUp = _lightScreenUp.receiveAsFlow()
+
+    fun switchHrDisplayMode() {
+        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
+    }
+
+    fun switchHeaderDisplayMode() {
+        _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
+    }
+
+    fun toggleScreenDimming() {
+        _enableScreenDimming.value = !_enableScreenDimming.value
+    }
+
+    fun lightScreenUp() {
+        viewModelScope.launch {
+            _lightScreenUp.send(Unit)
+        }
+    }
 
     fun sendAll(context: Context) {
         viewModelScope.launch {
@@ -120,6 +150,18 @@ class AppViewModel : WorkoutViewModel() {
         // Implementation for sending data to the phone
         // This would use the Wearable DataClient to send data
         return true // Placeholder return
+    }
+
+    override fun startWorkout() {
+        super.startWorkout()
+        lightScreenUp()
+    }
+
+    override fun resumeWorkoutFromRecord(onEnd: () -> Unit) {
+        super.resumeWorkoutFromRecord {
+            lightScreenUp()
+            onEnd()
+        }
     }
 
     override fun pushAndStoreWorkoutData(
