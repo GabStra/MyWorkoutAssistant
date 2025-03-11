@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
-class AppViewModel : WorkoutViewModel() {
+open class AppViewModel : WorkoutViewModel() {
     private var dataClient: DataClient? = null
     var phoneNode by mutableStateOf<Node?>(null)
 
@@ -142,16 +142,6 @@ class AppViewModel : WorkoutViewModel() {
         }
     }
 
-    // Method to send workout history store to the phone
-    private fun sendWorkoutHistoryStore(
-        dataClient: DataClient,
-        workoutHistoryStore: WorkoutHistoryStore
-    ): Boolean {
-        // Implementation for sending data to the phone
-        // This would use the Wearable DataClient to send data
-        return true // Placeholder return
-    }
-
     override fun startWorkout() {
         super.startWorkout()
         lightScreenUp()
@@ -171,10 +161,9 @@ class AppViewModel : WorkoutViewModel() {
         onEnd: () -> Unit
     ) {
         super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
-            // After storing the data, send it to the phone if needed
             if (!forceNotSend) {
                 val currentState = workoutState.value
-                val shouldSendData = (currentState != setStates.lastOrNull() || isDone) && !forceNotSend
+                val shouldSendData = (currentState != setStates.lastOrNull() || isDone)
 
                 if (shouldSendData && dataClient != null) {
                     val exerciseInfos = mutableListOf<ExerciseInfo>()

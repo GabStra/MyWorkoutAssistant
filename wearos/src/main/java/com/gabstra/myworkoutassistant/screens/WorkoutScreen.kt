@@ -28,7 +28,7 @@ import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.composable.CurrentBattery
 import com.gabstra.myworkoutassistant.composable.CurrentExercise
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.composable.CurrentTime
 import com.gabstra.myworkoutassistant.composable.CustomBackHandler
 import com.gabstra.myworkoutassistant.composable.HeartRatePolar

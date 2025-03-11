@@ -54,7 +54,7 @@ import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
-import com.gabstra.myworkoutassistant.data.WorkoutState
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -411,7 +411,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                 textAlign = TextAlign.Center
             )
         } else {
-            if (updatedState.plateChangeResult.change.steps.isEmpty()) {
+            if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
                 Text(
                     text = "No changes needed",
                     modifier = Modifier.fillMaxWidth(),
@@ -448,7 +448,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                         )
                     }
 
-                    if (updatedState.plateChangeResult.change.steps.isNotEmpty()) {
+                    if (updatedState.plateChangeResult!!.change.steps.isNotEmpty()) {
                         val style = MaterialTheme.typography.body1
 
                         Column(
@@ -463,7 +463,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                             verticalArrangement = Arrangement.spacedBy(5.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            updatedState.plateChangeResult.change.steps.forEachIndexed { index, step ->
+                            updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
