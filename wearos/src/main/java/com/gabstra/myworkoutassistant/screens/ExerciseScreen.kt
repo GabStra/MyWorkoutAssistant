@@ -320,6 +320,116 @@ fun PageButtons(
     )
 }
 
+@Preview(
+    device = Devices.WEAR_OS_LARGE_ROUND,
+    backgroundColor = 0xFF000000,
+    showBackground = true
+)
+@Composable
+fun ExerciseScreenPreview() {
+    val viewModel = remember { FakeAppViewModel() }
+    val exerciseState = viewModel.createFakeSetState()
+    
+    ExerciseScreen(
+        viewModel = viewModel,
+        state = exerciseState,
+        hearthRateChart = { }
+    )
+}
+
+// Fake classes for preview
+private class FakeAppViewModel : AppViewModel() {
+    fun createFakeSetState(): WorkoutState.Set {
+        val exerciseId = UUID.randomUUID()
+        val weightSet = WeightSet(
+            id = UUID.randomUUID(),
+            weight = 100.0,
+            reps = 10
+        )
+        
+        return WorkoutState.Set(
+            set = weightSet,
+            exerciseId = exerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        )
+    }
+
+    override val allWorkoutStates: MutableList<WorkoutState> = mutableListOf(
+        WorkoutState.Set(
+            set = WeightSet(
+                id = UUID.randomUUID(),
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = UUID.randomUUID(),
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        )
+    )
+
+    override val exercisesById = mutableMapOf<UUID, Exercise>().apply {
+        put(UUID.randomUUID(), Exercise(
+            id = UUID.randomUUID(),
+            name = "Bench Press Preview",
+            equipmentId = null,
+            notes = "Sample exercise for preview",
+            exerciseType = ExerciseType.WEIGHT,
+            sets = listOf(
+                WeightSet(
+                    id = UUID.randomUUID(),
+                    weight = 100.0,
+                    reps = 10
+                )
+            ),
+            enabled = true,
+            doNotStoreHistory = false,
+            minLoadPercent = 0.6,
+            maxLoadPercent = .8,
+            minReps = 6,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            bodyWeightPercentage = null
+        ))
+    }
+    
+    override val isPaused = mutableStateOf(false)
+    override val isCustomDialogOpen = MutableStateFlow(false)
+}
+
 @Composable
 fun PageExerciseDetail(
     updatedState: WorkoutState.Set,
