@@ -275,33 +275,6 @@ open class WorkoutViewModel : ViewModel() {
         _isSkipDialogOpen.value = false
     }
 
-    // UI State management
-    private val _hrDisplayMode = mutableStateOf(0)
-    val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
-    private val _headerDisplayMode = mutableStateOf(0)
-    val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
-    private val _enableScreenDimming = mutableStateOf(true)
-    val enableScreenDimming: State<Boolean> = _enableScreenDimming
-    private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
-    val lightScreenUp = _lightScreenUp.receiveAsFlow()
-
-    fun switchHrDisplayMode() {
-        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
-    }
-
-    fun switchHeaderDisplayMode() {
-        _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
-    }
-
-    fun toggleScreenDimming() {
-        _enableScreenDimming.value = !_enableScreenDimming.value
-    }
-
-    fun lightScreenUp() {
-        viewModelScope.launch {
-            _lightScreenUp.send(Unit)
-        }
-    }
 
     fun setWorkout(workout: Workout) {
         _selectedWorkout.value = workout;
