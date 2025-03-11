@@ -38,6 +38,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Devices
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -63,6 +65,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -70,7 +73,9 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalDateTime
+import java.util.UUID
 
 
 @Composable
@@ -327,7 +332,7 @@ fun PageButtons(
 )
 @Composable
 fun ExerciseScreenPreview() {
-    val viewModel = remember { FakeAppViewModel() }
+    val viewModel = remember { FakeExerciseScreenAppViewModel() }
     val exerciseState = viewModel.createFakeSetState()
     
     ExerciseScreen(
@@ -338,11 +343,14 @@ fun ExerciseScreenPreview() {
 }
 
 // Fake classes for preview
-private class FakeAppViewModel : AppViewModel() {
+private class FakeExerciseScreenAppViewModel : AppViewModel() {
+    private val upcomingExerciseId = UUID.randomUUID()
+    private val upcomingSetId = UUID.randomUUID()
+
     fun createFakeSetState(): WorkoutState.Set {
-        val exerciseId = UUID.randomUUID()
+        val exerciseId = upcomingExerciseId
         val weightSet = WeightSet(
-            id = UUID.randomUUID(),
+            id = upcomingSetId,
             weight = 100.0,
             reps = 10
         )
@@ -350,6 +358,39 @@ private class FakeAppViewModel : AppViewModel() {
         return WorkoutState.Set(
             set = weightSet,
             exerciseId = exerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData= WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        )
+    }
+
+    override val allWorkoutStates: MutableList<WorkoutState> = mutableListOf(
+        WorkoutState.Set(
+            set = WeightSet(
+                id = upcomingSetId,
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
             startTime = null,
             currentSetData = WeightSetData(
                 actualWeight = 100.0,
@@ -368,17 +409,92 @@ private class FakeAppViewModel : AppViewModel() {
             isDeloading = false,
             lastSessionVolume = 1000.0,
             expectedProgress = null
-        )
-    }
-
-    override val allWorkoutStates: MutableList<WorkoutState> = mutableListOf(
+        ),
         WorkoutState.Set(
             set = WeightSet(
-                id = UUID.randomUUID(),
+                id = upcomingSetId,
                 weight = 100.0,
                 reps = 10
             ),
-            exerciseId = UUID.randomUUID(),
+            exerciseId = upcomingExerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        ),
+        WorkoutState.Set(
+            set = WeightSet(
+                id = upcomingSetId,
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        ),
+        WorkoutState.Set(
+            set = WeightSet(
+                id = upcomingSetId,
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
+            startTime = null,
+            currentSetData = WeightSetData(
+                actualWeight = 100.0,
+                actualReps = 10,
+                volume = 1000.0
+            ),
+            previousSetData = null,
+            plateChangeResult = null,
+            order = 1u,
+            hasNoHistory = true,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 65.0,
+            streak = 1,
+            isDeloading = false,
+            lastSessionVolume = 1000.0,
+            expectedProgress = null
+        ),
+        WorkoutState.Set(
+            set = WeightSet(
+                id = upcomingSetId,
+                weight = 100.0,
+                reps = 10
+            ),
+            exerciseId = upcomingExerciseId,
             startTime = null,
             currentSetData = WeightSetData(
                 actualWeight = 100.0,
@@ -401,8 +517,8 @@ private class FakeAppViewModel : AppViewModel() {
     )
 
     override val exercisesById = mutableMapOf<UUID, Exercise>().apply {
-        put(UUID.randomUUID(), Exercise(
-            id = UUID.randomUUID(),
+        put(upcomingExerciseId, Exercise(
+            id = upcomingExerciseId,
             name = "Bench Press Preview",
             equipmentId = null,
             notes = "Sample exercise for preview",

@@ -337,7 +337,7 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    open fun resumeWorkoutFromRecord(onEnd: () -> Unit = {}) {
+    open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
@@ -923,7 +923,7 @@ open class WorkoutViewModel : ViewModel() {
         isDone: Boolean,
         context: Context? = null,
         forceNotSend: Boolean = false,
-        onEnd: () -> Unit = {}
+        onEnd: suspend () -> Unit = {}
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())

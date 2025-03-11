@@ -147,7 +147,7 @@ open class AppViewModel : WorkoutViewModel() {
         lightScreenUp()
     }
 
-    override fun resumeWorkoutFromRecord(onEnd: () -> Unit) {
+    override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
         super.resumeWorkoutFromRecord {
             lightScreenUp()
             onEnd()
@@ -158,7 +158,7 @@ open class AppViewModel : WorkoutViewModel() {
         isDone: Boolean,
         context: Context?,
         forceNotSend: Boolean,
-        onEnd: () -> Unit
+        onEnd: suspend () -> Unit
     ) {
         super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
             if (!forceNotSend) {
@@ -169,13 +169,11 @@ open class AppViewModel : WorkoutViewModel() {
                     val exerciseInfos = mutableListOf<ExerciseInfo>()
                     // Get exercise infos for sending
                     val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() +
-                        selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+                            selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
-                    viewModelScope.launch(Dispatchers.IO) {
-                        exercises.forEach { exercise ->
-                            exerciseInfoDao.getExerciseInfoById(exercise.id)?.let {
-                                exerciseInfos.add(it)
-                            }
+                    exercises.forEach { exercise ->
+                        exerciseInfoDao.getExerciseInfoById(exercise.id)?.let {
+                            exerciseInfos.add(it)
                         }
                     }
 

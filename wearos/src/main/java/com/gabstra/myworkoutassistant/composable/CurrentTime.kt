@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.annotation.SuppressLint
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -15,30 +18,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.time.temporal.ChronoUnit
-import androidx.compose.animation.core.animateColorAsState
+
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Row
 
+@SuppressLint("DefaultLocale")
 @Composable
 fun CurrentTime() {
     var currentTime by remember { mutableStateOf(LocalDateTime.now()) }
 
-    // Coroutine that updates the time every minute
-    LaunchedEffect(Unit) {
-        while (true) {
-            val now = LocalDateTime.now()
-            currentTime = now
-            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-            delay(java.time.Duration.between(now, nextSecond).toMillis())
-        }
-    }
-
     var showColon by remember { mutableStateOf(true) }
-    val colonColor by animateColorAsState(
-        targetValue = if (showColon) Color.White else Color.DarkGray,
-        animationSpec = tween(durationMillis = 500)
-    )
 
+    // Coroutine that updates the time every minute
     LaunchedEffect(Unit) {
         while (true) {
             val now = LocalDateTime.now()
@@ -57,7 +48,7 @@ fun CurrentTime() {
         Text(
             text = ":",
             style = MaterialTheme.typography.caption1,
-            color = colonColor
+            color =  if (showColon) Color.White else Color.DarkGray,
         )
         Text(
             text = String.format("%02d", currentTime.minute),
