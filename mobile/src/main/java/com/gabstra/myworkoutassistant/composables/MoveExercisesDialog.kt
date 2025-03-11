@@ -61,5 +61,13 @@
 │        ) {
 │            Text("Move to Selected Workout")
 │        }
+│
+│        Button(
+│            onClick = onDismiss,
+│            modifier = Modifier.fillMaxWidth(),
+│            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+│        ) {
+│            Text("Cancel")
+│        }
 │    }
 │}
