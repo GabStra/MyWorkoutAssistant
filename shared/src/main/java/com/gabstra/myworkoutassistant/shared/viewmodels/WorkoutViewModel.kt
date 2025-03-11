@@ -104,7 +104,7 @@ sealed class WorkoutState {
 }
 
 open class WorkoutViewModel : ViewModel() {
-    private var workoutStore by mutableStateOf(
+    var workoutStore by mutableStateOf(
         WorkoutStore(
             workouts = emptyList(),
             polarDeviceId = null,
@@ -986,7 +986,7 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    fun pushAndStoreWorkoutData(
+    open fun pushAndStoreWorkoutData(
         isDone: Boolean,
         context: Context? = null,
         forceNotSend: Boolean = false,
