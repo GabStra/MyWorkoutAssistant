@@ -68,6 +68,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
 open class WorkoutViewModel : ViewModel() {
+    // region Properties
+    // ---------------------------------------------------------------------------------------------
+    // Workout store & equipment
     var workoutStore by mutableStateOf(
         WorkoutStore(
             workouts = emptyList(),
@@ -79,43 +82,27 @@ open class WorkoutViewModel : ViewModel() {
             workloadProgressionUpperRange = 0.0
         )
     )
-
-    fun getEquipmentById(id: UUID): Equipment? {
-        return workoutStore.equipments.find { it.id == id }
-    }
-
-    private val _isPaused = mutableStateOf(false) // Private mutable state
-    open val isPaused: State<Boolean> = _isPaused // Public read-only State access
-
-    fun pauseWorkout() {
-        _isPaused.value = true
-    }
-
-    fun resumeWorkout() {
-        _isPaused.value = false
-    }
-
-    private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
-    val workouts = _workouts.asStateFlow()
-
-    private var _userAge = mutableIntStateOf(0)
-    val userAge: State<Int> = _userAge
-
-    private var _bodyWeight = mutableStateOf(0.0)
-    val bodyWeight: State<Double> = _bodyWeight
-
-    private var _backupProgress = mutableStateOf(0f)
-    val backupProgress: State<Float> = _backupProgress
-
-    // Create a function to update the backup progress
-    fun setBackupProgress(progress: Float) {
-        _backupProgress.value = progress
-    }
-
-    open val allWorkoutStates: MutableList<WorkoutState> = mutableListOf()
-
     var polarDeviceId: String = ""
         get() = workoutStore.polarDeviceId ?: ""
+
+    // State flows
+    private val _isPaused = mutableStateOf(false)
+    open val isPaused: State<Boolean> = _isPaused
+    private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
+    val workouts = _workouts.asStateFlow()
+    
+    // User metrics
+    private var _userAge = mutableIntStateOf(0)
+    val userAge: State<Int> = _userAge
+    private var _bodyWeight = mutableStateOf(0.0)
+    val bodyWeight: State<Double> = _bodyWeight
+    
+    // Progress tracking
+    private var _backupProgress = mutableStateOf(0f)
+    val backupProgress: State<Float> = _backupProgress
+    open val allWorkoutStates: MutableList<WorkoutState> = mutableListOf()
+    // ---------------------------------------------------------------------------------------------
+    // endregion
 
     fun resetWorkoutStore() {
         updateWorkoutStore(
@@ -139,6 +126,8 @@ open class WorkoutViewModel : ViewModel() {
         _bodyWeight.value = workoutStore.weightKg.toDouble()
     }
 
+    // region Initialization
+    // ---------------------------------------------------------------------------------------------
     fun initExerciseHistoryDao(context: Context) {
         val db = AppDatabase.getDatabase(context)
         setHistoryDao = db.setHistoryDao()
@@ -162,6 +151,8 @@ open class WorkoutViewModel : ViewModel() {
     fun initWorkoutStoreRepository(workoutStoreRepository: WorkoutStoreRepository) {
         this.workoutStoreRepository = workoutStoreRepository
     }
+    // ---------------------------------------------------------------------------------------------
+    // endregion
 
     private val _selectedWorkout = mutableStateOf(
         Workout(
