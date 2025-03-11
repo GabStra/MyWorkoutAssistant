@@ -67,7 +67,6 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
-
 open class WorkoutViewModel : ViewModel() {
     var workoutStore by mutableStateOf(
         WorkoutStore(
@@ -337,7 +336,7 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    fun resumeWorkoutFromRecord(onEnd: () -> Unit = {}) {
+    open fun resumeWorkoutFromRecord(onEnd: () -> Unit = {}) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
@@ -362,7 +361,6 @@ open class WorkoutViewModel : ViewModel() {
                 Log.d("WorkoutViewModel", "Resumed workout")
                 triggerWorkoutNotification()
                 onEnd()
-                lightScreenUp()
             }
         }
     }
@@ -713,7 +711,7 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    fun startWorkout() {
+    open fun startWorkout() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
@@ -733,7 +731,7 @@ open class WorkoutViewModel : ViewModel() {
                 generateWorkoutStates()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                 triggerWorkoutNotification()
-                lightScreenUp()
+
             }
         }
     }
