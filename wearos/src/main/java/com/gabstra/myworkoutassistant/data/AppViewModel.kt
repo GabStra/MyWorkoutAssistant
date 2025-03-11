@@ -3,10 +3,16 @@ package com.gabstra.myworkoutassistant.data
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+
+import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
@@ -131,12 +137,14 @@ class AppViewModel : WorkoutViewModel() {
                 if (shouldSendData && dataClient != null) {
                     val exerciseInfos = mutableListOf<ExerciseInfo>()
                     // Get exercise infos for sending
-                    val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + 
+                    val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() +
                         selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-                    
-                    exercises.forEach { exercise ->
-                        exerciseInfoDao.getExerciseInfoById(exercise.id)?.let {
-                            exerciseInfos.add(it)
+
+                    viewModelScope.launch(Dispatchers.IO) {
+                        exercises.forEach { exercise ->
+                            exerciseInfoDao.getExerciseInfoById(exercise.id)?.let {
+                                exerciseInfos.add(it)
+                            }
                         }
                     }
 
