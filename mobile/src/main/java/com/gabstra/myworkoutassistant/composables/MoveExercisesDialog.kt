@@ -7,6 +7,7 @@
 │import androidx.compose.material3.Button
 │import androidx.compose.material3.ButtonDefaults
 │import androidx.compose.material3.MaterialTheme
+│import com.gabstra.myworkoutassistant.composables.WorkoutSelectionList
 │import androidx.compose.material3.Text
 │import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 │import java.util.UUID
