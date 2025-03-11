@@ -263,7 +263,6 @@ fun RestScreen(
         title = "Skip rest",
         message = "Do you want to proceed?",
         handleYesClick = {
-            VibrateGentle(context)
             state.currentSetData = currentSetData.copy(
                 endTimer =  currentSeconds
             )

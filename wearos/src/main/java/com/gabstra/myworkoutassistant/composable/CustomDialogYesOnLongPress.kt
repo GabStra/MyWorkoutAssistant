@@ -165,7 +165,7 @@ fun CustomDialogYesOnLongPress(
                     ) {
                         EnhancedButton(
                             buttonSize = 35.dp,
-                            hitBoxScale = 1.5f,
+                            hitBoxScale = 2f,
                             onClick = {
                                 closeDialogJob?.cancel()
                                 handleNoClick()
@@ -177,7 +177,7 @@ fun CustomDialogYesOnLongPress(
                         Spacer(modifier = Modifier.width(5.dp))
                         Box(
                             modifier = Modifier
-                                .size(52.5.dp)
+                                .size(70.dp)
                                 .repeatActionOnLongPress(
                                     longPressCoroutineScope,
                                     thresholdMillis = 10,

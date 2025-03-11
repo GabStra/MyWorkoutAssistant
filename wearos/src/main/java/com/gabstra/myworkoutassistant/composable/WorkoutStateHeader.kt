@@ -58,7 +58,7 @@ fun WorkoutStateHeader(
         modifier = Modifier
             .fillMaxWidth()
             .height(20.dp)
-            .padding(55.dp,5.dp,55.dp,0.dp)
+            .padding(60.dp,5.dp,60.dp,0.dp)
             .clickable {
                 if(workoutState is WorkoutState.Preparing) return@clickable
                 viewModel.switchHeaderDisplayMode()

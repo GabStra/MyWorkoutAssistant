@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composable
 import android.annotation.SuppressLint
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +22,8 @@ import java.time.temporal.ChronoUnit
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -40,19 +43,28 @@ fun CurrentTime() {
         }
     }
 
-    Row {
+    Row(
+        modifier = Modifier.width(40.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
         Text(
+            modifier = Modifier.weight(1f),
             text = String.format("%02d", currentTime.hour),
-            style = MaterialTheme.typography.caption1
+            style = MaterialTheme.typography.caption1,
+            textAlign = TextAlign.End
         )
+
         Text(
             text = ":",
             style = MaterialTheme.typography.caption1,
             color =  if (showColon) Color.White else Color.DarkGray,
+            textAlign = TextAlign.Center
         )
         Text(
+            modifier = Modifier.weight(1f),
             text = String.format("%02d", currentTime.minute),
-            style = MaterialTheme.typography.caption1
+            style = MaterialTheme.typography.caption1,
+            textAlign = TextAlign.Start
         )
     }
 }

@@ -127,7 +127,7 @@ fun VibrateHard(context: Context) {
 
     GlobalScope.launch(Dispatchers.Default) {
         launch{
-            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            vibrator?.vibrate(VibrationEffect.createOneShot(100,  255))
         }
     }
 }
@@ -138,7 +138,7 @@ fun VibrateGentle(context: Context) {
 
     GlobalScope.launch(Dispatchers.Default) {
         launch{
-            vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            vibrator?.vibrate(VibrationEffect.createOneShot(50, 255))
         }
     }
 }
@@ -150,7 +150,7 @@ fun VibrateTwice(context: Context) {
     GlobalScope.launch(Dispatchers.Default) {
         repeat(2) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
             }
             val startTime = System.currentTimeMillis()
             vibratorJob.join()
@@ -180,7 +180,7 @@ fun VibrateShortImpulse(context: Context) {
                     while (readyCount.get() > 0) {
                         yield()
                     }
-                    vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                    vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
                 }
 
                 val job2 = launch {
@@ -209,7 +209,7 @@ fun VibrateAndBeep(context: Context) {
 
     GlobalScope.launch(Dispatchers.Default) {
         val vibratorJob = launch(start = CoroutineStart.LAZY){
-            vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
         }
 
         val toneJob= launch(start = CoroutineStart.LAZY){
@@ -237,7 +237,7 @@ fun VibrateTwiceAndBeep(context: Context) {
                     while (readyCount.get() > 0) {
                         yield()
                     }
-                    vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                    vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
                 }
 
                 val job2 = launch {
