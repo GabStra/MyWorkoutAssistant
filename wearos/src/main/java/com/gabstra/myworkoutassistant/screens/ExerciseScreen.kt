@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -187,7 +188,8 @@ fun PageNextSets(
         ExerciseSetsViewer(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 5.dp),
+                .padding(horizontal = 5.dp)
+                .padding(bottom = 10.dp),
             viewModel = viewModel,
             exercise = exercise,
             currentSet = updatedState.set
@@ -388,9 +390,6 @@ fun PageNotes(notes: String) {
 
 @Composable
 fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
-    Log.d("PagePlates", "Equipment: $equipment")
-    Log.d("PagePlates", "UpdatedState: ${updatedState.plateChangeResult }")
-
     val scrollState = rememberScrollState()
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -526,14 +525,16 @@ fun ExerciseScreen(
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
 
-    Log.d("ExerciseScreen", "Equipment: $equipment")
+    val showPlatesPage = remember(exercise, equipment) {
+        equipment != null
+                && equipment.type == EquipmentType.BARBELL
+                && equipment.name.contains("barbell", ignoreCase = true)
+                && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+    }
 
-    // Determine which pages to show based on equipment type and notes
-    val showPlatesPage = equipment != null
-            && equipment.type == EquipmentType.BARBELL
-            && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
-
-    val showNotesPage = exercise.notes.isNotEmpty()
+    val showNotesPage = remember(exercise) {
+        exercise.notes.isNotEmpty()
+    }
 
     val pageTypes = remember(showPlatesPage, showNotesPage) {
         mutableListOf<PageType>().apply {
