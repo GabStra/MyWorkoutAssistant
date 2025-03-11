@@ -67,10 +67,8 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
+
 open class WorkoutViewModel : ViewModel() {
-    // region Properties
-    // ---------------------------------------------------------------------------------------------
-    // Workout store & equipment
     var workoutStore by mutableStateOf(
         WorkoutStore(
             workouts = emptyList(),
@@ -82,27 +80,43 @@ open class WorkoutViewModel : ViewModel() {
             workloadProgressionUpperRange = 0.0
         )
     )
-    var polarDeviceId: String = ""
-        get() = workoutStore.polarDeviceId ?: ""
 
-    // State flows
-    private val _isPaused = mutableStateOf(false)
-    open val isPaused: State<Boolean> = _isPaused
+    fun getEquipmentById(id: UUID): Equipment? {
+        return workoutStore.equipments.find { it.id == id }
+    }
+
+    private val _isPaused = mutableStateOf(false) // Private mutable state
+    open val isPaused: State<Boolean> = _isPaused // Public read-only State access
+
+    fun pauseWorkout() {
+        _isPaused.value = true
+    }
+
+    fun resumeWorkout() {
+        _isPaused.value = false
+    }
+
     private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
     val workouts = _workouts.asStateFlow()
-    
-    // User metrics
+
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
+
     private var _bodyWeight = mutableStateOf(0.0)
     val bodyWeight: State<Double> = _bodyWeight
-    
-    // Progress tracking
+
     private var _backupProgress = mutableStateOf(0f)
     val backupProgress: State<Float> = _backupProgress
+
+    // Create a function to update the backup progress
+    fun setBackupProgress(progress: Float) {
+        _backupProgress.value = progress
+    }
+
     open val allWorkoutStates: MutableList<WorkoutState> = mutableListOf()
-    // ---------------------------------------------------------------------------------------------
-    // endregion
+
+    var polarDeviceId: String = ""
+        get() = workoutStore.polarDeviceId ?: ""
 
     fun resetWorkoutStore() {
         updateWorkoutStore(
@@ -126,8 +140,6 @@ open class WorkoutViewModel : ViewModel() {
         _bodyWeight.value = workoutStore.weightKg.toDouble()
     }
 
-    // region Initialization
-    // ---------------------------------------------------------------------------------------------
     fun initExerciseHistoryDao(context: Context) {
         val db = AppDatabase.getDatabase(context)
         setHistoryDao = db.setHistoryDao()
@@ -151,8 +163,6 @@ open class WorkoutViewModel : ViewModel() {
     fun initWorkoutStoreRepository(workoutStoreRepository: WorkoutStoreRepository) {
         this.workoutStoreRepository = workoutStoreRepository
     }
-    // ---------------------------------------------------------------------------------------------
-    // endregion
 
     private val _selectedWorkout = mutableStateOf(
         Workout(
@@ -327,8 +337,6 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    // region Workout Lifecycle
-    // ---------------------------------------------------------------------------------------------
     open fun resumeWorkoutFromRecord(onEnd: () -> Unit = {}) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
@@ -351,33 +359,8 @@ open class WorkoutViewModel : ViewModel() {
                 generateWorkoutStates()
                 workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
-                Log.d("WorkoutViewModel", "Resumed workout")
                 triggerWorkoutNotification()
                 onEnd()
-            }
-        }
-    }
-
-    open fun startWorkout() {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
-                workoutStateQueue.clear()
-                workoutStateHistory.clear()
-                _isHistoryEmpty.value = workoutStateHistory.isEmpty()
-                setStates.clear()
-                allWorkoutStates.clear()
-                weightsByEquipment.clear()
-                executedSetsHistory.clear()
-                heartBeatHistory.clear()
-                startWorkoutTime = null
-                currentWorkoutHistory = null
-                loadWorkoutHistory()
-                generateProgressions()
-                applyProgressions()
-                generateWorkoutStates()
-                _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
-                triggerWorkoutNotification()
             }
         }
     }
@@ -386,8 +369,6 @@ open class WorkoutViewModel : ViewModel() {
         return allWorkoutStates.filterIsInstance<WorkoutState.Set>()
             .filter { it.exerciseId == exerciseId }
     }
-    // ---------------------------------------------------------------------------------------------
-    // endregion
 
     private fun applyProgressions() {
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
@@ -750,7 +731,6 @@ open class WorkoutViewModel : ViewModel() {
                 generateWorkoutStates()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                 triggerWorkoutNotification()
-
             }
         }
     }
@@ -1541,12 +1521,12 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
     }
-    
+
     // Helper function for calculating one rep max
     protected fun calculateOneRepMax(weight: Double, reps: Int): Double {
         return weight / (1.0278 - (0.0278 * reps))
     }
-    
+
     // Extension function for rounding doubles
     protected fun Double.round(decimals: Int): Double {
         var multiplier = 1.0
