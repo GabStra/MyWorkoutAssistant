@@ -67,41 +67,6 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
-sealed class WorkoutState {
-    data class Preparing(
-        val dataLoaded: Boolean
-    ) : WorkoutState()
-
-    data class Set(
-        val exerciseId: UUID,
-        var set: com.gabstra.myworkoutassistant.shared.sets.Set,
-        val order: UInt,
-        val previousSetData: SetData?,
-        var currentSetData: SetData,
-        val hasNoHistory: Boolean,
-        var startTime : LocalDateTime? = null,
-        var skipped: Boolean,
-        val lowerBoundMaxHRPercent: Float? = null,
-        val upperBoundMaxHRPercent: Float? = null,
-        val currentBodyWeight: Double,
-        val plateChangeResult: PlateCalculator.Companion.PlateChangeResult? = null,
-        val streak: Int,
-        val isDeloading: Boolean,
-        val lastSessionVolume: Double,
-        val expectedProgress: Double?
-    ) : WorkoutState()
-
-    data class Rest(
-        var set: com.gabstra.myworkoutassistant.shared.sets.Set,
-        val order: UInt,
-        var currentSetData: SetData,
-        val exerciseId: UUID? = null,
-        var nextStateSets: List<WorkoutState.Set> = emptyList(),
-        var startTime : LocalDateTime? = null,
-    ) : WorkoutState()
-
-    data class Finished(val startWorkoutTime: LocalDateTime) : WorkoutState()
-}
 
 open class WorkoutViewModel : ViewModel() {
     var workoutStore by mutableStateOf(
@@ -310,29 +275,27 @@ open class WorkoutViewModel : ViewModel() {
         _isSkipDialogOpen.value = false
     }
 
+    // UI State management
     private val _hrDisplayMode = mutableStateOf(0)
     val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
+    private val _headerDisplayMode = mutableStateOf(0)
+    val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
+    private val _enableScreenDimming = mutableStateOf(true)
+    val enableScreenDimming: State<Boolean> = _enableScreenDimming
+    private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
+    val lightScreenUp = _lightScreenUp.receiveAsFlow()
 
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
     }
 
-    private val _headerDisplayMode = mutableStateOf(0)
-    val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
-
     fun switchHeaderDisplayMode() {
         _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
     }
-    
-    private val _enableScreenDimming = mutableStateOf(true)
-    val enableScreenDimming: State<Boolean> = _enableScreenDimming
- 
+
     fun toggleScreenDimming() {
         _enableScreenDimming.value = !_enableScreenDimming.value
     }
-
-    private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
-    val lightScreenUp = _lightScreenUp.receiveAsFlow()
 
     fun lightScreenUp() {
         viewModelScope.launch {
