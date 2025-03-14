@@ -81,7 +81,7 @@ fun BodyWeightSetScreen(
     var availableWeights by remember(exercise) { mutableStateOf<Set<Double>>(emptySet()) }
 
     LaunchedEffect(equipment) {
-        availableWeights = viewModel.getWeightByEquipment(equipment)
+        availableWeights = (viewModel.getWeightByEquipment(equipment) + setOf(0.0)).sorted().toSet()
     }
 
     val cumulativeWeight = remember(currentSetData,equipment){
@@ -293,9 +293,11 @@ fun BodyWeightSetScreen(
                 else -> MyColors.Green
             }
 
+            val weightText = if(weight > 0) "%.2f".format(weight).replace(',','.') else "-"
+
             Text(
                 modifier = Modifier.fillMaxWidth(),
-                text = "%.2f".format(weight).replace(',','.'),
+                text = weightText,
                 style = style,
                 color =  textColor,
                 textAlign = TextAlign.Center

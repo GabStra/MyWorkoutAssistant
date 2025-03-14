@@ -88,7 +88,7 @@ object VolumeDistributionHelper {
             }
         )
 
-        if(validSetCombination.isEmpty()){
+        if(validSetCombination.isEmpty() && params.maxSets < 5){
             validSetCombination = findBestProgressions(
                 possibleSets,
                 params.maxSets,

@@ -682,8 +682,6 @@ open class WorkoutViewModel : ViewModel() {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
         }
 
-        Log.d("WorkoutViewModel", "# =========================================================================================== #")
-
         return exercise.id to Pair(exerciseProgression, shouldDeload)
     }
 

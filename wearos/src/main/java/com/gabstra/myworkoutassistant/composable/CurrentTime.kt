@@ -50,21 +50,16 @@ fun CurrentTime() {
         modifier = Modifier.width(50.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val monospaceTextStyle = MaterialTheme.typography.caption1.copy(
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
-        )
-
         Text(
             modifier = Modifier.weight(1f),
             text = String.format("%02d", currentTime.hour),
-            style = monospaceTextStyle,
+            style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.End
         )
 
         Text(
             text = ":",
-            style = monospaceTextStyle,
+            style = MaterialTheme.typography.caption1,
             color = if (showColon) Color.White else Color.DarkGray,
             textAlign = TextAlign.Center
         )
@@ -72,7 +67,7 @@ fun CurrentTime() {
         Text(
             modifier = Modifier.weight(1f),
             text = String.format("%02d", currentTime.minute),
-            style = monospaceTextStyle,
+            style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.Start
         )
     }

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -38,6 +40,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -66,21 +70,52 @@ fun SetTableRow(
     modifier: Modifier = Modifier,
     setState: WorkoutState.Set,
     index: Int?,
+    isCurrentSet: Boolean,
     color: Color = Color.Unspecified,
 ){
+    val density = LocalDensity.current.density
+    val triangleSize = 10f
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
-/*        if(index != null){
-            Text(
-                modifier = Modifier.weight(1f),
-                text = "${index + 1}",
-                style =  MaterialTheme.typography.body1,
-                textAlign = TextAlign.Center,
-                color = color
-            )
-        }*/
+        if(isCurrentSet){
+            Box(modifier= Modifier.width(20.dp).fillMaxHeight(),contentAlignment = Alignment.Center){
+                Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
+                    val trianglePath = Path().apply {
+                        val height = (triangleSize * 2 / density).dp.toPx()
+                        val width = height
+
+                        // Create triangle pointing upward initially
+                        moveTo(width / 2, 0f)          // Top point
+                        lineTo(width, height * 0.866f) // Bottom right
+                        lineTo(0f, height * 0.866f)    // Bottom left
+                        close()
+                    }
+
+                    // Calculate rotation to point in direction of movement
+                    // Add 90 degrees (π/2) because our triangle points up by default
+                    // and we want it to point in the direction of travel
+                    val directionAngle = 0 - Math.PI / 2 + Math.PI
+
+                    withTransform({
+                        rotate(
+                            degrees = Math.toDegrees(directionAngle).toFloat(),
+                            pivot = center
+                        )
+                    }) {
+                        // Draw filled white triangle
+                        drawPath(
+                            path = trianglePath,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }else{
+            Spacer(modifier = Modifier.width(20.dp))
+        }
         when (setState.currentSetData) {
             is WeightSetData -> {
                 val weightSetData = (setState.currentSetData as WeightSetData)
@@ -194,12 +229,7 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-/*                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "#",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )*/
+                Spacer(modifier= Modifier.width(20.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "KG",
@@ -241,6 +271,7 @@ fun ExerciseSetsViewer(
                             },
                         setState = nextSetState,
                         index = index,
+                        isCurrentSet = index == setIndex,
                         color = when {
                             index < setIndex -> MyColors.Orange
                             else ->  Color.Unspecified
@@ -256,6 +287,7 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Spacer(modifier= Modifier.width(20.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "TIME",
@@ -291,6 +323,7 @@ fun ExerciseSetsViewer(
                             },
                         setState = nextSetState,
                         index = index,
+                        isCurrentSet = index == setIndex,
                         color = when{
                             index < setIndex -> MyColors.Orange
                             else ->  Color.Unspecified

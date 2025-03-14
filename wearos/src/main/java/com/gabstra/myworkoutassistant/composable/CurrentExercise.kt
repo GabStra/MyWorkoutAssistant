@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -18,6 +19,8 @@ fun CurrentExercise(
     Text(
         textAlign = TextAlign.Center,
         text = "${exerciseIndex + 1}/${exerciseCount}",
-        style = MaterialTheme.typography.caption1
+        style = MaterialTheme.typography.caption1.copy(
+            fontWeight = FontWeight.Bold
+        )
     )
 }
