@@ -53,27 +53,46 @@ object VolumeDistributionHelper {
         //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
 
         val maxSetVolume = possibleSets.maxOf { it.volume }
-        val maxPossibleVolume = maxSetVolume * params.maxSets
+
 
         var validSetCombination = emptyList<ExerciseSet>()
 
         //Log.d("WorkoutViewModel", "Max possible volume: $maxPossibleVolume Exercise volume: ${params.exerciseVolume}")
 
+/*
+        val maxPossibleVolume = maxSetVolume * params.maxSets
         if(maxPossibleVolume < params.previousSessionWorkload) {
             val maxSet = possibleSets.maxByOrNull { it.volume }!!
             validSetCombination = List(params.maxSets) { maxSet }
-        }
+        }*/
 
         //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
 
         //Log.d("WorkoutViewModel", "Volume progression range: ${params.volumeProgressionRange}")
         //Log.d("WorkoutViewModel", "Average load per rep progression range: ${params.averageLoadPerRepProgressionRange}")
 
+        validSetCombination = findBestProgressions(
+            possibleSets,
+            params.minSets,
+            params.maxSets,
+            params.previousSessionWorkload,
+            params.previousAverageWorkloadPerRep,
+            params.previousAverageWorkloadPerSet,
+            { combo: List<ExerciseSet> ->
+                val currentSessionWorkload = combo.sumOf { it.workload }
+                ValidationResult(
+                    shouldReturn = currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
+                            || currentSessionWorkload < params.previousSessionWorkload * (1+params.workloadProgressionRange.from/100)
+                            || currentSessionWorkload > params.previousSessionWorkload * (1+params.workloadProgressionRange.to/100)
+                )
+            }
+        )
+
         if(validSetCombination.isEmpty()){
             validSetCombination = findBestProgressions(
                 possibleSets,
-                params.minSets,
                 params.maxSets,
+                5,
                 params.previousSessionWorkload,
                 params.previousAverageWorkloadPerRep,
                 params.previousAverageWorkloadPerSet,
@@ -262,12 +281,14 @@ object VolumeDistributionHelper {
     ): ExerciseSet {
         val volume = weight * reps
 
+        val param = (1 + intensity) * (1 + intensity)
+
         return ExerciseSet(
             weight = weight,
             reps = reps,
             volume = volume,
             intensity = intensity,
-            workload = volume * intensity
+            workload = volume * param
         )
     }
 

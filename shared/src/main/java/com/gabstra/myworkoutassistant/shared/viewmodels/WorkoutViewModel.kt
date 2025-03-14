@@ -536,14 +536,16 @@ open class WorkoutViewModel : ViewModel() {
                     val weight = it.getWeight(equipment, relativeBodyWeight)
                     val intensity = weight / oneRepMax
                     val volume = weight * it.reps
-                    volume * intensity
+                    val param = (1 + intensity) * (1 + intensity)
+                    volume * param
                 }
 
                 is WeightSet -> {
                     val weight = it.getWeight(equipment)
                     val intensity = weight / oneRepMax
                     val volume = weight * it.reps
-                    volume * intensity
+                    val param = (1 + intensity) * (1 + intensity)
+                    volume * param
                 }
 
                 else -> 0.0
@@ -645,7 +647,7 @@ open class WorkoutViewModel : ViewModel() {
                 maxLoadPercent,
                 repsRange,
                 minSets = 3,
-                maxSets = 5,
+                maxSets = exerciseSets.size,
                 workloadProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
             )
         }
