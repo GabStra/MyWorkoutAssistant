@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -45,27 +47,32 @@ fun CurrentTime() {
     }
 
     Row(
-        modifier = Modifier.width(40.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.width(50.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        val monospaceTextStyle = MaterialTheme.typography.caption1.copy(
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold
+        )
+
         Text(
             modifier = Modifier.weight(1f),
             text = String.format("%02d", currentTime.hour),
-            style = MaterialTheme.typography.caption1,
+            style = monospaceTextStyle,
             textAlign = TextAlign.End
         )
 
         Text(
             text = ":",
-            style = MaterialTheme.typography.caption1,
-            color =  if (showColon) Color.White else Color.LightGray,
+            style = monospaceTextStyle,
+            color = if (showColon) Color.White else Color.DarkGray,
             textAlign = TextAlign.Center
         )
+
         Text(
             modifier = Modifier.weight(1f),
             text = String.format("%02d", currentTime.minute),
-            style = MaterialTheme.typography.caption1,
+            style = monospaceTextStyle,
             textAlign = TextAlign.Start
         )
     }

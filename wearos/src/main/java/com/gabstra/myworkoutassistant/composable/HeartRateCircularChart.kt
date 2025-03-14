@@ -262,7 +262,7 @@ private fun HeartRateView(
         else ->  "${"%.1f".format(mhrPercentage).replace(',','.')}%"
     }
 
-    val showHeartIcon = displayMode == 0
+    val showHeartIcon = displayMode != 1
     val context = LocalContext.current
 
     val startAngle = 115f
@@ -291,18 +291,12 @@ private fun HeartRateView(
                 )
                 Spacer(modifier = Modifier.width(5.dp))
             }
-
-            val textColor = when(displayMode) {
-                0 -> Color.White
-                1 -> Color.White
-                else -> colorsByZone[zone]
-            }
-
+            
             Text(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption1,
-                color = if (hr == 0) Color.DarkGray else textColor
+                color = if (hr == 0) Color.DarkGray else Color.White
             )
         }
 
