@@ -86,7 +86,7 @@ fun SetTableRow(
                 val weightSetData = (setState.currentSetData as WeightSetData)
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "${weightSetData.actualWeight}",
+                    text = "%.2f".format(weightSetData.actualWeight).replace(',','.'),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
                     color = color
@@ -105,7 +105,7 @@ fun SetTableRow(
                 Text(
                     modifier = Modifier.weight(1f),
                     text = if (bodyWeightSetData.additionalWeight > 0) {
-                        "${bodyWeightSetData.additionalWeight}"
+                        "%.2f".format(bodyWeightSetData.additionalWeight).replace(',','.')
                     } else {
                         "-"
                     },
@@ -241,10 +241,9 @@ fun ExerciseSetsViewer(
                             },
                         setState = nextSetState,
                         index = index,
-                        color = when{
-                            index < setIndex -> Color.Unspecified
-                            index == setIndex -> MyColors.Orange
-                            else ->  Color.DarkGray
+                        color = when {
+                            index < setIndex -> MyColors.Orange
+                            else ->  Color.Unspecified
                         }
                     )
                 }
@@ -293,9 +292,8 @@ fun ExerciseSetsViewer(
                         setState = nextSetState,
                         index = index,
                         color = when{
-                            index < setIndex -> Color.Unspecified
-                            index == setIndex -> MyColors.Orange
-                            else ->  Color.DarkGray
+                            index < setIndex -> MyColors.Orange
+                            else ->  Color.Unspecified
                         }
                     )
                 }

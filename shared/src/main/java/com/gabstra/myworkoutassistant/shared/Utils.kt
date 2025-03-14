@@ -148,8 +148,8 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
 fun initializeSetData(set: Set): SetData = when (set) {
     is WeightSet -> WeightSetData(set.reps, set.weight,0.0)
     is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0)
-    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis)
-    is EnduranceSet -> EnduranceSetData(set.timeInMillis,0)
+    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop)
+    is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds)
 }
 
@@ -201,8 +201,8 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
             return TimedDurationSet(
                 id = setHistory.setId,
                 timeInMillis = setData.startTimer,
-                autoStart = false,
-                autoStop = false
+                autoStart = setData.autoStart,
+                autoStop = setData.autoStop
             )
         }
 
@@ -210,8 +210,8 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
             return EnduranceSet(
                 id = setHistory.setId,
                 timeInMillis = setData.startTimer,
-                autoStart = false,
-                autoStop = false
+                autoStart = setData.autoStart,
+                autoStop = setData.autoStop
             )
         }
 
@@ -222,54 +222,6 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
             )
         }
     }
-}
-
-fun getNewSetFromSetHistory(set: Set, setData: SetData): Set? {
-    when (set) {
-        is WeightSet -> {
-            if (setData is WeightSetData) {
-                return set.copy(
-                    reps = setData.actualReps,
-                    weight = setData.actualWeight
-                )
-            }
-        }
-
-        is BodyWeightSet -> {
-            if (setData is BodyWeightSetData) {
-                return set.copy(
-                    reps = setData.actualReps,
-                    additionalWeight = setData.additionalWeight,
-                )
-            }
-        }
-
-        is TimedDurationSet -> {
-            if (setData is TimedDurationSetData) {
-                return set.copy(
-                    timeInMillis = setData.startTimer
-                )
-            }
-        }
-
-        is EnduranceSet -> {
-            if (setData is EnduranceSetData) {
-                return set.copy(
-                    timeInMillis = setData.startTimer
-                )
-            }
-        }
-
-        is RestSet -> {
-            if (setData is RestSetData) {
-                return set.copy(
-                    timeInSeconds = setData.startTimer
-                )
-            }
-        }
-    }
-
-    return null
 }
 
 val colorsByZone = arrayOf(

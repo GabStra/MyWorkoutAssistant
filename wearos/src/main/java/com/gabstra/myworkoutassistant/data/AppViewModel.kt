@@ -19,6 +19,8 @@ import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,8 +47,22 @@ open class AppViewModel : WorkoutViewModel() {
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
     val lightScreenUp = _lightScreenUp.receiveAsFlow()
 
+    private val _heartRateChangeRate = MutableStateFlow<Float?>(null)
+    val heartRateChangeRate: StateFlow<Float?> = _heartRateChangeRate
+
+    // Property to store confidence level in calculation
+    private val _heartRateChangeConfidence = MutableStateFlow(0.0f)
+    val heartRateChangeConfidence: StateFlow<Float> = _heartRateChangeConfidence
+
+    // Method to update the heart rate change rate
+    fun updateHeartRateChangeRate(rate: Float?, confidence: Float = 0.5f) {
+        _heartRateChangeRate.value = rate
+        _heartRateChangeConfidence.value = confidence
+    }
+
+
     fun switchHrDisplayMode() {
-        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
+        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 3
     }
 
     fun switchHeaderDisplayMode() {

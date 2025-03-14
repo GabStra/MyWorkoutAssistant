@@ -314,11 +314,7 @@ fun WeightSetScreen (
 
                 Text(
                     modifier = Modifier.fillMaxWidth(),
-                    text = if (weight % 1 == 0.0) {
-                        "${weight.toInt()}"
-                    } else {
-                        "$weight"
-                    },
+                    text = "%.2f".format(weight).replace(',','.'),
                     style = style,
                     color =  textColor,
                     textAlign = TextAlign.Center
@@ -401,6 +397,7 @@ fun WeightSetScreen (
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 exerciseTitleComposable()
+                Spacer(modifier = Modifier.height(5.dp))
                 SetScreen(customModifier = Modifier
                     .weight(1f).padding(horizontal = 10.dp))
                 if (extraInfo != null) {

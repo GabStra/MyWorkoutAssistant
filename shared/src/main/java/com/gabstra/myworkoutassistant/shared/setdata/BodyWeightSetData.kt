@@ -4,7 +4,12 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
-data class BodyWeightSetData(val actualReps: Int, val additionalWeight:Double, val relativeBodyWeightInKg: Double, val volume: Double): SetData(){
+data class BodyWeightSetData(
+    val actualReps: Int,
+    val additionalWeight:Double,
+    val relativeBodyWeightInKg: Double,
+    val volume: Double
+): SetData(){
     fun getWeight(equipment: Equipment?): Double {
         if(equipment != null){
             if(equipment is Barbell){

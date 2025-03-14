@@ -194,7 +194,7 @@ fun PageNextSets(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 5.dp)
-                .padding(bottom = 10.dp),
+                .padding(bottom = 15.dp),
             viewModel = viewModel,
             exercise = exercise,
             currentSet = updatedState.set

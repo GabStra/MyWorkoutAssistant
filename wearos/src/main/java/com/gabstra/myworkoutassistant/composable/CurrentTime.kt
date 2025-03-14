@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.ui.Alignment
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -45,7 +46,8 @@ fun CurrentTime() {
 
     Row(
         modifier = Modifier.width(40.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             modifier = Modifier.weight(1f),
@@ -57,7 +59,7 @@ fun CurrentTime() {
         Text(
             text = ":",
             style = MaterialTheme.typography.caption1,
-            color =  if (showColon) Color.White else Color.DarkGray,
+            color =  if (showColon) Color.White else Color.LightGray,
             textAlign = TextAlign.Center
         )
         Text(

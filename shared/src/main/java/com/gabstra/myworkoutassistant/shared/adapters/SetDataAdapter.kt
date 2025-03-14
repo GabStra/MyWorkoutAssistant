@@ -43,10 +43,14 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             is TimedDurationSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
                 jsonObject.addProperty("endTimer", src.endTimer)
+                jsonObject.addProperty("autoStart",src.autoStart)
+                jsonObject.addProperty("autoStop",src.autoStop)
             }
             is EnduranceSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
                 jsonObject.addProperty("endTimer", src.endTimer)
+                jsonObject.addProperty("autoStart",src.autoStart)
+                jsonObject.addProperty("autoStop",src.autoStop)
             }
             is RestSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
@@ -77,12 +81,16 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             "TimedDurationSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt
                 val endTimer = jsonObject.get("endTimer").asInt
-                TimedDurationSetData(startTimer,endTimer)
+                val autoStart = if(jsonObject.has("autoStart")) jsonObject.get("autoStart").asBoolean else false
+                val autoStop = if(jsonObject.has("autoStop")) jsonObject.get("autoStop").asBoolean else false
+                TimedDurationSetData(startTimer,endTimer,autoStart,autoStop)
             }
             "EnduranceSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt
                 val endTimer = jsonObject.get("endTimer").asInt
-                EnduranceSetData(startTimer,endTimer)
+                val autoStart = if(jsonObject.has("autoStart")) jsonObject.get("autoStart").asBoolean else false
+                val autoStop = if(jsonObject.has("autoStop")) jsonObject.get("autoStop").asBoolean else false
+                EnduranceSetData(startTimer,endTimer,autoStart,autoStop)
             }
             "RestSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt

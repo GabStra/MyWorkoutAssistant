@@ -58,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private fun getProgressIndicatorSegments() = listOf(
@@ -239,6 +240,8 @@ private fun HeartRateView(
     upperBoundMaxHRPercent: Float?,
 ) {
 
+    val heartRateChangeRate by appViewModel.heartRateChangeRate.collectAsState()
+
     val segments = remember { getProgressIndicatorSegments() }
 
     val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
@@ -248,7 +251,15 @@ private fun HeartRateView(
 
     val textToDisplay = when(displayMode) {
         0 -> if (hr == 0) "-" else hr.toString()
-        else ->  "Zone $zone ${(mhrPercentage).toInt()}%"
+        1 -> {
+            if (heartRateChangeRate == null) {
+                "Δ: --"
+            } else {
+                val prefix = if (heartRateChangeRate!! > 0) "+" else ""
+                "Δ: $prefix${"%.2f".format(heartRateChangeRate).replace(',','.')}/s"
+            }
+        }
+        else ->  "${"%.1f".format(mhrPercentage).replace(',','.')}%"
     }
 
     val showHeartIcon = displayMode == 0
@@ -282,7 +293,8 @@ private fun HeartRateView(
             }
 
             val textColor = when(displayMode) {
-                0 ->  Color.White
+                0 -> Color.White
+                1 -> Color.White
                 else -> colorsByZone[zone]
             }
 
@@ -337,6 +349,11 @@ fun HeartRateStandard(
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
     val hr = currentHeartRate ?: 0
 
+    HeartRateMonitor(
+        appViewModel = appViewModel,
+        heartRateSupplier = { hrViewModel.heartRateBpm.value ?: 0 }
+    )
+
     LaunchedEffect(Unit) {
         while (true) {
             appViewModel.registerHeartBeat(hrViewModel.heartRateBpm.value ?: 0)
@@ -359,6 +376,11 @@ fun HeartRatePolar(
 ) {
     val hrData by polarViewModel.hrDataState.collectAsState()
     val hr = hrData ?: 0
+
+    HeartRateMonitor(
+        appViewModel = appViewModel,
+        heartRateSupplier = { polarViewModel.hrDataState.value ?: 0 }
+    )
 
     LaunchedEffect(Unit) {
         while (true) {

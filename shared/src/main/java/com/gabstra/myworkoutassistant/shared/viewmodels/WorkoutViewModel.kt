@@ -798,7 +798,7 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    fun registerHeartBeat(heartBeat: Int) {
+    open fun registerHeartBeat(heartBeat: Int) {
         heartBeatHistory.add(heartBeat)
     }
 
