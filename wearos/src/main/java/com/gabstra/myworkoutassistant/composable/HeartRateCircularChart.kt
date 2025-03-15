@@ -241,6 +241,7 @@ private fun HeartRateView(
 ) {
 
     val heartRateChangeRate by appViewModel.heartRateChangeRate.collectAsState()
+    val heartRateChangeConfidence by appViewModel.heartRateChangeConfidence.collectAsState()
 
     val segments = remember { getProgressIndicatorSegments() }
 
@@ -252,7 +253,7 @@ private fun HeartRateView(
     val textToDisplay = when(displayMode) {
         0 -> if (hr == 0) "-" else hr.toString()
         1 -> {
-            if (heartRateChangeRate == null) {
+            if (heartRateChangeRate == null || heartRateChangeConfidence < 0.8) {
                 "Δ: --"
             } else {
                 val prefix = if (heartRateChangeRate!! > 0) "+" else ""
@@ -329,8 +330,6 @@ private fun HeartRateView(
     }
 }
 
-
-@OptIn(FlowPreview::class)
 @Composable
 fun HeartRateStandard(
     modifier: Modifier = Modifier,
@@ -343,11 +342,6 @@ fun HeartRateStandard(
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
     val hr = currentHeartRate ?: 0
 
-    HeartRateMonitor(
-        appViewModel = appViewModel,
-        heartRateSupplier = { hrViewModel.heartRateBpm.value ?: 0 }
-    )
-
     LaunchedEffect(Unit) {
         while (true) {
             appViewModel.registerHeartBeat(hrViewModel.heartRateBpm.value ?: 0)
@@ -358,7 +352,6 @@ fun HeartRateStandard(
     HeartRateCircularChart(modifier = modifier, appViewModel = appViewModel, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
 }
 
-@OptIn(FlowPreview::class)
 @Composable
 fun HeartRatePolar(
     modifier: Modifier = Modifier,
@@ -370,11 +363,6 @@ fun HeartRatePolar(
 ) {
     val hrData by polarViewModel.hrDataState.collectAsState()
     val hr = hrData ?: 0
-
-    HeartRateMonitor(
-        appViewModel = appViewModel,
-        heartRateSupplier = { polarViewModel.hrDataState.value ?: 0 }
-    )
 
     LaunchedEffect(Unit) {
         while (true) {

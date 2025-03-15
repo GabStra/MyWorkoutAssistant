@@ -38,6 +38,7 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.composable.HeartRateMonitor
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.composable.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.VibrateHard
@@ -76,6 +77,11 @@ fun WorkoutScreen(
         upperBoundMaxHRPercent: Float? = null
     ){
         if(selectedWorkout.usePolarDevice){
+            HeartRateMonitor(
+                appViewModel = viewModel,
+                heartRateSupplier = { polarViewModel.hrDataState.value ?: 0 }
+            )
+
             HeartRatePolar(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
@@ -85,6 +91,11 @@ fun WorkoutScreen(
                 upperBoundMaxHRPercent
             )
         }else{
+            HeartRateMonitor(
+                appViewModel = viewModel,
+                heartRateSupplier = { hrViewModel.heartRateBpm.value ?: 0 }
+            )
+
             HeartRateStandard(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
