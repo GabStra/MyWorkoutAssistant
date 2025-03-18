@@ -103,7 +103,7 @@ fun CustomHorizontalPager(
 
     Box(modifier = modifier) {
         HorizontalPager(
-            modifier = Modifier.fillMaxSize().padding(bottom = 10.dp),
+            modifier = Modifier.fillMaxSize().padding(bottom = 15.dp),
             state = pagerState,
             userScrollEnabled = userScrollEnabled,
         ) { page ->

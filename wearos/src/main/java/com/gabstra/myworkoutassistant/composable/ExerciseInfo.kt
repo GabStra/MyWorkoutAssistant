@@ -74,14 +74,14 @@ fun SetTableRow(
     color: Color = Color.Unspecified,
 ){
     val density = LocalDensity.current.density
-    val triangleSize = 10f
+    val triangleSize = 6f
 
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
         if(isCurrentSet){
-            Box(modifier= Modifier.width(20.dp).fillMaxHeight(),contentAlignment = Alignment.Center){
+            Box(modifier= Modifier.width(10.dp).fillMaxHeight(),contentAlignment = Alignment.Center){
                 Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
                     val trianglePath = Path().apply {
                         val height = (triangleSize * 2 / density).dp.toPx()
@@ -114,7 +114,7 @@ fun SetTableRow(
                 }
             }
         }else{
-            Spacer(modifier = Modifier.width(20.dp))
+            Spacer(modifier = Modifier.width(10.dp))
         }
         when (setState.currentSetData) {
             is WeightSetData -> {
@@ -229,7 +229,7 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier= Modifier.width(20.dp))
+                Spacer(modifier= Modifier.width(10.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "KG",
@@ -274,7 +274,8 @@ fun ExerciseSetsViewer(
                         isCurrentSet = index == setIndex,
                         color = when {
                             index < setIndex -> MyColors.Orange
-                            else ->  Color.Unspecified
+                            index == setIndex -> Color.White
+                            else ->  Color.DarkGray
                         }
                     )
                 }
@@ -287,7 +288,7 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier= Modifier.width(20.dp))
+                Spacer(modifier= Modifier.width(10.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "TIME",
@@ -324,9 +325,10 @@ fun ExerciseSetsViewer(
                         setState = nextSetState,
                         index = index,
                         isCurrentSet = index == setIndex,
-                        color = when{
+                        color = when {
                             index < setIndex -> MyColors.Orange
-                            else ->  Color.Unspecified
+                            index == setIndex -> Color.White
+                            else ->  Color.DarkGray
                         }
                     )
                 }

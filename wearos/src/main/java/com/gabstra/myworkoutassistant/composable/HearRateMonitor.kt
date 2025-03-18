@@ -33,8 +33,14 @@ class HeartRateChangeCalculator {
     // Store filtered heart rates for noise reduction
     private val filteredHeartRates = LinkedList<Pair<Long, Double>>()
 
+    // Store trend history for temporal smoothing
+    private val trendHistory = LinkedList<Float>()
+
     // Maximum number of readings to store
     private val maxReadings = 20
+
+    // Maximum history entries for trend smoothing
+    private val maxTrendHistory = 5
 
     // Minimum time difference (ms) required for calculation
     private val minTimeDifferenceMs = 3000L
@@ -47,18 +53,41 @@ class HeartRateChangeCalculator {
     private val _confidenceLevel = MutableStateFlow(0.0f)
     val confidenceLevel: StateFlow<Float> = _confidenceLevel
 
+    // State flow for heart rate trend
+    private val _heartRateTrend = MutableStateFlow<TrendDirection>(TrendDirection.UNKNOWN)
+    val heartRateTrend: StateFlow<TrendDirection> = _heartRateTrend
+
     // Thresholds for determining significance of change (BPM/s)
-    val significantIncreaseThreshold = 0.1f // BPM/s
-    val significantDecreaseThreshold = -0.1f // BPM/s
+    val significantIncreaseThreshold = 0.3f // BPM/s - increased for stability
+    val significantDecreaseThreshold = -0.3f // BPM/s - decreased for stability
+
+    // Hysteresis buffer to prevent oscillation between states
+    private val hysteresisBuffer = 0.1f
+
+    // Consecutive readings needed to confirm a trend
+    private val requiredConsistentReadings = 3
+    private var consistentReadingCounter = 0
+    private var lastTrendDirection: TrendDirection = TrendDirection.UNKNOWN
 
     // Alpha value for exponential moving average filter
     private val alphaEMA = 0.3
+
+    // Exponential moving average of heart rate
+    private var emaHeartRate = 0.0
 
     // Kalman filter parameters
     private var kalmanEstimate = 0.0
     private var kalmanError = 1.0
     private val kalmanProcessNoise = 0.01
     private val kalmanMeasurementNoise = 2.0
+
+    // Enum to represent trend direction
+    enum class TrendDirection {
+        INCREASING,
+        DECREASING,
+        STABLE,
+        UNKNOWN
+    }
 
     /**
      * Registers a new heart rate reading and calculates the rate of change
@@ -72,11 +101,14 @@ class HeartRateChangeCalculator {
         // Apply Kalman filter to reduce noise
         val filteredValue = applyKalmanFilter(heartRate.toDouble())
 
+        // Apply exponential moving average for additional smoothing
+        updateEMA(filteredValue)
+
         // Add new raw reading
         recentHeartRates.add(Pair(currentTime, heartRate))
 
-        // Add filtered reading
-        filteredHeartRates.add(Pair(currentTime, filteredValue))
+        // Add filtered reading (using the EMA value for better smoothing)
+        filteredHeartRates.add(Pair(currentTime, emaHeartRate))
 
         // Keep only the most recent readings
         while (recentHeartRates.size > maxReadings) {
@@ -89,6 +121,19 @@ class HeartRateChangeCalculator {
 
         // Calculate rate of change using best method based on data availability
         calculateHeartRateChangeRate()
+    }
+
+    /**
+     * Update exponential moving average with new filtered heart rate
+     */
+    private fun updateEMA(newValue: Double) {
+        if (emaHeartRate == 0.0) {
+            // Initialize EMA with first value
+            emaHeartRate = newValue
+        } else {
+            // Update EMA with new value
+            emaHeartRate = alphaEMA * newValue + (1 - alphaEMA) * emaHeartRate
+        }
     }
 
     /**
@@ -115,11 +160,15 @@ class HeartRateChangeCalculator {
         if (filteredHeartRates.size < 3) {
             _heartRateChangeRate.value = null
             _confidenceLevel.value = 0.0f
+            _heartRateTrend.value = TrendDirection.UNKNOWN
             return
         }
 
         // Apply linear regression for better precision
         val result = calculateLinearRegression()
+
+        // Variable to store the calculated change rate
+        var calculatedRate: Float? = null
 
         // If we have enough points, use linear regression slope
         if (result != null) {
@@ -130,12 +179,98 @@ class HeartRateChangeCalculator {
             _confidenceLevel.value = result.second.toFloat()
 
             // Round to three decimal places for better precision
-            _heartRateChangeRate.value = (Math.round(changeRatePerSecond * 1000) / 1000f)
+            calculatedRate = (Math.round(changeRatePerSecond * 1000) / 1000f)
+        } else {
+            // Fallback to simpler calculation if regression fails
+            calculatedRate = fallbackCalculation()
+        }
+
+        // Add to trend history for temporal smoothing
+        if (calculatedRate != null) {
+            trendHistory.add(calculatedRate)
+
+            // Keep only recent history
+            while (trendHistory.size > maxTrendHistory) {
+                trendHistory.removeFirst()
+            }
+
+            // Apply temporal smoothing across trend history
+            val smoothedRate = smoothTrendRate()
+            _heartRateChangeRate.value = smoothedRate
+
+            // Classify the trend with hysteresis and persistence
+            updateTrendDirection(smoothedRate)
+        }
+    }
+
+    /**
+     * Apply temporal smoothing to trend rate using a weighted average
+     * More recent values have higher weight
+     */
+    private fun smoothTrendRate(): Float {
+        if (trendHistory.isEmpty()) return 0f
+
+        var weightedSum = 0f
+        var weightSum = 0f
+
+        // Apply weighted average with more recent values having higher weights
+        trendHistory.forEachIndexed { index, rate ->
+            val weight = index + 1 // Linear weight increase
+            weightedSum += rate * weight
+            weightSum += weight
+        }
+
+        return if (weightSum > 0) {
+            (Math.round((weightedSum / weightSum) * 1000) / 1000f)
+        } else {
+            trendHistory.last()
+        }
+    }
+
+    /**
+     * Update trend direction with hysteresis and temporal persistence
+     * Requires multiple consistent readings to confirm a trend
+     */
+    private fun updateTrendDirection(changeRate: Float) {
+        // Skip if confidence is too low
+        if (_confidenceLevel.value < 0.5f) {
+            _heartRateTrend.value = TrendDirection.UNKNOWN
+            consistentReadingCounter = 0
             return
         }
 
-        // Fallback to simpler calculation if regression fails
-        fallbackCalculation()
+        // Determine the current trend with hysteresis to prevent oscillation
+        val currentTrend = when {
+            // If currently increasing, keep increasing unless it drops below threshold minus buffer
+            _heartRateTrend.value == TrendDirection.INCREASING &&
+                    changeRate >= (significantIncreaseThreshold - hysteresisBuffer) -> TrendDirection.INCREASING
+
+            // If currently decreasing, keep decreasing unless it rises above threshold plus buffer
+            _heartRateTrend.value == TrendDirection.DECREASING &&
+                    changeRate <= (significantDecreaseThreshold + hysteresisBuffer) -> TrendDirection.DECREASING
+
+            // New increasing trend must cross the full threshold
+            changeRate >= significantIncreaseThreshold -> TrendDirection.INCREASING
+
+            // New decreasing trend must cross the full threshold
+            changeRate <= significantDecreaseThreshold -> TrendDirection.DECREASING
+
+            // Otherwise stable
+            else -> TrendDirection.STABLE
+        }
+
+        // Check for trend persistence
+        if (currentTrend == lastTrendDirection) {
+            consistentReadingCounter++
+        } else {
+            consistentReadingCounter = 1
+            lastTrendDirection = currentTrend
+        }
+
+        // Only update the published trend if we have enough consistent readings
+        if (consistentReadingCounter >= requiredConsistentReadings) {
+            _heartRateTrend.value = currentTrend
+        }
     }
 
     /**
@@ -185,7 +320,7 @@ class HeartRateChangeCalculator {
     /**
      * Fallback calculation method when linear regression is not possible
      */
-    private fun fallbackCalculation() {
+    private fun fallbackCalculation(): Float? {
         // Get filtered readings
         val oldest = filteredHeartRates.first
         val newest = filteredHeartRates.last
@@ -194,9 +329,8 @@ class HeartRateChangeCalculator {
 
         // Ensure meaningful time difference
         if (timeDifferenceMs < minTimeDifferenceMs) {
-            _heartRateChangeRate.value = null
             _confidenceLevel.value = 0.0f
-            return
+            return null
         }
 
         // Calculate change in BPM using filtered values
@@ -209,7 +343,7 @@ class HeartRateChangeCalculator {
         _confidenceLevel.value = 0.5f
 
         // Round to three decimal places
-        _heartRateChangeRate.value = (Math.round(changeRatePerSecond * 1000) / 1000f)
+        return (Math.round(changeRatePerSecond * 1000) / 1000f)
     }
 
     /**
@@ -218,14 +352,19 @@ class HeartRateChangeCalculator {
     fun reset() {
         recentHeartRates.clear()
         filteredHeartRates.clear()
+        trendHistory.clear()
         kalmanEstimate = 0.0
         kalmanError = 1.0
+        emaHeartRate = 0.0
+        consistentReadingCounter = 0
+        lastTrendDirection = TrendDirection.UNKNOWN
         _heartRateChangeRate.value = null
         _confidenceLevel.value = 0.0f
+        _heartRateTrend.value = TrendDirection.UNKNOWN
     }
 
     /**
-     * Get a formatted string with rate of change and confidence indicator
+     * Get a formatted string with rate of change, confidence indicator and trend
      */
     fun getFormattedChangeRate(): String {
         val changeRate = _heartRateChangeRate.value
@@ -241,7 +380,14 @@ class HeartRateChangeCalculator {
             else -> "*"                           // Low confidence
         }
 
-        return "Δ: $prefix${changeRate}/s $confidenceIndicator"
+        val trendIndicator = when (_heartRateTrend.value) {
+            TrendDirection.INCREASING -> "↑"
+            TrendDirection.DECREASING -> "↓"
+            TrendDirection.STABLE -> "→"
+            TrendDirection.UNKNOWN -> "?"
+        }
+
+        return "Δ: $prefix${changeRate}/s $confidenceIndicator $trendIndicator"
     }
 }
 
@@ -260,9 +406,9 @@ fun HeartRateMonitor(
     val changeRate by calculator.heartRateChangeRate.collectAsState()
     val confidence by calculator.confidenceLevel.collectAsState()
 
-    // Update the change rate in the app view model with confidence level
+    // Update the change rate in the app view model with confidence level and trend
     LaunchedEffect(changeRate, confidence) {
-        appViewModel.updateHeartRateChangeRate(changeRate, confidence)
+        appViewModel.updateHeartRateChangeRate(changeRate, confidence )
     }
 
     // Poll for heart rate readings

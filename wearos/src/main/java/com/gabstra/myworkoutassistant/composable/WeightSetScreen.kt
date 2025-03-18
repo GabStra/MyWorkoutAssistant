@@ -122,7 +122,7 @@ fun WeightSetScreen (
         if (isInEditMode) {
             onEditModeEnabled()
             while (isInEditMode) {
-                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                if (System.currentTimeMillis() - lastInteractionTime > 2000) {
                     isRepsInEditMode = false
                     isWeightInEditMode = false
                 }
@@ -397,7 +397,6 @@ fun WeightSetScreen (
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 exerciseTitleComposable()
-                Spacer(modifier = Modifier.height(5.dp))
                 SetScreen(customModifier = Modifier
                     .weight(1f).padding(horizontal = 10.dp))
                 if (extraInfo != null) {

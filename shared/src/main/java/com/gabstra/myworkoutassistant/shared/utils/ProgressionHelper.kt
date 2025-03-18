@@ -73,7 +73,7 @@ object VolumeDistributionHelper {
 
         validSetCombination = findBestProgressions(
             possibleSets,
-            params.minSets,
+            params.maxSets,
             params.maxSets,
             params.previousSessionWorkload,
             params.previousAverageWorkloadPerRep,
@@ -152,20 +152,16 @@ object VolumeDistributionHelper {
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val currentWorkload = combo.sumOf { it.workload }
-            val currentTotalReps = combo.sumOf { it.reps }
-            val currentAverageWorkloadPerRep = currentWorkload / currentTotalReps
-
             val currentAverageWorkloadPerSet = currentWorkload / combo.size
 
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val progressScore = 1 + abs(currentWorkload - previousSessionWorkload)
-            val workloadPerRepScore = 1 + abs(currentAverageWorkloadPerRep - previousAverageWorkloadPerRep)
             val workloadDifferenceScore = 1 + combo.maxOf { it.workload } - combo.minOf { it.workload }
             val workloadPerSetScore = 1 + abs(currentAverageWorkloadPerSet - previousAverageWorkloadPerSet)
 
-            return progressScore * workloadPerRepScore * workloadPerSetScore * workloadDifferenceScore * combo.size
+            return progressScore * workloadPerSetScore * workloadDifferenceScore * combo.size
         }
 
         suspend fun exploreCombinations(

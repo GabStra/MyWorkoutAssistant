@@ -69,15 +69,9 @@ fun WorkoutStateHeader(
         horizontalArrangement = Arrangement.Center
     ) {
         if(displayMode == 0){
-            if(workoutState is WorkoutState.Set){
-                CurrentExercise(viewModel,workoutState as WorkoutState.Set)
-                Spacer(modifier = Modifier.width(5.dp))
-                CurrentTime()
-            }else{
-                CurrentBattery()
-                Spacer(modifier = Modifier.width(5.dp))
-                CurrentTime()
-            }
+            CurrentBattery()
+            Spacer(modifier = Modifier.width(5.dp))
+            CurrentTime()
         }else{
             val hours = remember(duration) { duration.toHours() }
             val minutes = remember(duration) { duration.toMinutes() % 60 }

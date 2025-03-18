@@ -4,18 +4,21 @@ import CircleWithNumber
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
+import java.math.RoundingMode
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
@@ -24,7 +27,38 @@ fun ExerciseIndicator(
     viewModel: AppViewModel,
     set: WorkoutState.Set,
 ){
-    val parentIndex = viewModel.setsByExerciseId.keys.indexOf(set.exerciseId)
+    val exerciseCount = viewModel.setsByExerciseId.keys.count()
+    val currentExerciseIndex = viewModel.setsByExerciseId.keys.indexOf(set.exerciseId)
+
+    val step = (1f / exerciseCount)
+
+    val halfStep = (step / 2)
+
+
+    val trackSegments = List(exerciseCount) { index ->
+        ProgressIndicatorSegment(step,if (index != currentExerciseIndex) MyColors.Orange else Color.White)
+    }
+
+    val progress = step * (currentExerciseIndex+1).toBigDecimal().setScale(2, RoundingMode.HALF_UP).toFloat()
+
+
+
+    SegmentedProgressIndicator(
+        trackSegments = trackSegments,
+        progress = progress,
+        modifier = Modifier.fillMaxSize(),
+        strokeWidth = 4.dp,
+        paddingAngle = 2f,
+        startAngle = -60f,
+        endAngle = 65f,
+        trackColor =  Color.DarkGray,
+    )
+
+    val indicatorAngle = remember(progress) {   getValueInRange( -60f, 65f, progress - halfStep)}
+
+    RotatingIndicator(indicatorAngle, Color.White)
+
+    /*val parentIndex = viewModel.setsByExerciseId.keys.indexOf(set.exerciseId)
     val totalGroups = viewModel.setsByExerciseId.keys.count()
     val maxCount = 1
 
@@ -37,7 +71,7 @@ fun ExerciseIndicator(
     val numberOfElementsLeft = totalGroups - (elementsToSkip + exerciseSelection.size)
 
     // Calculate gaps and angles
-    val baseGapAngle = 2f
+    val baseGapAngle = 1f
     val size= 25f
 
     val availableAngle = 125f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
@@ -50,14 +84,14 @@ fun ExerciseIndicator(
         // Indicate skipped elements at the start
         if (elementsToSkip > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.White)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, MyColors.Orange)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
                 paddingAngle = 2f,
                 startAngle = accumulatedAngle,
                 endAngle = accumulatedAngle + size,
-                trackColor = Color.White,
+                trackColor =  MyColors.Orange,
             )
 
             if(elementsToSkip > 1){
@@ -74,7 +108,7 @@ fun ExerciseIndicator(
         if (areMoreElementsAvailable) {
 
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.DarkGray)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.White)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize().alpha(1f),
                 strokeWidth = 4.dp,
@@ -85,10 +119,10 @@ fun ExerciseIndicator(
             )
 
             if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = Color.DarkGray, number = numberOfElementsLeft, transparency = 1f)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = Color.White, number = numberOfElementsLeft, transparency = 1f)
             }
         }
-    }
+    }*/
 }
 
 @OptIn(ExperimentalHorologistApi::class)
@@ -135,7 +169,7 @@ fun SetIndicator(
         // Indicator for skipped elements
         if (elementsToSkip > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f,if(setsSelection.isEmpty()) MyColors.Orange else Color.White)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, MyColors.Orange)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -161,7 +195,7 @@ fun SetIndicator(
             }
             // Draw group segment
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) MyColors.Orange  else (if(markAsCompleted) Color.White else Color.DarkGray))),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White  else (if(markAsCompleted) MyColors.Orange else Color.White))),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -182,7 +216,7 @@ fun SetIndicator(
         // Indicator for more elements available
         if (numberOfElementsLeft > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.DarkGray)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.White)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
@@ -193,7 +227,7 @@ fun SetIndicator(
             )
 
             if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = Color.DarkGray, number = numberOfElementsLeft)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = Color.White, number = numberOfElementsLeft)
             }
         }
     }

@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
+import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
@@ -162,72 +163,6 @@ fun HeartRateCircularChart(
     HeartRateView(modifier,appViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
 }
 
-
-@Composable
-private fun RotatingIndicator(rotationAngle: Float, fillColor: Color) {
-    val density = LocalDensity.current.density
-    val triangleSize = 6f
-
-    BoxWithConstraints(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        val boxWidth = (constraints.maxWidth/density).dp
-        val boxHeight = (constraints.maxHeight/density).dp
-
-        val angleInRadians = Math.toRadians(rotationAngle.toDouble())
-
-        val widthOffset = (constraints.maxWidth/2) - 22
-        val heightOffset = (constraints.maxHeight/2) - 22
-
-        val xRadius = ((widthOffset * cos(angleInRadians)) / density).dp
-        val yRadius = ((heightOffset * sin(angleInRadians)) / density).dp
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .absoluteOffset(
-                    x = (boxWidth / 2) - (triangleSize / density).dp + xRadius,
-                    y = (boxHeight / 2) - (triangleSize / density).dp + yRadius,
-                ),
-        ) {
-            Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
-                val trianglePath = Path().apply {
-                    val height = (triangleSize * 2 / density).dp.toPx()
-                    val width = height
-
-                    // Create triangle pointing upward initially
-                    moveTo(width / 2, 0f)          // Top point
-                    lineTo(width, height * 0.866f) // Bottom right
-                    lineTo(0f, height * 0.866f)    // Bottom left
-                    close()
-                }
-
-                // Calculate rotation to point in direction of movement
-                // Add 90 degrees (π/2) because our triangle points up by default
-                // and we want it to point in the direction of travel
-                val directionAngle = angleInRadians - Math.PI / 2 + Math.PI
-
-                withTransform({
-                    rotate(
-                        degrees = Math.toDegrees(directionAngle).toFloat(),
-                        pivot = center
-                    )
-                }) {
-                    // Draw filled white triangle
-                    drawPath(
-                        path = trianglePath,
-                        color = fillColor
-                    )
-                }
-            }
-        }
-    }
-}
-
-fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Float {
-    return startAngle + (endAngle - startAngle) * percentage
-}
-
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HeartRateView(
@@ -253,7 +188,7 @@ private fun HeartRateView(
     val textToDisplay = when(displayMode) {
         0 -> if (hr == 0) "-" else hr.toString()
         1 -> {
-            if (heartRateChangeRate == null || heartRateChangeConfidence < 0.8) {
+            if (heartRateChangeRate == null) {
                 "Δ: --"
             } else {
                 val prefix = if (heartRateChangeRate!! > 0) "+" else ""

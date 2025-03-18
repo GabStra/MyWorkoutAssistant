@@ -64,7 +64,7 @@ fun CircleWithNumber(
         ) {
             Canvas(modifier = Modifier.size((circleRadius * 2 / density).dp)) {
                 drawCircle(
-                    color = Color.White,
+                    color = circleColor,
                     radius = (circleRadius / density).dp.toPx(),
                     center = center
                 )

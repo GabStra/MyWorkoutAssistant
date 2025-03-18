@@ -91,7 +91,7 @@ fun RestScreen(
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+            if (System.currentTimeMillis() - lastInteractionTime > 2000) {
                 isTimerInEditMode = false
             }
             delay(1000) // Check every second
@@ -135,7 +135,6 @@ fun RestScreen(
             state.currentSetData = currentSetData.copy(
                 endTimer = 0
             )
-            VibrateTwice(context)
             onTimerEnd()
         }
 

@@ -48,7 +48,8 @@ fun CurrentTime() {
 
     Row(
         modifier = Modifier.width(50.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         Text(
             modifier = Modifier.weight(1f),

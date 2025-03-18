@@ -443,3 +443,7 @@ fun Double.round(decimals: Int): Double {
     repeat(decimals) { multiplier *= 10 }
     return kotlin.math.round(this * multiplier) / multiplier
 }
+
+fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Float {
+    return startAngle + (endAngle - startAngle) * percentage
+}
