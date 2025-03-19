@@ -303,7 +303,7 @@ fun EnduranceSetScreen (
                     ) {
                         SetScreen(customModifier = Modifier.weight(1f))
                         if (extraInfo != null) {
-                            HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                             extraInfo(state)
                         }
                     }

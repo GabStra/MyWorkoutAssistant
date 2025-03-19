@@ -27,32 +27,50 @@ fun ExerciseIndicator(
     viewModel: AppViewModel,
     set: WorkoutState.Set,
 ){
-    val exerciseCount = viewModel.setsByExerciseId.keys.count()
-    val currentExerciseIndex = viewModel.setsByExerciseId.keys.indexOf(set.exerciseId)
+
+    val exerciseKeys = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
+    val exerciseCount = exerciseKeys.count()
+
+    val exerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(set.exerciseId)) viewModel.supersetIdByExerciseId[set.exerciseId] else set.exerciseId
+    val currentExerciseIndex = exerciseKeys.indexOf(exerciseOrSupersetId)
 
     val step = (1f / exerciseCount)
 
     val halfStep = (step / 2)
 
+    val progress = (currentExerciseIndex + 1).toFloat() / exerciseCount
 
-    val trackSegments = List(exerciseCount) { index ->
-        ProgressIndicatorSegment(step,if (index != currentExerciseIndex) MyColors.Orange else Color.White)
+    Box(modifier = modifier.fillMaxSize()) {
+        // Create n SegmentedProgressIndicator
+        for (index in 0 until exerciseCount) {
+            // Calculate whether this indicator should be filled (1.0) or empty (0.0)
+            val indicatorProgress = if (index <= currentExerciseIndex) 1.0f else 0.0f
+
+            // Create a single segment for each indicator
+            val trackSegment = ProgressIndicatorSegment(
+                weight = 1f,
+                indicatorColor = if (index != currentExerciseIndex) MyColors.Orange else Color.White
+            )
+
+            // Calculate angle for each indicator to space them evenly
+            // Total arc: 65f - (-60f) = 125f
+            val totalArcAngle = 125f
+            val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
+            val startAngle = -60f + index * (segmentArcAngle + 2f)
+            val endAngle = startAngle + segmentArcAngle
+
+            SegmentedProgressIndicator(
+                trackSegments = listOf(trackSegment),
+                progress = indicatorProgress,
+                modifier = Modifier.fillMaxSize(),
+                strokeWidth = 4.dp,
+                paddingAngle = 0f,
+                startAngle = startAngle,
+                endAngle = endAngle,
+                trackColor = Color.DarkGray,
+            )
+        }
     }
-
-    val progress = step * (currentExerciseIndex+1).toBigDecimal().setScale(2, RoundingMode.HALF_UP).toFloat()
-
-
-
-    SegmentedProgressIndicator(
-        trackSegments = trackSegments,
-        progress = progress,
-        modifier = Modifier.fillMaxSize(),
-        strokeWidth = 4.dp,
-        paddingAngle = 2f,
-        startAngle = -60f,
-        endAngle = 65f,
-        trackColor =  Color.DarkGray,
-    )
 
     val indicatorAngle = remember(progress) {   getValueInRange( -60f, 65f, progress - halfStep)}
 

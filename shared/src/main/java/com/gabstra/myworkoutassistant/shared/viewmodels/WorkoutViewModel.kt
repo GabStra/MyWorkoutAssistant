@@ -2,10 +2,8 @@ package com.gabstra.myworkoutassistant.shared.viewmodels
 
 import android.content.Context
 import android.util.Log
-import android.widget.Toast
 import androidx.annotation.FloatRange
 import androidx.compose.runtime.State
-import androidx.compose.runtime.asIntState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -21,7 +19,6 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
-import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
@@ -51,11 +48,9 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
@@ -229,12 +224,27 @@ open class WorkoutViewModel : ViewModel() {
 
     var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
 
-    open val exercisesById: Map<UUID, Exercise>
-        get() = selectedWorkout.value.workoutComponents
-            .filterIsInstance<Exercise>()
-            .associateBy { it.id } + selectedWorkout.value.workoutComponents
-            .filterIsInstance<Superset>().flatMap { it.exercises }
-            .associateBy { it.id }
+    open val exercisesById: Map<UUID, Exercise> by lazy {
+        // Create a list of all exercises in their original order
+        val orderedExercises = mutableListOf<Exercise>()
+
+        selectedWorkout.value.workoutComponents.forEach { component ->
+            when (component) {
+                is Exercise -> orderedExercises.add(component)
+                is Superset -> orderedExercises.addAll(component.exercises)
+                is Rest -> Unit
+            }
+        }
+
+        // Convert to map while preserving order
+        orderedExercises.associateBy { it.id }
+    }
+
+    val supersetIdByExerciseId by lazy {
+        selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { superset ->
+            superset.exercises.map { it.id to superset.id}
+        }.toMap()
+    }
 
     val setsByExerciseId: Map<UUID, List<WorkoutState.Set>>
         get() = setStates
@@ -489,7 +499,7 @@ open class WorkoutViewModel : ViewModel() {
 
         var exerciseWorkload = 0.0
         var oneRepMax = 0.0
-        var averageIntensityPerRep = 0.0
+        var averageLoadPerRep = 0.0
         var averageWorkloadPerRep = 0.0
 
         oneRepMax = exerciseSets.maxOf {
@@ -562,8 +572,7 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
-        averageIntensityPerRep = exerciseVolume / totalReps
-        averageWorkloadPerRep = exerciseWorkload / totalReps
+        averageLoadPerRep = exerciseVolume / totalReps
 
         if (exerciseWorkload == 0.0 || oneRepMax == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
@@ -638,9 +647,7 @@ open class WorkoutViewModel : ViewModel() {
         } else {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
                 exerciseWorkload,
-                setWorkloads.min(),
-                averageIntensityPerRep,
-                averageWorkloadPerRep,
+                averageLoadPerRep,
                 exerciseWorkload / exerciseSets.size,
                 oneRepMax,
                 availableWeights,

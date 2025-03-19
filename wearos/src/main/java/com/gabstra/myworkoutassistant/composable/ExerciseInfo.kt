@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -191,10 +192,13 @@ fun ExerciseSetsViewer(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
     exercise: Exercise,
-    currentSet: com.gabstra.myworkoutassistant.shared.sets.Set
+    currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
+    customColor: Color? = null
 ){
     val exerciseSets = exercise.sets.filter { it !is RestSet }
     val setIndex = exerciseSets.indexOf(currentSet)
+
+    Log.d("ExerciseSetsViewer", "setIndex: $setIndex")
     val exerciseSetStates = remember(exercise.id) { viewModel.getAllExerciseWorkoutStates(exercise.id).filter { it.set !is RestSet } }
 
     val typography = MaterialTheme.typography
@@ -209,7 +213,7 @@ fun ExerciseSetsViewer(
 
     // Effect to handle scrolling whenever heights are updated or setIndex changes
     LaunchedEffect(allItemsMeasured.value, setIndex) {
-        if (!allItemsMeasured.value) {
+        if (!allItemsMeasured.value || setIndex == -1) {
             return@LaunchedEffect
         }
         // Calculate position including spacing
@@ -272,7 +276,7 @@ fun ExerciseSetsViewer(
                         setState = nextSetState,
                         index = index,
                         isCurrentSet = index == setIndex,
-                        color = when {
+                        color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> Color.White
                             else ->  Color.DarkGray
@@ -325,7 +329,7 @@ fun ExerciseSetsViewer(
                         setState = nextSetState,
                         index = index,
                         isCurrentSet = index == setIndex,
-                        color = when {
+                        color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> Color.White
                             else ->  Color.DarkGray
@@ -359,7 +363,7 @@ fun ExerciseInfo(
         }, label = ""
     ) { updatedStateSet ->
         val exercise = remember(updatedStateSet) { viewModel.exercisesById[updatedStateSet.exerciseId]!! }
-        val exerciseSets = remember(updatedStateSet) {  exercise.sets.filter { it !is RestSet } }
+        val exerciseSets = remember(exercise) {  exercise.sets.filter { it !is RestSet } }
         val setIndex = remember(updatedStateSet) { exerciseSets.indexOf(updatedStateSet.set)  }
 
         Column(
