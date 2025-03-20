@@ -1,14 +1,19 @@
 package com.gabstra.myworkoutassistant.shared.viewmodels
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import java.time.LocalDateTime
 import java.util.UUID
 
 sealed class WorkoutState {
-    data class Preparing(
-        val dataLoaded: Boolean
-    ) : WorkoutState()
+    class Preparing(
+        dataLoaded: Boolean
+    ) : WorkoutState() {
+        var dataLoaded by mutableStateOf(dataLoaded)
+    }
 
     data class Set(
         val exerciseId: UUID,

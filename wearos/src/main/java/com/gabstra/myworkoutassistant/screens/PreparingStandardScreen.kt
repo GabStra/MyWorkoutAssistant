@@ -56,29 +56,24 @@ fun PreparingStandardScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var currentMillis by remember { mutableIntStateOf(0) }
-    var canSkip by remember { mutableStateOf(false) }
+
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit){
         scope.launch {
             while (true) {
-                delay(1000) // Update every sec.
+                delay(1000)
                 currentMillis += 1000
-                if(currentMillis >= 5000){
-                    canSkip = true
-                    break
-                }
             }
         }
     }
-
-    LaunchedEffect(state,currentMillis,hasWorkoutRecord) {
+    LaunchedEffect(state.dataLoaded,hasWorkoutRecord, currentMillis) {
         if(hasTriggeredNextState){
             return@LaunchedEffect
         }
 
-        val isReady = state.dataLoaded && currentMillis >=3000
+        val isReady = state.dataLoaded && currentMillis >= 3000
 
         if (isReady) {
             hasTriggeredNextState = true
@@ -104,32 +99,6 @@ fun PreparingStandardScreen(
             Text(modifier = Modifier.fillMaxWidth(), text = "Preparing\nWatch HR Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(15.dp))
             LoadingText(baseText = "Please wait")
-            Spacer(modifier = Modifier.height(25.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth()
-                    .then(
-                        if(canSkip && state.dataLoaded){
-                            Modifier
-                        }else {
-                            Modifier.alpha(0f)
-                        }
-                    ),
-                horizontalArrangement = Arrangement.Center
-            ){
-                Button(
-                    onClick = {
-                        VibrateGentle(context)
-                        viewModel.goToNextState()
-                        viewModel.lightScreenUp()
-                        viewModel.setWorkoutStart()
-                        onReady()
-                    },
-                    modifier = Modifier.size(35.dp),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
-                ) {
-                    Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
-                }
-            }
         }
     }
 }

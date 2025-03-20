@@ -49,9 +49,9 @@ class HeartRateChangeViewModel : ViewModel() {
     private val _formattedChangeRate = MutableStateFlow("Δ: --")
     val formattedChangeRate: StateFlow<String> = _formattedChangeRate
 
-    // Thresholds for determining significance of change (BPM/s)
-    val significantIncreaseThreshold = 0.3f // BPM/s - increased for stability
-    val significantDecreaseThreshold = -0.3f // BPM/s - decreased for stability
+    // Thresholds for determining significance of change (BPM/m)
+    val significantIncreaseThreshold = 18f
+    val significantDecreaseThreshold = -18f
 
     // Hysteresis buffer to prevent oscillation between states
     private val hysteresisBuffer = 0.1f
@@ -170,13 +170,13 @@ class HeartRateChangeViewModel : ViewModel() {
         // If we have enough points, use linear regression slope
         if (result != null) {
             // Slope is in BPM/ms, convert to BPM/s
-            val changeRatePerSecond = result.first * 1000
+            val changeRatePerMinute = result.first * 60000
 
             // Set confidence level based on R² value
             _confidenceLevel.value = result.second.toFloat()
 
             // Round to three decimal places for better precision
-            calculatedRate = (Math.round(changeRatePerSecond * 1000) / 1000f)
+            calculatedRate = (Math.round(changeRatePerMinute * 1000) / 1000f)
         } else {
             // Fallback to simpler calculation if regression fails
             calculatedRate = fallbackCalculation()
@@ -334,13 +334,13 @@ class HeartRateChangeViewModel : ViewModel() {
         val bpmDifference = newest.second - oldest.second
 
         // Convert to BPM change per second
-        val changeRatePerSecond = (bpmDifference / timeDifferenceMs) * 1000
+        val changeRatePerMinute = (bpmDifference / timeDifferenceMs) * 60000
 
         // Lower confidence level for fallback method
         _confidenceLevel.value = 0.5f
 
         // Round to three decimal places
-        return (Math.round(changeRatePerSecond * 1000) / 1000f)
+        return (Math.round(changeRatePerMinute * 1000) / 1000f)
     }
 
     /**

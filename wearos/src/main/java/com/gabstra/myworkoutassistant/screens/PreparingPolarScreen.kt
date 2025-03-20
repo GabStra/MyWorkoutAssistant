@@ -85,12 +85,12 @@ fun PreparingPolarScreen(
         }
     }
 
-    LaunchedEffect(deviceConnectionInfo, state,currentMillis,hasWorkoutRecord) {
+    LaunchedEffect(deviceConnectionInfo, state.dataLoaded,currentMillis,hasWorkoutRecord) {
         if(hasTriggeredNextState){
             return@LaunchedEffect
         }
 
-        val isReady = (deviceConnectionInfo != null) && state.dataLoaded && currentMillis >=3000
+        val isReady = (deviceConnectionInfo != null) && state.dataLoaded && currentMillis >= 3000
         if (isReady) {
             hasTriggeredNextState = true
 

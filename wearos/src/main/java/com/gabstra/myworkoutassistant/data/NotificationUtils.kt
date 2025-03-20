@@ -23,8 +23,8 @@ fun showWorkoutInProgressNotification(context: Context) {
 
     // Create a notification channel for Android O and above
     val name = "Workout Progress"
-    val descriptionText = "Shows progress of the current workout"
-    val importance = NotificationManager.IMPORTANCE_HIGH
+    val descriptionText = "A workout is in progress"
+    val importance = NotificationManager.IMPORTANCE_LOW
     val channel = NotificationChannel(channelId, name, importance).apply {
         description = descriptionText
     }

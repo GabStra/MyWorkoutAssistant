@@ -49,6 +49,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 private fun getProgressIndicatorSegments() = listOf(
     ProgressIndicatorSegment(.166f, colorsByZone[0]),
@@ -180,7 +181,7 @@ private fun HeartRateView(
                 "Δ: --"
             } else {
                 val prefix = if (heartRateChangeRate!! > 0) "+" else ""
-                "Δ: $prefix${"%.2f".format(heartRateChangeRate).replace(',','.')}/s"
+                "Δ: $prefix${"%.1f".format(heartRateChangeRate).replace(',','.')}/m"
             }
         }
         else ->  "${"%.1f".format(mhrPercentage).replace(',','.')}%"

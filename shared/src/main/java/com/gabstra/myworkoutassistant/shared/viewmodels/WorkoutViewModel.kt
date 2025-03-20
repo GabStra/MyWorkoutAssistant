@@ -357,13 +357,17 @@ open class WorkoutViewModel : ViewModel() {
     open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
+                _enableWorkoutNotificationFlow.value = null
+
+                val preparingState = WorkoutState.Preparing(dataLoaded = false)
+                _workoutState.value = preparingState
                 workoutStateQueue.clear()
                 workoutStateHistory.clear()
                 _isHistoryEmpty.value = workoutStateHistory.isEmpty()
                 setStates.clear()
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
+
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
@@ -375,7 +379,7 @@ open class WorkoutViewModel : ViewModel() {
                 applyProgressions()
                 generateWorkoutStates()
                 workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
-                _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+                preparingState.dataLoaded = true
                 triggerWorkoutNotification()
                 onEnd()
             }
@@ -728,7 +732,11 @@ open class WorkoutViewModel : ViewModel() {
     open fun startWorkout() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
+                _enableWorkoutNotificationFlow.value = null
+
+                val preparingState = WorkoutState.Preparing(dataLoaded = false)
+                _workoutState.value = preparingState
+
                 workoutStateQueue.clear()
                 workoutStateHistory.clear()
                 _isHistoryEmpty.value = workoutStateHistory.isEmpty()
@@ -739,11 +747,12 @@ open class WorkoutViewModel : ViewModel() {
                 heartBeatHistory.clear()
                 startWorkoutTime = null
                 currentWorkoutHistory = null
+
                 loadWorkoutHistory()
                 generateProgressions()
                 applyProgressions()
                 generateWorkoutStates()
-                _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+                preparingState.dataLoaded = true
                 triggerWorkoutNotification()
             }
         }
