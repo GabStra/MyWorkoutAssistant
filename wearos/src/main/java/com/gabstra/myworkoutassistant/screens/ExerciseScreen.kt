@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -14,13 +13,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,7 +30,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -79,6 +77,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalDateTime
 import java.util.UUID
@@ -179,108 +178,137 @@ fun ExerciseDetail(
 }
 
 @Composable
-fun PageNextSets(
+fun PageExercises(
     currentStateSet: WorkoutState.Set,
     viewModel: AppViewModel,
     currentExercise: Exercise,
 ) {
-    val exerciseKeys = viewModel.setsByExerciseId.keys.toList()
+    val exerciseIds = viewModel.setsByExerciseId.keys.toList()
+    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
+
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-    var currentExerciseIndex = exerciseKeys.indexOf(currentExercise.id)
-
+    val currentExerciseIndex = exerciseIds.indexOf(currentExercise.id)
     var currentIndex by remember { mutableIntStateOf(currentExerciseIndex) }
     var selectedExercise by remember { mutableStateOf(currentExercise) }
-
-
 
     val typography = MaterialTheme.typography
     val captionStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
+
+    var isNavigationLocked by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isNavigationLocked) {
+        if (isNavigationLocked) {
+            delay(500)
+            isNavigationLocked = false
+        }
+    }
+
     AnimatedContent(
-        modifier = Modifier.fillMaxSize().padding(top = 10.dp).padding(horizontal = 10.dp),
+        modifier = Modifier.fillMaxSize(),
         targetState = selectedExercise,
         transitionSpec = {
             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-        }, label = ""
+        },
+        label = "",
     ) { updatedExercise ->
+        val updatedExerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) viewModel.supersetIdByExerciseId[updatedExercise.id] else updatedExercise.id
+        val updatedExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId)
+
+        val updatedIndex = exerciseIds.indexOf(updatedExercise.id)
+
+        val isSuperset = viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId)
+
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 25.dp)
+                    .clickable { marqueeEnabled = !marqueeEnabled }
+                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = updatedExercise.name,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.title3,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
             Row(
+                modifier = Modifier.height(85.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                if (exerciseKeys.size > 1) {
+                if (exerciseIds.size > 1) {
                     Icon(
-                        modifier = Modifier.clickable {
-                            if (currentIndex > 0) {
-                                currentIndex--
-                                selectedExercise = viewModel.exercisesById[exerciseKeys[currentIndex]]!!
-                            }
+                        modifier = Modifier.fillMaxHeight().clickable(enabled = !isNavigationLocked && currentIndex > 0) {
+                            currentIndex--
+                            selectedExercise = viewModel.exercisesById[exerciseIds[currentIndex]]!!
+                            isNavigationLocked = true
                         },
                         imageVector = Icons.Filled.ArrowBack,
                         contentDescription = "Previous",
-                        tint = if (currentIndex > 0) Color.White else Color.DarkGray
+                        tint = if (currentIndex > 0) Color.White else MyColors.MediumGray
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { marqueeEnabled = !marqueeEnabled }
-                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val text = if (viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) {
-                        "${updatedExercise.name} (Superset)"
-                    } else {
-                        updatedExercise.name
+                ExerciseSetsViewer(
+                    modifier =  Modifier.fillMaxHeight().weight(1f),
+                    viewModel = viewModel,
+                    exercise = updatedExercise,
+                    currentSet = currentStateSet.set,
+                    customColor = when{
+                        updatedIndex < currentExerciseIndex -> MyColors.Orange
+                        updatedIndex > currentExerciseIndex -> MyColors.MediumGray
+                        else -> null
                     }
+                )
 
-                    Text(
-                        text = text,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                if (exerciseKeys.size > 1) {
+                if (exerciseIds.size > 1) {
                     Icon(
-                        modifier = Modifier.clickable {
-                            if (currentIndex < exerciseKeys.size - 1) {
-                                currentIndex++
-                                selectedExercise = viewModel.exercisesById[exerciseKeys[currentIndex]]!!
-                            }
+                        modifier = Modifier.fillMaxHeight().clickable(enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1) {
+                            currentIndex++
+                            selectedExercise = viewModel.exercisesById[exerciseIds[currentIndex]]!!
+                            isNavigationLocked = true
                         },
                         imageVector = Icons.Filled.ArrowForward,
                         contentDescription = "Next",
-                        tint = if (currentIndex < exerciseKeys.size - 1) Color.White else Color.DarkGray
+                        tint = if (currentIndex < exerciseIds.size - 1) Color.White else MyColors.MediumGray
                     )
                 }
             }
 
-            ExerciseSetsViewer(
-                modifier =  Modifier.height(85.dp),
-                viewModel = viewModel,
-                exercise = updatedExercise,
-                currentSet = currentStateSet.set,
-                customColor = when{
-                    currentIndex < currentExerciseIndex -> MyColors.Orange
-                    currentIndex > currentExerciseIndex -> Color.DarkGray
-                    else -> null
-                }
-            )
 
-            Text(
-                textAlign = TextAlign.Center,
-                text = "EXERCISES: ${currentIndex + 1}/${exerciseKeys.size}",
-                style = captionStyle
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    textAlign = TextAlign.Center,
+                    text = "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                    style = captionStyle
+                )
+                if(isSuperset){
+                    Spacer(modifier = Modifier.width(5.dp))
+
+                    val supersetExercises = remember { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!!  }
+                    val supersetIndex = remember { supersetExercises.indexOf(updatedExercise) }
+
+                    Text(
+                        textAlign = TextAlign.Center,
+                        text = "${supersetIndex + 1}/${supersetExercises.size}",
+                        style = captionStyle
+                    )
+                }
+            }
         }
     }
 }
@@ -340,18 +368,20 @@ fun PageButtons(
                     MaterialTheme.colors.primary
             )
         }
-        item {
-            ButtonWithText(
-                text = "Add Set",
-                onClick = {
-                    VibrateGentle(context)
-                    viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false, context) {
-                        viewModel.addNewSetStandard()
-                    }
-                },
-                backgroundColor = MaterialTheme.colors.background
-            )
+        if (isMovementSet) {
+            item {
+                ButtonWithText(
+                    text = "Add Set",
+                    onClick = {
+                        VibrateGentle(context)
+                        viewModel.storeSetData()
+                        viewModel.pushAndStoreWorkoutData(false, context) {
+                            viewModel.addNewSetStandard()
+                        }
+                    },
+                    backgroundColor = MaterialTheme.colors.background
+                )
+            }
         }
         if (nextWorkoutState !is WorkoutState.Rest) {
             item {
@@ -388,7 +418,7 @@ fun PageButtons(
 
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
-        title = "Go to previous set",
+        title = "Go to previous Set",
         message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)
@@ -661,8 +691,8 @@ fun PageExerciseDetail(
         viewModel = viewModel,
         onEditModeDisabled = { onScrollEnabledChange(true) },
         onEditModeEnabled = { onScrollEnabledChange(false) },
-        onTimerDisabled = { onScrollEnabledChange(true) },
-        onTimerEnabled = { onScrollEnabledChange(false) },
+        onTimerDisabled = { },
+        onTimerEnabled = { },
         extraInfo = extraInfoComposable,
         exerciseTitleComposable = exerciseTitleComposable
     )
@@ -766,7 +796,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                                 .verticalColumnScrollbar(
                                     scrollState = scrollState,
                                     scrollBarColor = Color.White,
-                                    scrollBarTrackColor = Color.DarkGray
+                                    scrollBarTrackColor = MyColors.MediumGray
                                 )
                                 .verticalScroll(scrollState),
                             verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -814,7 +844,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
 }
 
 enum class PageType {
-    PLATES, EXERCISE_DETAIL, NEXT_SETS, NOTES, BUTTONS
+    PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -850,7 +880,7 @@ fun ExerciseScreen(
         mutableListOf<PageType>().apply {
             if (showPlatesPage) add(PageType.PLATES)
             add(PageType.EXERCISE_DETAIL)
-            add(PageType.NEXT_SETS)
+            add(PageType.EXERCISES)
             if (showNotesPage) add(PageType.NOTES)
             add(PageType.BUTTONS)
         }
@@ -885,6 +915,11 @@ fun ExerciseScreen(
 
     val typography = MaterialTheme.typography
     val captionStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
+    val exerciseOrSupersetId = remember(exercise) { if(viewModel.supersetIdByExerciseId.containsKey(exercise.id)) viewModel.supersetIdByExerciseId[exercise.id] else exercise.id }
+    val currentExerciseOrSupersetIndex = remember(exerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
+    val isSuperset =  remember(exerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId) }
 
     Box(
         modifier = Modifier
@@ -926,7 +961,8 @@ fun ExerciseScreen(
             CustomHorizontalPager(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp),
+                    .padding(top = 5.dp)
+                    .padding(vertical = 20.dp, horizontal = 15.dp),
                 pagerState = pagerState,
                 userScrollEnabled = allowHorizontalScrolling,
             ) { pageIndex ->
@@ -943,17 +979,36 @@ fun ExerciseScreen(
                         },
                         exerciseTitleComposable = exerciseTitleComposable,
                         extraInfoComposable = { _ ->
-                            if(exerciseSets.size>1){
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textAlign = TextAlign.Center,
-                                    text = "SET: ${setIndex + 1}/${exerciseSets.size}",
-                                    style = captionStyle
-                                )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center
+                            ){
+                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
+                                    Text(
+                                        textAlign = TextAlign.Center,
+                                        text =  "${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                                        style = captionStyle
+                                    )
+                                    if(isSuperset){
+                                        val supersetExercises = viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
+                                        val supersetIndex = supersetExercises.indexOf(exercise)
+
+                                        Text(
+                                            textAlign = TextAlign.Center,
+                                            text =  "${supersetIndex + 1}/${supersetExercises.size}",
+                                            style = captionStyle
+                                        )
+                                    }
+                                    Text(
+                                        textAlign = TextAlign.Center,
+                                        text =  "${setIndex + 1}/${exerciseSets.size}",
+                                        style = captionStyle
+                                    )
+                                }
                             }
                         }
                     )
-                    PageType.NEXT_SETS -> PageNextSets(updatedState, viewModel, exercise)
+                    PageType.EXERCISES -> PageExercises(updatedState, viewModel, exercise)
                     PageType.NOTES -> PageNotes(exercise.notes)
                     PageType.BUTTONS -> PageButtons(updatedState, viewModel)
                 }
@@ -979,7 +1034,7 @@ fun ExerciseScreen(
 
     CustomDialogYesOnLongPress(
         show = showNextDialog,
-        title = "Complete set",
+        title = "Complete Set",
         message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)

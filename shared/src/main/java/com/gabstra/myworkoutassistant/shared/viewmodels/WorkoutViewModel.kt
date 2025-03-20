@@ -246,6 +246,13 @@ open class WorkoutViewModel : ViewModel() {
         }.toMap()
     }
 
+    val exercisesBySupersetId by lazy {
+        selectedWorkout.value.workoutComponents.filterIsInstance<Superset>()
+            .associate { superset ->
+                superset.id to superset.exercises
+            }
+    }
+
     val setsByExerciseId: Map<UUID, List<WorkoutState.Set>>
         get() = setStates
             .groupBy { it.exerciseId }

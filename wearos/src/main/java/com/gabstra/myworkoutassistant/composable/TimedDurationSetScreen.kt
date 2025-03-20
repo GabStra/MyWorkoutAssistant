@@ -125,13 +125,22 @@ fun TimedDurationSetScreen(
         timerJob?.cancel()
         timerJob = scope.launch {
             onTimerEnabled()
-            while (currentMillis > 0) {
-                delay(1000) // Update every sec.
-                currentMillis -= 1000
 
+            var nextExecutionTime = System.currentTimeMillis() + 1000
+            nextExecutionTime = (nextExecutionTime / 1000) * 1000 // Round to next second boundary
+
+            while (currentMillis > 0) {
+                val currentTime = System.currentTimeMillis()
+                val waitTime = maxOf(0, nextExecutionTime - currentTime)
+
+                delay(waitTime) // Wait until next second boundary
+
+                currentMillis -= 1000
                 currentSet = currentSet.copy(
                     endTimer = currentMillis
                 )
+
+                nextExecutionTime += 1000 // Schedule next second
             }
 
             state.currentSetData = currentSet.copy(
@@ -148,14 +157,39 @@ fun TimedDurationSetScreen(
     }
 
     LaunchedEffect(set) {
+        if(state.startTime != null) {
+            // Calculate elapsed time between now and startTime
+            val now = LocalDateTime.now()
+            val elapsedMillis = java.time.Duration.between(state.startTime, now).toMillis()
+
+            // Subtract elapsed time from the timer, ensuring it doesn't go below 0
+            currentMillis = maxOf(currentSet.startTimer - elapsedMillis.toInt(), 0)
+
+            // If timer still has time left, start it
+            if (currentMillis > 0) {
+                startTimerJob()
+            } else {
+                // If timer would have already ended, trigger timer end
+                state.currentSetData = currentSet.copy(
+                    endTimer = 0
+                )
+                VibrateTwice(context)
+                onTimerDisabled()
+                onTimerEnd()
+            }
+
+            return@LaunchedEffect
+        }
+
         if (set.autoStart) {
             delay(500)
             VibrateTwice(context)
-            startTimerJob()
 
             if(state.startTime == null){
                 state.startTime = LocalDateTime.now()
             }
+
+            startTimerJob()
         }
     }
 
@@ -308,7 +342,7 @@ fun TimedDurationSetScreen(
 
     CustomDialogYesOnLongPress(
         show = showStopDialog,
-        title = "Stop exercise",
+        title = "Stop Exercise",
         message = "Do you want to stop this exercise?",
         handleYesClick = {
             VibrateGentle(context)

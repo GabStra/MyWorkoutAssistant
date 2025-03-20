@@ -6,19 +6,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
-import java.math.RoundingMode
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
@@ -28,11 +24,11 @@ fun ExerciseIndicator(
     set: WorkoutState.Set,
 ){
 
-    val exerciseKeys = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
-    val exerciseCount = exerciseKeys.count()
+    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
+    val exerciseCount = exerciseOrSupersetIds.count()
 
     val exerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(set.exerciseId)) viewModel.supersetIdByExerciseId[set.exerciseId] else set.exerciseId
-    val currentExerciseIndex = exerciseKeys.indexOf(exerciseOrSupersetId)
+    val currentExerciseIndex = exerciseOrSupersetIds.indexOf(exerciseOrSupersetId)
 
     val step = (1f / exerciseCount)
 
@@ -72,7 +68,7 @@ fun ExerciseIndicator(
         }
     }
 
-    val indicatorAngle = remember(progress) {   getValueInRange( -60f, 65f, progress - halfStep)}
+    val indicatorAngle = remember(progress) { getValueInRange( -60f, 65f, progress - halfStep) }
 
     RotatingIndicator(indicatorAngle, Color.White)
 

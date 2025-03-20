@@ -48,6 +48,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.screens.LoadingScreen
@@ -265,7 +266,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                         modifier = Modifier.fillMaxSize(),
                         strokeWidth = 4.dp,
                         indicatorColor = MaterialTheme.colors.primary,
-                        trackColor = MaterialTheme.colors.background
+                        trackColor = MyColors.MediumGray
                     )
 
                     LoadingScreen(appViewModel,"Syncing with phone")

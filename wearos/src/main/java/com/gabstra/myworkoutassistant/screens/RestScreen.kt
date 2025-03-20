@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.circleMask
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -123,13 +124,23 @@ fun RestScreen(
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
+            // Calculate the next second boundary
+            var nextExecutionTime = System.currentTimeMillis() + 1000
+            nextExecutionTime = (nextExecutionTime / 1000) * 1000 // Round to next second boundary
+
             while (currentSeconds > 0) {
-                delay(1000) // Update every sec.
+                val currentTime = System.currentTimeMillis()
+                val waitTime = maxOf(0, nextExecutionTime - currentTime)
+
+                delay(waitTime) // Wait until next second boundary
+
                 currentSeconds -= 1
 
                 currentSetData = currentSetData.copy(
                     endTimer = currentSeconds
                 )
+
+                nextExecutionTime += 1000 // Schedule next second
             }
 
             state.currentSetData = currentSetData.copy(
@@ -223,15 +234,14 @@ fun RestScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp),
+                    .padding(vertical= 20.dp,horizontal = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 textComposable()
                 ExerciseInfo(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 10.dp),
+                        .fillMaxSize(),
                     viewModel,
                     state.nextStateSets
                 )
@@ -259,7 +269,7 @@ fun RestScreen(
 
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
-        title = "Skip rest",
+        title = "Skip Rest",
         message = "Do you want to proceed?",
         handleYesClick = {
             state.currentSetData = currentSetData.copy(

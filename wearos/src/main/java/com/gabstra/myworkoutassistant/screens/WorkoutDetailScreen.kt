@@ -169,7 +169,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
 
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,
-        title = "Resume workout",
+        title = "Resume Workout",
         message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)

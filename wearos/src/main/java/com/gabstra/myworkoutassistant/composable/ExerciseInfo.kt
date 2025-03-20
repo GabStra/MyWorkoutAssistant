@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,9 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,7 +45,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -63,7 +59,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 
 @Composable
@@ -77,48 +73,52 @@ fun SetTableRow(
     val density = LocalDensity.current.density
     val triangleSize = 6f
 
+    val indicatorComposable = @Composable {
+        Box(modifier= Modifier.width(10.dp).fillMaxHeight()){
+            Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
+                val trianglePath = Path().apply {
+                    val height = (triangleSize * 2 / density).dp.toPx()
+                    val width = height
+
+                    // Create triangle pointing upward initially
+                    moveTo(width / 2, 0f)          // Top point
+                    lineTo(width, height * 0.866f) // Bottom right
+                    lineTo(0f, height * 0.866f)    // Bottom left
+                    close()
+                }
+
+                // Calculate rotation to point in direction of movement
+                // Add 90 degrees (π/2) because our triangle points up by default
+                // and we want it to point in the direction of travel
+                val directionAngle = 0 - Math.PI / 2 + Math.PI
+
+                withTransform({
+                    rotate(
+                        degrees = Math.toDegrees(directionAngle).toFloat(),
+                        pivot = center
+                    )
+                }) {
+                    // Draw filled white triangle
+                    drawPath(
+                        path = trianglePath,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+    }
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if(isCurrentSet){
-            Box(modifier= Modifier.width(10.dp).fillMaxHeight(),contentAlignment = Alignment.Center){
-                Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
-                    val trianglePath = Path().apply {
-                        val height = (triangleSize * 2 / density).dp.toPx()
-                        val width = height
-
-                        // Create triangle pointing upward initially
-                        moveTo(width / 2, 0f)          // Top point
-                        lineTo(width, height * 0.866f) // Bottom right
-                        lineTo(0f, height * 0.866f)    // Bottom left
-                        close()
-                    }
-
-                    // Calculate rotation to point in direction of movement
-                    // Add 90 degrees (π/2) because our triangle points up by default
-                    // and we want it to point in the direction of travel
-                    val directionAngle = 0 - Math.PI / 2 + Math.PI
-
-                    withTransform({
-                        rotate(
-                            degrees = Math.toDegrees(directionAngle).toFloat(),
-                            pivot = center
-                        )
-                    }) {
-                        // Draw filled white triangle
-                        drawPath(
-                            path = trianglePath,
-                            color = Color.White
-                        )
-                    }
-                }
-            }
-        }else{
-            Spacer(modifier = Modifier.width(10.dp))
-        }
         when (setState.currentSetData) {
             is WeightSetData -> {
+                if(isCurrentSet){
+                    indicatorComposable()
+                }else{
+                    Spacer(modifier = Modifier.width(10.dp))
+                }
                 val weightSetData = (setState.currentSetData as WeightSetData)
                 Text(
                     modifier = Modifier.weight(1f),
@@ -137,6 +137,11 @@ fun SetTableRow(
             }
 
             is BodyWeightSetData -> {
+                if(isCurrentSet){
+                    indicatorComposable()
+                }else{
+                    Spacer(modifier = Modifier.width(10.dp))
+                }
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
                 Text(
                     modifier = Modifier.weight(1f),
@@ -161,23 +166,38 @@ fun SetTableRow(
             is TimedDurationSetData -> {
                 val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
 
+                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center){
+                    if(isCurrentSet){
+                        indicatorComposable()
+                    }else{
+                        Spacer(modifier = Modifier.width(10.dp))
+                    }
+                }
+
                 Text(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(2f),
                     text = FormatTime(timedDurationSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center,
                     color = color
                 )
+
             }
 
             is EnduranceSetData -> {
                 val enduranceSetData = (setState.currentSetData as EnduranceSetData)
 
+                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center){
+                    if(isCurrentSet){
+                        indicatorComposable()
+                    }else{
+                        Spacer(modifier = Modifier.width(10.dp))
+                    }
+                }
+
                 Text(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(2f),
                     text = FormatTime(enduranceSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center,
                     color = color
                 )
             }
@@ -253,7 +273,7 @@ fun ExerciseSetsViewer(
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
                         scrollBarColor = Color.White,
-                        scrollBarTrackColor = Color.DarkGray
+                        scrollBarTrackColor = MyColors.MediumGray
                     )
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -279,7 +299,7 @@ fun ExerciseSetsViewer(
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> Color.White
-                            else ->  Color.DarkGray
+                            else ->  MyColors.MediumGray
                         }
                     )
                 }
@@ -292,7 +312,6 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier= Modifier.width(10.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "TIME",
@@ -306,7 +325,7 @@ fun ExerciseSetsViewer(
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
                         scrollBarColor = Color.White,
-                        scrollBarTrackColor = Color.DarkGray
+                        scrollBarTrackColor = MyColors.MediumGray
                     )
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -332,7 +351,7 @@ fun ExerciseSetsViewer(
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> Color.White
-                            else ->  Color.DarkGray
+                            else -> MyColors.MediumGray
                         }
                     )
                 }
@@ -352,8 +371,19 @@ fun ExerciseInfo(
     var currentIndex by remember { mutableIntStateOf(0) }
     var selectedStateSet by remember { mutableStateOf(nextStateSets[currentIndex]) }
 
+    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
+
     val typography = MaterialTheme.typography
     val style = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+    var isNavigationLocked by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isNavigationLocked) {
+        if (isNavigationLocked) {
+            delay(500)
+            isNavigationLocked = false
+        }
+    }
 
     AnimatedContent(
         modifier = modifier,
@@ -366,72 +396,98 @@ fun ExerciseInfo(
         val exerciseSets = remember(exercise) {  exercise.sets.filter { it !is RestSet } }
         val setIndex = remember(updatedStateSet) { exerciseSets.indexOf(updatedStateSet.set)  }
 
+        val updatedExerciseOrSupersetId = remember (exercise){ if(viewModel.supersetIdByExerciseId.containsKey(exercise.id)) viewModel.supersetIdByExerciseId[exercise.id] else exercise.id }
+        val updatedExerciseOrSupersetIndex = remember(exerciseOrSupersetIds,updatedExerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId) }
+
+        val isSuperset = remember (updatedExerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId) }
+
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { marqueeEnabled = !marqueeEnabled }
+                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = exercise.name,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.title3,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
             Row(
+                modifier = Modifier.height(85.dp).then(if(nextStateSets.size > 1) Modifier else Modifier.padding(horizontal = 25.dp)),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (nextStateSets.size > 1) {
                     Icon(
-                        modifier = Modifier.clickable {
-                            if (currentIndex > 0) {
-                                currentIndex--
-                                selectedStateSet = nextStateSets[currentIndex]
-                            }
+                        modifier = Modifier.fillMaxHeight().clickable(enabled = !isNavigationLocked && currentIndex > 0) {
+                            currentIndex--
+                            selectedStateSet = nextStateSets[currentIndex]
+                            isNavigationLocked = true
                         },
                         imageVector = Icons.Filled.ArrowBack,
                         contentDescription = "Previous",
-                        tint = if (currentIndex > 0) Color.White else Color.DarkGray
+                        tint = if (currentIndex > 0) Color.White else MyColors.MediumGray
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { marqueeEnabled = !marqueeEnabled }
-                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = exercise.name,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                ExerciseSetsViewer(
+                    modifier =  Modifier.fillMaxHeight().weight(1f),
+                    viewModel = viewModel,
+                    exercise = exercise,
+                    currentSet = updatedStateSet.set
+                )
 
                 if (nextStateSets.size > 1) {
                     Icon(
-                        modifier = Modifier.clickable {
-                            if (currentIndex < nextStateSets.size - 1) {
-                                currentIndex++
-                                selectedStateSet = nextStateSets[currentIndex]
-                            }
+                        modifier = Modifier.fillMaxHeight().clickable(enabled = !isNavigationLocked && currentIndex < nextStateSets.size - 1) {
+                            currentIndex++
+                            selectedStateSet = nextStateSets[currentIndex]
+                            isNavigationLocked = true
                         },
                         imageVector = Icons.Filled.ArrowForward,
                         contentDescription = "Next",
-                        tint = if (currentIndex < nextStateSets.size - 1) Color.White else Color.DarkGray
+                        tint = if (currentIndex < nextStateSets.size - 1) Color.White else MyColors.MediumGray
                     )
                 }
             }
 
-            ExerciseSetsViewer(
-                modifier =  Modifier.height(85.dp),
-                viewModel = viewModel,
-                exercise = exercise,
-                currentSet = updatedStateSet.set
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ){
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
+                    Text(
+                        textAlign = TextAlign.Center,
+                        text =  "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                        style = style
+                    )
+                    if(isSuperset){
+                        val supersetExercises = remember(updatedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!! }
+                        val supersetIndex = remember(exercise,supersetExercises) {  supersetExercises.indexOf(exercise) }
 
-            Text(
-                textAlign = TextAlign.Center,
-                text = "SET: ${setIndex + 1}/${exerciseSets.size}",
-                style = style
-            )
+                        Text(
+                            textAlign = TextAlign.Center,
+                            text =  "${supersetIndex + 1}/${supersetExercises.size}",
+                            style = style
+                        )
+                    }
+                    Text(
+                        textAlign = TextAlign.Center,
+                        text =  "${setIndex + 1}/${exerciseSets.size}",
+                        style = style
+                    )
+                }
+            }
         }
     }
 }

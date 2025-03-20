@@ -3,18 +3,11 @@ package com.gabstra.myworkoutassistant.composable
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -24,11 +17,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import kotlin.math.roundToInt
@@ -176,7 +166,7 @@ fun ProgressIndicator(
             Row(modifier = Modifier.height(6.dp).weight(1f).clip(roundedCornerShape)){
                 SimpleProgressIndicator(
                     progress = ratio.toFloat(),
-                    trackColor = Color.DarkGray,
+                    trackColor = MyColors.MediumGray,
                     progressBarColor = progressBarColor,
                     modifier = Modifier.fillMaxHeight().weight(1f),
                 )
@@ -185,7 +175,7 @@ fun ProgressIndicator(
                 imageVector = Icons.Filled.Check,
                 modifier = Modifier.size(20.dp),
                 contentDescription = "Streak",
-                tint = if(ratio>=1) MyColors.Green else Color.DarkGray,
+                tint = if(ratio>=1) MyColors.Green else MyColors.DarkGray,
             )*/
         }
     }

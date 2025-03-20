@@ -1,8 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -12,7 +10,6 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -23,10 +20,8 @@ import java.time.temporal.ChronoUnit
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -61,7 +56,7 @@ fun CurrentTime() {
         Text(
             text = ":",
             style = MaterialTheme.typography.caption1,
-            color = if (showColon) Color.White else Color.DarkGray,
+            color = if (showColon) Color.White else MyColors.MediumGray,
             textAlign = TextAlign.Center
         )
 
