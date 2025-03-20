@@ -56,6 +56,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -142,6 +143,8 @@ class MainActivity : ComponentActivity() {
 
     private val appViewModel: AppViewModel by viewModels()
 
+    private val heartRateChangeViewModel: HeartRateChangeViewModel by viewModels()
+
     private lateinit var myReceiver: BroadcastReceiver
 
     @OptIn(ExperimentalHorologistApi::class)
@@ -165,7 +168,7 @@ class MainActivity : ComponentActivity() {
         lateinit var myReceiver: MyReceiver
 
         setContent {
-            WearApp(dataClient, appViewModel, appHelper, workoutStoreRepository){ navController ->
+            WearApp(dataClient, appViewModel, heartRateChangeViewModel, appHelper, workoutStoreRepository){ navController ->
                 myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
                 val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
                 registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -182,7 +185,14 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
-fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearDataLayerAppHelper,workoutStoreRepository: WorkoutStoreRepository, onNavControllerAvailable: (NavController) -> Unit) {
+fun WearApp(
+    dataClient: DataClient,
+    appViewModel: AppViewModel,
+    heartRateChangeViewModel: HeartRateChangeViewModel,
+    appHelper: WearDataLayerAppHelper,
+    workoutStoreRepository: WorkoutStoreRepository,
+    onNavControllerAvailable: (NavController) -> Unit
+) {
     MyWorkoutAssistantTheme {
         val navController = rememberNavController()
         val localContext = LocalContext.current
@@ -254,7 +264,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                     val isPaused by appViewModel.isPaused
 
                     KeepOn(appViewModel,enableDimming = !isPaused){
-                        WorkoutScreen(navController,appViewModel,hrViewModel,polarViewModel)
+                        WorkoutScreen(navController,appViewModel,heartRateChangeViewModel,hrViewModel,polarViewModel)
                     }
                 }
                 composable(Screen.Loading.route) {

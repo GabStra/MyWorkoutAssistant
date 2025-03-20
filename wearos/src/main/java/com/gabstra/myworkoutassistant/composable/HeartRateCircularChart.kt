@@ -41,6 +41,7 @@ import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
+import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -256,6 +257,7 @@ private fun HeartRateView(
 fun HeartRateStandard(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
+    heartRateChangeViewModel : HeartRateChangeViewModel,
     hrViewModel: SensorDataViewModel,
     userAge : Int,
     lowerBoundMaxHRPercent: Float?,
@@ -267,6 +269,7 @@ fun HeartRateStandard(
     LaunchedEffect(Unit) {
         while (true) {
             appViewModel.registerHeartBeat(hrViewModel.heartRateBpm.value ?: 0)
+            heartRateChangeViewModel.registerHeartRate(hrViewModel.heartRateBpm.value ?: 0)
             delay(1000)
         }
     }
@@ -278,6 +281,7 @@ fun HeartRateStandard(
 fun HeartRatePolar(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
+    heartRateChangeViewModel : HeartRateChangeViewModel,
     polarViewModel: PolarViewModel,
     userAge : Int,
     lowerBoundMaxHRPercent: Float?,
@@ -288,7 +292,9 @@ fun HeartRatePolar(
 
     LaunchedEffect(Unit) {
         while (true) {
+
             appViewModel.registerHeartBeat(polarViewModel.hrDataState.value ?: 0)
+            heartRateChangeViewModel.registerHeartRate(polarViewModel.hrDataState.value ?: 0)
             delay(1000)
         }
     }

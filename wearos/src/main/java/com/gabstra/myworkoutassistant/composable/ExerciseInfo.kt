@@ -213,12 +213,12 @@ fun ExerciseSetsViewer(
     viewModel: AppViewModel,
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
-    customColor: Color? = null
+    customColor: Color? = null,
+    overrideSetIndex: Int? = null
 ){
     val exerciseSets = exercise.sets.filter { it !is RestSet }
-    val setIndex = exerciseSets.indexOf(currentSet)
+    val setIndex = overrideSetIndex ?: exerciseSets.indexOf(currentSet)
 
-    Log.d("ExerciseSetsViewer", "setIndex: $setIndex")
     val exerciseSetStates = remember(exercise.id) { viewModel.getAllExerciseWorkoutStates(exercise.id).filter { it.set !is RestSet } }
 
     val typography = MaterialTheme.typography
@@ -273,7 +273,7 @@ fun ExerciseSetsViewer(
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
                         scrollBarColor = Color.White,
-                        scrollBarTrackColor = MyColors.MediumGray
+                        scrollBarTrackColor = Color.DarkGray
                     )
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -325,7 +325,7 @@ fun ExerciseSetsViewer(
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
                         scrollBarColor = Color.White,
-                        scrollBarTrackColor = MyColors.MediumGray
+                        scrollBarTrackColor = Color.DarkGray
                     )
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(5.dp),

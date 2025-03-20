@@ -80,7 +80,7 @@ fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
-    scrollBarTrackColor: Color = Color.Gray,
+    scrollBarTrackColor: Color = Color.DarkGray,
     scrollBarColor: Color = Color.Black,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f

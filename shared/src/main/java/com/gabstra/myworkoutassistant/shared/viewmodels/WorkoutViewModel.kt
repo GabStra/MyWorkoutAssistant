@@ -1260,18 +1260,18 @@ open class WorkoutViewModel : ViewModel() {
                         //check if all the items are of type WorkoutState.Set
                         val allItemsAreSets = items.all { it is WorkoutState.Set }
 
-                        if(allItemsAreSets){
-                            states.addAll(items)
-                        }else{
+                        if(!allItemsAreSets){
                             continue
                         }
+
+                        states.addAll(items)
 
                         if(i != count - 1){
                             val restSet = RestSet(UUID.randomUUID(),superset.timeInSeconds)
                             val restState = WorkoutState.Rest(
                                 set = restSet,
                                 order = (i+1).toUInt(),
-                                currentSetData = initializeSetData(RestSet(UUID.randomUUID(), superset.timeInSeconds))
+                                currentSetData = initializeSetData(RestSet(UUID.randomUUID(), superset.timeInSeconds)),
                             )
                             states.add(restState)
                         }
@@ -1317,7 +1317,6 @@ open class WorkoutViewModel : ViewModel() {
             // Update the Rest state with the collected nextSets
             currentState.nextStateSets = nextSets
         }
-
         totalStates.forEach {
             workoutStateQueue.addLast(it)
             allWorkoutStates.add(it)

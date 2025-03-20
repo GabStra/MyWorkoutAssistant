@@ -189,14 +189,26 @@ fun PageExercises(
     var marqueeEnabled by remember { mutableStateOf(false) }
 
     val currentExerciseIndex = exerciseIds.indexOf(currentExercise.id)
+
+    val currentExerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
+    val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(currentExerciseOrSupersetId)
+
     var currentIndex by remember { mutableIntStateOf(currentExerciseIndex) }
     var selectedExercise by remember { mutableStateOf(currentExercise) }
 
     val typography = MaterialTheme.typography
     val captionStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
-
     var isNavigationLocked by remember { mutableStateOf(false) }
+
+    val isSuperset = remember(currentExerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId) }
+
+    val overrideSetIndex = remember(isSuperset,currentExercise){
+        if(isSuperset){
+            currentExercise.sets.filter { it !is RestSet }.indexOf(currentStateSet.set)
+        }
+        else null
+    }
 
     LaunchedEffect(isNavigationLocked) {
         if (isNavigationLocked) {
@@ -215,8 +227,6 @@ fun PageExercises(
     ) { updatedExercise ->
         val updatedExerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) viewModel.supersetIdByExerciseId[updatedExercise.id] else updatedExercise.id
         val updatedExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId)
-
-        val updatedIndex = exerciseIds.indexOf(updatedExercise.id)
 
         val isSuperset = viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId)
 
@@ -265,11 +275,15 @@ fun PageExercises(
                     viewModel = viewModel,
                     exercise = updatedExercise,
                     currentSet = currentStateSet.set,
-                    customColor = when{
-                        updatedIndex < currentExerciseIndex -> MyColors.Orange
-                        updatedIndex > currentExerciseIndex -> MyColors.MediumGray
+                    customColor =   when{
+                        updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
+                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.MediumGray
                         else -> null
+                    },
+                    overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                        overrideSetIndex
                     }
+                    else null
                 )
 
                 if (exerciseIds.size > 1) {
@@ -796,7 +810,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                                 .verticalColumnScrollbar(
                                     scrollState = scrollState,
                                     scrollBarColor = Color.White,
-                                    scrollBarTrackColor = MyColors.MediumGray
+                                    scrollBarTrackColor = Color.DarkGray
                                 )
                                 .verticalScroll(scrollState),
                             verticalArrangement = Arrangement.spacedBy(5.dp),

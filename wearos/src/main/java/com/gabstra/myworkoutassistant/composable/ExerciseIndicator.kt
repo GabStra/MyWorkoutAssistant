@@ -68,9 +68,13 @@ fun ExerciseIndicator(
         }
     }
 
-    val indicatorAngle = remember(progress) { getValueInRange( -60f, 65f, progress - halfStep) }
+    val totalArcAngle = 125f
+    val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
+    val startAngle = -60f + currentExerciseIndex * (segmentArcAngle + 2f)
+    val middleAngle = startAngle + (segmentArcAngle / 2f)
 
-    RotatingIndicator(indicatorAngle, Color.White)
+    // Place the indicator exactly at the middle of the current segment
+    RotatingIndicator(middleAngle, Color.White)
 
     /*val parentIndex = viewModel.setsByExerciseId.keys.indexOf(set.exerciseId)
     val totalGroups = viewModel.setsByExerciseId.keys.count()

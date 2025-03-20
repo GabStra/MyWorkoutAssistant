@@ -7,6 +7,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 
@@ -157,12 +158,11 @@ object VolumeDistributionHelper {
             val workloadDifferenceScore = 1 + (combo.maxOf { it.workload } - combo.minOf { it.workload })
             val workloadPerSetScore = 1 + abs(currentAverageWorkloadPerSet - previousAverageWorkloadPerSet)
 
-            return progressScore * workloadPerSetScore * workloadDifferenceScore * combo.size
+            return progressScore * workloadPerSetScore * workloadDifferenceScore * 10.0.pow(combo.size)
         }
 
         suspend fun exploreCombinations(
             currentCombo: List<ExerciseSet>,
-            currentVolume: Double,
             depth: Int = 1
         ) {
 
@@ -183,7 +183,7 @@ object VolumeDistributionHelper {
             if (depth >= maxSets) return
 
             val lastSet = currentCombo.last()
-            val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.volume >= candidate.volume }
+            val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.workload >= candidate.workload }
 
             /*
             val maxRemainingVolume = validSets.maxOfOrNull { it.volume } ?: 0.0
@@ -193,15 +193,14 @@ object VolumeDistributionHelper {
 
             for (nextSet in validSets) {
                 val newCombo = currentCombo + nextSet
-                val newVolume = currentVolume + nextSet.volume
-                exploreCombinations(newCombo, newVolume, depth + 1)
+                exploreCombinations(newCombo,depth + 1)
             }
         }
 
         suspend fun processSetRange(startIdx: Int, endIdx: Int) {
             for (firstSetIdx in startIdx until endIdx) {
                 val firstSet = sortedSets[firstSetIdx]
-                exploreCombinations(listOf(firstSet), firstSet.volume)
+                exploreCombinations(listOf(firstSet))
             }
         }
 
@@ -244,6 +243,8 @@ object VolumeDistributionHelper {
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
         coroutineScope {
+            //val sortedWeights = params.availableWeights.sorted()
+
             val nearAverageWeights = getNearAverageWeights(params)
 
             //Log.d("WorkoutViewModel", "Closest Weight Index: $closestWeightIndex Intensity: ${params.averageLoad} Near average weights: $nearAverageWeights")

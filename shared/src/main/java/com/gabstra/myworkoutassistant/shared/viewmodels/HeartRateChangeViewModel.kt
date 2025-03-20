@@ -1,32 +1,20 @@
-package com.gabstra.myworkoutassistant.composable
+package com.gabstra.myworkoutassistant.shared.viewmodels
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.PolarViewModel
-import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.delay
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.util.LinkedList
 import kotlin.math.abs
 
 /**
- * Handles heart rate change calculation logic with enhanced precision.
+ * ViewModel that handles heart rate change calculation logic with enhanced precision.
  * This class tracks heart rate measurements and applies statistical methods
  * to calculate a more precise rate of change.
  */
-class HeartRateChangeCalculator {
+class HeartRateChangeViewModel : ViewModel() {
     // Store recent heart rates with timestamps
     private val recentHeartRates = LinkedList<Pair<Long, Int>>()
 
@@ -56,6 +44,10 @@ class HeartRateChangeCalculator {
     // State flow for heart rate trend
     private val _heartRateTrend = MutableStateFlow<TrendDirection>(TrendDirection.UNKNOWN)
     val heartRateTrend: StateFlow<TrendDirection> = _heartRateTrend
+
+    // State flow for formatted change rate
+    private val _formattedChangeRate = MutableStateFlow("Δ: --")
+    val formattedChangeRate: StateFlow<String> = _formattedChangeRate
 
     // Thresholds for determining significance of change (BPM/s)
     val significantIncreaseThreshold = 0.3f // BPM/s - increased for stability
@@ -93,34 +85,39 @@ class HeartRateChangeCalculator {
      * Registers a new heart rate reading and calculates the rate of change
      */
     fun registerHeartRate(heartRate: Int) {
-        val currentTime = System.currentTimeMillis()
+        viewModelScope.launch {
+            // Only add non-zero heart rates
+            if (heartRate <= 0) return@launch
 
-        // Only add non-zero heart rates
-        if (heartRate <= 0) return
+            val currentTime = System.currentTimeMillis()
 
-        // Apply Kalman filter to reduce noise
-        val filteredValue = applyKalmanFilter(heartRate.toDouble())
+            // Apply Kalman filter to reduce noise
+            val filteredValue = applyKalmanFilter(heartRate.toDouble())
 
-        // Apply exponential moving average for additional smoothing
-        updateEMA(filteredValue)
+            // Apply exponential moving average for additional smoothing
+            updateEMA(filteredValue)
 
-        // Add new raw reading
-        recentHeartRates.add(Pair(currentTime, heartRate))
+            // Add new raw reading
+            recentHeartRates.add(Pair(currentTime, heartRate))
 
-        // Add filtered reading (using the EMA value for better smoothing)
-        filteredHeartRates.add(Pair(currentTime, emaHeartRate))
+            // Add filtered reading (using the EMA value for better smoothing)
+            filteredHeartRates.add(Pair(currentTime, emaHeartRate))
 
-        // Keep only the most recent readings
-        while (recentHeartRates.size > maxReadings) {
-            recentHeartRates.removeFirst()
+            // Keep only the most recent readings
+            while (recentHeartRates.size > maxReadings) {
+                recentHeartRates.removeFirst()
+            }
+
+            while (filteredHeartRates.size > maxReadings) {
+                filteredHeartRates.removeFirst()
+            }
+
+            // Calculate rate of change using best method based on data availability
+            calculateHeartRateChangeRate()
+
+            // Update formatted change rate
+            updateFormattedChangeRate()
         }
-
-        while (filteredHeartRates.size > maxReadings) {
-            filteredHeartRates.removeFirst()
-        }
-
-        // Calculate rate of change using best method based on data availability
-        calculateHeartRateChangeRate()
     }
 
     /**
@@ -350,27 +347,31 @@ class HeartRateChangeCalculator {
      * Reset stored readings and calculated rate
      */
     fun reset() {
-        recentHeartRates.clear()
-        filteredHeartRates.clear()
-        trendHistory.clear()
-        kalmanEstimate = 0.0
-        kalmanError = 1.0
-        emaHeartRate = 0.0
-        consistentReadingCounter = 0
-        lastTrendDirection = TrendDirection.UNKNOWN
-        _heartRateChangeRate.value = null
-        _confidenceLevel.value = 0.0f
-        _heartRateTrend.value = TrendDirection.UNKNOWN
+        viewModelScope.launch {
+            recentHeartRates.clear()
+            filteredHeartRates.clear()
+            trendHistory.clear()
+            kalmanEstimate = 0.0
+            kalmanError = 1.0
+            emaHeartRate = 0.0
+            consistentReadingCounter = 0
+            lastTrendDirection = TrendDirection.UNKNOWN
+            _heartRateChangeRate.value = null
+            _confidenceLevel.value = 0.0f
+            _heartRateTrend.value = TrendDirection.UNKNOWN
+            _formattedChangeRate.value = "Δ: --"
+        }
     }
 
     /**
-     * Get a formatted string with rate of change, confidence indicator and trend
+     * Update formatted change rate with current values
      */
-    fun getFormattedChangeRate(): String {
+    private fun updateFormattedChangeRate() {
         val changeRate = _heartRateChangeRate.value
 
         if (changeRate == null) {
-            return "Δ: --"
+            _formattedChangeRate.value = "Δ: --"
+            return
         }
 
         val prefix = if (changeRate > 0) "+" else ""
@@ -387,43 +388,6 @@ class HeartRateChangeCalculator {
             TrendDirection.UNKNOWN -> "?"
         }
 
-        return "Δ: $prefix${changeRate}/s $confidenceIndicator $trendIndicator"
-    }
-}
-
-/**
- * Composable that handles heart rate monitoring and change rate calculation
- */
-@Composable
-fun HeartRateMonitor(
-    appViewModel: AppViewModel,
-    heartRateSupplier: () -> Int
-) {
-    // Create and remember the calculator
-    val calculator = remember { HeartRateChangeCalculator() }
-
-    // Observe the change rate and confidence
-    val changeRate by calculator.heartRateChangeRate.collectAsState()
-    val confidence by calculator.confidenceLevel.collectAsState()
-
-    // Update the change rate in the app view model with confidence level and trend
-    LaunchedEffect(changeRate, confidence) {
-        appViewModel.updateHeartRateChangeRate(changeRate, confidence )
-    }
-
-    // Poll for heart rate readings
-    LaunchedEffect(Unit) {
-        while (true) {
-            val hr = heartRateSupplier()
-            calculator.registerHeartRate(hr)
-            delay(1000)
-        }
-    }
-
-    // Clean up when leaving composition
-    DisposableEffect(Unit) {
-        onDispose {
-            calculator.reset()
-        }
+        _formattedChangeRate.value = "Δ: $prefix${changeRate}/s $confidenceIndicator $trendIndicator"
     }
 }

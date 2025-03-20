@@ -38,13 +38,13 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.VibrateGentle
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composable.HeartRateMonitor
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.composable.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.VibrateHard
 import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -52,8 +52,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 fun WorkoutScreen(
     navController: NavController,
     viewModel : AppViewModel,
+    heartRateChangeViewModel : HeartRateChangeViewModel,
     hrViewModel: SensorDataViewModel,
-    polarViewModel: PolarViewModel
+    polarViewModel: PolarViewModel,
 ){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -66,6 +67,7 @@ fun WorkoutScreen(
 
     val triggerMobileNotification by viewModel.enableWorkoutNotificationFlow.collectAsState()
 
+
     LaunchedEffect(triggerMobileNotification){
         if(triggerMobileNotification==null) return@LaunchedEffect
         showWorkoutInProgressNotification(context)
@@ -77,28 +79,20 @@ fun WorkoutScreen(
         upperBoundMaxHRPercent: Float? = null
     ){
         if(selectedWorkout.usePolarDevice){
-            HeartRateMonitor(
-                appViewModel = viewModel,
-                heartRateSupplier = { polarViewModel.hrDataState.value ?: 0 }
-            )
-
             HeartRatePolar(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
+                heartRateChangeViewModel,
                 polarViewModel,
                 userAge,
                 lowerBoundMaxHRPercent,
                 upperBoundMaxHRPercent
             )
         }else{
-            HeartRateMonitor(
-                appViewModel = viewModel,
-                heartRateSupplier = { hrViewModel.heartRateBpm.value ?: 0 }
-            )
-
             HeartRateStandard(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
+                heartRateChangeViewModel,
                 hrViewModel,
                 userAge,
                 lowerBoundMaxHRPercent,

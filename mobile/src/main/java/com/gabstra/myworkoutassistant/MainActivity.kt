@@ -62,6 +62,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -170,6 +171,7 @@ class MainActivity : ComponentActivity() {
 fun MyWorkoutAssistantNavHost(
     dataClient: DataClient,
     appViewModel: AppViewModel,
+    heartRateChangeViewModel : HeartRateChangeViewModel,
     workoutStoreRepository: WorkoutStoreRepository,
     db: AppDatabase,
     healthConnectClient: HealthConnectClient
