@@ -266,7 +266,7 @@ fun WearApp(dataClient: DataClient, appViewModel: AppViewModel, appHelper: WearD
                         modifier = Modifier.fillMaxSize(),
                         strokeWidth = 4.dp,
                         indicatorColor = MaterialTheme.colors.primary,
-                        trackColor = MyColors.MediumGray
+                        trackColor = Color.DarkGray
                     )
 
                     LoadingScreen(appViewModel,"Syncing with phone")
