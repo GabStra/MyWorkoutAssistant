@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -251,47 +252,19 @@ fun WorkoutForm(
                     } else {
                         Column {
                             schedules.value.forEachIndexed { index, schedule ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        // Display schedule info
-                                        Text(
-                                            text = if (schedule.label.isNotEmpty()) schedule.label else "Schedule ${index + 1}",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        
-                                        Text(
-                                            text = if (schedule.specificDate != null) {
-                                                "On ${schedule.specificDate} at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
-                                            } else {
-                                                val days = getDaysOfWeekString(schedule.daysOfWeek)
-                                                "Every $days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
-                                            },
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                    
-                                    // Edit button
-                                    IconButton(onClick = {
+                                ScheduleListItem(
+                                    schedule = schedule,
+                                    index = index,
+                                    onEdit = {
                                         currentEditingSchedule.value = schedule
                                         showScheduleDialog.value = true
-                                    }) {
-                                        Text("Edit")
+                                    },
+                                    onDelete = {
+                                        val updatedSchedules = schedules.value.toMutableList()
+                                        updatedSchedules.removeAt(index)
+                                        schedules.value = updatedSchedules
                                     }
-                                    
-                                    // Delete button
-                                    IconButton(onClick = {
-                                        schedules.value.removeAt(index)
-                                        schedules.value = schedules.value.toMutableList()
-                                    }) {
-                                        Text("Delete")
-                                    }
-                                }
+                                )
                             }
                         }
                     }
@@ -364,18 +337,20 @@ fun WorkoutForm(
             workoutId = workout?.id ?: UUID.randomUUID(),
             onDismiss = { showScheduleDialog.value = false },
             onSave = { newSchedule ->
+                val updatedSchedules = schedules.value.toMutableList()
+                
                 if (currentEditingSchedule.value != null) {
                     // Update existing schedule
-                    val index = schedules.value.indexOfFirst { it.id == newSchedule.id }
+                    val index = updatedSchedules.indexOfFirst { it.id == newSchedule.id }
                     if (index != -1) {
-                        schedules.value[index] = newSchedule
-                        schedules.value = schedules.value.toMutableList()
+                        updatedSchedules[index] = newSchedule
                     }
                 } else {
                     // Add new schedule
-                    schedules.value.add(newSchedule)
-                    schedules.value = schedules.value.toMutableList()
+                    updatedSchedules.add(newSchedule)
                 }
+                
+                schedules.value = updatedSchedules
                 showScheduleDialog.value = false
             }
         )
@@ -439,52 +414,31 @@ fun ScheduleDialog(
                 )
                 
                 // Time selection
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Time: ")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = { showTimePicker.value = true }) {
-                        Text("${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}")
-                    }
-                }
+                LabeledButton(
+                    label = "Time:",
+                    buttonText = "${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}",
+                    onClick = { showTimePicker.value = true }
+                )
                 
                 // Toggle between specific date and recurring
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Use specific date: ")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = useSpecificDate.value,
-                        onCheckedChange = { useSpecificDate.value = it }
-                    )
-                }
+                LabeledSwitch(
+                    label = "Use specific date:",
+                    checked = useSpecificDate.value,
+                    onCheckedChange = { useSpecificDate.value = it }
+                )
                 
                 // Date selection or days of week
                 if (useSpecificDate.value) {
                     // Specific date
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Date: ")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(onClick = { showDatePicker.value = true }) {
-                            val date = datePickerState.selectedDateMillis?.let {
-                                Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-                            } ?: LocalDate.now()
-                            Text(date.toString())
-                        }
-                    }
+                    val date = datePickerState.selectedDateMillis?.let {
+                        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+                    } ?: LocalDate.now()
+                    
+                    LabeledButton(
+                        label = "Date:",
+                        buttonText = date.toString(),
+                        onClick = { showDatePicker.value = true }
+                    )
                 } else {
                     // Days of week
                     Text(
@@ -492,125 +446,28 @@ fun ScheduleDialog(
                         modifier = Modifier.padding(vertical = 8.dp)
                     )
                     
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        // Sunday (bit 0)
-                        DayOfWeekCheckbox(
-                            day = "Sun",
-                            isChecked = (daysOfWeekState.intValue and 1) != 0,
-                            onCheckedChange = { checked ->
-                                daysOfWeekState.intValue = if (checked) {
-                                    daysOfWeekState.intValue or 1
-                                } else {
-                                    daysOfWeekState.intValue and 1.inv()
-                                }
-                            }
-                        )
-                        
-                        // Monday (bit 1)
-                        DayOfWeekCheckbox(
-                            day = "Mon",
-                            isChecked = (daysOfWeekState.intValue and 2) != 0,
-                            onCheckedChange = { checked ->
-                                daysOfWeekState.intValue = if (checked) {
-                                    daysOfWeekState.intValue or 2
-                                } else {
-                                    daysOfWeekState.intValue and 2.inv()
-                                }
-                            }
-                        )
-                        
-                        // Tuesday (bit 2)
-                        DayOfWeekCheckbox(
-                            day = "Tue",
-                            isChecked = (daysOfWeekState.intValue and 4) != 0,
-                            onCheckedChange = { checked ->
-                                daysOfWeekState.intValue = if (checked) {
-                                    daysOfWeekState.intValue or 4
-                                } else {
-                                    daysOfWeekState.intValue and 4.inv()
-                                }
-                            }
-                        )
-                        
-                        // Wednesday (bit 3)
-                        DayOfWeekCheckbox(
-                            day = "Wed",
-                            isChecked = (daysOfWeekState.intValue and 8) != 0,
-                            onCheckedChange = { checked ->
-                                daysOfWeekState.intValue = if (checked) {
-                                    daysOfWeekState.intValue or 8
-                                } else {
-                                    daysOfWeekState.intValue and 8.inv()
-                                }
-                            }
-                        )
-                    }
+                    // First row: Sun-Wed
+                    WeekdaySelectionRow(
+                        days = listOf("Sun", "Mon", "Tue", "Wed"),
+                        bitValues = listOf(1, 2, 4, 8),
+                        daysOfWeekState = daysOfWeekState
+                    )
                     
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        // Thursday (bit 4)
-                        DayOfWeekCheckbox(
-                            day = "Thu",
-                            isChecked = (daysOfWeekState.intValue and 16) != 0,
-                            onCheckedChange = { checked ->
-                                daysOfWeekState.intValue = if (checked) {
-                                    daysOfWeekState.intValue or 16
-                                } else {
-                                    daysOfWeekState.intValue and 16.inv()
-                                }
-                            }
-                        )
-                        
-                        // Friday (bit 5)
-                        DayOfWeekCheckbox(
-                            day = "Fri",
-                            isChecked = (daysOfWeekState.intValue and 32) != 0,
-                            onCheckedChange = { checked ->
-                                daysOfWeekState.intValue = if (checked) {
-                                    daysOfWeekState.intValue or 32
-                                } else {
-                                    daysOfWeekState.intValue and 32.inv()
-                                }
-                            }
-                        )
-                        
-                        // Saturday (bit 6)
-                        DayOfWeekCheckbox(
-                            day = "Sat",
-                            isChecked = (daysOfWeekState.intValue and 64) != 0,
-                            onCheckedChange = { checked ->
-                                daysOfWeekState.intValue = if (checked) {
-                                    daysOfWeekState.intValue or 64
-                                } else {
-                                    daysOfWeekState.intValue and 64.inv()
-                                }
-                            }
-                        )
-                        
-                        // Empty space for alignment
-                        Box(modifier = Modifier.width(48.dp))
-                    }
+                    // Second row: Thu-Sat + empty space
+                    WeekdaySelectionRow(
+                        days = listOf("Thu", "Fri", "Sat", ""),
+                        bitValues = listOf(16, 32, 64, 0),
+                        daysOfWeekState = daysOfWeekState,
+                        showLastCheckbox = false
+                    )
                 }
                 
                 // Enabled toggle
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Enabled: ")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Checkbox(
-                        checked = isEnabledState.value,
-                        onCheckedChange = { isEnabledState.value = it }
-                    )
-                }
+                LabeledCheckbox(
+                    label = "Enabled:",
+                    checked = isEnabledState.value,
+                    onCheckedChange = { isEnabledState.value = it }
+                )
             }
         },
         confirmButton = {
@@ -651,28 +508,14 @@ fun ScheduleDialog(
     
     // Time picker dialog
     if (showTimePicker.value) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showTimePicker.value = false },
-            title = { Text("Select Time") },
-            text = {
-                TimePicker(state = timePickerState)
+        TimePickerDialog(
+            onDismiss = { showTimePicker.value = false },
+            onConfirm = { 
+                hourState.intValue = timePickerState.hour
+                minuteState.intValue = timePickerState.minute
+                showTimePicker.value = false
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        hourState.intValue = timePickerState.hour
-                        minuteState.intValue = timePickerState.minute
-                        showTimePicker.value = false
-                    }
-                ) {
-                    Text("OK")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTimePicker.value = false }) {
-                    Text("Cancel")
-                }
-            }
+            timePickerState = timePickerState
         )
     }
     
@@ -681,11 +524,7 @@ fun ScheduleDialog(
         DatePickerDialog(
             onDismissRequest = { showDatePicker.value = false },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDatePicker.value = false
-                    }
-                ) {
+                TextButton(onClick = { showDatePicker.value = false }) {
                     Text("OK")
                 }
             },
@@ -698,6 +537,122 @@ fun ScheduleDialog(
             DatePicker(state = datePickerState)
         }
     }
+}
+
+@Composable
+fun LabeledButton(
+    label: String,
+    buttonText: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label)
+        Spacer(modifier = Modifier.width(8.dp))
+        Button(onClick = onClick) {
+            Text(buttonText)
+        }
+    }
+}
+
+@Composable
+fun LabeledSwitch(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label)
+        Spacer(modifier = Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
+    }
+}
+
+@Composable
+fun LabeledCheckbox(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label)
+        Spacer(modifier = Modifier.width(8.dp))
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
+    }
+}
+
+@Composable
+fun WeekdaySelectionRow(
+    days: List<String>,
+    bitValues: List<Int>,
+    daysOfWeekState: androidx.compose.runtime.MutableIntState,
+    showLastCheckbox: Boolean = true
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        days.forEachIndexed { index, day ->
+            if (index == days.lastIndex && !showLastCheckbox) {
+                Box(modifier = Modifier.width(48.dp))
+            } else if (day.isNotEmpty()) {
+                DayOfWeekCheckbox(
+                    day = day,
+                    isChecked = (daysOfWeekState.intValue and bitValues[index]) != 0,
+                    onCheckedChange = { checked ->
+                        daysOfWeekState.intValue = if (checked) {
+                            daysOfWeekState.intValue or bitValues[index]
+                        } else {
+                            daysOfWeekState.intValue and bitValues[index].inv()
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TimePickerDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    timePickerState: TimePickerState
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Time") },
+        text = { TimePicker(state = timePickerState) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("OK") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -719,15 +674,12 @@ fun DayOfWeekCheckbox(
 
 // Helper function to convert bit field to readable days string
 fun getDaysOfWeekString(daysOfWeek: Int): String {
-    val days = mutableListOf<String>()
+    val dayPairs = listOf(
+        1 to "Sun", 2 to "Mon", 4 to "Tue", 8 to "Wed", 
+        16 to "Thu", 32 to "Fri", 64 to "Sat"
+    )
     
-    if ((daysOfWeek and 1) != 0) days.add("Sun")
-    if ((daysOfWeek and 2) != 0) days.add("Mon")
-    if ((daysOfWeek and 4) != 0) days.add("Tue")
-    if ((daysOfWeek and 8) != 0) days.add("Wed")
-    if ((daysOfWeek and 16) != 0) days.add("Thu")
-    if ((daysOfWeek and 32) != 0) days.add("Fri")
-    if ((daysOfWeek and 64) != 0) days.add("Sat")
+    val days = dayPairs.filter { (bit, _) -> (daysOfWeek and bit) != 0 }.map { it.second }
     
     return when {
         days.isEmpty() -> "No days selected"
@@ -735,5 +687,56 @@ fun getDaysOfWeekString(daysOfWeek: Int): String {
         days.size == 5 && !days.contains("Sat") && !days.contains("Sun") -> "Weekdays"
         days.size == 2 && days.contains("Sat") && days.contains("Sun") -> "Weekends"
         else -> days.joinToString(", ")
+    }
+}
+@Composable
+fun ScheduleListItem(
+    schedule: WorkoutSchedule,
+    index: Int,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                // Display schedule info
+                Text(
+                    text = if (schedule.label.isNotEmpty()) schedule.label else "Schedule ${index + 1}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Text(
+                    text = if (schedule.specificDate != null) {
+                        "On ${schedule.specificDate} at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
+                    } else {
+                        val days = getDaysOfWeekString(schedule.daysOfWeek)
+                        "Every $days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            
+            // Edit button
+            IconButton(onClick = onEdit) {
+                Text("Edit")
+            }
+            
+            // Delete button
+            IconButton(onClick = onDelete) {
+                Text("Delete")
+            }
+        }
     }
 }
