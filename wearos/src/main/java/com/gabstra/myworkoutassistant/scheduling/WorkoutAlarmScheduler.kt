@@ -1,10 +1,12 @@
 package com.gabstra.myworkoutassistant.scheduling
 
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import com.gabstra.myworkoutassistant.receivers.WorkoutAlarmReceiver
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -12,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import android.util.Log
 
 class WorkoutAlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -72,7 +75,6 @@ class WorkoutAlarmScheduler(private val context: Context) {
             }
         }
 
-        // Check for permission to schedule exact alarms on Android S (API 31) and above
         if (alarmManager.canScheduleExactAlarms()) {
             alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
@@ -80,9 +82,6 @@ class WorkoutAlarmScheduler(private val context: Context) {
                 pendingIntent
             )
         } else {
-            // Fall back to inexact alarm or request permission
-            requestExactAlarmPermission()
-
             // Meanwhile, use setAndAllowWhileIdle as a fallback
             alarmManager.setAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
@@ -92,16 +91,7 @@ class WorkoutAlarmScheduler(private val context: Context) {
         }
     }
 
-    private fun requestExactAlarmPermission() {
-        val intent = Intent().apply {
-            action = android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
-        }
-        // This intent needs to be started from an Activity context
-        // You may need to pass this intent back to your activity to start it
-        // Or use a broadcast to notify your activity to show a permission dialog
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-    }
+
 
     fun cancelSchedule(schedule: WorkoutSchedule) {
         val intent = Intent(context, WorkoutAlarmReceiver::class.java)
