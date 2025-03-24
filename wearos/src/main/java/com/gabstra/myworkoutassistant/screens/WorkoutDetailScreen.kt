@@ -11,16 +11,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -38,17 +36,18 @@ import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import kotlinx.coroutines.delay
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @Composable
-fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, hrViewModel : SensorDataViewModel) {
-    val workout by viewModel.selectedWorkout
+fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel, hrViewModel : SensorDataViewModel) {
+    val workout by appViewModel.selectedWorkout
     val context = LocalContext.current
 
     var showDeleteDialog by remember { mutableStateOf(false) }
 
-    val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
-    val hasExercises by viewModel.hasExercises.collectAsState()
+    val hasWorkoutRecord by appViewModel.hasWorkoutRecord.collectAsState()
+    val hasExercises by appViewModel.hasExercises.collectAsState()
 
     val basePermissions = listOf(
         Manifest.permission.BODY_SENSORS,
@@ -63,8 +62,8 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         if (result.all { it.value }) {
-            if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-            viewModel.startWorkout()
+            if(hasWorkoutRecord) appViewModel.deleteWorkoutRecord()
+            appViewModel.startWorkout()
             navController.navigate(Screen.Workout.route)
         }
     }
@@ -73,9 +72,17 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         if (result.all { it.value }) {
-            viewModel.resumeWorkoutFromRecord()
+            appViewModel.resumeWorkoutFromRecord()
             navController.navigate(Screen.Workout.route)
         }
+    }
+
+
+    LaunchedEffect(appViewModel.executeStartWorkout) {
+        if(!appViewModel.executeStartWorkout.value) return@LaunchedEffect
+        delay(1000)
+        permissionLauncherStart.launch(basePermissions.toTypedArray())
+        appViewModel.consumeStartWorkout()
     }
 
     var marqueeEnabled by remember { mutableStateOf(false) }
@@ -148,7 +155,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
                     text = "Send history",
                     onClick = {
                         VibrateGentle(context)
-                        viewModel.sendWorkoutHistoryToPhone() { success ->
+                        appViewModel.sendWorkoutHistoryToPhone() { success ->
                             if (success)
                                 Toast.makeText(
                                     context,
@@ -173,7 +180,7 @@ fun WorkoutDetailScreen(navController: NavController, viewModel: AppViewModel, h
         message = "Do you want to proceed?",
         handleYesClick = {
             VibrateGentle(context)
-            viewModel.deleteWorkoutRecord()
+            appViewModel.deleteWorkoutRecord()
             showDeleteDialog = false
         },
         handleNoClick = {

@@ -71,23 +71,38 @@ class WorkoutAlarmScheduler(private val context: Context) {
                 }
             }
         }
-        
-        // Schedule the alarm
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+
+        // Check for permission to schedule exact alarms on Android S (API 31) and above
+        if (alarmManager.canScheduleExactAlarms()) {
             alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 calendar.timeInMillis,
                 pendingIntent
             )
         } else {
-            alarmManager.setExact(
+            // Fall back to inexact alarm or request permission
+            requestExactAlarmPermission()
+
+            // Meanwhile, use setAndAllowWhileIdle as a fallback
+            alarmManager.setAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 calendar.timeInMillis,
                 pendingIntent
             )
         }
     }
-    
+
+    private fun requestExactAlarmPermission() {
+        val intent = Intent().apply {
+            action = android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
+        }
+        // This intent needs to be started from an Activity context
+        // You may need to pass this intent back to your activity to start it
+        // Or use a broadcast to notify your activity to show a permission dialog
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+
     fun cancelSchedule(schedule: WorkoutSchedule) {
         val intent = Intent(context, WorkoutAlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(

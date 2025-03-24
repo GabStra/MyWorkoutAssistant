@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
+import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.screens.LoadingScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
@@ -63,7 +64,9 @@ import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 class MyReceiver(
     private val navController: NavController,
@@ -111,6 +114,9 @@ class MyReceiver(
                         //Disabling this for now
                         //appViewModel.RefreshAndGoToLastState()
                     }
+
+                    val scheduler = WorkoutAlarmScheduler(this)
+                    scheduler.rescheduleAllWorkouts()
                 }
 
                 if (appBackupProgress != null) {
@@ -131,33 +137,6 @@ class MyReceiver(
             }catch (exception: Exception) {
                 Log.e("MyReceiver", "Error processing data", exception)
                 throw exception
-            }
-        }
-    }
-    
-    private fun handleNotificationIntent(intent: Intent) {
-        if (intent.hasExtra("WORKOUT_ID")) {
-            val workoutId = intent.getStringExtra("WORKOUT_ID")
-            val scheduleId = intent.getStringExtra("SCHEDULE_ID")
-            val autoStart = intent.getBooleanExtra("AUTO_START", false)
-            
-            if (workoutId != null) {
-                val uuid = UUID.fromString(workoutId)
-                
-                // Find the workout
-                val workoutStoreRepository = WorkoutStoreRepository(this.filesDir)
-                val workoutStore = workoutStoreRepository.getWorkoutStore()
-                val workout = workoutStore.workouts.find { it.id == uuid }
-                
-                if (workout != null) {
-                    // Set the workout in the view model
-                    appViewModel.selectWorkout(workout)
-                    
-                    // If auto-start is true, start the workout immediately
-                    if (autoStart) {
-                        appViewModel.startWorkout()
-                    }
-                }
             }
         }
     }
@@ -210,6 +189,33 @@ class MainActivity : ComponentActivity() {
         setIntent(intent) // Update the old intent
         handleNotificationIntent(intent)
     }
+
+    private fun handleNotificationIntent(intent: Intent) {
+        if (intent.hasExtra("WORKOUT_ID")) {
+            val workoutId = intent.getStringExtra("WORKOUT_ID")
+            val scheduleId = intent.getStringExtra("SCHEDULE_ID")
+            val autoStart = intent.getBooleanExtra("AUTO_START", false)
+
+            if (workoutId != null) {
+                val uuid = UUID.fromString(workoutId)
+
+                // Find the workout
+                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                val workout = workoutStore.workouts.find { it.id == uuid }
+
+                if (workout != null) {
+                    // Set the workout in the view model
+                    appViewModel.triggerStartWorkout()
+                    appViewModel.setWorkout(workout)
+
+                    // If auto-start is true, start the workout immediately
+                    if (autoStart) {
+                        appViewModel.startWorkout()
+                    }
+                }
+            }
+        }
+    }
 }
 
 
@@ -243,6 +249,12 @@ fun WearApp(
 
             appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
             initialized = true
+        }
+
+        LaunchedEffect(initialized,appViewModel.executeStartWorkout) {
+            if(!initialized || !appViewModel.executeStartWorkout.value) return@LaunchedEffect
+            delay(1000)
+            navController.navigate(Screen.WorkoutDetail.route)
         }
 
         onNavControllerAvailable(navController)

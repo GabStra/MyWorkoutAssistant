@@ -56,7 +56,7 @@ class WorkoutNotificationHelper(private val context: Context) {
         
         // Build the notification
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_workout)
             .setContentTitle(workout.name)
             .setContentText(if (schedule.label.isNotEmpty()) schedule.label else "Time for your workout!")
             .setPriority(NotificationCompat.PRIORITY_HIGH)

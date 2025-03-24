@@ -67,7 +67,6 @@ fun WorkoutScreen(
 
     val triggerMobileNotification by viewModel.enableWorkoutNotificationFlow.collectAsState()
 
-
     LaunchedEffect(triggerMobileNotification){
         if(triggerMobileNotification==null) return@LaunchedEffect
         showWorkoutInProgressNotification(context)

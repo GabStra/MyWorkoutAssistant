@@ -62,6 +62,23 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 
+private class ResettableLazy<T>(private val initializer: () -> T) {
+    private var _value: T? = null
+    private var initialized = false
+
+    fun getValue(): T {
+        if (!initialized) {
+            _value = initializer()
+            initialized = true
+        }
+        return _value!!
+    }
+
+    fun reset() {
+        _value = null
+        initialized = false
+    }
+}
 
 open class WorkoutViewModel : ViewModel() {
     var workoutStore by mutableStateOf(
@@ -224,11 +241,14 @@ open class WorkoutViewModel : ViewModel() {
 
     var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
 
-    open val exercisesById: Map<UUID, Exercise> by lazy {
-        // Create a list of all exercises in their original order
+    var exercisesById: Map<UUID, Exercise> = emptyMap()
+    var supersetIdByExerciseId: Map<UUID, UUID> = emptyMap()
+    var exercisesBySupersetId: Map<UUID, List<Exercise>> = emptyMap()
+
+    fun initializeExercisesMaps(selectedWorkout: Workout) {
         val orderedExercises = mutableListOf<Exercise>()
 
-        selectedWorkout.value.workoutComponents.forEach { component ->
+        selectedWorkout.workoutComponents.forEach { component ->
             when (component) {
                 is Exercise -> orderedExercises.add(component)
                 is Superset -> orderedExercises.addAll(component.exercises)
@@ -236,18 +256,16 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
-        // Convert to map while preserving order
-        orderedExercises.associateBy { it.id }
-    }
+        exercisesById = orderedExercises.associateBy { it.id }
 
-    val supersetIdByExerciseId by lazy {
-        selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { superset ->
-            superset.exercises.map { it.id to superset.id}
-        }.toMap()
-    }
+        supersetIdByExerciseId = selectedWorkout.workoutComponents
+            .filterIsInstance<Superset>()
+            .flatMap { superset ->
+                superset.exercises.map { it.id to superset.id }
+            }.toMap()
 
-    val exercisesBySupersetId by lazy {
-        selectedWorkout.value.workoutComponents.filterIsInstance<Superset>()
+        exercisesBySupersetId = selectedWorkout.workoutComponents
+            .filterIsInstance<Superset>()
             .associate { superset ->
                 superset.id to superset.exercises
             }
@@ -298,6 +316,8 @@ open class WorkoutViewModel : ViewModel() {
 
         _hasExercises.value =
             selectedWorkout.value.workoutComponents.filter { it.enabled }.isNotEmpty()
+
+        initializeExercisesMaps(workout)
 
         getWorkoutRecord(workout)
     }

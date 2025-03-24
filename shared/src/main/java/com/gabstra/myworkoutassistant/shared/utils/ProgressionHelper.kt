@@ -154,11 +154,11 @@ object VolumeDistributionHelper {
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
-            val progressScore = 1 + abs(currentWorkload - previousSessionWorkload)
+            //val progressScore = 1 + abs(currentWorkload - previousSessionWorkload)
             val workloadDifferenceScore = 1 + (combo.maxOf { it.workload } - combo.minOf { it.workload })
             val workloadPerSetScore = 1 + abs(currentAverageWorkloadPerSet - previousAverageWorkloadPerSet)
 
-            return progressScore * workloadPerSetScore * workloadDifferenceScore * 10.0.pow(combo.size)
+            return currentWorkload * workloadDifferenceScore * 10.0.pow(combo.size)
         }
 
         suspend fun exploreCombinations(

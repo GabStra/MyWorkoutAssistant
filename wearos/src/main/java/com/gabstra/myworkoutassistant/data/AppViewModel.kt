@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
@@ -24,7 +23,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 open class AppViewModel : WorkoutViewModel() {
     private var dataClient: DataClient? = null
@@ -33,15 +31,21 @@ open class AppViewModel : WorkoutViewModel() {
     val isPhoneConnectedAndHasApp: Boolean
         get() = phoneNode != null
 
-
-    fun selectWorkout(workout: Workout) {
-        // Set the selected workout and navigate to workout detail screen
-        selectedWorkout = workout
-        currentScreen = Screen.WorkoutDetail
-    }
-    
     fun initDataClient(client: DataClient) {
         dataClient = client
+    }
+
+    private val _executeStartWorkout = mutableStateOf(false)
+    val executeStartWorkout: State<Boolean> = _executeStartWorkout
+
+    // Method to trigger the action
+    fun triggerStartWorkout() {
+        _executeStartWorkout.value = true
+    }
+
+    // Method to reset/consume the action
+    fun consumeStartWorkout() {
+        _executeStartWorkout.value = false
     }
 
     private val _hrDisplayMode = mutableStateOf(0)
@@ -59,13 +63,6 @@ open class AppViewModel : WorkoutViewModel() {
     // Property to store confidence level in calculation
     private val _heartRateChangeConfidence = MutableStateFlow(0.0f)
     val heartRateChangeConfidence: StateFlow<Float> = _heartRateChangeConfidence
-
-    // Method to update the heart rate change rate
-    fun updateHeartRateChangeRate(rate: Float?, confidence: Float = 0.5f) {
-        _heartRateChangeRate.value = rate
-        _heartRateChangeConfidence.value = confidence
-    }
-
 
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 3

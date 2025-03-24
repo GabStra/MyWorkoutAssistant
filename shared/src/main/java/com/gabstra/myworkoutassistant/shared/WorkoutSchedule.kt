@@ -18,9 +18,6 @@ data class WorkoutSchedule(
     val isEnabled: Boolean = true,
     // Store days as a bit field: bit 0 = Sunday, bit 1 = Monday, etc.
     val daysOfWeek: Int = 0,
-    // For one-time schedules
-    @TypeConverters(DateTypeConverter::class)
     val specificDate: LocalDate? = null,
-    // Track if this is a one-time schedule that has been executed
     val hasExecuted: Boolean = false
 )

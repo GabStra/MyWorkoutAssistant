@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
@@ -65,7 +66,7 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        try{
+        try {
             dataEvents.forEach { dataEvent ->
                 val uri = dataEvent.dataItem.uri
                 when (uri.path) {
@@ -79,26 +80,28 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                         sendBroadcast(intent)
                     }
+
                     BACKUP_CHUNK_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
 
-                        val isStart = dataMap.getBoolean("isStart",false)
+                        val isStart = dataMap.getBoolean("isStart", false)
                         val isLastChunk = dataMap.getBoolean("isLastChunk", false)
 
-                        if(dataMap.containsKey("chunksCount")){
-                            expectedChunks = dataMap.getInt("chunksCount",0)
+                        if (dataMap.containsKey("chunksCount")) {
+                            expectedChunks = dataMap.getInt("chunksCount", 0)
                         }
                         val backupChunk = dataMap.getByteArray("chunk")
 
                         val transactionId = dataMap.getString("transactionId")
 
-                        if(currentTransactionId != null && currentTransactionId != transactionId){
+                        if (currentTransactionId != null && currentTransactionId != transactionId) {
                             return
                         }
-                        
-                        val shouldStop = (isStart && hasStartedSync) || (backupChunk != null && !hasStartedSync)
 
-                        if(!ignoreUntilStartOrEnd && shouldStop) {
+                        val shouldStop =
+                            (isStart && hasStartedSync) || (backupChunk != null && !hasStartedSync)
+
+                        if (!ignoreUntilStartOrEnd && shouldStop) {
                             handler.removeCallbacks(timeoutRunnable)
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
@@ -110,7 +113,7 @@ class DataLayerListenerService : WearableListenerService() {
                             return
                         }
 
-                        if(isStart) {
+                        if (isStart) {
                             backupChunks.clear()
 
                             val intent = Intent(INTENT_ID).apply {
@@ -138,7 +141,7 @@ class DataLayerListenerService : WearableListenerService() {
                         }
 
                         if (isLastChunk) {
-                            if(!ignoreUntilStartOrEnd){
+                            if (!ignoreUntilStartOrEnd) {
                                 handler.removeCallbacks(timeoutRunnable)
                                 val backupData = combineChunks(backupChunks)
                                 val jsonBackup = decompressToString(backupData)
@@ -147,19 +150,33 @@ class DataLayerListenerService : WearableListenerService() {
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
                                 runBlocking {
-                                    val insertWorkoutHistoriesJob = scope.launch(start = CoroutineStart.LAZY) {
-                                        workoutHistoryDao.insertAllWithVersionCheck(*appBackup.WorkoutHistories.toTypedArray())
-                                    }
+                                    val insertWorkoutHistoriesJob =
+                                        scope.launch(start = CoroutineStart.LAZY) {
+                                            workoutHistoryDao.insertAllWithVersionCheck(*appBackup.WorkoutHistories.toTypedArray())
+                                        }
 
-                                    val insertSetHistoriesJob = scope.launch(start = CoroutineStart.LAZY) {
-                                        setHistoryDao.insertAllWithVersionCheck(*appBackup.SetHistories.toTypedArray())
-                                    }
+                                    val insertSetHistoriesJob =
+                                        scope.launch(start = CoroutineStart.LAZY) {
+                                            setHistoryDao.insertAllWithVersionCheck(*appBackup.SetHistories.toTypedArray())
+                                        }
 
-                                    val insertExerciseInfosJob = scope.launch(start = CoroutineStart.LAZY) {
-                                        exerciseInfoDao.insertAllWithVersionCheck(*appBackup.ExerciseInfos.toTypedArray())
-                                    }
+                                    val insertExerciseInfosJob =
+                                        scope.launch(start = CoroutineStart.LAZY) {
+                                            exerciseInfoDao.insertAllWithVersionCheck(*appBackup.ExerciseInfos.toTypedArray())
+                                        }
 
-                                    joinAll(insertWorkoutHistoriesJob, insertSetHistoriesJob, insertExerciseInfosJob)
+                                    val insertWorkoutSchedulesJob =
+                                        scope.launch(start = CoroutineStart.LAZY) {
+                                            workoutScheduleDao.deleteAll()
+                                            workoutScheduleDao.insertAll(*appBackup.WorkoutSchedules.toTypedArray())
+                                        }
+
+                                    joinAll(
+                                        insertWorkoutHistoriesJob,
+                                        insertSetHistoriesJob,
+                                        insertExerciseInfosJob,
+                                        insertWorkoutSchedulesJob
+                                    )
 
                                     val intent = Intent(INTENT_ID).apply {
                                         putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
@@ -184,30 +201,8 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
                 }
-                
-                // Check if this is workout schedule data
-                if (dataMap.containsKey("WORKOUT_SCHEDULES")) {
-                    scope.launch {
-                        handleWorkoutScheduleData(dataMap)
-                    }
-                }
             }
-            
-    private suspend fun handleWorkoutScheduleData(dataMap: com.google.android.gms.wearable.DataMap) {
-        val schedulesJson = dataMap.getString("WORKOUT_SCHEDULES")
-        if (schedulesJson != null) {
-            val type = object : com.google.gson.reflect.TypeToken<List<com.gabstra.myworkoutassistant.shared.WorkoutSchedule>>() {}.type
-            val schedules = com.google.gson.Gson().fromJson<List<com.gabstra.myworkoutassistant.shared.WorkoutSchedule>>(schedulesJson, type)
-            
-            // Replace all schedules with the new ones
-            workoutScheduleDao.deleteAll()
-            workoutScheduleDao.insertAll(schedules)
-            
-            // Reschedule all alarms
-            val scheduler = com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler(this)
-            scheduler.rescheduleAllWorkouts()
-        }
-        }catch (exception: Exception) {
+        } catch (exception: Exception) {
             exception.printStackTrace()
             Log.e("DataLayerListenerService", "Error processing data", exception)
             val intent = Intent(INTENT_ID).apply {
@@ -218,7 +213,7 @@ class DataLayerListenerService : WearableListenerService() {
             expectedChunks = 0
             hasStartedSync = false
             ignoreUntilStartOrEnd = true
-        }finally {
+        } finally {
             super.onDataChanged(dataEvents)
         }
     }
