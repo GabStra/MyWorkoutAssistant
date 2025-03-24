@@ -40,33 +40,3 @@ interface WorkoutScheduleDao {
     @Query("UPDATE workout_schedule SET hasExecuted = 1 WHERE id = :id")
     suspend fun markAsExecuted(id: UUID)
 }
-package com.gabstra.myworkoutassistant.shared
-
-import androidx.room.Dao
-import androidx.room.Delete
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
-import androidx.room.Query
-import androidx.room.Update
-import java.util.UUID
-
-@Dao
-interface WorkoutScheduleDao {
-    @Query("SELECT * FROM workout_schedule")
-    suspend fun getAllSchedules(): List<WorkoutSchedule>
-    
-    @Query("SELECT * FROM workout_schedule WHERE workoutId = :workoutId")
-    suspend fun getScheduleByWorkoutId(workoutId: UUID): WorkoutSchedule?
-    
-    @Query("SELECT * FROM workout_schedule WHERE isEnabled = 1")
-    suspend fun getEnabledSchedules(): List<WorkoutSchedule>
-    
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(schedule: WorkoutSchedule)
-    
-    @Update
-    suspend fun update(schedule: WorkoutSchedule)
-    
-    @Delete
-    suspend fun delete(schedule: WorkoutSchedule)
-}
