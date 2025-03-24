@@ -23,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun workoutRecordDao(): WorkoutRecordDao
     abstract fun exerciseInfoDao(): ExerciseInfoDao
     abstract fun workoutScheduleDao(): WorkoutScheduleDao
+    abstract fun workoutScheduleDao(): WorkoutScheduleDao
 
     companion object {
         @Volatile
