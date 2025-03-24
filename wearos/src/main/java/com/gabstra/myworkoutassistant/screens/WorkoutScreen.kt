@@ -113,7 +113,7 @@ fun WorkoutScreen(
             }
             cancelWorkoutInProgressNotification(context)
             navController.navigate(Screen.WorkoutSelection.route){
-                popUpTo(Screen.WorkoutSelection.route) {
+                popUpTo(0) {
                     inclusive = true
                 }
             }

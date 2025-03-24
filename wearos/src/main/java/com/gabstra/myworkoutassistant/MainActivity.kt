@@ -7,11 +7,14 @@
 package com.gabstra.myworkoutassistant
 
 import android.app.Activity
+import android.app.AlarmManager
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -143,6 +146,8 @@ class MyReceiver(
 }
 
 class MainActivity : ComponentActivity() {
+    private val alarmManager by lazy { getSystemService(Context.ALARM_SERVICE) as AlarmManager }
+
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -173,9 +178,14 @@ class MainActivity : ComponentActivity() {
         val wearDataLayerRegistry  = WearDataLayerRegistry.fromContext(this, lifecycleScope)
         appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
 
-        lateinit var myReceiver: MyReceiver
+        val scheduler = WorkoutAlarmScheduler(this)
+        scheduler.rescheduleAllWorkouts()
 
         setContent {
+            if(!alarmManager.canScheduleExactAlarms()){
+                requestExactAlarmPermission()
+            }
+
             WearApp(dataClient, appViewModel, heartRateChangeViewModel, appHelper, workoutStoreRepository){ navController ->
                 myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
                 val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
@@ -192,6 +202,8 @@ class MainActivity : ComponentActivity() {
 
     private fun handleNotificationIntent(intent: Intent) {
         if (intent.hasExtra("WORKOUT_ID")) {
+            Log.d("WorkoutAlarmScheduler", "Received intent to start workout")
+
             val workoutId = intent.getStringExtra("WORKOUT_ID")
             val scheduleId = intent.getStringExtra("SCHEDULE_ID")
             val autoStart = intent.getBooleanExtra("AUTO_START", false)
@@ -201,20 +213,26 @@ class MainActivity : ComponentActivity() {
 
                 // Find the workout
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
-                val workout = workoutStore.workouts.find { it.id == uuid }
+                val workout = workoutStore.workouts.find { it.globalId == uuid }
 
                 if (workout != null) {
+                    Log.d("WorkoutAlarmScheduler", "Starting workout ${workout.name}")
                     // Set the workout in the view model
-                    appViewModel.triggerStartWorkout()
-                    appViewModel.setWorkout(workout)
-
-                    // If auto-start is true, start the workout immediately
-                    if (autoStart) {
-                        appViewModel.startWorkout()
-                    }
+                    appViewModel.triggerStartWorkout(uuid)
                 }
             }
         }
+    }
+
+    private fun requestExactAlarmPermission() {
+        val intent = Intent().apply {
+            action = android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
+        }
+        // This intent needs to be started from an Activity context
+        // You may need to pass this intent back to your activity to start it
+        // Or use a broadcast to notify your activity to show a permission dialog
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        this.startActivity(intent)
     }
 }
 
@@ -234,10 +252,13 @@ fun WearApp(
         val localContext = LocalContext.current
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
+        appViewModel.initWorkoutScheduleDao(localContext)
         appViewModel.initWorkoutRecordDao(localContext)
         appViewModel.initExerciseInfoDao(localContext)
 
         var initialized by remember { mutableStateOf(false) }
+
+        var startDestination by remember { mutableStateOf(Screen.WorkoutSelection.route) }
 
         LaunchedEffect(Unit) {
             try{
@@ -251,11 +272,14 @@ fun WearApp(
             initialized = true
         }
 
-        LaunchedEffect(initialized,appViewModel.executeStartWorkout) {
-            if(!initialized || !appViewModel.executeStartWorkout.value) return@LaunchedEffect
-            delay(1000)
-            navController.navigate(Screen.WorkoutDetail.route)
+        LaunchedEffect(appViewModel.executeStartWorkout) {
+            if(appViewModel.executeStartWorkout.value == null) return@LaunchedEffect
+            val workoutStore = workoutStoreRepository.getWorkoutStore()
+            val workout = workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }!!
+            appViewModel.setWorkout(workout)
+            startDestination = Screen.WorkoutDetail.route
         }
+
 
         onNavControllerAvailable(navController)
 
@@ -282,7 +306,7 @@ fun WearApp(
         }else{
             NavHost(
                 navController,
-                startDestination = Screen.WorkoutSelection.route,
+                startDestination = startDestination,
                 enterTransition = {
                     fadeIn(animationSpec = tween(500))
                 },
@@ -325,5 +349,7 @@ fun WearApp(
                 }
             }
         }
+
+
     }
 }

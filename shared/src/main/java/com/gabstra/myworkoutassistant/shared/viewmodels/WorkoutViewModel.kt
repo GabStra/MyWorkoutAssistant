@@ -24,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSets
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
+import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
@@ -162,6 +163,11 @@ open class WorkoutViewModel : ViewModel() {
         workoutHistoryDao = db.workoutHistoryDao()
     }
 
+    fun initWorkoutScheduleDao(context: Context) {
+        val db = AppDatabase.getDatabase(context)
+        workoutScheduleDao = db.workoutScheduleDao()
+    }
+
     fun initWorkoutRecordDao(context: Context) {
         val db = AppDatabase.getDatabase(context)
         workoutRecordDao = db.workoutRecordDao()
@@ -194,6 +200,8 @@ open class WorkoutViewModel : ViewModel() {
     protected lateinit var workoutRecordDao: WorkoutRecordDao
 
     protected lateinit var workoutHistoryDao: WorkoutHistoryDao
+
+    protected lateinit var workoutScheduleDao: WorkoutScheduleDao
 
     protected lateinit var setHistoryDao: SetHistoryDao
 
@@ -318,7 +326,6 @@ open class WorkoutViewModel : ViewModel() {
             selectedWorkout.value.workoutComponents.filter { it.enabled }.isNotEmpty()
 
         initializeExercisesMaps(workout)
-
         getWorkoutRecord(workout)
     }
 
@@ -330,6 +337,7 @@ open class WorkoutViewModel : ViewModel() {
                 setHistoryDao.deleteAll()
                 exerciseInfoDao.deleteAll()
                 workoutRecordDao.deleteAll()
+                workoutScheduleDao.deleteAll()
             }
         }
     }

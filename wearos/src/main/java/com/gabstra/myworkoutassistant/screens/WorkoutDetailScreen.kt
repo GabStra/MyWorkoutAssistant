@@ -65,6 +65,7 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
             if(hasWorkoutRecord) appViewModel.deleteWorkoutRecord()
             appViewModel.startWorkout()
             navController.navigate(Screen.Workout.route)
+            appViewModel.consumeStartWorkout()
         }
     }
 
@@ -77,16 +78,13 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
         }
     }
 
-
     LaunchedEffect(appViewModel.executeStartWorkout) {
-        if(!appViewModel.executeStartWorkout.value) return@LaunchedEffect
-        delay(1000)
-        permissionLauncherStart.launch(basePermissions.toTypedArray())
-        appViewModel.consumeStartWorkout()
+        if(appViewModel.executeStartWorkout.value!=null) {
+            permissionLauncherStart.launch(basePermissions.toTypedArray())
+        }
     }
 
     var marqueeEnabled by remember { mutableStateOf(false) }
-
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
 
     Scaffold(

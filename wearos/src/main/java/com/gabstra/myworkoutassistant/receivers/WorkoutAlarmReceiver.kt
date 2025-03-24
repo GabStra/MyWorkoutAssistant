@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.receivers
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
@@ -16,8 +17,7 @@ import java.util.UUID
 class WorkoutAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val scheduleId = intent.getStringExtra("SCHEDULE_ID") ?: return
-        
-        // Launch a coroutine to handle the database operations
+
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
             val database = AppDatabase.getDatabase(context)
@@ -28,7 +28,7 @@ class WorkoutAlarmReceiver : BroadcastReceiver() {
                 // Get the workout
                 val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
-                val workout = workoutStore.workouts.find { it.id == workoutSchedule.workoutId }
+                val workout = workoutStore.workouts.find { it.globalId == workoutSchedule.workoutId }
                 
                 if (workout != null) {
                     // Show notification

@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -44,12 +46,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -87,9 +86,11 @@ fun WorkoutForm(
     val expanded = remember { mutableStateOf(false) }
     
     // Schedule states
-    val schedules = remember { mutableStateOf(existingSchedules.toMutableList()) }
+    val schedules = remember(existingSchedules) { mutableStateOf(existingSchedules.toMutableList()) }
     val showScheduleDialog = remember { mutableStateOf(false) }
     val currentEditingSchedule = remember { mutableStateOf<WorkoutSchedule?>(null) }
+
+    val newGlobalId = remember { UUID.randomUUID() }
 
     Scaffold(
         topBar = {
@@ -129,7 +130,8 @@ fun WorkoutForm(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(it),
+                .padding(it)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.Center,
         ) {
             // Workout name field
@@ -293,7 +295,7 @@ fun WorkoutForm(
                     }
 
                     val newWorkout = Workout(
-                        id  = workout?.id ?: java.util.UUID.randomUUID(),
+                        id  = workout?.id ?: UUID.randomUUID(),
                         name = workoutNameState.value.trim(),
                         description = workoutDescriptionState.value.trim(),
                         workoutComponents = workout?.workoutComponents ?: listOf(),
@@ -301,7 +303,7 @@ fun WorkoutForm(
                         creationDate = LocalDate.now(),
                         order =  workout?.order ?: 0,
                         timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
-                        globalId = workout?.globalId ?: java.util.UUID.randomUUID(),
+                        globalId = workout?.globalId ?: newGlobalId,
                         type = selectedWorkoutType.value
                     )
 
@@ -334,7 +336,7 @@ fun WorkoutForm(
     if (showScheduleDialog.value) {
         ScheduleDialog(
             schedule = currentEditingSchedule.value,
-            workoutId = workout?.id ?: UUID.randomUUID(),
+            workoutId = workout?.globalId ?: newGlobalId,
             onDismiss = { showScheduleDialog.value = false },
             onSave = { newSchedule ->
                 val updatedSchedules = schedules.value.toMutableList()

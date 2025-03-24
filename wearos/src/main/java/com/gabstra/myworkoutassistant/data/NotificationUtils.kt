@@ -10,7 +10,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.gabstra.myworkoutassistant.R
 
-@SuppressLint("MissingPermission")
 fun showWorkoutInProgressNotification(context: Context) {
     val channelId = "workout_progress_channel"
     val notificationId = 1

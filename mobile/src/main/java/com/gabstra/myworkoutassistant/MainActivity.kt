@@ -30,6 +30,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -52,7 +55,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
-import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -167,13 +169,11 @@ class MainActivity : ComponentActivity() {
 
 }
 
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @OptIn(FlowPreview::class)
 @Composable
 fun MyWorkoutAssistantNavHost(
     dataClient: DataClient,
     appViewModel: AppViewModel,
-    heartRateChangeViewModel : HeartRateChangeViewModel,
     workoutStoreRepository: WorkoutStoreRepository,
     db: AppDatabase,
     healthConnectClient: HealthConnectClient
@@ -203,6 +203,8 @@ fun MyWorkoutAssistantNavHost(
 
     val setHistoryDao = db.setHistoryDao()
     val workoutHistoryDao = db.workoutHistoryDao()
+    val workoutScheduleDao = db.workoutScheduleDao()
+
     val exerciseInfoDao = db.exerciseInfoDao()
 
     val updateMobileFlow = appViewModel.updateMobileFlow
@@ -245,6 +247,7 @@ fun MyWorkoutAssistantNavHost(
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
                                 exerciseInfoDao.deleteAll()
+                                workoutScheduleDao.deleteAll()
 
                                 val validWorkoutHistories = appBackup.WorkoutHistories.filter { workoutHistory ->
                                     allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
@@ -324,7 +327,8 @@ fun MyWorkoutAssistantNavHost(
                                 }
 
                                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-                                val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos)
+                                val workoutSchedules = workoutScheduleDao.getAllSchedules()
+                                val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules)
                                 sendAppBackup(dataClient, appBackup)
                             }
                             Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
@@ -354,24 +358,15 @@ fun MyWorkoutAssistantNavHost(
                                     validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
                                 }
                                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+                                val workoutSchedules = workoutScheduleDao.getAllSchedules()
 
-
-                                val workoutSchedules = listOf(
-                                    WorkoutSchedule(
-                                        workoutId = allowedWorkouts.first().id,
-                                        label = "Daily Workout",
-                                        hour = 15,                       // Set to your preferred hour (24-hour format)
-                                        minute = 30,                    // Set to your preferred minute
-                                        isEnabled = true,
-                                        // Set bits for all days (Sunday through Saturday)
-                                        // 0b1111111 = 127 in decimal
-                                        daysOfWeek = 127,
-                                        specificDate = null,            // No specific date since it's recurring
-                                        hasExecuted = false
-                                    )
+                                val appBackup = AppBackup(
+                                    appViewModel.workoutStore.copy(workouts = allowedWorkouts),
+                                    validWorkoutHistories,
+                                    setHistories,
+                                    exerciseInfos,
+                                    workoutSchedules
                                 )
-
-                                val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = allowedWorkouts), validWorkoutHistories, setHistories,exerciseInfos)
                                 val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                                 writeJsonToDownloadsFolder(context, filename, jsonString)
                                 Toast.makeText(
@@ -402,6 +397,7 @@ fun MyWorkoutAssistantNavHost(
                         scope.launch {
                             workoutHistoryDao.deleteAll()
                             setHistoryDao.deleteAll()
+
                             Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
 
                             appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
@@ -452,8 +448,13 @@ fun MyWorkoutAssistantNavHost(
 
             is ScreenData.NewWorkout -> {
                 WorkoutForm(
-                    onWorkoutUpsert = { newWorkout ->
+                    onWorkoutUpsert = { newWorkout, schedules ->
                         appViewModel.addNewWorkout(newWorkout)
+
+                        scope.launch {
+                            workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                        }
+
                         appViewModel.goBack()
                     },
                     onCancel = { appViewModel.goBack() },
@@ -464,15 +465,27 @@ fun MyWorkoutAssistantNavHost(
                 val screenData = currentScreen as ScreenData.EditWorkout
                 val workouts by appViewModel.workoutsFlow.collectAsState()
                 val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+                val existingSchedules by produceState<List<WorkoutSchedule>>(
+                    initialValue = emptyList(),
+                    key1 = selectedWorkout.globalId
+                ) {
+                    value = workoutScheduleDao.getSchedulesByWorkoutId(selectedWorkout.globalId)
+                }
+
                 WorkoutForm(
-                    onWorkoutUpsert = { updatedWorkout ->
+                    onWorkoutUpsert = { updatedWorkout, schedules ->
                         appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
+                        scope.launch {
+                            workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                        }
                         appViewModel.goBack()
                     },
                     onCancel = {
                         appViewModel.goBack()
                     },
-                    workout = selectedWorkout
+                    workout = selectedWorkout,
+                    existingSchedules = existingSchedules
                 )
             }
 

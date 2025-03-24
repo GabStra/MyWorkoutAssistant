@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 open class AppViewModel : WorkoutViewModel() {
     private var dataClient: DataClient? = null
@@ -35,17 +36,17 @@ open class AppViewModel : WorkoutViewModel() {
         dataClient = client
     }
 
-    private val _executeStartWorkout = mutableStateOf(false)
-    val executeStartWorkout: State<Boolean> = _executeStartWorkout
+    private val _executeStartWorkout = mutableStateOf<UUID?>(null)
+    val executeStartWorkout: State<UUID?> = _executeStartWorkout
 
     // Method to trigger the action
-    fun triggerStartWorkout() {
-        _executeStartWorkout.value = true
+    fun triggerStartWorkout(globalId: UUID) {
+        _executeStartWorkout.value = globalId
     }
 
     // Method to reset/consume the action
     fun consumeStartWorkout() {
-        _executeStartWorkout.value = false
+        _executeStartWorkout.value = null
     }
 
     private val _hrDisplayMode = mutableStateOf(0)

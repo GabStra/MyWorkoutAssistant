@@ -24,18 +24,17 @@ class WorkoutNotificationHelper(private val context: Context) {
     }
     
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Workout Reminders"
-            val descriptionText = "Notifications for scheduled workouts"
-            val importance = NotificationManager.IMPORTANCE_HIGH
-            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
-                description = descriptionText
-                enableVibration(true)
-            }
-            
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+        val name = "Workout Reminders"
+        val descriptionText = "Notifications for scheduled workouts"
+        val importance = NotificationManager.IMPORTANCE_HIGH
+        val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+            description = descriptionText
+            enableVibration(true)
+            enableLights(true)
         }
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(channel)
     }
     
     fun buildWorkoutNotification(schedule: WorkoutSchedule, workout: Workout): Notification {
@@ -48,8 +47,8 @@ class WorkoutNotificationHelper(private val context: Context) {
         }
         
         val pendingIntent = PendingIntent.getActivity(
-            context, 
-            schedule.id.hashCode(), 
+            context,
+            schedule.id.hashCode(),
             intent, 
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -59,10 +58,9 @@ class WorkoutNotificationHelper(private val context: Context) {
             .setSmallIcon(R.drawable.ic_workout)
             .setContentTitle(workout.name)
             .setContentText(if (schedule.label.isNotEmpty()) schedule.label else "Time for your workout!")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         
         // For Wear OS, we can use a full-screen intent
@@ -74,6 +72,7 @@ class WorkoutNotificationHelper(private val context: Context) {
     fun showNotification(schedule: WorkoutSchedule, workout: Workout) {
         val notification = buildWorkoutNotification(schedule, workout)
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
         notificationManager.notify(schedule.id.hashCode(), notification)
     }
 }
