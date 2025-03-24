@@ -20,7 +20,7 @@ interface WorkoutScheduleDao {
     suspend fun insert(schedule: WorkoutSchedule)
     
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(schedules: List<WorkoutSchedule>)
+    suspend fun insertAll(vararg schedules: WorkoutSchedule)
     
     @Update
     suspend fun update(schedule: WorkoutSchedule)

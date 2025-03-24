@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.screens.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
+import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -352,6 +353,22 @@ fun MyWorkoutAssistantNavHost(
                                     validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
                                 }
                                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+
+
+                                val workoutSchedules = listOf(
+                                    WorkoutSchedule(
+                                        workoutId = allowedWorkouts.first().id,
+                                        label = "Daily Workout",
+                                        hour = 15,                       // Set to your preferred hour (24-hour format)
+                                        minute = 30,                    // Set to your preferred minute
+                                        isEnabled = true,
+                                        // Set bits for all days (Sunday through Saturday)
+                                        // 0b1111111 = 127 in decimal
+                                        daysOfWeek = 127,
+                                        specificDate = null,            // No specific date since it's recurring
+                                        hasExecuted = false
+                                    )
+                                )
 
                                 val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = allowedWorkouts), validWorkoutHistories, setHistories,exerciseInfos)
                                 val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
