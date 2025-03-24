@@ -43,12 +43,15 @@ class DataLayerListenerService : WearableListenerService() {
 
     private var currentTransactionId : String? = null
 
+    private lateinit var workoutScheduleDao: WorkoutScheduleDao
+
     override fun onCreate() {
         super.onCreate()
         val db = AppDatabase.getDatabase(this)
         setHistoryDao = db.setHistoryDao()
         workoutHistoryDao = db.workoutHistoryDao()
         exerciseInfoDao = db.exerciseInfoDao()
+        workoutScheduleDao = db.workoutScheduleDao()
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -181,7 +184,29 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
                 }
+                
+                // Check if this is workout schedule data
+                if (dataMap.containsKey("WORKOUT_SCHEDULES")) {
+                    scope.launch {
+                        handleWorkoutScheduleData(dataMap)
+                    }
+                }
             }
+            
+    private suspend fun handleWorkoutScheduleData(dataMap: com.google.android.gms.wearable.DataMap) {
+        val schedulesJson = dataMap.getString("WORKOUT_SCHEDULES")
+        if (schedulesJson != null) {
+            val type = object : com.google.gson.reflect.TypeToken<List<com.gabstra.myworkoutassistant.shared.WorkoutSchedule>>() {}.type
+            val schedules = com.google.gson.Gson().fromJson<List<com.gabstra.myworkoutassistant.shared.WorkoutSchedule>>(schedulesJson, type)
+            
+            // Replace all schedules with the new ones
+            workoutScheduleDao.deleteAll()
+            workoutScheduleDao.insertAll(schedules)
+            
+            // Reschedule all alarms
+            val scheduler = com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler(this)
+            scheduler.rescheduleAllWorkouts()
+        }
         }catch (exception: Exception) {
             exception.printStackTrace()
             Log.e("DataLayerListenerService", "Error processing data", exception)

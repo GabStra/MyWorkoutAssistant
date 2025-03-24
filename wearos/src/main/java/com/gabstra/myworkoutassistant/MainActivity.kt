@@ -134,6 +134,33 @@ class MyReceiver(
             }
         }
     }
+    
+    private fun handleNotificationIntent(intent: Intent) {
+        if (intent.hasExtra("WORKOUT_ID")) {
+            val workoutId = intent.getStringExtra("WORKOUT_ID")
+            val scheduleId = intent.getStringExtra("SCHEDULE_ID")
+            val autoStart = intent.getBooleanExtra("AUTO_START", false)
+            
+            if (workoutId != null) {
+                val uuid = UUID.fromString(workoutId)
+                
+                // Find the workout
+                val workoutStoreRepository = WorkoutStoreRepository(this.filesDir)
+                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                val workout = workoutStore.workouts.find { it.id == uuid }
+                
+                if (workout != null) {
+                    // Set the workout in the view model
+                    appViewModel.selectWorkout(workout)
+                    
+                    // If auto-start is true, start the workout immediately
+                    if (autoStart) {
+                        appViewModel.startWorkout()
+                    }
+                }
+            }
+        }
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -160,6 +187,8 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalHorologistApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Handle intent if app was launched from notification
+        handleNotificationIntent(intent)
         super.onCreate(savedInstanceState)
         appViewModel.initDataClient(dataClient)
         val wearDataLayerRegistry  = WearDataLayerRegistry.fromContext(this, lifecycleScope)
@@ -179,6 +208,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update the old intent
+        handleNotificationIntent(intent)
     }
 }
 

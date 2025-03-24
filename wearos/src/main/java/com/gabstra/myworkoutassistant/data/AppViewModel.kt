@@ -34,6 +34,12 @@ open class AppViewModel : WorkoutViewModel() {
         get() = phoneNode != null
 
 
+    fun selectWorkout(workout: Workout) {
+        // Set the selected workout and navigate to workout detail screen
+        selectedWorkout = workout
+        currentScreen = Screen.WorkoutDetail
+    }
+    
     fun initDataClient(client: DataClient) {
         dataClient = client
     }
