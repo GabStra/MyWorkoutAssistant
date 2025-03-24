@@ -16,6 +16,9 @@ interface WorkoutScheduleDao {
     @Query("SELECT * FROM workout_schedule WHERE id = :id")
     suspend fun getScheduleById(id: UUID): WorkoutSchedule?
     
+    @Query("SELECT * FROM workout_schedule WHERE workoutId = :workoutId")
+    suspend fun getSchedulesByWorkoutId(workoutId: UUID): List<WorkoutSchedule>
+    
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(schedule: WorkoutSchedule)
     
