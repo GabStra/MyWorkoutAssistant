@@ -79,9 +79,7 @@ fun WorkoutCompleteScreen(
         if(!dataSent) return@LaunchedEffect
         delay(1000)
         navController.navigate(Screen.WorkoutSelection.route){
-            popUpTo(Screen.WorkoutSelection.route) {
-                inclusive = true
-            }
+            popUpTo(0) { inclusive = true }
         }
     }
 
