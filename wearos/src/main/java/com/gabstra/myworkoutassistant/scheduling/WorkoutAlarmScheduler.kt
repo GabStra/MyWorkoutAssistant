@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.scheduling
 
+import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -20,6 +21,7 @@ class WorkoutAlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
     private val scope = CoroutineScope(Dispatchers.IO)
     
+    @SuppressLint("ScheduleExactAlarm")
     fun scheduleWorkout(schedule: WorkoutSchedule) {
         val intent = Intent(context, WorkoutAlarmReceiver::class.java).apply {
             putExtra("SCHEDULE_ID", schedule.id.toString())
@@ -75,23 +77,12 @@ class WorkoutAlarmScheduler(private val context: Context) {
             }
         }
 
-        if (alarmManager.canScheduleExactAlarms()) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                calendar.timeInMillis,
-                pendingIntent
-            )
-        } else {
-            // Meanwhile, use setAndAllowWhileIdle as a fallback
-            alarmManager.setAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                calendar.timeInMillis,
-                pendingIntent
-            )
-        }
+        val alarmClockInfo = AlarmManager.AlarmClockInfo(
+            calendar.timeInMillis,
+            pendingIntent
+        )
+        alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
     }
-
-
 
     fun cancelSchedule(schedule: WorkoutSchedule) {
         val intent = Intent(context, WorkoutAlarmReceiver::class.java)

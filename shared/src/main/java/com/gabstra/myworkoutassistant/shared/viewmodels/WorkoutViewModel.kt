@@ -692,7 +692,7 @@ open class WorkoutViewModel : ViewModel() {
                 availableWeights,
                 maxLoadPercent,
                 repsRange,
-                minSets = 3,
+                minSets = minOf(3, exerciseSets.size),
                 maxSets = exerciseSets.size,
                 workloadProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
             )

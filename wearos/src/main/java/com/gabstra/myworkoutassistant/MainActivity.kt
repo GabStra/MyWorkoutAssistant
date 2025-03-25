@@ -13,6 +13,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
@@ -70,6 +71,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import androidx.core.net.toUri
 
 class MyReceiver(
     private val navController: NavController,
@@ -178,19 +180,21 @@ class MainActivity : ComponentActivity() {
         val wearDataLayerRegistry  = WearDataLayerRegistry.fromContext(this, lifecycleScope)
         appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
 
-        val scheduler = WorkoutAlarmScheduler(this)
-        scheduler.rescheduleAllWorkouts()
+        if(!alarmManager.canScheduleExactAlarms()){
+            requestExactAlarmPermission()
+        }else{
+            val scheduler = WorkoutAlarmScheduler(this)
+            scheduler.rescheduleAllWorkouts()
+        }
 
         setContent {
-            if(!alarmManager.canScheduleExactAlarms()){
-                requestExactAlarmPermission()
-            }
-
-            WearApp(dataClient, appViewModel, heartRateChangeViewModel, appHelper, workoutStoreRepository){ navController ->
-                myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
-                val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
-                registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
-            }
+            WearApp(dataClient, appViewModel, heartRateChangeViewModel, appHelper, workoutStoreRepository){
+                navController ->
+                    if(::myReceiver.isInitialized) return@WearApp
+                    myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
+                    val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
+                    registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
+                }
         }
     }
 
@@ -211,13 +215,10 @@ class MainActivity : ComponentActivity() {
             if (workoutId != null) {
                 val uuid = UUID.fromString(workoutId)
 
-                // Find the workout
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                 val workout = workoutStore.workouts.find { it.globalId == uuid }
 
                 if (workout != null) {
-                    Log.d("WorkoutAlarmScheduler", "Starting workout ${workout.name}")
-                    // Set the workout in the view model
                     appViewModel.triggerStartWorkout(uuid)
                 }
             }
@@ -226,12 +227,9 @@ class MainActivity : ComponentActivity() {
 
     private fun requestExactAlarmPermission() {
         val intent = Intent().apply {
-            action = android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
+            action = Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
+            data = "package:${packageName}".toUri()
         }
-        // This intent needs to be started from an Activity context
-        // You may need to pass this intent back to your activity to start it
-        // Or use a broadcast to notify your activity to show a permission dialog
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         this.startActivity(intent)
     }
 }
@@ -270,6 +268,8 @@ fun WearApp(
 
             appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
             initialized = true
+
+            onNavControllerAvailable(navController)
         }
 
         LaunchedEffect(appViewModel.executeStartWorkout) {
@@ -279,9 +279,6 @@ fun WearApp(
             appViewModel.setWorkout(workout)
             startDestination = Screen.WorkoutDetail.route
         }
-
-
-        onNavControllerAvailable(navController)
 
         val hrViewModel: SensorDataViewModel =  viewModel(
             factory = SensorDataViewModelFactory(
