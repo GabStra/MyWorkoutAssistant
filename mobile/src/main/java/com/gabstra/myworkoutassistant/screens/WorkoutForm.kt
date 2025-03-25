@@ -952,15 +952,15 @@ fun BatchScheduleDialog(
 
                     // First row: Sun-Wed
                     WeekdaySelectionRow(
-                        days = listOf("Sun", "Mon", "Tue", "Wed"),
-                        bitValues = listOf(1, 2, 4, 8),
+                        days = listOf( "Mon", "Tue", "Wed","Thu"),
+                        bitValues = listOf(2, 4, 8, 16),
                         daysOfWeekState = daysOfWeekState
                     )
 
                     // Second row: Thu-Sat + empty space
                     WeekdaySelectionRow(
-                        days = listOf("Thu", "Fri", "Sat", ""),
-                        bitValues = listOf(16, 32, 64, 0),
+                        days = listOf("Fri", "Sat", "Sun"),
+                        bitValues = listOf(32, 64, 1),
                         daysOfWeekState = daysOfWeekState,
                         showLastCheckbox = false
                     )

@@ -299,6 +299,32 @@ fun MyWorkoutAssistantNavHost(
         Toast.makeText(context, "Error showing workout detail", Toast.LENGTH_SHORT).show()
     }
 
+    val syncWithWatch = {
+        scope.launch {
+            withContext(Dispatchers.IO){
+                val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+
+                val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
+                    workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
+                }
+
+                val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
+                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && workoutHistory.isDone
+                }
+
+                val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
+                    validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
+                }
+
+                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+                val workoutSchedules = workoutScheduleDao.getAllSchedules()
+                val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules)
+                sendAppBackup(dataClient, appBackup)
+            }
+            Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     AnimatedContent(
         targetState = appViewModel.currentScreenData,
         transitionSpec = {
@@ -313,29 +339,7 @@ fun MyWorkoutAssistantNavHost(
                     setHistoryDao,
                     healthConnectClient,
                     onSyncClick = {
-                        scope.launch {
-                            withContext(Dispatchers.IO){
-                                val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-
-                                val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
-                                    workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
-                                }
-
-                                val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
-                                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && workoutHistory.isDone
-                                }
-
-                                val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
-                                    validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
-                                }
-
-                                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-                                val workoutSchedules = workoutScheduleDao.getAllSchedules()
-                                val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules)
-                                sendAppBackup(dataClient, appBackup)
-                            }
-                            Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
-                        }
+                        syncWithWatch()
                     },
                     onOpenSettingsClick = {
                         appViewModel.setScreenData(ScreenData.Settings())
@@ -438,7 +442,7 @@ fun MyWorkoutAssistantNavHost(
                     onSave = { newWorkoutStore ->
                         appViewModel.updateWorkoutStore(newWorkoutStore)
                         workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
-                        sendWorkoutStore(dataClient, appViewModel.workoutStore)
+                        syncWithWatch()
                         Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
                         appViewModel.goBack()
                     },
