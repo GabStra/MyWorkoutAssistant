@@ -1,6 +1,11 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.basicMarquee
@@ -15,6 +20,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +34,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListAnchorType
@@ -39,6 +50,7 @@ import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import  androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material.Button
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -142,6 +154,60 @@ fun MissingAgeSettingMessage(
 
 }
 
+@Composable
+fun rememberNotificationPermissionState(): State<Boolean> {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Create mutable state to track permission status
+    val permissionState = remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    // Update permission state when lifecycle resumes
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionState.value = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    return permissionState
+}
+
+@Composable
+fun NotificationPermissionHandler(content: @Composable (Boolean, () -> Unit) -> Unit) {
+    val context = LocalContext.current
+    val permissionState = rememberNotificationPermissionState().value
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        // This will be called when the user responds to the permission dialog
+        // The state will be updated on the next lifecycle resume
+    }
+
+    val requestPermission = {
+        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    content(permissionState, requestPermission)
+}
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutSelectionScreen(
@@ -164,30 +230,40 @@ fun WorkoutSelectionScreen(
     var showClearData by remember { mutableStateOf(false) }
 
     val titleComposable = @Composable {
-        Text(
-            modifier = Modifier
-                .padding(0.dp, 0.dp, 0.dp, 10.dp)
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        VibrateHard(context)
-                        Toast
-                            .makeText(
-                                context,
-                                "Build version code: $versionName",
-                                Toast.LENGTH_LONG
-                            )
-                            .show()
-                    },
-                    onDoubleClick = {
-                        showClearData = true
-                        VibrateTwice(context)
-                    }
-                ),
-            text = "My Workout Assistant",
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.caption1,
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally){
+            Text(
+                modifier = Modifier
+                    .padding(0.dp, 0.dp, 0.dp, 10.dp)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = {
+                            VibrateHard(context)
+                            Toast
+                                .makeText(
+                                    context,
+                                    "Build version code: $versionName",
+                                    Toast.LENGTH_LONG
+                                )
+                                .show()
+                        },
+                        onDoubleClick = {
+                            showClearData = true
+                            VibrateTwice(context)
+                        }
+                    ),
+                text = "My Workout Assistant",
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.caption1,
+            )
+            NotificationPermissionHandler { hasPermission, requestPermission ->
+                if (!hasPermission) {
+                    ButtonWithText(text = "Request notification permission", onClick = {
+                        VibrateGentle(context)
+                        requestPermission()
+                    })
+                }
+            }
+        }
     }
 
     if (userAge == currentYear) {

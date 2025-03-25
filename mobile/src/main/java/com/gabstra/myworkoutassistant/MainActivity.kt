@@ -265,6 +265,9 @@ fun MyWorkoutAssistantNavHost(
 
                                 val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
                                 exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
+
+                                val validWorkoutSchedules = appBackup.WorkoutSchedules.filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
+                                workoutScheduleDao.insertAll(*validWorkoutSchedules.toTypedArray())
                             }
 
                             // Wait for the delete and insert operations to complete

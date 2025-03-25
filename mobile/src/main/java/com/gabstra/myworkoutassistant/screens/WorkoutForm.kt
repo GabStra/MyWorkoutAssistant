@@ -37,6 +37,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -91,6 +93,8 @@ fun WorkoutForm(
     val currentEditingSchedule = remember { mutableStateOf<WorkoutSchedule?>(null) }
 
     val newGlobalId = remember { UUID.randomUUID() }
+
+    val showBatchScheduleDialog = remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -270,18 +274,31 @@ fun WorkoutForm(
                             }
                         }
                     }
-                    
-                    // Add schedule button
-                    Button(
-                        onClick = {
-                            currentEditingSchedule.value = null
-                            showScheduleDialog.value = true
-                        },
+
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Add Schedule")
+                        Button(
+                            onClick = {
+                                currentEditingSchedule.value = null
+                                showScheduleDialog.value = true
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Add Single")
+                        }
+
+                        Button(
+                            onClick = {
+                                showBatchScheduleDialog.value = true
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Add Multiple")
+                        }
                     }
                 }
             }
@@ -354,6 +371,21 @@ fun WorkoutForm(
                 
                 schedules.value = updatedSchedules
                 showScheduleDialog.value = false
+            }
+        )
+    }
+
+    // Add this right after the single ScheduleDialog
+// Batch Schedule Dialog
+    if (showBatchScheduleDialog.value) {
+        BatchScheduleDialog(
+            workoutId = workout?.globalId ?: newGlobalId,
+            onDismiss = { showBatchScheduleDialog.value = false },
+            onSave = { newSchedules ->
+                val updatedSchedules = schedules.value.toMutableList()
+                updatedSchedules.addAll(newSchedules)
+                schedules.value = updatedSchedules
+                showBatchScheduleDialog.value = false
             }
         )
     }
@@ -691,6 +723,7 @@ fun getDaysOfWeekString(daysOfWeek: Int): String {
         else -> days.joinToString(", ")
     }
 }
+
 @Composable
 fun ScheduleListItem(
     schedule: WorkoutSchedule,
@@ -709,7 +742,8 @@ fun ScheduleListItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 // Display schedule info
@@ -729,16 +763,313 @@ fun ScheduleListItem(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            
-            // Edit button
-            IconButton(onClick = onEdit) {
-                Text("Edit")
+
+            Text(modifier = Modifier.clickable {
+                onEdit()
+            },
+                text= "Edit"
+            )
+
+            Text(modifier = Modifier.clickable {
+                onDelete()
+            },
+                text= "Delete"
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BatchScheduleDialog(
+    workoutId: UUID,
+    onDismiss: () -> Unit,
+    onSave: (List<WorkoutSchedule>) -> Unit
+) {
+    // Tab selection
+    val selectedTabIndex = remember { mutableStateOf(0) }
+
+    // Shared state
+    val labelPrefixState = remember { mutableStateOf("Schedule") }
+    val isEnabledState = remember { mutableStateOf(true) }
+
+    // Time range state
+    val startHourState = remember { mutableIntStateOf(8) }
+    val startMinuteState = remember { mutableIntStateOf(0) }
+    val endHourState = remember { mutableIntStateOf(16) }
+    val endMinuteState = remember { mutableIntStateOf(0) }
+
+    // Time picker states
+    val currentPickerMode = remember { mutableStateOf("") } // "start" or "end"
+    val showTimePicker = remember { mutableStateOf(false) }
+    val timePickerState = rememberTimePickerState(initialHour = 8, initialMinute = 0)
+
+    // Interval state
+    val intervalHoursState = remember { mutableStateOf("0") }
+    val intervalMinutesState = remember { mutableStateOf("30") }
+
+    // Days of week state (bit field)
+    val daysOfWeekState = remember { mutableIntStateOf(0) }
+
+    // Date picker for one-time schedules
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
+    val showDatePicker = remember { mutableStateOf(false) }
+
+    // Dialog content
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Multiple Schedules") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            ) {
+                // Tab selection for schedule type
+                TabRow(selectedTabIndex = selectedTabIndex.value) {
+                    Tab(
+                        selected = selectedTabIndex.value == 0,
+                        onClick = { selectedTabIndex.value = 0 },
+                        text = { Text("Recurring") }
+                    )
+                    Tab(
+                        selected = selectedTabIndex.value == 1,
+                        onClick = { selectedTabIndex.value = 1 },
+                        text = { Text("One-time") }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Label prefix field
+                OutlinedTextField(
+                    value = labelPrefixState.value,
+                    onValueChange = { labelPrefixState.value = it },
+                    label = { Text("Label Prefix") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                )
+
+                // Time range selection
+                Text(
+                    text = "Time Range:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("From:")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = {
+                        timePickerState.hour = startHourState.intValue
+                        timePickerState.minute = startMinuteState.intValue
+                        currentPickerMode.value = "start"
+                        showTimePicker.value = true
+                    }) {
+                        Text("${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}")
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Text("To:")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = {
+                        timePickerState.hour = endHourState.intValue
+                        timePickerState.minute = endMinuteState.intValue
+                        currentPickerMode.value = "end"
+                        showTimePicker.value = true
+                    }) {
+                        Text("${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Interval selection
+                Text(
+                    text = "Interval:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Hours
+                    OutlinedTextField(
+                        value = intervalHoursState.value,
+                        onValueChange = { value ->
+                            if (value.isEmpty() || value.all { it.isDigit() }) {
+                                intervalHoursState.value = value
+                            }
+                        },
+                        label = { Text("Hours") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Minutes
+                    OutlinedTextField(
+                        value = intervalMinutesState.value,
+                        onValueChange = { value ->
+                            if (value.isEmpty() || value.all { it.isDigit() }) {
+                                intervalMinutesState.value = value
+                            }
+                        },
+                        label = { Text("Minutes") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Specific date or days of week based on tab
+                if (selectedTabIndex.value == 1) {
+                    // Specific date for one-time schedules
+                    val date = datePickerState.selectedDateMillis?.let {
+                        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+                    } ?: LocalDate.now()
+
+                    LabeledButton(
+                        label = "Date:",
+                        buttonText = date.toString(),
+                        onClick = { showDatePicker.value = true }
+                    )
+                } else {
+                    // Days of week for recurring schedules
+                    Text(
+                        text = "Days of week:",
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    // First row: Sun-Wed
+                    WeekdaySelectionRow(
+                        days = listOf("Sun", "Mon", "Tue", "Wed"),
+                        bitValues = listOf(1, 2, 4, 8),
+                        daysOfWeekState = daysOfWeekState
+                    )
+
+                    // Second row: Thu-Sat + empty space
+                    WeekdaySelectionRow(
+                        days = listOf("Thu", "Fri", "Sat", ""),
+                        bitValues = listOf(16, 32, 64, 0),
+                        daysOfWeekState = daysOfWeekState,
+                        showLastCheckbox = false
+                    )
+                }
+
+                // Enabled toggle
+                LabeledCheckbox(
+                    label = "Enable all schedules:",
+                    checked = isEnabledState.value,
+                    onCheckedChange = { isEnabledState.value = it }
+                )
             }
-            
-            // Delete button
-            IconButton(onClick = onDelete) {
-                Text("Delete")
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val schedules = mutableListOf<WorkoutSchedule>()
+
+                    // Calculate total minutes in each time
+                    val startTotalMinutes = startHourState.intValue * 60 + startMinuteState.intValue
+                    val endTotalMinutes = endHourState.intValue * 60 + endMinuteState.intValue
+
+                    // Calculate interval in minutes
+                    val intervalMinutes = (intervalHoursState.value.toIntOrNull() ?: 0) * 60 +
+                            (intervalMinutesState.value.toIntOrNull() ?: 30)
+
+                    // Ensure interval is at least 1 minute
+                    val safeInterval = if (intervalMinutes < 1) 1 else intervalMinutes
+
+                    var currentTime = startTotalMinutes
+                    var count = 1
+
+                    while (currentTime <= endTotalMinutes) {
+                        val hour = currentTime / 60
+                        val minute = currentTime % 60
+
+                        val specificDate = if (selectedTabIndex.value == 1) {
+                            datePickerState.selectedDateMillis?.let {
+                                Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+                            }
+                        } else {
+                            null
+                        }
+
+                        val newSchedule = WorkoutSchedule(
+                            id = UUID.randomUUID(),
+                            workoutId = workoutId,
+                            label = "${labelPrefixState.value} $count",
+                            hour = hour,
+                            minute = minute,
+                            isEnabled = isEnabledState.value,
+                            daysOfWeek = if (selectedTabIndex.value == 0) daysOfWeekState.intValue else 0,
+                            specificDate = specificDate,
+                            hasExecuted = false
+                        )
+
+                        schedules.add(newSchedule)
+
+                        currentTime += safeInterval
+                        count++
+                    }
+
+                    onSave(schedules)
+                }
+            ) {
+                Text("Save")
             }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+
+    // Time picker dialog
+    if (showTimePicker.value) {
+        TimePickerDialog(
+            onDismiss = { showTimePicker.value = false },
+            onConfirm = {
+                if (currentPickerMode.value == "start") {
+                    startHourState.intValue = timePickerState.hour
+                    startMinuteState.intValue = timePickerState.minute
+                } else if (currentPickerMode.value == "end") {
+                    endHourState.intValue = timePickerState.hour
+                    endMinuteState.intValue = timePickerState.minute
+                }
+                showTimePicker.value = false
+            },
+            timePickerState = timePickerState
+        )
+    }
+
+    // Date picker dialog
+    if (showDatePicker.value) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker.value = false },
+            confirmButton = {
+                TextButton(onClick = { showDatePicker.value = false }) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker.value = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
 }
