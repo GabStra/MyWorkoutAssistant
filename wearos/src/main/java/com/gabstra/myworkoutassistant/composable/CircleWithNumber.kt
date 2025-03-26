@@ -1,3 +1,4 @@
+import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.composable.ScalableText
 
 
+@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun CircleWithNumber(
     baseAngleInDegrees: Float,
