@@ -330,6 +330,10 @@ fun EnduranceSetScreen (
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ){
                 exerciseTitleComposable()
+                if (extraInfo != null) {
+                    //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                    extraInfo(state)
+                }
                 Box(
                     modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.Center
@@ -339,10 +343,6 @@ fun EnduranceSetScreen (
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         SetScreen(customModifier = Modifier.weight(1f))
-                        if (extraInfo != null) {
-                            //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                            extraInfo(state)
-                        }
                     }
                 }
             }

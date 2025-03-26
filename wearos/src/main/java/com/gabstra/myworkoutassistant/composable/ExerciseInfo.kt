@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -216,8 +217,8 @@ fun ExerciseSetsViewer(
     customColor: Color? = null,
     overrideSetIndex: Int? = null
 ){
-    val exerciseSets = exercise.sets.filter { it !is RestSet }
-    val setIndex = overrideSetIndex ?: exerciseSets.indexOf(currentSet)
+    val exerciseSetIds = exercise.sets.filter { it !is RestSet }.map { it.id }
+    val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
 
     val exerciseSetStates = remember(exercise.id) { viewModel.getAllExerciseWorkoutStates(exercise.id).filter { it.set !is RestSet } }
 
@@ -276,7 +277,7 @@ fun ExerciseSetsViewer(
                         scrollBarTrackColor = Color.DarkGray
                     )
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
                     SetTableRow(
@@ -328,7 +329,7 @@ fun ExerciseSetsViewer(
                         scrollBarTrackColor = Color.DarkGray
                     )
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
                     SetTableRow(
@@ -393,8 +394,8 @@ fun ExerciseInfo(
         }, label = ""
     ) { updatedStateSet ->
         val exercise = remember(updatedStateSet) { viewModel.exercisesById[updatedStateSet.exerciseId]!! }
-        val exerciseSets = remember(exercise) {  exercise.sets.filter { it !is RestSet } }
-        val setIndex = remember(updatedStateSet) { exerciseSets.indexOf(updatedStateSet.set)  }
+        val exerciseSetIds = remember(exercise) { exercise.sets.filter { it !is RestSet }.map { it.id } }
+        val setIndex = remember(updatedStateSet.set.id) { exerciseSetIds.indexOf(updatedStateSet.set.id)  }
 
         val updatedExerciseOrSupersetId = remember (exercise){ if(viewModel.supersetIdByExerciseId.containsKey(exercise.id)) viewModel.supersetIdByExerciseId[exercise.id] else exercise.id }
         val updatedExerciseOrSupersetIndex = remember(exerciseOrSupersetIds,updatedExerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId) }
@@ -409,6 +410,7 @@ fun ExerciseInfo(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 15.dp)
                     .clickable { marqueeEnabled = !marqueeEnabled }
                     .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                 contentAlignment = Alignment.Center
@@ -420,45 +422,6 @@ fun ExerciseInfo(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-            }
-
-            Row(
-                modifier = Modifier.height(85.dp).then(if(nextStateSets.size > 1) Modifier else Modifier.padding(horizontal = 25.dp)),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                if (nextStateSets.size > 1) {
-                    Icon(
-                        modifier = Modifier.fillMaxHeight().clickable(enabled = !isNavigationLocked && currentIndex > 0) {
-                            currentIndex--
-                            selectedStateSet = nextStateSets[currentIndex]
-                            isNavigationLocked = true
-                        },
-                        imageVector = Icons.Filled.ArrowBack,
-                        contentDescription = "Previous",
-                        tint = if (currentIndex > 0) Color.White else MyColors.MediumGray
-                    )
-                }
-
-                ExerciseSetsViewer(
-                    modifier =  Modifier.fillMaxHeight().weight(1f),
-                    viewModel = viewModel,
-                    exercise = exercise,
-                    currentSet = updatedStateSet.set
-                )
-
-                if (nextStateSets.size > 1) {
-                    Icon(
-                        modifier = Modifier.fillMaxHeight().clickable(enabled = !isNavigationLocked && currentIndex < nextStateSets.size - 1) {
-                            currentIndex++
-                            selectedStateSet = nextStateSets[currentIndex]
-                            isNavigationLocked = true
-                        },
-                        imageVector = Icons.Filled.ArrowForward,
-                        contentDescription = "Next",
-                        tint = if (currentIndex < nextStateSets.size - 1) Color.White else MyColors.MediumGray
-                    )
-                }
             }
 
             Row(
@@ -483,10 +446,49 @@ fun ExerciseInfo(
                     }
                     Text(
                         textAlign = TextAlign.Center,
-                        text =  "${setIndex + 1}/${exerciseSets.size}",
+                        text =  "${setIndex + 1}/${exerciseSetIds.size}",
                         style = style
                     )
                 }
+            }
+
+            Row(
+                modifier = Modifier.height(80.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .clickable(enabled = !isNavigationLocked && currentIndex > 0) {
+                            currentIndex--
+                            selectedStateSet = nextStateSets[currentIndex]
+                            isNavigationLocked = true
+                        }.then( if (nextStateSets.size > 1) Modifier else Modifier.alpha(0f)),
+                    imageVector = Icons.Filled.ArrowBack,
+                    contentDescription = "Previous",
+                    tint = if (currentIndex > 0) Color.White else MyColors.MediumGray
+                )
+
+                ExerciseSetsViewer(
+                    modifier =  Modifier.fillMaxHeight().weight(1f),
+                    viewModel = viewModel,
+                    exercise = exercise,
+                    currentSet = updatedStateSet.set
+                )
+
+                Icon(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .clickable(enabled = !isNavigationLocked && currentIndex < nextStateSets.size - 1) {
+                            currentIndex++
+                            selectedStateSet = nextStateSets[currentIndex]
+                            isNavigationLocked = true
+                        }.then( if (nextStateSets.size > 1) Modifier else Modifier.alpha(0f)),
+                    imageVector = Icons.Filled.ArrowForward,
+                    contentDescription = "Next",
+                    tint = if (currentIndex < nextStateSets.size - 1) Color.White else MyColors.MediumGray
+                )
             }
         }
     }

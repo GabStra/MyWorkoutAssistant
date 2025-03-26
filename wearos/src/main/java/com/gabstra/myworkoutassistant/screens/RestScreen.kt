@@ -1,5 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -24,15 +29,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composable.ExerciseInfo
+import com.gabstra.myworkoutassistant.composable.PageButtons
+import com.gabstra.myworkoutassistant.composable.PageExerciseDetail
+import com.gabstra.myworkoutassistant.composable.PageExercises
+import com.gabstra.myworkoutassistant.composable.PageNotes
+import com.gabstra.myworkoutassistant.composable.PagePlates
 import com.gabstra.myworkoutassistant.composable.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -42,6 +55,7 @@ import com.gabstra.myworkoutassistant.data.VibrateTwice
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -54,6 +68,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 import java.util.UUID
+import kotlin.collections.get
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -79,17 +94,43 @@ fun RestScreen(
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
     val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
 
+    val exercise = remember(state.nextStateSets.first().exerciseId) {
+        viewModel.exercisesById[state.nextStateSets.first().exerciseId]!!
+    }
+    val equipment = remember(exercise) {
+        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
+    }
+
+    val showPlatesPage = remember(exercise, equipment) {
+        equipment != null
+                && equipment.type == EquipmentType.BARBELL
+                && equipment.name.contains("barbell", ignoreCase = true)
+                && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+    }
+
+    val pageTypes = remember(showPlatesPage) {
+        mutableListOf<PageType>().apply {
+            if (showPlatesPage) add(PageType.PLATES)
+            add(PageType.EXERCISE_DETAIL)
+            add(PageType.EXERCISES)
+            add(PageType.BUTTONS)
+        }
+    }
+
+    val exerciseDetailPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.EXERCISE_DETAIL).coerceAtLeast(0)
+    }
+
     val pagerState = rememberPagerState(
-        initialPage = 0,
+        initialPage = exerciseDetailPageIndex,
         pageCount = {
-            2
-        })
+            pageTypes.size
+        }
+    )
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
     }
-
-    val progress = currentSeconds.toFloat() / currentSetData.startTimer.toFloat()
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
@@ -159,7 +200,7 @@ fun RestScreen(
         delay(500)
         startTimerJob()
 
-        if(state.startTime == null){
+        if (state.startTime == null) {
             state.startTime = LocalDateTime.now()
         }
     }
@@ -184,7 +225,7 @@ fun RestScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 55.dp),
+                .padding(horizontal = 60.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -207,48 +248,90 @@ fun RestScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(5.dp)
-            .circleMask(),
-        contentAlignment = Alignment.Center
-    ) {
-        if (isTimerInEditMode) {
-            ControlButtonsVertical(
-                modifier = Modifier
-                    .clickable(
-                        interactionSource = null,
-                        indication = null
-                    ) {
-                        updateInteractionTime()
-                    },
-                onMinusTap = { onMinusClick() },
-                onMinusLongPress = { onMinusClick() },
-                onPlusTap = { onPlusClick() },
-                onPlusLongPress = { onPlusClick() },
-                content = {
-                    textComposable()
-                }
-            )
-        } else{
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical= 20.dp,horizontal = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                textComposable()
-                ExerciseInfo(
+
+        AnimatedContent(
+            targetState = isTimerInEditMode,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+            }, label = ""
+        ) { updatedState ->
+            if (updatedState) {
+                Box(
                     modifier = Modifier
-                        .fillMaxSize(),
-                    viewModel,
-                    state.nextStateSets
-                )
+                        .fillMaxSize()
+                        .padding(5.dp)
+                        .circleMask(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ControlButtonsVertical(
+                        modifier = Modifier
+                            .clickable(
+                                interactionSource = null,
+                                indication = null
+                            ) {
+                                updateInteractionTime()
+                            },
+                        onMinusTap = { onMinusClick() },
+                        onMinusLongPress = { onMinusClick() },
+                        onPlusTap = { onPlusClick() },
+                        onPlusLongPress = { onPlusClick() },
+                        content = {
+                            textComposable()
+                        }
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(5.dp)
+                        .circleMask(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CustomHorizontalPager(
+                        modifier = Modifier.fillMaxSize()
+                            .padding(vertical = 22.dp, horizontal = 15.dp),
+                        pagerState = pagerState,
+                    ) { pageIndex ->
+                        val pageType = pageTypes[pageIndex]
+                        when (pageType) {
+                            PageType.PLATES -> {
+                                PagePlates(
+                                    state.nextStateSets.first(),
+                                    equipment
+                                )
+                            }
+
+                            PageType.EXERCISE_DETAIL -> {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize(),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    textComposable()
+                                    ExerciseInfo(
+                                        modifier = Modifier.fillMaxSize(),
+                                        viewModel,
+                                        state.nextStateSets
+                                    )
+                                }
+
+                            }
+
+                            PageType.EXERCISES -> PageExercises(
+                                state.nextStateSets.first(),
+                                viewModel,
+                                exercise
+                            )
+
+                            PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel)
+                            PageType.NOTES -> TODO()
+                        }
+                    }
+                }
             }
         }
-    }
+
 
     Box(
         modifier = Modifier
@@ -270,7 +353,7 @@ fun RestScreen(
         message = "Do you want to proceed?",
         handleYesClick = {
             state.currentSetData = currentSetData.copy(
-                endTimer =  currentSeconds
+                endTimer = currentSeconds
             )
             onTimerEnd()
             viewModel.closeCustomDialog()

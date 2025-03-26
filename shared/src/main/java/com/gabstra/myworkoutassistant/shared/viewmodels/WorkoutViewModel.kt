@@ -401,11 +401,35 @@ open class WorkoutViewModel : ViewModel() {
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
                 startWorkoutTime = currentWorkoutHistory!!.startTime
 
+
                 restoreExecutedSets()
                 loadWorkoutHistory()
                 generateProgressions()
                 applyProgressions()
-                generateWorkoutStates()
+                val workoutStates = generateWorkoutStates()
+
+                workoutStates.forEach {
+                    if(it is WorkoutState.Set){
+                        val setHistory = executedSetsHistory.firstOrNull { setHistory -> setHistory.setId == it.set.id }
+                        if(setHistory != null){
+                            it.currentSetData = setHistory.setData
+                        }
+                    }
+
+                    if(it is WorkoutState.Rest){
+                        val setHistory = executedSetsHistory.firstOrNull { setHistory -> setHistory.setId == it.set.id }
+                        if(setHistory != null){
+                            it.currentSetData = setHistory.setData
+                        }
+                    }
+
+                    workoutStateQueue.addLast(it)
+                    allWorkoutStates.add(it)
+                    if(it is WorkoutState.Set){
+                        setStates.addLast(it)
+                    }
+                }
+
                 workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
                 preparingState.dataLoaded = true
                 triggerWorkoutNotification()
@@ -779,7 +803,16 @@ open class WorkoutViewModel : ViewModel() {
                 loadWorkoutHistory()
                 generateProgressions()
                 applyProgressions()
-                generateWorkoutStates()
+                val workoutStates = generateWorkoutStates()
+
+                workoutStates.forEach {
+                    workoutStateQueue.addLast(it)
+                    allWorkoutStates.add(it)
+                    if(it is WorkoutState.Set){
+                        setStates.addLast(it)
+                    }
+                }
+
                 preparingState.dataLoaded = true
                 triggerWorkoutNotification()
             }
@@ -1245,7 +1278,7 @@ open class WorkoutViewModel : ViewModel() {
             .map { it.setData as T }
     }
 
-    protected suspend fun generateWorkoutStates() {
+    protected suspend fun generateWorkoutStates() : List<WorkoutState> {
         val workoutComponents = selectedWorkout.value.workoutComponents.filter { it.enabled }
         val totalStates = mutableListOf<WorkoutState>()
 
@@ -1354,13 +1387,8 @@ open class WorkoutViewModel : ViewModel() {
             // Update the Rest state with the collected nextSets
             currentState.nextStateSets = nextSets
         }
-        totalStates.forEach {
-            workoutStateQueue.addLast(it)
-            allWorkoutStates.add(it)
-            if(it is WorkoutState.Set){
-                setStates.addLast(it)
-            }
-        }
+
+        return totalStates.toList()
     }
 
     protected fun getPlateChangeResults(
