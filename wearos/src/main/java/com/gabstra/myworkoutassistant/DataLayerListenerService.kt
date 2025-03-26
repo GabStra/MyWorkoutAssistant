@@ -89,7 +89,7 @@ class DataLayerListenerService : WearableListenerService() {
 
         val intent = Intent(INTENT_ID).apply {
             putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
-        }
+        }.apply { setPackage(packageName) }
         sendBroadcast(intent)
 
         backupChunks.clear()
@@ -118,7 +118,7 @@ class DataLayerListenerService : WearableListenerService() {
                     BACKUP_CHUNK_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
 
-                        Log.d("DataLayerListenerService", "Received backup chunk ${dataMap} currentTransactionId ${currentTransactionId} hasStartedSync ${hasStartedSync}")
+                        Log.d("MainActivity", "Received backup chunk")
 
                         val isStart = dataMap.getBoolean("isStart", false)
                         val isLastChunk = dataMap.getBoolean("isLastChunk", false)
@@ -133,7 +133,7 @@ class DataLayerListenerService : WearableListenerService() {
                             handler.removeCallbacks(timeoutRunnable)
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
-                            }
+                            }.apply { setPackage(packageName) }
 
                             sendBroadcast(intent)
 
@@ -158,7 +158,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_START_JSON, APP_BACKUP_START_JSON)
-                            }
+                            }.apply { setPackage(packageName) }
                             sendBroadcast(intent)
 
                             handler.removeCallbacks(timeoutRunnable)
@@ -174,7 +174,7 @@ class DataLayerListenerService : WearableListenerService() {
                             val progress = backupChunks.size.toFloat() / expectedChunks
                             val progressIntent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_PROGRESS_UPDATE, "$progress")
-                            }
+                            }.apply { setPackage(packageName) }
                             sendBroadcast(progressIntent)
                         }
 
@@ -227,7 +227,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                                     val intent = Intent(INTENT_ID).apply {
                                         putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
-                                    }
+                                    }.apply { setPackage(packageName) }
                                     //intent.apply { setPackage(packageName) }
                                     sendBroadcast(intent)
 

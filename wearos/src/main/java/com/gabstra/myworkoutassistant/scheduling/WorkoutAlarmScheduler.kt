@@ -97,7 +97,6 @@ class WorkoutAlarmScheduler(private val context: Context) {
         alarmManager.cancel(pendingIntent)
     }
     
-    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     fun rescheduleAllWorkouts() {
         scope.launch {
             alarmManager.cancelAll()

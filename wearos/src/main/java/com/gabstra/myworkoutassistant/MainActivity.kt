@@ -81,8 +81,9 @@ class MyReceiver(
     private val workoutStoreRepository: WorkoutStoreRepository,
     private val activity: Activity
 ) : BroadcastReceiver() {
-    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     override fun onReceive(context: Context, intent: Intent) {
+        Log.d("MainActivity", "Received intent")
+
         activity.run {
             try{
                 val workoutStoreJson = intent.getStringExtra(DataLayerListenerService.WORKOUT_STORE_JSON)
@@ -176,7 +177,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     @OptIn(ExperimentalHorologistApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         // Handle intent if app was launched from notification
@@ -211,6 +211,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNotificationIntent(intent: Intent) {
+        Log.d("MainActivity", "Handling notification intent")
+
         if (intent.hasExtra("WORKOUT_ID")) {
             val workoutId = intent.getStringExtra("WORKOUT_ID")
             val scheduleId = intent.getStringExtra("SCHEDULE_ID")

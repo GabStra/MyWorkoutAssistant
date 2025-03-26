@@ -27,9 +27,12 @@ class WorkoutNotificationHelper(private val context: Context) {
         val name = "Workout Reminders"
         val descriptionText = "Notifications for scheduled workouts"
         val importance = NotificationManager.IMPORTANCE_HIGH
+
         val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
             description = descriptionText
         }
+
+
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.createNotificationChannel(channel)
@@ -49,24 +52,49 @@ class WorkoutNotificationHelper(private val context: Context) {
             intent, 
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        
+
+        val vibrationPattern = longArrayOf(
+            0,      // Start immediately
+
+            // First set of 3 pulses
+            200,    // Short pulse 1
+            200,    // Pause
+            200,    // Short pulse 2
+            200,    // Pause
+            200,    // Short pulse 3
+
+            500,    // Longer pause between sets
+
+            // Second set of 3 pulses
+            200,    // Short pulse 1
+            200,    // Pause
+            200,    // Short pulse 2
+            200,    // Pause
+            200,    // Short pulse 3
+
+            500,    // Longer pause between sets
+
+            // Third set of 3 pulses
+            200,    // Short pulse 1
+            200,    // Pause
+            200,    // Short pulse 2
+            200,    // Pause
+            200     // Short pulse 3
+        )
+
         // Build the notification
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_workout)
             .setContentTitle(workout.name)
             .setContentText(if (schedule.label.isNotEmpty()) schedule.label else "Time for your workout!")
-            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setContentIntent(pendingIntent)
-            .setAutoCancel(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-        
-        // For Wear OS, we can use a full-screen intent
-        builder.setFullScreenIntent(pendingIntent, true)
-
-        builder.setCategory(NotificationCompat.CATEGORY_REMINDER) // Treats it as an alarm
-        builder.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)) // Use alarm sound
-        builder.setVibrate(longArrayOf(0, 500, 250, 500)) // Strong vibration pattern
-        builder.setOngoing(true) // Makes it persistent until user interacts
+            .setFullScreenIntent(pendingIntent, true)
+            .setVibrate(vibrationPattern)
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
+            .setPriority(NotificationCompat.PRIORITY_MAX)
 
         return builder.build()
     }
