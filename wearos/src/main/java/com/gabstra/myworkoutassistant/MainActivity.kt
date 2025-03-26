@@ -14,6 +14,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
@@ -21,6 +22,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -79,6 +81,7 @@ class MyReceiver(
     private val workoutStoreRepository: WorkoutStoreRepository,
     private val activity: Activity
 ) : BroadcastReceiver() {
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     override fun onReceive(context: Context, intent: Intent) {
         activity.run {
             try{
@@ -150,6 +153,8 @@ class MyReceiver(
 class MainActivity : ComponentActivity() {
     private val alarmManager by lazy { getSystemService(Context.ALARM_SERVICE) as AlarmManager }
 
+    private val notificationManager by lazy { getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }
+
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -171,6 +176,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     @OptIn(ExperimentalHorologistApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         // Handle intent if app was launched from notification
@@ -206,11 +212,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleNotificationIntent(intent: Intent) {
         if (intent.hasExtra("WORKOUT_ID")) {
-            Log.d("WorkoutAlarmScheduler", "Received intent to start workout")
-
             val workoutId = intent.getStringExtra("WORKOUT_ID")
             val scheduleId = intent.getStringExtra("SCHEDULE_ID")
-            val autoStart = intent.getBooleanExtra("AUTO_START", false)
+
+            notificationManager.cancel(scheduleId.hashCode())
 
             if (workoutId != null) {
                 val uuid = UUID.fromString(workoutId)

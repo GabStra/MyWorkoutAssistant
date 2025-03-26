@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.gabstra.myworkoutassistant.MainActivity
@@ -16,7 +17,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 class WorkoutNotificationHelper(private val context: Context) {
     companion object {
         const val CHANNEL_ID = "workout_reminders"
-        const val NOTIFICATION_GROUP = "workout_group"
     }
     
     init {
@@ -29,8 +29,6 @@ class WorkoutNotificationHelper(private val context: Context) {
         val importance = NotificationManager.IMPORTANCE_HIGH
         val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
             description = descriptionText
-            enableVibration(true)
-            enableLights(true)
         }
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -43,7 +41,6 @@ class WorkoutNotificationHelper(private val context: Context) {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             putExtra("WORKOUT_ID", schedule.workoutId.toString())
             putExtra("SCHEDULE_ID", schedule.id.toString())
-            putExtra("AUTO_START", true)
         }
         
         val pendingIntent = PendingIntent.getActivity(
@@ -60,12 +57,17 @@ class WorkoutNotificationHelper(private val context: Context) {
             .setContentText(if (schedule.label.isNotEmpty()) schedule.label else "Time for your workout!")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setContentIntent(pendingIntent)
-            .setAutoCancel(true)
+            .setAutoCancel(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         
         // For Wear OS, we can use a full-screen intent
         builder.setFullScreenIntent(pendingIntent, true)
-        
+
+        builder.setCategory(NotificationCompat.CATEGORY_REMINDER) // Treats it as an alarm
+        builder.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)) // Use alarm sound
+        builder.setVibrate(longArrayOf(0, 500, 250, 500)) // Strong vibration pattern
+        builder.setOngoing(true) // Makes it persistent until user interacts
+
         return builder.build()
     }
     

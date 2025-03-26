@@ -406,7 +406,7 @@ open class WorkoutViewModel : ViewModel() {
                 generateProgressions()
                 applyProgressions()
                 generateWorkoutStates()
-                workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
+                workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
                 preparingState.dataLoaded = true
                 triggerWorkoutNotification()
                 onEnd()
@@ -744,7 +744,7 @@ open class WorkoutViewModel : ViewModel() {
 
         viewModelScope.launch(Dispatchers.IO) {
             _isResuming.value = true
-            while (_workoutState.value !is WorkoutState.Finished) {
+            while (_workoutState.value !is WorkoutState.Completed) {
                 goToNextState()
 
                 if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
@@ -938,7 +938,7 @@ open class WorkoutViewModel : ViewModel() {
             setStates.clear()
 
             generateWorkoutStates()
-            workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
+            workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
 
             val targetSetId = when (_workoutState.value) {
                 is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
@@ -948,7 +948,7 @@ open class WorkoutViewModel : ViewModel() {
 
             _workoutState.value = workoutStateQueue.pollFirst()!!
 
-            while (_workoutState.value !is WorkoutState.Finished) {
+            while (_workoutState.value !is WorkoutState.Completed) {
                 val currentSetId = when (_workoutState.value) {
                     is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
                     is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
@@ -962,7 +962,7 @@ open class WorkoutViewModel : ViewModel() {
                 goToNextState()
             }
 
-            if (_workoutState.value !is WorkoutState.Finished) {
+            if (_workoutState.value !is WorkoutState.Completed) {
                 goToNextState()
             }
 
@@ -1498,7 +1498,7 @@ open class WorkoutViewModel : ViewModel() {
     fun setWorkoutStart() {
         val startTime = LocalDateTime.now()
         startWorkoutTime = startTime
-        workoutStateQueue.addLast(WorkoutState.Finished(startWorkoutTime!!))
+        workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
     }
 
     fun goToNextState() {
@@ -1510,9 +1510,15 @@ open class WorkoutViewModel : ViewModel() {
         }
 
         val newState = workoutStateQueue.pollFirst()!!
+
+        if(newState is WorkoutState.Completed){
+            newState.endWorkoutTime = LocalDateTime.now()
+        }
+
+        _workoutState.value = newState
+
         val nextWorkoutState =
             if (workoutStateQueue.isNotEmpty()) workoutStateQueue.peek()!! else null
-        _workoutState.value = newState
         if (nextWorkoutState != null) {
             _nextWorkoutState.value = nextWorkoutState
         }
@@ -1565,7 +1571,7 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            if (state is WorkoutState.Finished) {
+            if (state is WorkoutState.Completed) {
                 _workoutState.value = state
                 break
             }

@@ -28,9 +28,6 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
-import com.gabstra.myworkoutassistant.data.VibrateShortImpulse
-import com.gabstra.myworkoutassistant.data.VibrateTwice
-import com.gabstra.myworkoutassistant.data.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 
@@ -43,7 +40,7 @@ import java.time.LocalDateTime
 fun WorkoutCompleteScreen(
     navController: NavController,
     viewModel: AppViewModel,
-    state : WorkoutState.Finished,
+    state : WorkoutState.Completed,
     hrViewModel: SensorDataViewModel,
     polarViewModel: PolarViewModel
 ){
@@ -51,7 +48,7 @@ fun WorkoutCompleteScreen(
     val context = LocalContext.current
 
     val duration = remember {
-        Duration.between(state.startWorkoutTime, LocalDateTime.now())
+        Duration.between(state.startWorkoutTime, state.endWorkoutTime)
     }
 
     val hours = remember { duration.toHours() }

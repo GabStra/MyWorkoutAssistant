@@ -38,7 +38,6 @@ import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import kotlinx.coroutines.delay
 
-@RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @Composable
 fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel, hrViewModel : SensorDataViewModel) {
     val workout by appViewModel.selectedWorkout
@@ -84,93 +83,96 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
         }
     }
 
-    var marqueeEnabled by remember { mutableStateOf(false) }
-    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
+    if(appViewModel.executeStartWorkout.value == null){
+        var marqueeEnabled by remember { mutableStateOf(false) }
+        val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
 
-    Scaffold(
-        positionIndicator = {
-            PositionIndicator(
-                scalingLazyListState = scalingLazyListState
-            )
-        }
-    ) {
-        ScalingLazyColumn(
-            modifier = Modifier.padding(10.dp),
-            state = scalingLazyListState,
+        Scaffold(
+            positionIndicator = {
+                PositionIndicator(
+                    scalingLazyListState = scalingLazyListState
+                )
+            }
         ) {
-            item {
-                Text(
-                    text = workout.name,
-                    modifier = Modifier
-                        .clickable(onClick = {
-                            marqueeEnabled = !marqueeEnabled
-                        })
-                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
-                        .padding(0.dp, 0.dp, 0.dp, 10.dp),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.caption1,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            ScalingLazyColumn(
+                modifier = Modifier.padding(10.dp),
+                state = scalingLazyListState,
+            ) {
+                item {
+                    Text(
+                        text = workout.name,
+                        modifier = Modifier
+                            .clickable(onClick = {
+                                marqueeEnabled = !marqueeEnabled
+                            })
+                            .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
+                            .padding(0.dp, 0.dp, 0.dp, 10.dp),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption1,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
-            item {
-                ButtonWithText(
-                    text = "Start",
-                    onClick = {
-                        VibrateGentle(context)
-                        permissionLauncherStart.launch(basePermissions.toTypedArray())
-                    },
-                    backgroundColor = MaterialTheme.colors.background,
-                    enabled = hasExercises
-                )
-            }
-
-            if (hasWorkoutRecord) {
                 item {
                     ButtonWithText(
-                        text = "Resume",
+                        text = "Start",
                         onClick = {
                             VibrateGentle(context)
-                            permissionLauncherResume.launch(basePermissions.toTypedArray())
+                            permissionLauncherStart.launch(basePermissions.toTypedArray())
                         },
                         backgroundColor = MaterialTheme.colors.background,
+                        enabled = hasExercises
                     )
                 }
 
+                if (hasWorkoutRecord) {
+                    item {
+                        ButtonWithText(
+                            text = "Resume",
+                            onClick = {
+                                VibrateGentle(context)
+                                permissionLauncherResume.launch(basePermissions.toTypedArray())
+                            },
+                            backgroundColor = MaterialTheme.colors.background,
+                        )
+                    }
+
+                    item {
+                        ButtonWithText(
+                            text = "Delete record",
+                            onClick = {
+                                showDeleteDialog = true
+                            },
+                            backgroundColor = MaterialTheme.colors.background,
+                        )
+                    }
+                }
                 item {
                     ButtonWithText(
-                        text = "Delete record",
+                        text = "Send history",
                         onClick = {
-                            showDeleteDialog = true
+                            VibrateGentle(context)
+                            appViewModel.sendWorkoutHistoryToPhone() { success ->
+                                if (success)
+                                    Toast.makeText(
+                                        context,
+                                        "Workout History sent to phone",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                else
+                                    Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT)
+                                        .show()
+                            }
                         },
                         backgroundColor = MaterialTheme.colors.background,
+                        enabled = hasExercises
                     )
                 }
-            }
-            item {
-                ButtonWithText(
-                    text = "Send history",
-                    onClick = {
-                        VibrateGentle(context)
-                        appViewModel.sendWorkoutHistoryToPhone() { success ->
-                            if (success)
-                                Toast.makeText(
-                                    context,
-                                    "Workout History sent to phone",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            else
-                                Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT)
-                                    .show()
-                        }
-                    },
-                    backgroundColor = MaterialTheme.colors.background,
-                    enabled = hasExercises
-                )
             }
         }
     }
+
 
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,

@@ -43,6 +43,7 @@ class WorkoutAlarmReceiver : BroadcastReceiver() {
                     } else if (workoutSchedule.daysOfWeek > 0) {
                         // Reschedule for recurring workouts
                         val scheduler = WorkoutAlarmScheduler(context)
+                        scheduler.cancelSchedule(workoutSchedule)
                         scheduler.scheduleWorkout(workoutSchedule)
                     }
                 }

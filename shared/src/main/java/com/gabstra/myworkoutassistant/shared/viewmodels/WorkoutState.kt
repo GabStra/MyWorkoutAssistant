@@ -43,5 +43,8 @@ sealed class WorkoutState {
         var startTime : LocalDateTime? = null,
     ) : WorkoutState()
 
-    data class Finished(val startWorkoutTime: LocalDateTime) : WorkoutState()
+    data class Completed(val startWorkoutTime: LocalDateTime) : WorkoutState()
+    {
+        var endWorkoutTime: LocalDateTime by mutableStateOf(LocalDateTime.now())
+    }
 }

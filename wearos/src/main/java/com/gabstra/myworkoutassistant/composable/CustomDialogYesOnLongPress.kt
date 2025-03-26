@@ -59,8 +59,6 @@ fun CustomDialogYesOnLongPress(
     handleOnAutomaticClose: () -> Unit = {},
     holdTimeInMillis: Long = 0,
 ) {
-    val context = LocalContext.current
-
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val longPressCoroutineScope = rememberCoroutineScope()

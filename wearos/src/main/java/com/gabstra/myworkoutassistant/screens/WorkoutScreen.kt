@@ -5,14 +5,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -25,11 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import com.gabstra.myworkoutassistant.composable.CurrentBattery
-import com.gabstra.myworkoutassistant.composable.CurrentExercise
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.gabstra.myworkoutassistant.composable.CurrentTime
 import com.gabstra.myworkoutassistant.composable.CustomBackHandler
 import com.gabstra.myworkoutassistant.composable.HeartRatePolar
 import com.gabstra.myworkoutassistant.composable.HeartRateStandard
@@ -124,7 +116,7 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
         },
-        closeTimerInMillis = 2000,
+        closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
@@ -136,12 +128,12 @@ fun WorkoutScreen(
 
     CustomBackHandler(
         onSinglePress = {
-            if(workoutState is WorkoutState.Finished || showWorkoutInProgressDialog) return@CustomBackHandler
+            if(workoutState is WorkoutState.Completed || showWorkoutInProgressDialog) return@CustomBackHandler
             VibrateGentle(context)
             viewModel.openCustomDialog()
             viewModel.lightScreenUp()
         }, onDoublePress = {
-            if(workoutState is WorkoutState.Finished || isCustomDialogOpen) return@CustomBackHandler
+            if(workoutState is WorkoutState.Completed || isCustomDialogOpen) return@CustomBackHandler
             showWorkoutInProgressDialog = true
             VibrateTwice(context)
             viewModel.pauseWorkout()
@@ -220,8 +212,8 @@ fun WorkoutScreen(
                         }
                     )
                 }
-                is WorkoutState.Finished -> {
-                    val state = updatedWorkoutState as WorkoutState.Finished
+                is WorkoutState.Completed -> {
+                    val state = updatedWorkoutState as WorkoutState.Completed
                     WorkoutCompleteScreen(
                         navController,
                         viewModel,

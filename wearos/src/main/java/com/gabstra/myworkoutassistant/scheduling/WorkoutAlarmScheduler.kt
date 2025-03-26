@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import android.util.Log
+import androidx.annotation.RequiresApi
 
 class WorkoutAlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -96,8 +97,11 @@ class WorkoutAlarmScheduler(private val context: Context) {
         alarmManager.cancel(pendingIntent)
     }
     
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     fun rescheduleAllWorkouts() {
         scope.launch {
+            alarmManager.cancelAll()
+
             val database = AppDatabase.getDatabase(context)
             val schedules = database.workoutScheduleDao().getActiveSchedules()
             
