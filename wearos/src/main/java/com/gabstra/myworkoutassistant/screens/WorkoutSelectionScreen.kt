@@ -1,8 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.ContextCompat.getSystemService
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -94,64 +97,6 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
             .height(50.dp)
             .padding(2.dp),
     )
-}
-
-@Composable
-fun MissingAppMessage(titleComposable: @Composable () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier.fillMaxSize().padding(10.dp)
-    ) {
-        titleComposable()
-        Spacer(modifier = Modifier.height(15.dp))
-        Text(
-            modifier = Modifier.padding(vertical = 10.dp),
-            text = "Please install the app on your phone",
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.caption1,
-        )
-    }
-}
-
-@OptIn(ExperimentalHorologistApi::class)
-@Composable
-fun MissingAgeSettingMessage(
-    dataClient: DataClient,
-    viewModel: AppViewModel,
-    appHelper: WearDataLayerAppHelper,
-    titleComposable: @Composable () -> Unit
-) {
-    val context = LocalContext.current
-
-    val scope = rememberCoroutineScope()
-
-    Box(modifier = Modifier.fillMaxSize().padding(10.dp),contentAlignment = Alignment.Center){
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(15.dp),
-        ) {
-            titleComposable()
-            Text(
-                text = "Input your age on the phone",
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1,
-            )
-            Box(modifier = Modifier.padding(horizontal = 15.dp)){
-                ButtonWithText(
-                    text = "Open mobile app",
-                    onClick = {
-                        VibrateGentle(context)
-                        scope.launch {
-                            openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
-                        }
-                    },
-                    backgroundColor = MaterialTheme.colors.background,
-                )
-            }
-        }
-    }
-
 }
 
 @Composable
@@ -216,64 +161,18 @@ fun WorkoutSelectionScreen(
     viewModel: AppViewModel,
     appHelper: WearDataLayerAppHelper
 ) {
-    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
+    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val workouts by viewModel.workouts.collectAsState()
 
     val sortedWorkouts = workouts.sortedBy { it.order }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
     val userAge by viewModel.userAge
-
     val context = LocalContext.current
     val versionName = getVersionName(context);
 
     var showClearData by remember { mutableStateOf(false) }
-
-    val titleComposable = @Composable {
-        Column(horizontalAlignment = Alignment.CenterHorizontally){
-            Text(
-                modifier = Modifier
-                    .padding(0.dp, 0.dp, 0.dp, 10.dp)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            VibrateHard(context)
-                            Toast
-                                .makeText(
-                                    context,
-                                    "Build version code: $versionName",
-                                    Toast.LENGTH_LONG
-                                )
-                                .show()
-                        },
-                        onDoubleClick = {
-                            showClearData = true
-                            VibrateTwice(context)
-                        }
-                    ),
-                text = "My Workout Assistant",
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1,
-            )
-            NotificationPermissionHandler { hasPermission, requestPermission ->
-                if (!hasPermission) {
-                    ButtonWithText(text = "Request notification permission", onClick = {
-                        VibrateGentle(context)
-                        requestPermission()
-                    })
-                }
-            }
-        }
-    }
-
-    if (userAge == currentYear) {
-        if(viewModel.isPhoneConnectedAndHasApp){
-            MissingAgeSettingMessage(dataClient, viewModel, appHelper, titleComposable)
-        }else{
-            MissingAppMessage(titleComposable)
-        }
-        return
-    }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         positionIndicator = {
@@ -287,30 +186,100 @@ fun WorkoutSelectionScreen(
             state = scalingLazyListState,
         ) {
             item {
-                titleComposable()
+                Text(
+                    modifier = Modifier
+                        .padding(vertical = 10.dp)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                VibrateHard(context)
+                                Toast
+                                    .makeText(
+                                        context,
+                                        "Build version code: $versionName",
+                                        Toast.LENGTH_LONG
+                                    )
+                                    .show()
+                            },
+                            onDoubleClick = {
+                                showClearData = true
+                                VibrateTwice(context)
+                            }
+                        ),
+                    text = "My Workout Assistant",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1,
+                )
             }
 
-            if (sortedWorkouts.isEmpty()) {
-                item {
-                    Text(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        text = "No workouts available",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.caption1,
-                    )
-                }
-            } else {
-                items(
-                    items = sortedWorkouts,
-                    key = { workout -> workout.id }
-                ) { workout ->
-                    WorkoutListItem(workout) {
-                        VibrateGentle(context)
-                        navController.navigate(Screen.WorkoutDetail.route)
-                        viewModel.setWorkout(workout)
+            item{
+                NotificationPermissionHandler { hasPermission, requestPermission ->
+                    if (!hasPermission) {
+                        ButtonWithText(text = "Request notification permission", onClick = {
+                            VibrateGentle(context)
+                            requestPermission()
+                        })
                     }
                 }
             }
+
+            if (userAge == currentYear) {
+                if(viewModel.isPhoneConnectedAndHasApp){
+                    item{
+                        Text(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            text = "Input your age on the phone",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.caption1,
+                        )
+                    }
+                    item{
+                        ButtonWithText(
+                            text = "Open mobile app",
+                            onClick = {
+                                VibrateGentle(context)
+                                scope.launch {
+                                    openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
+                                }
+                            },
+                            backgroundColor = MaterialTheme.colors.background,
+                        )
+                    }
+                }else{
+                    item{
+                        Text(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            text = "Please install the app on your phone",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.caption1,
+                        )
+                    }
+                }
+            }else{
+                if (sortedWorkouts.isEmpty()) {
+                    item {
+                        Text(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            text = "No workouts available",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.caption1,
+                        )
+                    }
+                } else {
+                    items(
+                        items = sortedWorkouts,
+                        key = { workout -> workout.id }
+                    ) { workout ->
+                        WorkoutListItem(workout) {
+                            VibrateGentle(context)
+                            navController.navigate(Screen.WorkoutDetail.route)
+                            viewModel.setWorkout(workout)
+                        }
+                    }
+                }
+            }
+
+
         }
     }
 

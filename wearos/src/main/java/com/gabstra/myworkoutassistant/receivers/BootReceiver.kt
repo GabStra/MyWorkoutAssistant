@@ -8,7 +8,6 @@ import androidx.annotation.RequiresApi
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 
 class BootReceiver : BroadcastReceiver() {
-    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             val scheduler = WorkoutAlarmScheduler(context)

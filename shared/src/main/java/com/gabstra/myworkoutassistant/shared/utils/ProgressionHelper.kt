@@ -29,7 +29,7 @@ object VolumeDistributionHelper {
     )
 
     data class WeightExerciseParameters(
-        val previousAverageIntensityPerRep: Double,
+        val previousAverageLoadPerRep: Double,
         val previousAverageWorkloadPerSet: Double,
         val previousSessionWorkload: Double,
         val oneRepMax: Double,
@@ -52,7 +52,7 @@ object VolumeDistributionHelper {
 
         //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
 
-        val maxSetVolume = possibleSets.maxOf { it.volume }
+        //val maxSetVolume = possibleSets.maxOf { it.volume }
 
 
         var validSetCombination = emptyList<ExerciseSet>()
@@ -75,12 +75,15 @@ object VolumeDistributionHelper {
             possibleSets,
             params.minSets,
             params.maxSets,
-            params.previousSessionWorkload,
             params.previousAverageWorkloadPerSet,
+            params.previousAverageLoadPerRep,
             { combo: List<ExerciseSet> ->
                 val currentSessionWorkload = combo.sumOf { it.workload }
+                val currentAverageLoadPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
+
                 ValidationResult(
-                    shouldReturn = currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
+                    shouldReturn = currentAverageLoadPerRep < params.previousAverageLoadPerRep
+                            ||currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
                             || currentSessionWorkload < params.previousSessionWorkload * (1+params.workloadProgressionRange.from/100)
                             || currentSessionWorkload > params.previousSessionWorkload * (1+params.workloadProgressionRange.to/100)
                 )
@@ -92,12 +95,15 @@ object VolumeDistributionHelper {
                 possibleSets,
                 params.maxSets,
                 5,
-                params.previousSessionWorkload,
                 params.previousAverageWorkloadPerSet,
+                params.previousAverageLoadPerRep,
                 { combo: List<ExerciseSet> ->
                     val currentSessionWorkload = combo.sumOf { it.workload }
+                    val currentAverageLoadPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
+
                     ValidationResult(
-                        shouldReturn = currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
+                        shouldReturn = currentAverageLoadPerRep < params.previousAverageLoadPerRep
+                                || currentSessionWorkload.isEqualTo(params.previousSessionWorkload)
                                 || currentSessionWorkload < params.previousSessionWorkload * (1+params.workloadProgressionRange.from/100)
                                 || currentSessionWorkload > params.previousSessionWorkload * (1+params.workloadProgressionRange.to/100)
                     )
@@ -129,8 +135,8 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
-        previousSessionWorkload: Double,
         previousAverageWorkloadPerSet: Double,
+        previousAverageLoadPerRep: Double,
         validationRules: (List<ExerciseSet>) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
@@ -148,17 +154,19 @@ object VolumeDistributionHelper {
         var bestScore = Double.MAX_VALUE
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
-            val currentWorkload = combo.sumOf { it.workload }
-            val currentAverageWorkloadPerSet = currentWorkload / combo.size
-
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
+            val currentWorkload = combo.sumOf { it.workload }
+            //val currentAverageWorkloadPerSet = currentWorkload / combo.size
+            val currentAverageLoadPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
+
             //val progressScore = 1 + abs(currentWorkload - previousSessionWorkload)
             val workloadDifferenceScore = 1 + (combo.maxOf { it.workload } - combo.minOf { it.workload })
-            val workloadPerSetScore = 1 + abs(currentAverageWorkloadPerSet - previousAverageWorkloadPerSet)
+            //val workloadPerSetScore = 1 + abs(currentAverageWorkloadPerSet - previousAverageWorkloadPerSet)
 
-            return currentWorkload * workloadDifferenceScore * 10.0.pow(combo.size)
+            val loadChangeScore =  1 + abs(currentAverageLoadPerRep - previousAverageLoadPerRep)
+            return currentWorkload * loadChangeScore * workloadDifferenceScore * 10.0.pow(combo.size)
         }
 
         suspend fun exploreCombinations(
@@ -229,9 +237,9 @@ object VolumeDistributionHelper {
         }
 
         val closestWeightIndex = when {
-            params.previousAverageIntensityPerRep.isNaN() || params.previousAverageIntensityPerRep.isInfinite() -> 0
+            params.previousAverageLoadPerRep.isNaN() || params.previousAverageLoadPerRep.isInfinite() -> 0
             else -> sortedWeights.binarySearch {
-                it.compareTo(params.previousAverageIntensityPerRep)
+                it.compareTo(params.previousAverageLoadPerRep)
             }.let { if (it < 0) -(it + 1) else it }
                 .coerceIn(0, sortedWeights.lastIndex)
         }
@@ -273,7 +281,6 @@ object VolumeDistributionHelper {
         intensity: Double
     ): ExerciseSet {
         val volume = weight * reps
-
         val param = (1 + intensity) * (1 + intensity)
 
         return ExerciseSet(
@@ -306,7 +313,7 @@ object VolumeDistributionHelper {
             previousSessionWorkload = exerciseWorkload,
             minSets = minSets,
             maxSets = maxSets,
-            previousAverageIntensityPerRep =  averageLoadPerRep,
+            previousAverageLoadPerRep =  averageLoadPerRep,
             workloadProgressionRange = workloadProgressionRange,
             previousAverageWorkloadPerSet = averageWorkloadPerSet
         )

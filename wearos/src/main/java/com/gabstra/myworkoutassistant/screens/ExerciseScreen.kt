@@ -108,7 +108,7 @@ fun ExerciseScreen(
     }
 
     val exerciseSetIds = remember(exercise) {
-        exercise.sets.filter { it !is RestSet }.map { it.id }
+        viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     }
 
     val equipment = remember(exercise) {

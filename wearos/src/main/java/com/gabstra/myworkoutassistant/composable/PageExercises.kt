@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -73,7 +74,7 @@ fun PageExercises(
 
     val overrideSetIndex = remember(isSuperset,currentExercise){
         if(isSuperset){
-            currentExercise.sets.filter { it !is RestSet }.indexOf(currentStateSet.set)
+            viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }.indexOf(currentStateSet.set.id)
         }
         else null
     }
@@ -106,7 +107,7 @@ fun PageExercises(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 25.dp)
+                    .padding(horizontal = 30.dp)
                     .clickable { marqueeEnabled = !marqueeEnabled }
                     .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                 contentAlignment = Alignment.Center
@@ -124,22 +125,35 @@ fun PageExercises(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center
             ) {
-                Text(
-                    textAlign = TextAlign.Center,
-                    text = "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                    style = captionStyle
-                )
-                if(isSuperset){
-                    Spacer(modifier = Modifier.width(5.dp))
-
-                    val supersetExercises = remember { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!!  }
-                    val supersetIndex = remember { supersetExercises.indexOf(updatedExercise) }
-
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(
                         textAlign = TextAlign.Center,
-                        text = "${supersetIndex + 1}/${supersetExercises.size}",
+                        text = "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
                         style = captionStyle
                     )
+                    if (isSuperset) {
+                        val supersetExercises =
+                            remember { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!! }
+                        val supersetIndex = remember { supersetExercises.indexOf(updatedExercise) }
+
+                        Text(
+                            textAlign = TextAlign.Center,
+                            text = "${supersetIndex + 1}/${supersetExercises.size}",
+                            style = captionStyle
+                        )
+                    }
+
+                    if (updatedExercise.id == currentExercise.id) {
+                        val exerciseSetIds =
+                            remember { viewModel.setsByExerciseId[updatedExercise.id]!!.map { it.set.id } }
+                        val setIndex = remember { exerciseSetIds.indexOf(currentStateSet.set.id) }
+
+                        Text(
+                            textAlign = TextAlign.Center,
+                            text = "${setIndex + 1}/${exerciseSetIds.size}",
+                            style = captionStyle
+                        )
+                    }
                 }
             }
 
@@ -166,7 +180,7 @@ fun PageExercises(
                     viewModel = viewModel,
                     exercise = updatedExercise,
                     currentSet = currentStateSet.set,
-                    customColor =   when{
+                    customColor = when{
                         updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
                         updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.MediumGray
                         else -> null

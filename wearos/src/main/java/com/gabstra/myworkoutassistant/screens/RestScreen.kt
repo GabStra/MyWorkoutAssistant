@@ -111,14 +111,13 @@ fun RestScreen(
     val pageTypes = remember(showPlatesPage) {
         mutableListOf<PageType>().apply {
             if (showPlatesPage) add(PageType.PLATES)
-            add(PageType.EXERCISE_DETAIL)
             add(PageType.EXERCISES)
             add(PageType.BUTTONS)
         }
     }
 
     val exerciseDetailPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.EXERCISE_DETAIL).coerceAtLeast(0)
+        pageTypes.indexOf(PageType.EXERCISES).coerceAtLeast(0)
     }
 
     val pagerState = rememberPagerState(
@@ -301,29 +300,12 @@ fun RestScreen(
                                     equipment
                                 )
                             }
-
-                            PageType.EXERCISE_DETAIL -> {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize(),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    textComposable()
-                                    ExerciseInfo(
-                                        modifier = Modifier.fillMaxSize(),
-                                        viewModel,
-                                        state.nextStateSets
-                                    )
-                                }
-
-                            }
-
+                            PageType.EXERCISE_DETAIL -> {}
                             PageType.EXERCISES -> PageExercises(
                                 state.nextStateSets.first(),
                                 viewModel,
                                 exercise
                             )
-
                             PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel)
                             PageType.NOTES -> TODO()
                         }

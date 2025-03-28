@@ -217,7 +217,8 @@ fun ExerciseSetsViewer(
     customColor: Color? = null,
     overrideSetIndex: Int? = null
 ){
-    val exerciseSetIds = exercise.sets.filter { it !is RestSet }.map { it.id }
+
+    val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
 
     val exerciseSetStates = remember(exercise.id) { viewModel.getAllExerciseWorkoutStates(exercise.id).filter { it.set !is RestSet } }
@@ -394,7 +395,7 @@ fun ExerciseInfo(
         }, label = ""
     ) { updatedStateSet ->
         val exercise = remember(updatedStateSet) { viewModel.exercisesById[updatedStateSet.exerciseId]!! }
-        val exerciseSetIds = remember(exercise) { exercise.sets.filter { it !is RestSet }.map { it.id } }
+        val exerciseSetIds = remember(exercise) { viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id } }
         val setIndex = remember(updatedStateSet.set.id) { exerciseSetIds.indexOf(updatedStateSet.set.id)  }
 
         val updatedExerciseOrSupersetId = remember (exercise){ if(viewModel.supersetIdByExerciseId.containsKey(exercise.id)) viewModel.supersetIdByExerciseId[exercise.id] else exercise.id }

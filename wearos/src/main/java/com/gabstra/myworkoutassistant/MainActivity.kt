@@ -6,6 +6,7 @@
 
 package com.gabstra.myworkoutassistant
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.NotificationManager
@@ -14,15 +15,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -54,7 +54,6 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
@@ -69,9 +68,6 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import java.util.UUID
 import androidx.core.net.toUri
 
@@ -82,8 +78,6 @@ class MyReceiver(
     private val activity: Activity
 ) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        Log.d("MainActivity", "Received intent")
-
         activity.run {
             try{
                 val workoutStoreJson = intent.getStringExtra(DataLayerListenerService.WORKOUT_STORE_JSON)
@@ -187,7 +181,7 @@ class MainActivity : ComponentActivity() {
         appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
 
         if(!alarmManager.canScheduleExactAlarms()){
-            requestExactAlarmPermission()
+            requestScheduleAlarmPermission()
         }else{
             val scheduler = WorkoutAlarmScheduler(this)
             scheduler.rescheduleAllWorkouts()
@@ -232,7 +226,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestExactAlarmPermission() {
+    private fun requestScheduleAlarmPermission() {
         val intent = Intent().apply {
             action = Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
             data = "package:${packageName}".toUri()

@@ -19,5 +19,6 @@ data class WorkoutSchedule(
     // Store days as a bit field: bit 0 = Sunday, bit 1 = Monday, etc.
     val daysOfWeek: Int = 0,
     val specificDate: LocalDate? = null,
-    val hasExecuted: Boolean = false
+    val hasExecuted: Boolean = false,
+    val lastNotificationSentAt : LocalDate? = null
 )

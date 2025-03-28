@@ -401,7 +401,6 @@ open class WorkoutViewModel : ViewModel() {
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
                 startWorkoutTime = currentWorkoutHistory!!.startTime
 
-
                 restoreExecutedSets()
                 loadWorkoutHistory()
                 generateProgressions()
@@ -563,7 +562,6 @@ open class WorkoutViewModel : ViewModel() {
         var exerciseWorkload = 0.0
         var oneRepMax = 0.0
         var averageLoadPerRep = 0.0
-        var averageWorkloadPerRep = 0.0
 
         oneRepMax = exerciseSets.maxOf {
             when (it) {

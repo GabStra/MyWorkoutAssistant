@@ -6,6 +6,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import java.time.LocalDate
 import java.util.UUID
 
 @Dao
@@ -42,4 +43,8 @@ interface WorkoutScheduleDao {
     
     @Query("UPDATE workout_schedule SET hasExecuted = 1 WHERE id = :id")
     suspend fun markAsExecuted(id: UUID)
+
+    //Query to set last notification sent at
+    @Query("UPDATE workout_schedule SET lastNotificationSentAt = :date WHERE id = :id")
+    suspend fun setLastNotificationSentAt(id: UUID, date: LocalDate)
 }

@@ -21,20 +21,25 @@ import androidx.annotation.RequiresApi
 class WorkoutAlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
     private val scope = CoroutineScope(Dispatchers.IO)
-    
-    @SuppressLint("ScheduleExactAlarm")
-    fun scheduleWorkout(schedule: WorkoutSchedule) {
+
+
+    fun GetWorkoutSchedulePendingIntent(schedule: WorkoutSchedule, flags : Int) : PendingIntent? {
         val intent = Intent(context, WorkoutAlarmReceiver::class.java).apply {
             putExtra("SCHEDULE_ID", schedule.id.toString())
         }
-        
-        val pendingIntent = PendingIntent.getBroadcast(
+        return PendingIntent.getBroadcast(
             context,
             schedule.id.hashCode(),
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            flags
         )
-        
+    }
+
+    @SuppressLint("ScheduleExactAlarm")
+    fun scheduleWorkout(schedule: WorkoutSchedule) {
+
+        val pendingIntent = GetWorkoutSchedulePendingIntent(schedule,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
+
         // Calculate next alarm time
         val calendar = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, schedule.hour)
@@ -86,25 +91,17 @@ class WorkoutAlarmScheduler(private val context: Context) {
     }
 
     fun cancelSchedule(schedule: WorkoutSchedule) {
-        val intent = Intent(context, WorkoutAlarmReceiver::class.java)
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            schedule.id.hashCode(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        
+        val pendingIntent = GetWorkoutSchedulePendingIntent(schedule,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
         alarmManager.cancel(pendingIntent)
     }
     
     fun rescheduleAllWorkouts() {
         scope.launch {
-            alarmManager.cancelAll()
-
             val database = AppDatabase.getDatabase(context)
             val schedules = database.workoutScheduleDao().getActiveSchedules()
             
             schedules.forEach { schedule ->
+                cancelSchedule(schedule)
                 scheduleWorkout(schedule)
             }
         }

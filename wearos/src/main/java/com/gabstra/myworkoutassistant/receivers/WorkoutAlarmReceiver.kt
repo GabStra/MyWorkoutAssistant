@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.receivers
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
@@ -12,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.util.UUID
 
 class WorkoutAlarmReceiver : BroadcastReceiver() {
@@ -22,30 +22,31 @@ class WorkoutAlarmReceiver : BroadcastReceiver() {
         scope.launch {
             val database = AppDatabase.getDatabase(context)
             val scheduleDao = database.workoutScheduleDao()
-            val workoutSchedule = scheduleDao.getScheduleById(UUID.fromString(scheduleId))
+            val schedule = scheduleDao.getScheduleById(UUID.fromString(scheduleId))
             
-            if (workoutSchedule != null && workoutSchedule.isEnabled) {
+            if (schedule != null && schedule.isEnabled) {
                 // Get the workout
                 val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
-                val workout = workoutStore.workouts.find { it.globalId == workoutSchedule.workoutId }
+                val workout = workoutStore.workouts.find { it.globalId == schedule.workoutId }
                 
-                if (workout != null) {
-                    // Show notification
+                if (workout != null && (schedule.lastNotificationSentAt == null || schedule.lastNotificationSentAt != LocalDate.now())) {
                     withContext(Dispatchers.Main) {
                         val notificationHelper = WorkoutNotificationHelper(context)
-                        notificationHelper.showNotification(workoutSchedule, workout)
+                        notificationHelper.showNotification(schedule, workout)
                     }
-                    
+
                     // Mark one-time schedules as executed
-                    if (workoutSchedule.specificDate != null) {
-                        scheduleDao.markAsExecuted(workoutSchedule.id)
-                    } else if (workoutSchedule.daysOfWeek > 0) {
+                    if (schedule.specificDate != null) {
+                        scheduleDao.markAsExecuted(schedule.id)
+                    } else if (schedule.daysOfWeek > 0) {
                         // Reschedule for recurring workouts
                         val scheduler = WorkoutAlarmScheduler(context)
-                        scheduler.cancelSchedule(workoutSchedule)
-                        scheduler.scheduleWorkout(workoutSchedule)
+                        scheduler.cancelSchedule(schedule)
+                        scheduler.scheduleWorkout(schedule)
                     }
+
+                    scheduleDao.setLastNotificationSentAt(schedule.id, LocalDate.now())
                 }
             }
         }
