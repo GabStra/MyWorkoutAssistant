@@ -484,6 +484,7 @@ fun MyWorkoutAssistantNavHost(
                     onWorkoutUpsert = { updatedWorkout, schedules ->
                         appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
                         scope.launch {
+                            workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
                             workoutScheduleDao.insertAll(*schedules.toTypedArray())
                         }
                         appViewModel.goBack()

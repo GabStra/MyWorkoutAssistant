@@ -47,4 +47,8 @@ interface WorkoutScheduleDao {
     //Query to set last notification sent at
     @Query("UPDATE workout_schedule SET lastNotificationSentAt = :date WHERE id = :id")
     suspend fun setLastNotificationSentAt(id: UUID, date: LocalDate)
+
+    //delete all by workout id
+    @Query("DELETE FROM workout_schedule WHERE workoutId = :workoutId")
+    suspend fun deleteAllByWorkoutId(workoutId: UUID)
 }

@@ -62,6 +62,7 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.math.exp
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -562,6 +563,7 @@ open class WorkoutViewModel : ViewModel() {
         var exerciseWorkload = 0.0
         var oneRepMax = 0.0
         var averageLoadPerRep = 0.0
+        var averageRelativeLoadPerRep = 0.0
 
         oneRepMax = exerciseSets.maxOf {
             when (it) {
@@ -607,16 +609,16 @@ open class WorkoutViewModel : ViewModel() {
                     val weight = it.getWeight(equipment, relativeBodyWeight)
                     val intensity = weight / oneRepMax
                     val volume = weight * it.reps
-                    val param = (1 + intensity) * (1 + intensity)
-                    volume * param
+                    val effortMultiplier = exp(2.0 * intensity)
+                    volume * effortMultiplier
                 }
 
                 is WeightSet -> {
                     val weight = it.getWeight(equipment)
                     val intensity = weight / oneRepMax
                     val volume = weight * it.reps
-                    val param = (1 + intensity) * (1 + intensity)
-                    volume * param
+                    val effortMultiplier = exp(2.0 * intensity)
+                    volume * effortMultiplier
                 }
 
                 else -> 0.0
@@ -634,6 +636,7 @@ open class WorkoutViewModel : ViewModel() {
         }
 
         averageLoadPerRep = exerciseVolume / totalReps
+        averageRelativeLoadPerRep = exerciseWorkload / totalReps
 
         if (exerciseWorkload == 0.0 || oneRepMax == 0.0) {
             Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
@@ -707,13 +710,13 @@ open class WorkoutViewModel : ViewModel() {
             //TODO: Implement deloading
         } else {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
-                exerciseWorkload,
-                averageLoadPerRep,
-                exerciseWorkload / exerciseSets.size,
-                oneRepMax,
-                availableWeights,
-                maxLoadPercent,
-                repsRange,
+                setVolumes = setVolumes,
+                setWorkloads = setWorkloads,
+                totalReps = totalReps,
+                oneRepMax = oneRepMax,
+                availableWeights = availableWeights,
+                maxLoadPercent = maxLoadPercent,
+                repsRange = repsRange,
                 minSets = minOf(3, exerciseSets.size),
                 maxSets = exerciseSets.size,
                 workloadProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),

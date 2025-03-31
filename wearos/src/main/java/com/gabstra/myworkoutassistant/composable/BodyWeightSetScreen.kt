@@ -81,7 +81,11 @@ fun BodyWeightSetScreen(
     var availableWeights by remember(exercise) { mutableStateOf<Set<Double>>(emptySet()) }
 
     LaunchedEffect(equipment) {
-        availableWeights = (viewModel.getWeightByEquipment(equipment) + setOf(0.0)).sorted().toSet()
+        availableWeights = if (equipment == null) {
+            emptySet()
+        }else{
+            (viewModel.getWeightByEquipment(equipment) + setOf(0.0)).sorted().toSet()
+        }
     }
 
     val cumulativeWeight = remember(currentSetData,equipment){
@@ -387,7 +391,6 @@ fun BodyWeightSetScreen(
                     extraInfo(state)
                 }
                 SetScreen(customModifier = Modifier.weight(1f).padding(horizontal = 10.dp))
-
             }
         }
     }
