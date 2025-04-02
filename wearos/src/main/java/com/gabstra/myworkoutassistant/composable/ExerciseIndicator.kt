@@ -36,6 +36,9 @@ fun ExerciseIndicator(
 
     val progress = (currentExerciseIndex + 1).toFloat() / exerciseCount
 
+    val totalArcAngle = 120f
+    val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
+
     Box(modifier = modifier.fillMaxSize()) {
         // Create n SegmentedProgressIndicator
         for (index in 0 until exerciseCount) {
@@ -50,8 +53,7 @@ fun ExerciseIndicator(
 
             // Calculate angle for each indicator to space them evenly
             // Total arc: 65f - (-60f) = 125f
-            val totalArcAngle = 120f
-            val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
+
             val startAngle = -60f + index * (segmentArcAngle + 2f)
             val endAngle = startAngle + segmentArcAngle
 
@@ -68,8 +70,6 @@ fun ExerciseIndicator(
         }
     }
 
-    val totalArcAngle = 125f
-    val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
     val startAngle = -60f + currentExerciseIndex * (segmentArcAngle + 2f)
     val middleAngle = startAngle + (segmentArcAngle / 2f)
 

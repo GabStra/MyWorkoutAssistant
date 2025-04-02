@@ -62,9 +62,12 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.collections.setOf
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -1439,11 +1442,23 @@ open class WorkoutViewModel : ViewModel() {
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
-        if(exercise.generateWarmUpSets && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
+        if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
             val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-            val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
-            val workSet = exerciseSets.first().let  {
+            val oneRepMax = exerciseSets.maxOf {
+                when (it) {
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                        calculateOneRepMax(it.getWeight(equipment, relativeBodyWeight), it.reps)
+                    }
+
+                    is WeightSet -> calculateOneRepMax(it.getWeight(equipment), it.reps)
+                    else -> 0.0
+                }
+            }
+
+            val equipmentVolumeMultiplier = equipment.volumeMultiplier
+            val (workWeight,workReps) = exerciseSets.first().let  {
                 when (it) {
                     is BodyWeightSet -> {
                         val relativeBodyWeight =
@@ -1459,75 +1474,132 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            val workWeight = workSet.first
-            val workReps = workSet.second
+            val intensity = workWeight / oneRepMax
 
-            val availableWeights = mutableSetOf<Double>()
-
-            if(equipment != null){
-                availableWeights.addAll(getWeightByEquipment(equipment))
+            val numberOfWarmUpSets = when {
+                intensity < 0.6 -> 2  // Lower intensity: 2 warm-up sets (lower range of 2-3)
+                intensity in 0.6..0.8 -> 3  // Moderate intensity: 3 warm-up sets (lower range of 3-4)
+                else -> 4  // High intensity: 4 warm-up sets (lower range of 4-5)
             }
 
-            fun getNewSet(id: UUID,desiredWeight: Double, reps: Int) : Set?{
+            val availableWeights = when (exercise.exerciseType) {
+                ExerciseType.WEIGHT -> getWeightByEquipment(equipment)
+
+                ExerciseType.BODY_WEIGHT -> {
+                    val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    (getWeightByEquipment(equipment).map { value -> relativeBodyWeight + value }.toSet() + setOf(relativeBodyWeight)).sorted()
+                }
+
+                else -> throw IllegalArgumentException("Unknown exercise type")
+            }
+
+            fun getSetWeight(desiredWeight: Double) : Double{
                 return when (exercise.exerciseType) {
                     ExerciseType.BODY_WEIGHT -> {
                         val relativeBodyWeight =
                             bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-
-                        var weight = if (equipment is Barbell) {
+                        if (equipment is Barbell) {
                             (desiredWeight - equipment.barWeight - relativeBodyWeight) / equipmentVolumeMultiplier
                         } else if (equipment != null) {
                             (desiredWeight - relativeBodyWeight) / equipmentVolumeMultiplier
                         } else {
                             desiredWeight - relativeBodyWeight
                         }
-
-                        if(availableWeights.isNotEmpty() && weight >= availableWeights.min() && weight <= availableWeights.max()){
-                            weight = availableWeights.minBy { kotlin.math.abs(it - weight) }
-                        }
-
-                        //check if the weight is the max
-                        if (weight < 0) return null
-
-                        BodyWeightSet(id, reps, weight, true)
                     }
 
                     ExerciseType.WEIGHT -> {
-                        var weight = if (equipment is Barbell) {
+                        if (equipment is Barbell) {
                             (desiredWeight - equipment.barWeight) / equipmentVolumeMultiplier
                         } else if (equipment != null) {
                             (desiredWeight) / equipmentVolumeMultiplier
                         } else {
                             desiredWeight
                         }
-
-                        if(availableWeights.isNotEmpty() && weight >= availableWeights.min() && weight <= availableWeights.max()){
-                            weight = availableWeights.minBy { kotlin.math.abs(it - weight) }
-                        }
-
-                        if (weight < 0) return null
-
-                        WeightSet(id, reps, weight, true)
                     }
 
-                    else -> return null
+                    else -> throw IllegalArgumentException("Unknown exercise type")
                 }
             }
 
+            fun getNewSet(id: UUID,weight: Double, reps: Int) : Set{
+                return when (exercise.exerciseType) {
+                    ExerciseType.BODY_WEIGHT -> {
+                        BodyWeightSet(id, reps, weight, true)
+                    }
+
+                    ExerciseType.WEIGHT -> {
+                        WeightSet(id, reps, weight, true)
+                    }
+
+                    else -> throw IllegalArgumentException("Unknown exercise type")
+                }
+            }
+
+            fun <T> filterByDistance(original: List<T>, subset: List<T>, minDistance: Int): List<T> {
+                val indices = subset.mapNotNull { original.indexOf(it).takeIf { i -> i != -1 } }.sorted()
+                val result = mutableListOf<T>()
+                var lastAcceptedIndex = -minDistance - 1
+
+                for (i in indices) {
+                    if (i - lastAcceptedIndex >= minDistance) {
+                        result.add(original[i])
+                        lastAcceptedIndex = i
+                    }
+                }
+                return result
+            }
+
             val warmUpProtocols = listOf(
-                Pair(0.5, max(5, min(8, workReps))),
-                Pair(0.75, max(3, min(5, workReps)))
+                Pair(0.4, min(15, workReps+5)),
+                Pair(0.6, min(12, workReps+3)),
+                Pair(0.75, min(8, workReps+1)),
+                Pair(0.85, min(5, workReps)),
+                Pair(0.95,  max(2, min(3, workReps - 2))),
             )
 
-            warmUpProtocols.forEach {
+            val chosenWeights = mutableSetOf<Double>()
+
+            var actualWarmupSets = warmUpProtocols.mapNotNull {
                 val (percentage, reps) = it
                 val weight = workWeight * percentage
-                val newSet = getNewSet(UUID.randomUUID(), weight, reps)
-                if(newSet != null){
-                    exerciseAllSets.add(newSet)
-                    var newRestSet = RestSet(UUID.randomUUID(), 60, false)
-                    exerciseAllSets.add(newRestSet)
+
+                val selectableWeights = (availableWeights - chosenWeights).filter { it <= weight && it < workWeight }
+                val closestWeight = selectableWeights.minByOrNull { abs(it - weight) }
+                if(closestWeight == null) {
+                     null
+                }else{
+                    chosenWeights.add(closestWeight)
+                    Pair(closestWeight, reps)
                 }
+            }
+
+            if(actualWarmupSets.size > 1){
+                val warmupWeights = actualWarmupSets.map { it.first }.toSet()
+                val usableWarmupWeight = filterByDistance(availableWeights.toList(), warmupWeights.toList(), 2)
+
+                actualWarmupSets = actualWarmupSets.filter { it.first in usableWarmupWeight }
+            }
+
+            if(actualWarmupSets.isEmpty()){
+                val lowestPossibleWeight = availableWeights.min()
+                val intensity = lowestPossibleWeight / oneRepMax
+                val expectedReps = ((1.0278 - intensity) / 0.0278).roundToInt() 
+                val halfCapacityEstimatedReps =  expectedReps / 2
+
+                actualWarmupSets = listOf(Pair(lowestPossibleWeight, halfCapacityEstimatedReps))
+            }
+
+            if (actualWarmupSets.size > numberOfWarmUpSets) {
+                actualWarmupSets = actualWarmupSets.take(numberOfWarmUpSets)
+            }
+
+            actualWarmupSets.forEach {
+                val (weight, reps) = it
+                val setWeight = getSetWeight(weight)
+                val newSet = getNewSet(UUID.randomUUID(), setWeight, reps)
+                exerciseAllSets.add(newSet)
+                var newRestSet = RestSet(UUID.randomUUID(), 60, false)
+                exerciseAllSets.add(newRestSet)
             }
 
             exerciseAllSets.addAll(exercise.sets)
