@@ -77,6 +77,8 @@ fun ExerciseForm(
     val minReps = remember { mutableStateOf(exercise?.minReps?.toFloat()?:6f) }
     val maxReps = remember { mutableStateOf(exercise?.maxReps?.toFloat()?:12f) }
 
+    val generateWarmupSets = remember { mutableStateOf(exercise?.generateWarmUpSets ?: false) }
+
     val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
     val equipments by viewModel.equipmentsFlow.collectAsState()
