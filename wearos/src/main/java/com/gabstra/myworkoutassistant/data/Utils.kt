@@ -83,40 +83,90 @@ fun Modifier.verticalColumnScrollbar(
     scrollBarTrackColor: Color = Color.DarkGray,
     scrollBarColor: Color = Color.Black,
     scrollBarCornerRadius: Float = 4f,
-    endPadding: Float = 12f
+    endPadding: Float = 12f,
+    /**
+     * Optional explicit height for the scrollbar track.
+     * If null (default), the track height will be 2/3 of the viewport height and centered vertically.
+     * If provided, the track will use this height. If this provided height is less
+     * than the viewport height, it will also be centered vertically.
+     */
+    trackHeight: Dp? = null
 ): Modifier {
     return drawWithContent {
         // Draw the column's content
         drawContent()
+
         // Dimensions and calculations
         val viewportHeight = this.size.height
         val totalContentHeight = scrollState.maxValue.toFloat() + viewportHeight
         val scrollValue = scrollState.value.toFloat()
-        // Compute scrollbar height and position
 
-        val visibleRatio = viewportHeight / totalContentHeight
+        // Compute visibility ratio (how much of the total content is visible)
+        // Avoid division by zero if totalContentHeight is equal to viewportHeight (or less, though unlikely)
+        val visibleRatio = if (totalContentHeight > viewportHeight) {
+            viewportHeight / totalContentHeight
+        } else {
+            1f // Everything is visible
+        }
 
-        val scrollBarHeight =
-            (viewportHeight / totalContentHeight) * viewportHeight
-        val scrollBarStartOffset =
-            (scrollValue / totalContentHeight) * viewportHeight
+
+        // If everything is visible, don't draw the scrollbar (only draw track if requested and always visible)
+        if (visibleRatio >= 1f && !showScrollBarTrack) {
+            return@drawWithContent // Don't draw anything if not needed and track isn't shown
+        }
+
+        // Calculate actual track height: Use provided height or default to 2/3 of viewport
+        val defaultTrackHeight = viewportHeight * (2f / 3f)
+        val actualTrackHeight = trackHeight?.toPx() ?: defaultTrackHeight
+
+        // Calculate track position (center it if its height is less than the viewport height)
+        val trackTopOffset = if (actualTrackHeight < viewportHeight) {
+            (viewportHeight - actualTrackHeight) / 2f
+        } else {
+            0f // If track is as tall or taller than viewport, start at the top
+        }
+
         // Draw the track (optional)
-        if (showScrollBarTrack && visibleRatio < 1) {
+        if (showScrollBarTrack) {
             drawRoundRect(
                 cornerRadius = CornerRadius(scrollBarCornerRadius),
                 color = scrollBarTrackColor,
-                topLeft = Offset(this.size.width - endPadding, 0f),
-                size = Size(width.toPx(), viewportHeight),
+                topLeft = Offset(this.size.width - endPadding, trackTopOffset),
+                size = Size(width.toPx(), actualTrackHeight),
             )
         }
 
-        if(visibleRatio >= 1) return@drawWithContent
-        // Draw the scrollbar
+        // If everything is visible, we only needed to draw the track (if requested), so exit now.
+        if (visibleRatio >= 1f) {
+            return@drawWithContent
+        }
+
+
+        // Calculate scrollbar height (proportional to visible content ratio within the track height)
+        // Ensure scrollbar height is at least a minimum size (e.g., width*2) for visibility? - Optional enhancement
+        val scrollBarHeight = (visibleRatio * actualTrackHeight).coerceAtLeast(width.toPx() * 2) // Ensure minimum height
+
+
+        // Calculate scrollbar position within the track
+        val availableTrackSpace = actualTrackHeight - scrollBarHeight
+        val scrollProgress = if (scrollState.maxValue > 0) {
+            scrollValue / scrollState.maxValue.toFloat()
+        } else {
+            0f
+        }
+        // Ensure scroll progress is clamped between 0 and 1
+        val clampedScrollProgress = scrollProgress.coerceIn(0f, 1f)
+
+        val scrollBarOffsetWithinTrack = clampedScrollProgress * availableTrackSpace
+        val scrollBarStartOffset = trackTopOffset + scrollBarOffsetWithinTrack
+
+        // Draw the scrollbar thumb
         drawRoundRect(
             cornerRadius = CornerRadius(scrollBarCornerRadius),
             color = scrollBarColor,
             topLeft = Offset(this.size.width - endPadding, scrollBarStartOffset),
-            size = Size(width.toPx(), scrollBarHeight)
+            // Ensure the drawn size doesn't exceed the track boundaries if calculations are slightly off
+            size = Size(width.toPx(), scrollBarHeight.coerceAtMost(actualTrackHeight))
         )
     }
 }

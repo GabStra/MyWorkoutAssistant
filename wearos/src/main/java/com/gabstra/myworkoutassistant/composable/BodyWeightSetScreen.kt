@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.toUpperCase
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
@@ -47,6 +48,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -214,10 +216,11 @@ fun BodyWeightSetScreen(
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
-                        if (!forceStopEditMode) {
-                            isRepsInEditMode = !isRepsInEditMode
-                            updateInteractionTime()
-                        }
+                        if (forceStopEditMode) return@combinedClickable
+
+                        isRepsInEditMode = !isRepsInEditMode
+                        updateInteractionTime()
+                        isWeightInEditMode = false
 
                         VibrateGentle(context)
                     },
@@ -246,7 +249,7 @@ fun BodyWeightSetScreen(
                 else -> MyColors.Green
             }
 
-            Text(
+            ScalableText(
                 modifier = Modifier.fillMaxWidth(),
                 text = "${currentSetData.actualReps}",
                 style = style,
@@ -264,11 +267,12 @@ fun BodyWeightSetScreen(
                     onClick = {
                     },
                     onLongClick = {
-                        if (!forceStopEditMode) {
-                            isWeightInEditMode = !isWeightInEditMode
-                            updateInteractionTime()
-                            isRepsInEditMode = false
-                        }
+                        if (forceStopEditMode) return@combinedClickable
+
+                        isWeightInEditMode = !isWeightInEditMode
+                        updateInteractionTime()
+                        isRepsInEditMode = false
+
                         VibrateGentle(context)
                     },
                     onDoubleClick = {
@@ -299,7 +303,7 @@ fun BodyWeightSetScreen(
 
             val weightText = if(weight > 0) "%.2f".format(weight).replace(',','.') else "-"
 
-            Text(
+            ScalableText(
                 modifier = Modifier.fillMaxWidth(),
                 text = weightText,
                 style = style,
@@ -319,6 +323,13 @@ fun BodyWeightSetScreen(
         ) {
             val typography = MaterialTheme.typography
             val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+            if(equipment!=null){
+                Text(
+                    text = equipment.name.toUpperCase(Locale.ROOT),
+                    style = headerStyle
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

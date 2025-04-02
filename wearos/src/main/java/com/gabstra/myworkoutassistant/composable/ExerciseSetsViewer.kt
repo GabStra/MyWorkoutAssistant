@@ -1,50 +1,31 @@
 package com.gabstra.myworkoutassistant.composable
 
-import android.util.Log
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -60,7 +41,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import kotlinx.coroutines.delay
 
 
 @Composable
@@ -121,14 +101,14 @@ fun SetTableRow(
                     Spacer(modifier = Modifier.width(10.dp))
                 }
                 val weightSetData = (setState.currentSetData as WeightSetData)
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(1f),
                     text = "%.2f".format(weightSetData.actualWeight).replace(',','.'),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
                     color = color
                 )
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(1f),
                     text = "${weightSetData.actualReps}",
                     style = MaterialTheme.typography.body1,
@@ -144,7 +124,7 @@ fun SetTableRow(
                     Spacer(modifier = Modifier.width(10.dp))
                 }
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(1f),
                     text = if (bodyWeightSetData.additionalWeight > 0) {
                         "%.2f".format(bodyWeightSetData.additionalWeight).replace(',','.')
@@ -155,7 +135,7 @@ fun SetTableRow(
                     textAlign = TextAlign.Center,
                     color = color
                 )
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(1f),
                     text = "${bodyWeightSetData.actualReps}",
                     style = MaterialTheme.typography.body1,
@@ -175,10 +155,12 @@ fun SetTableRow(
                     }
                 }
 
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(2f),
                     text = FormatTime(timedDurationSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
+                    textAlign = TextAlign.Start,
+                    contentAlignment = Alignment.CenterStart,
                     color = color
                 )
 
@@ -195,10 +177,12 @@ fun SetTableRow(
                     }
                 }
 
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(2f),
                     text = FormatTime(enduranceSetData.startTimer / 1000),
                     style = MaterialTheme.typography.body1,
+                    textAlign = TextAlign.Start,
+                    contentAlignment = Alignment.CenterStart,
                     color = color
                 )
             }
@@ -239,7 +223,7 @@ fun ExerciseSetsViewer(
             return@LaunchedEffect
         }
         // Calculate position including spacing
-        val spacingHeight = with(density) { 5.dp.toPx().toInt() }
+        val spacingHeight = with(density) { 2.dp.toPx().toInt() }
         val position = (0 until setIndex).sumOf { index ->
             (itemHeights[index] ?: 0) + spacingHeight
         }
@@ -248,11 +232,11 @@ fun ExerciseSetsViewer(
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         if (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Spacer(modifier= Modifier.width(10.dp))
@@ -275,10 +259,11 @@ fun ExerciseSetsViewer(
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
                         scrollBarColor = Color.White,
-                        scrollBarTrackColor = Color.DarkGray
+                        scrollBarTrackColor = Color.DarkGray,
                     )
+                    .padding(horizontal = 2.dp)
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
                     SetTableRow(
@@ -311,7 +296,7 @@ fun ExerciseSetsViewer(
 
         if (exercise.exerciseType == ExerciseType.COUNTUP || exercise.exerciseType == ExerciseType.COUNTDOWN) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -329,6 +314,7 @@ fun ExerciseSetsViewer(
                         scrollBarColor = Color.White,
                         scrollBarTrackColor = Color.DarkGray
                     )
+                    .padding(horizontal = 2.dp)
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
@@ -359,138 +345,6 @@ fun ExerciseSetsViewer(
                 }
             }
             return
-        }
-    }
-}
-
-@Composable
-fun ExerciseInfo(
-    modifier: Modifier = Modifier,
-    viewModel: AppViewModel,
-    nextStateSets: List<WorkoutState.Set>,
-) {
-    var marqueeEnabled by remember { mutableStateOf(false) }
-    var currentIndex by remember { mutableIntStateOf(0) }
-    var selectedStateSet by remember { mutableStateOf(nextStateSets[currentIndex]) }
-
-    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
-
-    val typography = MaterialTheme.typography
-    val style = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-
-    var isNavigationLocked by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isNavigationLocked) {
-        if (isNavigationLocked) {
-            delay(500)
-            isNavigationLocked = false
-        }
-    }
-
-    AnimatedContent(
-        modifier = modifier,
-        targetState = selectedStateSet,
-        transitionSpec = {
-            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-        }, label = ""
-    ) { updatedStateSet ->
-        val exercise = remember(updatedStateSet) { viewModel.exercisesById[updatedStateSet.exerciseId]!! }
-        val exerciseSetIds = remember(exercise) { viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id } }
-        val setIndex = remember(updatedStateSet.set.id) { exerciseSetIds.indexOf(updatedStateSet.set.id)  }
-
-        val updatedExerciseOrSupersetId = remember (exercise){ if(viewModel.supersetIdByExerciseId.containsKey(exercise.id)) viewModel.supersetIdByExerciseId[exercise.id] else exercise.id }
-        val updatedExerciseOrSupersetIndex = remember(exerciseOrSupersetIds,updatedExerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId) }
-
-        val isSuperset = remember (updatedExerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId) }
-
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 15.dp)
-                    .clickable { marqueeEnabled = !marqueeEnabled }
-                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = exercise.name,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.title3,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
-            ){
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
-                    Text(
-                        textAlign = TextAlign.Center,
-                        text =  "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                        style = style
-                    )
-                    if(isSuperset){
-                        val supersetExercises = remember(updatedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!! }
-                        val supersetIndex = remember(exercise,supersetExercises) {  supersetExercises.indexOf(exercise) }
-
-                        Text(
-                            textAlign = TextAlign.Center,
-                            text =  "${supersetIndex + 1}/${supersetExercises.size}",
-                            style = style
-                        )
-                    }
-                    Text(
-                        textAlign = TextAlign.Center,
-                        text =  "${setIndex + 1}/${exerciseSetIds.size}",
-                        style = style
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.height(80.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Icon(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .clickable(enabled = !isNavigationLocked && currentIndex > 0) {
-                            currentIndex--
-                            selectedStateSet = nextStateSets[currentIndex]
-                            isNavigationLocked = true
-                        }.then( if (nextStateSets.size > 1) Modifier else Modifier.alpha(0f)),
-                    imageVector = Icons.Filled.ArrowBack,
-                    contentDescription = "Previous",
-                    tint = if (currentIndex > 0) Color.White else MyColors.MediumGray
-                )
-
-                ExerciseSetsViewer(
-                    modifier =  Modifier.fillMaxHeight().weight(1f),
-                    viewModel = viewModel,
-                    exercise = exercise,
-                    currentSet = updatedStateSet.set
-                )
-
-                Icon(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .clickable(enabled = !isNavigationLocked && currentIndex < nextStateSets.size - 1) {
-                            currentIndex++
-                            selectedStateSet = nextStateSets[currentIndex]
-                            isNavigationLocked = true
-                        }.then( if (nextStateSets.size > 1) Modifier else Modifier.alpha(0f)),
-                    imageVector = Icons.Filled.ArrowForward,
-                    contentDescription = "Next",
-                    tint = if (currentIndex < nextStateSets.size - 1) Color.White else MyColors.MediumGray
-                )
-            }
         }
     }
 }

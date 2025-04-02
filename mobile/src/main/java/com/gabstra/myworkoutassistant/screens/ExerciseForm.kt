@@ -221,23 +221,6 @@ fun ExerciseForm(
                     )
 
                     Spacer(modifier = Modifier.height(16.dp)) // Added spacer
-
-                    // Generate Warmup Sets Checkbox
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp) // Adjusted padding
-                    ) {
-                        Checkbox(
-                            checked = generateWarmupSets.value,
-                            onCheckedChange = { generateWarmupSets.value = it },
-                            colors = CheckboxDefaults.colors().copy(
-                                checkedCheckmarkColor = MaterialTheme.colorScheme.background
-                            )
-                        )
-                        Text(text = "Generate Warmup Sets")
-                    }
                 }
             }
 
@@ -254,6 +237,24 @@ fun ExerciseForm(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
+            }
+
+            if(selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT){
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp) // Adjusted padding
+                ) {
+                    Checkbox(
+                        checked = generateWarmupSets.value,
+                        onCheckedChange = { generateWarmupSets.value = it },
+                        colors = CheckboxDefaults.colors().copy(
+                            checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                        )
+                    )
+                    Text(text = "Generate Warmup Sets")
+                }
             }
 
             Row(
@@ -445,7 +446,7 @@ fun ExerciseForm(
                         upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value,
                         equipmentId = selectedEquipmentId.value,
                         bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
-                        generateWarmUpSets = generateWarmupSets.value // Added generateWarmupSets to Exercise creation
+                        generateWarmUpSets = generateWarmupSets.value
                     )
 
                     onExerciseUpsert(newExercise)

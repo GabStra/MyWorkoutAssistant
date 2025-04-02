@@ -30,8 +30,8 @@ sealed class WorkoutState {
         val plateChangeResult: PlateCalculator.Companion.PlateChangeResult? = null,
         val streak: Int,
         val isDeloading: Boolean,
-        val lastSessionVolume: Double,
-        val expectedProgress: Double?
+        val expectedProgress: Double?,
+        val isWarmupSet: Boolean,
     ) : WorkoutState()
 
     data class Rest(

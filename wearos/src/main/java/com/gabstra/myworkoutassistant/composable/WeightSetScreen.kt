@@ -49,6 +49,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -229,11 +230,11 @@ fun WeightSetScreen (
                     onClick = {
                     },
                     onLongClick = {
-                        if (!forceStopEditMode) {
-                            isRepsInEditMode = !isRepsInEditMode
-                            updateInteractionTime()
-                            isWeightInEditMode = false
-                        }
+                        if (forceStopEditMode) return@combinedClickable
+
+                        isRepsInEditMode = !isRepsInEditMode
+                        updateInteractionTime()
+                        isWeightInEditMode = false
 
                         VibrateGentle(context)
                     },
@@ -261,7 +262,7 @@ fun WeightSetScreen (
                 else -> MyColors.Green
             }
 
-            Text(
+            ScalableText(
                 modifier = Modifier.fillMaxWidth(),
                 text = "${currentSetData.actualReps}",
                 style = style,
@@ -279,11 +280,12 @@ fun WeightSetScreen (
                         onClick = {
                         },
                         onLongClick = {
-                            if (!forceStopEditMode) {
-                                isWeightInEditMode = !isWeightInEditMode
-                                updateInteractionTime()
-                                isRepsInEditMode = false
-                            }
+                            if (forceStopEditMode) return@combinedClickable
+
+                            isWeightInEditMode = !isWeightInEditMode
+                            updateInteractionTime()
+                            isRepsInEditMode = false
+
                             VibrateGentle(context)
                         },
                         onDoubleClick = {
@@ -312,7 +314,7 @@ fun WeightSetScreen (
                     else -> MyColors.Green
                 }
 
-                Text(
+                ScalableText(
                     modifier = Modifier.fillMaxWidth(),
                     text = "%.2f".format(weight).replace(',','.'),
                     style = style,
@@ -332,6 +334,13 @@ fun WeightSetScreen (
         ) {
             val typography = MaterialTheme.typography
             val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+            if(equipment!=null){
+                Text(
+                    text = equipment.name.toUpperCase(Locale.ROOT),
+                    style = headerStyle
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -397,6 +406,7 @@ fun WeightSetScreen (
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 exerciseTitleComposable()
+
                 if (extraInfo != null) {
                     //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                     extraInfo(state)

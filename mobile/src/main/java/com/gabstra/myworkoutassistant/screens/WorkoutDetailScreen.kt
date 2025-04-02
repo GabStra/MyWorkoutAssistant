@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MoveDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
@@ -58,6 +59,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,6 +81,7 @@ import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -350,9 +353,8 @@ fun WorkoutDetailScreen(
 
     var showRest by remember { mutableStateOf(false) }
 
-    var isDragDisabled by remember {
-        mutableStateOf(false)
-    }
+    var showMoveWorkoutDialog by remember { mutableStateOf(false) }
+    val allWorkouts by appViewModel.workoutsFlow.collectAsState()
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -510,6 +512,16 @@ fun WorkoutDetailScreen(
                             tint = color
                         )
                     }
+                    IconButton(
+                        enabled = selectedWorkoutComponents.isNotEmpty(),
+                        onClick = { showMoveWorkoutDialog = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoveDown,
+                            contentDescription = "Move to Another Workout",
+                            tint = Color.White.copy(alpha = .87f)
+                        )
+                    }
                     IconButton(onClick = {
                         val superSetExercises =
                             selectedWorkoutComponents.filterIsInstance<Superset>()
@@ -604,7 +616,6 @@ fun WorkoutDetailScreen(
             }
         },
     ) { it ->
-
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -675,7 +686,6 @@ fun WorkoutDetailScreen(
                         .padding(5.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-
                     if (workout.workoutComponents.isEmpty()) {
                         DarkModeContainer(
                             modifier = Modifier
@@ -807,6 +817,26 @@ fun WorkoutDetailScreen(
                 }
 
                 SupersetForm(displaySupersetDialog, appViewModel, workout)
+
+                MoveExercisesToWorkoutDialog(
+                    show = showMoveWorkoutDialog,
+                    onDismiss = { showMoveWorkoutDialog = false },
+                    workouts = allWorkouts,
+                    currentWorkout = workout,
+                    onMove = { targetWorkout ->
+                        appViewModel.moveComponents(workout, selectedWorkoutComponents, targetWorkout)
+
+                        selectedWorkoutComponents = emptyList()
+                        isSelectionModeActive = false
+                        Toast.makeText(
+                            context,
+                            "Selection moved to ${targetWorkout.name}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+
+                        appViewModel.setScreenData(ScreenData.WorkoutDetail(targetWorkout.id))
+                    }
+                )
             }
 
     }

@@ -63,6 +63,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 if (src.bodyWeightPercentage != null) {
                     jsonObject.addProperty("bodyWeightPercentage", src.bodyWeightPercentage)
                 }
+
+                jsonObject.addProperty("generateWarmUpSets", src.generateWarmUpSets)
             }
 
             is Rest -> {
@@ -168,6 +170,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     null
                 }
 
+                val generateWarmUpSets = if (jsonObject.has("generateWarmUpSets")) {
+                    jsonObject.get("generateWarmUpSets").asBoolean
+                } else {
+                    false
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -183,7 +191,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     lowerBoundMaxHRPercent,
                     upperBoundMaxHRPercent,
                     equipmentId,
-                    bodyWeightPercentage
+                    bodyWeightPercentage,
+                    generateWarmUpSets
                 )
             }
 

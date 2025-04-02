@@ -64,6 +64,7 @@ private fun getProgressIndicatorSegments() = listOf(
 fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
+    heartRateChangeViewModel: HeartRateChangeViewModel,
     hr: Int,
     age: Int,
     lowerBoundMaxHRPercent: Float?,
@@ -149,7 +150,7 @@ fun HeartRateCircularChart(
         }
     }
 
-    HeartRateView(modifier,appViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
+    HeartRateView(modifier,appViewModel,heartRateChangeViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
 }
 
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
@@ -157,15 +158,15 @@ fun HeartRateCircularChart(
 private fun HeartRateView(
     modifier: Modifier,
     appViewModel: AppViewModel,
+    heartRateChangeViewModel: HeartRateChangeViewModel,
     hr: Int,
     mhrPercentage: Float,
     colorsByZone: Array<Color>,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
 ) {
-
-    val heartRateChangeRate by appViewModel.heartRateChangeRate.collectAsState()
-    val heartRateChangeConfidence by appViewModel.heartRateChangeConfidence.collectAsState()
+    val formattedChangeRate by heartRateChangeViewModel.formattedChangeRate.collectAsState()
+    val confidenceLevel by heartRateChangeViewModel.confidenceLevel.collectAsState()
 
     val segments = remember { getProgressIndicatorSegments() }
 
@@ -176,22 +177,14 @@ private fun HeartRateView(
 
     val textToDisplay = when(displayMode) {
         0 -> if (hr == 0) "-" else hr.toString()
-        1 -> {
-            if (heartRateChangeRate == null) {
-                "Δ: --"
-            } else {
-                val prefix = if (heartRateChangeRate!! > 0) "+" else ""
-                "Δ: $prefix${"%.1f".format(heartRateChangeRate).replace(',','.')}/m"
-            }
-        }
+        1 -> formattedChangeRate
         else ->  "${"%.1f".format(mhrPercentage).replace(',','.')}%"
     }
 
-    val showHeartIcon = displayMode != 1
     val context = LocalContext.current
 
-    val startAngle = 115f
-    val endAngle = 240f
+    val startAngle = 120f
+    val endAngle = 235f
 
     Box(
         modifier = modifier,
@@ -209,20 +202,31 @@ private fun HeartRateView(
                     VibrateGentle(context)
                 }
         ) {
-            if(showHeartIcon){
-                HeartIcon(
-                    modifier = Modifier.size(15.dp),
-                    tint = if (hr == 0) Color.DarkGray else colorsByZone[zone]
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-            }
-            
-            Text(
-                text = textToDisplay,
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1,
-                color = if (hr == 0) Color.DarkGray else Color.White
+            HeartIcon(
+                modifier = Modifier.size(15.dp),
+                tint = if (hr == 0) Color.DarkGray else colorsByZone[zone]
             )
+            Spacer(modifier = Modifier.width(5.dp))
+
+            if(displayMode != 1){
+                Text(
+                    text = textToDisplay,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1,
+                    color = if (hr == 0) Color.DarkGray else Color.White
+                )
+            }else{
+                Text(
+                    text =  if (hr == 0) "--" else textToDisplay,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1,
+                    color = if (hr == 0) Color.DarkGray else when {
+                        confidenceLevel >= 0.75f -> MyColors.Green
+                        confidenceLevel >= 0.5f -> MyColors.Yellow
+                        else -> Color.White
+                    }
+                )
+            }
         }
 
         SegmentedProgressIndicator(
@@ -275,7 +279,15 @@ fun HeartRateStandard(
         }
     }
 
-    HeartRateCircularChart(modifier = modifier, appViewModel = appViewModel, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
+    HeartRateCircularChart(
+        modifier = modifier,
+        appViewModel = appViewModel,
+        heartRateChangeViewModel = heartRateChangeViewModel,
+        hr = hr,
+        age = userAge,
+        lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+        upperBoundMaxHRPercent = upperBoundMaxHRPercent
+    )
 }
 
 @Composable
@@ -293,12 +305,19 @@ fun HeartRatePolar(
 
     LaunchedEffect(Unit) {
         while (true) {
-
             appViewModel.registerHeartBeat(polarViewModel.hrDataState.value ?: 0)
             heartRateChangeViewModel.registerHeartRate(polarViewModel.hrDataState.value ?: 0)
             delay(1000)
         }
     }
 
-    HeartRateCircularChart(modifier = modifier,  appViewModel = appViewModel, hr = hr, age = userAge, lowerBoundMaxHRPercent = lowerBoundMaxHRPercent, upperBoundMaxHRPercent = upperBoundMaxHRPercent)
+    HeartRateCircularChart(
+        modifier = modifier,
+        appViewModel = appViewModel,
+        heartRateChangeViewModel = heartRateChangeViewModel,
+        hr = hr,
+        age = userAge,
+        lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+        upperBoundMaxHRPercent = upperBoundMaxHRPercent
+    )
 }

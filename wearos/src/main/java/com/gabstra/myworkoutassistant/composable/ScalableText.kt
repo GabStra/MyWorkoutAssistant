@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.annotation.SuppressLint
 import android.util.Log
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -34,6 +35,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.TextUnit
 
+@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun ScalableText(
     modifier: Modifier = Modifier,

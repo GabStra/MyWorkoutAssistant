@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,11 +26,12 @@ import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 
+@SuppressLint("DefaultLocale")
 @Composable
 fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
     val scrollState = rememberScrollState()
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 15.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -49,7 +51,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
         } else {
             if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
                 Text(
-                    text = "No changes needed",
+                    text = "Keep current plates",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center
@@ -77,7 +79,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                             textAlign = TextAlign.Center
                         )
                         Text(
-                            modifier = Modifier.weight(3f),
+                            modifier = Modifier.weight(2f),
                             text = "PLATES",
                             style = headerStyle,
                             textAlign = TextAlign.Center
@@ -110,11 +112,8 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                                         style = MaterialTheme.typography.body1,
                                         textAlign = TextAlign.Center
                                     )
-                                    val weightText = if (step.weight % 1 == 0.0) {
-                                        "${step.weight.toInt()}"
-                                    } else {
-                                        "${step.weight}"
-                                    }
+                                    val weightText = String.format("%.2f", step.weight).replace(",", ".")
+
 
                                     val actionText =
                                         if (step.action == PlateCalculator.Companion.Action.ADD) {
@@ -123,12 +122,25 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                                             "-"
                                         }
 
-                                    Text(
-                                        modifier = Modifier.weight(3f),
-                                        text = "$actionText $weightText",
-                                        style = style,
-                                        textAlign = TextAlign.Center,
-                                    )
+                                    Row(
+                                        modifier = Modifier.weight(2f),
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ){
+                                            Text(
+                                                text = actionText,
+                                                style = style,
+                                                textAlign = TextAlign.End,
+                                            )
+                                            Text(
+                                                text = weightText,
+                                                style = style,
+                                                textAlign = TextAlign.Start,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

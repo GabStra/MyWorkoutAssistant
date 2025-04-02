@@ -182,14 +182,18 @@ fun WorkoutScreen(
             WorkoutStateHeader(updatedWorkoutState,viewModel)
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
-                    val state = updatedWorkoutState as WorkoutState.Preparing
+                    val state = updatedWorkoutState
                     if(!selectedWorkout.usePolarDevice)
                         PreparingStandardScreen(viewModel,hrViewModel,state)
                     else
                         PreparingPolarScreen(viewModel,navController,polarViewModel,state)
                 }
                 is WorkoutState.Set -> {
-                    val state = updatedWorkoutState as WorkoutState.Set
+                    val state = updatedWorkoutState
+                    LaunchedEffect(state) {
+                        heartRateChangeViewModel.reset()
+                    }
+
                     ExerciseScreen(
                         viewModel,
                         state,
@@ -197,7 +201,11 @@ fun WorkoutScreen(
                     )
                 }
                 is WorkoutState.Rest -> {
-                    val state = updatedWorkoutState as WorkoutState.Rest
+                    val state = updatedWorkoutState
+                    LaunchedEffect(state) {
+                        heartRateChangeViewModel.reset()
+                    }
+
                     RestScreen(
                         viewModel,
                         state,
@@ -213,7 +221,7 @@ fun WorkoutScreen(
                     )
                 }
                 is WorkoutState.Completed -> {
-                    val state = updatedWorkoutState as WorkoutState.Completed
+                    val state = updatedWorkoutState
                     WorkoutCompleteScreen(
                         navController,
                         viewModel,

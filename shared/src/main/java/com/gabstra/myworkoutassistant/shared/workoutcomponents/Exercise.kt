@@ -21,4 +21,5 @@ data class Exercise (
     val upperBoundMaxHRPercent: Float?,
     val equipmentId: UUID?,
     val bodyWeightPercentage: Double?,
-): WorkoutComponent(id,enabled)
+    val generateWarmUpSets: Boolean = false,
+    ): WorkoutComponent(id,enabled)

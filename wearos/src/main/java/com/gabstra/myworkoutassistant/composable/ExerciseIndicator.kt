@@ -50,7 +50,7 @@ fun ExerciseIndicator(
 
             // Calculate angle for each indicator to space them evenly
             // Total arc: 65f - (-60f) = 125f
-            val totalArcAngle = 125f
+            val totalArcAngle = 120f
             val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
             val startAngle = -60f + index * (segmentArcAngle + 2f)
             val endAngle = startAngle + segmentArcAngle

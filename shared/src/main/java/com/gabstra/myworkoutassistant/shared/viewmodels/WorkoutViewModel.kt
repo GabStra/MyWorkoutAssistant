@@ -63,6 +63,8 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.exp
+import kotlin.math.max
+import kotlin.math.min
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -481,6 +483,7 @@ open class WorkoutViewModel : ViewModel() {
                         newSets.add(newRestSet)
                     }
 
+
                     val setId = exerciseSets.getOrNull(index)?.id ?: UUID.randomUUID()
                     val newSet = when (exercise.exerciseType) {
                         ExerciseType.BODY_WEIGHT -> {
@@ -759,11 +762,8 @@ open class WorkoutViewModel : ViewModel() {
     fun resumeLastState() {
         if (_workoutRecord == null) return
 
-        Log.d("WorkoutViewModel", "Resume last set")
-
         val targetSetId = _workoutRecord!!.setId
         if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
-            Log.d("WorkoutViewModel", "Found set")
             return
         }
 
@@ -773,7 +773,6 @@ open class WorkoutViewModel : ViewModel() {
                 goToNextState()
 
                 if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
-                    Log.d("WorkoutViewModel", "Found last Set")
                     break
                 }
             }
@@ -1214,7 +1213,7 @@ open class WorkoutViewModel : ViewModel() {
 
         if (currentState is WorkoutState.Set) {
             val exercise = exercisesById[currentState.exerciseId]!!
-            if (exercise.doNotStoreHistory) return
+            if (exercise.doNotStoreHistory || currentState.isWarmupSet) return
         }
 
         val newSetHistory = when (currentState) {
@@ -1436,30 +1435,110 @@ open class WorkoutViewModel : ViewModel() {
         val isDeloading = progressionData?.second
 
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
-        val exerciseSets = exercise.sets.filter { it !is RestSet }
+        val exerciseAllSets = mutableListOf<Set>()
 
-        val exerciseVolume = exerciseProgression?.originalWorkload
-            ?: exerciseSets.sumOf {
+        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
+
+        if(exercise.generateWarmUpSets && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
+            val exerciseSets = exercise.sets.filter { it !is RestSet }
+
+            val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
+            val workSet = exerciseSets.first().let  {
                 when (it) {
                     is BodyWeightSet -> {
                         val relativeBodyWeight =
                             bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                        it.getWeight(equipment, relativeBodyWeight) * it.reps
+                        Pair(it.getWeight(equipment, relativeBodyWeight), it.reps)
                     }
 
                     is WeightSet -> {
-                        it.getWeight(equipment) * it.reps
+                        Pair(it.getWeight(equipment), it.reps)
                     }
 
-                    else -> 0.0
+                    else -> throw IllegalArgumentException("Unknown set type")
                 }
             }
 
+            val workWeight = workSet.first
+            val workReps = workSet.second
+
+            val availableWeights = mutableSetOf<Double>()
+
+            if(equipment != null){
+                availableWeights.addAll(getWeightByEquipment(equipment))
+            }
+
+            fun getNewSet(id: UUID,desiredWeight: Double, reps: Int) : Set?{
+                return when (exercise.exerciseType) {
+                    ExerciseType.BODY_WEIGHT -> {
+                        val relativeBodyWeight =
+                            bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+
+                        var weight = if (equipment is Barbell) {
+                            (desiredWeight - equipment.barWeight - relativeBodyWeight) / equipmentVolumeMultiplier
+                        } else if (equipment != null) {
+                            (desiredWeight - relativeBodyWeight) / equipmentVolumeMultiplier
+                        } else {
+                            desiredWeight - relativeBodyWeight
+                        }
+
+                        if(availableWeights.isNotEmpty() && weight >= availableWeights.min() && weight <= availableWeights.max()){
+                            weight = availableWeights.minBy { kotlin.math.abs(it - weight) }
+                        }
+
+                        //check if the weight is the max
+                        if (weight < 0) return null
+
+                        BodyWeightSet(id, reps, weight, true)
+                    }
+
+                    ExerciseType.WEIGHT -> {
+                        var weight = if (equipment is Barbell) {
+                            (desiredWeight - equipment.barWeight) / equipmentVolumeMultiplier
+                        } else if (equipment != null) {
+                            (desiredWeight) / equipmentVolumeMultiplier
+                        } else {
+                            desiredWeight
+                        }
+
+                        if(availableWeights.isNotEmpty() && weight >= availableWeights.min() && weight <= availableWeights.max()){
+                            weight = availableWeights.minBy { kotlin.math.abs(it - weight) }
+                        }
+
+                        if (weight < 0) return null
+
+                        WeightSet(id, reps, weight, true)
+                    }
+
+                    else -> return null
+                }
+            }
+
+            val warmUpProtocols = listOf(
+                Pair(0.5, max(5, min(8, workReps))),
+                Pair(0.75, max(3, min(5, workReps)))
+            )
+
+            warmUpProtocols.forEach {
+                val (percentage, reps) = it
+                val weight = workWeight * percentage
+                val newSet = getNewSet(UUID.randomUUID(), weight, reps)
+                if(newSet != null){
+                    exerciseAllSets.add(newSet)
+                    var newRestSet = RestSet(UUID.randomUUID(), 60, false)
+                    exerciseAllSets.add(newRestSet)
+                }
+            }
+
+            exerciseAllSets.addAll(exercise.sets)
+        }else{
+            exerciseAllSets.addAll(exercise.sets)
+        }
+
+        val exerciseSets = exerciseAllSets.filter { it !is RestSet }
         val plateChangeResults = getPlateChangeResults(exercise, exerciseSets, equipment)
 
-        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
-
-        for ((index, set) in exercise.sets.withIndex()) {
+        for ((index, set) in exerciseAllSets.withIndex()) {
             if (set is RestSet) {
                 val restSet = RestSet(set.id, set.timeInSeconds)
 
@@ -1498,6 +1577,12 @@ open class WorkoutViewModel : ViewModel() {
 
                 val plateChangeResult = plateChangeResults.getOrNull(exerciseSets.indexOf(set))
 
+                val isWarmupSet = when(set) {
+                    is BodyWeightSet -> set.isWarmupSet
+                    is WeightSet -> set.isWarmupSet
+                    else -> false
+                }
+
                 val setState: WorkoutState.Set = WorkoutState.Set(
                     exercise.id,
                     set,
@@ -1513,8 +1598,8 @@ open class WorkoutViewModel : ViewModel() {
                     plateChangeResult,
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
                     isDeloading ?: false,
-                    exerciseVolume,
-                    exerciseProgression?.progressIncrease
+                    exerciseProgression?.progressIncrease,
+                    isWarmupSet
                 )
 
                 states.add(setState)

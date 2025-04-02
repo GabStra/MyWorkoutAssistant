@@ -40,7 +40,6 @@ import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composable.ExerciseInfo
 import com.gabstra.myworkoutassistant.composable.PageButtons
 import com.gabstra.myworkoutassistant.composable.PageExerciseDetail
 import com.gabstra.myworkoutassistant.composable.PageExercises
@@ -248,71 +247,82 @@ fun RestScreen(
     }
 
 
-        AnimatedContent(
-            targetState = isTimerInEditMode,
-            transitionSpec = {
-                fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-            }, label = ""
-        ) { updatedState ->
-            if (updatedState) {
-                Box(
+    AnimatedContent(
+        targetState = isTimerInEditMode,
+        transitionSpec = {
+            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+        }, label = ""
+    ) { updatedState ->
+        if (updatedState) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(5.dp)
+                    .circleMask(),
+                contentAlignment = Alignment.Center
+            ) {
+                ControlButtonsVertical(
+                    modifier = Modifier
+                        .clickable(
+                            interactionSource = null,
+                            indication = null
+                        ) {
+                            updateInteractionTime()
+                        },
+                    onMinusTap = { onMinusClick() },
+                    onMinusLongPress = { onMinusClick() },
+                    onPlusTap = { onPlusClick() },
+                    onPlusLongPress = { onPlusClick() },
+                    content = {
+                        textComposable()
+                    }
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(5.dp)
+                    .circleMask(),
+                contentAlignment = Alignment.Center
+            ) {
+                CustomHorizontalPager(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(5.dp)
-                        .circleMask(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    ControlButtonsVertical(
-                        modifier = Modifier
-                            .clickable(
-                                interactionSource = null,
-                                indication = null
-                            ) {
-                                updateInteractionTime()
-                            },
-                        onMinusTap = { onMinusClick() },
-                        onMinusLongPress = { onMinusClick() },
-                        onPlusTap = { onPlusClick() },
-                        onPlusLongPress = { onPlusClick() },
-                        content = {
-                            textComposable()
+                        .padding(vertical = 22.dp, horizontal = 15.dp),
+                    pagerState = pagerState,
+                ) { pageIndex ->
+                    val pageType = pageTypes[pageIndex]
+                    when (pageType) {
+                        PageType.PLATES -> {
+                            PagePlates(
+                                state.nextStateSets.first(),
+                                equipment
+                            )
                         }
-                    )
-                }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(5.dp)
-                        .circleMask(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CustomHorizontalPager(
-                        modifier = Modifier.fillMaxSize()
-                            .padding(vertical = 22.dp, horizontal = 15.dp),
-                        pagerState = pagerState,
-                    ) { pageIndex ->
-                        val pageType = pageTypes[pageIndex]
-                        when (pageType) {
-                            PageType.PLATES -> {
-                                PagePlates(
+
+                        PageType.EXERCISE_DETAIL -> {}
+                        PageType.EXERCISES -> {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                textComposable()
+                                PageExercises(
                                     state.nextStateSets.first(),
-                                    equipment
+                                    viewModel,
+                                    exercise
                                 )
                             }
-                            PageType.EXERCISE_DETAIL -> {}
-                            PageType.EXERCISES -> PageExercises(
-                                state.nextStateSets.first(),
-                                viewModel,
-                                exercise
-                            )
-                            PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel)
-                            PageType.NOTES -> TODO()
                         }
+
+                        PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel)
+                        PageType.NOTES -> TODO()
                     }
                 }
             }
         }
+    }
 
 
     Box(

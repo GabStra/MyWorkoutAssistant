@@ -19,6 +19,7 @@ class MyColors {
     companion object {
         val Orange = Color(0xFFff6700)
         val Green = Color.hsl(113f, 0.79f, 0.34f)
+        val Yellow = Color.hsl(50f, 0.85f, 0.42f)
         val Red = Color.hsl(9f, 0.88f, 0.45f)
         val MediumGray = Color(0xFF808080)
     }

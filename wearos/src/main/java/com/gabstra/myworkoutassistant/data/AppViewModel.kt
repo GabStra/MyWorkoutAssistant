@@ -58,13 +58,6 @@ open class AppViewModel : WorkoutViewModel() {
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
     val lightScreenUp = _lightScreenUp.receiveAsFlow()
 
-    private val _heartRateChangeRate = MutableStateFlow<Float?>(null)
-    val heartRateChangeRate: StateFlow<Float?> = _heartRateChangeRate
-
-    // Property to store confidence level in calculation
-    private val _heartRateChangeConfidence = MutableStateFlow(0.0f)
-    val heartRateChangeConfidence: StateFlow<Float> = _heartRateChangeConfidence
-
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 3
     }

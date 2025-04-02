@@ -35,10 +35,12 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is WeightSet -> {
                 jsonObject.addProperty("reps", src.reps)
                 jsonObject.addProperty("weight", src.weight)
+                jsonObject.addProperty("isWarmupSet", src.isWarmupSet)
             }
             is BodyWeightSet ->{
                 jsonObject.addProperty("reps", src.reps)
                 jsonObject.addProperty("additionalWeight", src.additionalWeight)
+                jsonObject.addProperty("isWarmupSet", src.isWarmupSet)
             }
             is TimedDurationSet ->{
                 jsonObject.addProperty("timeInMillis", src.timeInMillis)
@@ -68,12 +70,14 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             "WeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
                 val weight = jsonObject.get("weight").asDouble
-                WeightSet(id,reps, weight)
+                val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
+                WeightSet(id,reps, weight,isWarmupSet)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
                 val additionalWeight = if(jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
-                BodyWeightSet(id,reps,additionalWeight)
+                val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
+                BodyWeightSet(id,reps,additionalWeight,isWarmupSet)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt

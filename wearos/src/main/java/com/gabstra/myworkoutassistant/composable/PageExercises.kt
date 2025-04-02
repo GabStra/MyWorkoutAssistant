@@ -57,12 +57,9 @@ fun PageExercises(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-    val currentExerciseIndex = exerciseIds.indexOf(currentExercise.id)
-
     val currentExerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
     val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(currentExerciseOrSupersetId)
 
-    var currentIndex by remember { mutableIntStateOf(currentExerciseIndex) }
     var selectedExercise by remember { mutableStateOf(currentExercise) }
 
     val typography = MaterialTheme.typography
@@ -94,89 +91,96 @@ fun PageExercises(
         },
         label = "",
     ) { updatedExercise ->
-        val updatedExerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) viewModel.supersetIdByExerciseId[updatedExercise.id] else updatedExercise.id
-        val updatedExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId)
+        val updatedExerciseOrSupersetId = remember(updatedExercise) { if(viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) viewModel.supersetIdByExerciseId[updatedExercise.id] else updatedExercise.id }
+        val updatedExerciseOrSupersetIndex =  remember(updatedExerciseOrSupersetId) {exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId) }
 
-        val isSuperset = viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId)
+        val isSuperset = remember(updatedExerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId) }
 
-        Column(
+        val currentIndex = remember(updatedExercise) { exerciseIds.indexOf(updatedExercise.id) }
+
+        Row(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
+            Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 30.dp)
-                    .clickable { marqueeEnabled = !marqueeEnabled }
-                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = updatedExercise.name,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.title3,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(
-                        textAlign = TextAlign.Center,
-                        text = "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                        style = captionStyle
-                    )
-                    if (isSuperset) {
-                        val supersetExercises =
-                            remember { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!! }
-                        val supersetIndex = remember { supersetExercises.indexOf(updatedExercise) }
-
-                        Text(
-                            textAlign = TextAlign.Center,
-                            text = "${supersetIndex + 1}/${supersetExercises.size}",
-                            style = captionStyle
-                        )
-                    }
-
-                    if (updatedExercise.id == currentExercise.id) {
-                        val exerciseSetIds =
-                            remember { viewModel.setsByExerciseId[updatedExercise.id]!!.map { it.set.id } }
-                        val setIndex = remember { exerciseSetIds.indexOf(currentStateSet.set.id) }
-
-                        Text(
-                            textAlign = TextAlign.Center,
-                            text = "${setIndex + 1}/${exerciseSetIds.size}",
-                            style = captionStyle
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.height(80.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
+                    .fillMaxHeight()
+                    .clickable(enabled = !isNavigationLocked && currentIndex > 0) {
+                        val newIndex = currentIndex - 1
+                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
+                        isNavigationLocked = true
+                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Icon(
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .clickable(enabled = !isNavigationLocked && currentIndex > 0) {
-                            currentIndex--
-                            selectedExercise = viewModel.exercisesById[exerciseIds[currentIndex]]!!
-                            isNavigationLocked = true
-                        }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                        .padding(2.dp),
                     imageVector = Icons.Filled.ArrowBack,
                     contentDescription = "Previous",
                     tint = if (currentIndex > 0) Color.White else MyColors.MediumGray
                 )
+            }
+
+
+
+            Column(
+                modifier = Modifier.fillMaxHeight().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { marqueeEnabled = !marqueeEnabled }
+                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = updatedExercise.name,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.title3,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            textAlign = TextAlign.Center,
+                            text = "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                            style = captionStyle
+                        )
+                        if (isSuperset) {
+                            val supersetExercises =
+                                remember { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!! }
+                            val supersetIndex = remember { supersetExercises.indexOf(updatedExercise) }
+
+                            Text(
+                                textAlign = TextAlign.Center,
+                                text = "${supersetIndex + 1}/${supersetExercises.size}",
+                                style = captionStyle
+                            )
+                        }
+
+                        if (updatedExercise.id == currentExercise.id) {
+                            val exerciseSetIds =
+                                remember { viewModel.setsByExerciseId[updatedExercise.id]!!.map { it.set.id } }
+                            val setIndex = remember { exerciseSetIds.indexOf(currentStateSet.set.id) }
+
+                            Text(
+                                textAlign = TextAlign.Center,
+                                text = "${setIndex + 1}/${exerciseSetIds.size}",
+                                style = captionStyle
+                            )
+                        }
+                    }
+                }
 
                 ExerciseSetsViewer(
-                    modifier =  Modifier.fillMaxHeight().weight(1f),
+                    modifier =  Modifier.height(76.dp).fillMaxWidth(),
                     viewModel = viewModel,
                     exercise = updatedExercise,
                     currentSet = currentStateSet.set,
@@ -190,20 +194,26 @@ fun PageExercises(
                     }
                     else null
                 )
+            }
 
+            Row(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .clickable(enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1) {
+                        val newIndex = currentIndex + 1
+                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
+                        isNavigationLocked = true
+                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Icon(
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .clickable(enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1) {
-                            currentIndex++
-                            selectedExercise = viewModel.exercisesById[exerciseIds[currentIndex]]!!
-                            isNavigationLocked = true
-                        }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                        .padding(2.dp),
                     imageVector = Icons.Filled.ArrowForward,
                     contentDescription = "Next",
                     tint = if (currentIndex < exerciseIds.size - 1) Color.White else MyColors.MediumGray
                 )
             }
+
         }
     }
 }

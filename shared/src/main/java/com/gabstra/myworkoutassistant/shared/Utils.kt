@@ -225,12 +225,12 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
 }
 
 val colorsByZone = arrayOf(
-    Color.hsl(0f, 0.10f, 0.80f),     // Light gray-pink (12.71:1)
-    Color.hsl(208f, 0.66f, 0.85f),   // Light blue (14.55:1)
-    Color.hsl(200f, 0.71f, 0.64f),   // Teal (9.58:1)
-    Color.hsl(113f, 0.84f, 0.49f),   // Green (12.44:1)
-    Color.hsl(27f, 0.95f, 0.69f),    // Orange (10.89:1)
-    Color.hsl(9f, 0.93f, 0.60f)      // Red (6.42:1)
+    Color.hsl(0f, 0.02f, 0.68f),
+    Color.hsl(208f, 0.61f, 0.76f),
+    Color.hsl(200f, 0.66f, 0.49f),
+    Color.hsl(113f, 0.79f, 0.34f),
+    Color.hsl(27f, 0.97f, 0.54f),
+    Color.hsl(9f, 0.88f, 0.45f)
 )
 
 //define an array that for each zone, contains the upper and lower limit in percentage

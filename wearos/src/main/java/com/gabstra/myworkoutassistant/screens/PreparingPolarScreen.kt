@@ -99,9 +99,9 @@ fun PreparingPolarScreen(
             }else{
                 viewModel.goToNextState()
                 viewModel.setWorkoutStart()
+                VibrateHard(context)
             }
 
-            VibrateHard(context)
             viewModel.lightScreenUp()
             onReady()
         }
@@ -109,7 +109,7 @@ fun PreparingPolarScreen(
 
     Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.CenterStart
     ){
         Column(horizontalAlignment = Alignment.CenterHorizontally){
             Text(modifier = Modifier.fillMaxWidth(),text = "Preparing\nPolar Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)

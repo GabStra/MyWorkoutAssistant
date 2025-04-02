@@ -252,6 +252,12 @@ fun ExerciseScreen(
                                         text =  "${setIndex + 1}/${exerciseSetIds.size}",
                                         style = captionStyle
                                     )
+                                    if(updatedState.isWarmupSet){
+                                        Text(
+                                            text = "WARM-UP",
+                                            style = captionStyle
+                                        )
+                                    }
                                 }
                             }
                         }
