@@ -77,7 +77,7 @@ fun ExerciseForm(
     val minReps = remember { mutableStateOf(exercise?.minReps?.toFloat()?:6f) }
     val maxReps = remember { mutableStateOf(exercise?.maxReps?.toFloat()?:12f) }
 
-    val generateWarmupSets = remember { mutableStateOf(exercise?.generateWarmUpSets ?: false) }
+    val generateWarmupSets = remember { mutableStateOf(exercise?.generateWarmUpSets ?: false) } // Added state for generateWarmupSets
 
     val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
@@ -219,6 +219,25 @@ fun ExerciseForm(
                         steps = 49,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp)) // Added spacer
+
+                    // Generate Warmup Sets Checkbox
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp) // Adjusted padding
+                    ) {
+                        Checkbox(
+                            checked = generateWarmupSets.value,
+                            onCheckedChange = { generateWarmupSets.value = it },
+                            colors = CheckboxDefaults.colors().copy(
+                                checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                            )
+                        )
+                        Text(text = "Generate Warmup Sets")
+                    }
                 }
             }
 
@@ -295,7 +314,7 @@ fun ExerciseForm(
             }
 
             val expandedHeartRateZone = remember { mutableStateOf(false) }
-            val showCustomTargetZone = remember (selectedTargetZone.value) { selectedTargetZone.value!=null }
+            val showCustomTargetZone = remember (selectedTargetZone.value) { selectedTargetZone.value!=null && selectedTargetZone.value == -1 } // Show only when custom is selected
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -307,9 +326,9 @@ fun ExerciseForm(
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = when(selectedTargetZone.value) {
-                            null -> heartRateZones[0]
-                            -1 -> heartRateZones[6]
-                            else -> heartRateZones[selectedTargetZone.value!!]
+                            null -> heartRateZones[0] // None
+                            -1 -> heartRateZones[6] // Custom
+                            else -> heartRateZones[selectedTargetZone.value!! + 1] // Zone 1-5 (index + 1)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -324,19 +343,24 @@ fun ExerciseForm(
                         heartRateZones.forEachIndexed { index, zone ->
                             DropdownMenuItem(
                                 onClick = {
-                                    if(index == 0){
-                                        selectedLowerBoundMaxHRPercent.value = null
-                                        selectedUpperBoundMaxHRPercent.value = null
-                                    }else if(index <= 5){
-                                        val (lowerBound, upperBound) = zoneRanges[index]
-
-                                        selectedLowerBoundMaxHRPercent.value = lowerBound
-                                        selectedUpperBoundMaxHRPercent.value = upperBound
-                                    }else{
-                                        selectedLowerBoundMaxHRPercent.value = 50f
-                                        selectedUpperBoundMaxHRPercent.value = 60f
+                                    when (index) {
+                                        0 -> { // None
+                                            selectedLowerBoundMaxHRPercent.value = null
+                                            selectedUpperBoundMaxHRPercent.value = null
+                                            selectedTargetZone.value = null
+                                        }
+                                        in 1..5 -> { // Zone 1-5
+                                            val (lowerBound, upperBound) = zoneRanges[index - 1] // Adjust index for zoneRanges
+                                            selectedLowerBoundMaxHRPercent.value = lowerBound
+                                            selectedUpperBoundMaxHRPercent.value = upperBound
+                                            selectedTargetZone.value = index - 1 // Store zone index
+                                        }
+                                        6 -> { // Custom
+                                            selectedLowerBoundMaxHRPercent.value = 50f // Default custom range
+                                            selectedUpperBoundMaxHRPercent.value = 60f
+                                            selectedTargetZone.value = -1 // Indicate custom
+                                        }
                                     }
-
                                     expandedHeartRateZone.value = false
                                 },
                                 text = {
@@ -349,27 +373,22 @@ fun ExerciseForm(
             }
 
             if(showCustomTargetZone){
-                RangeSlider(
-                    value =  selectedLowerBoundMaxHRPercent.value!!..selectedUpperBoundMaxHRPercent.value!!,
-                    onValueChange = { range ->
-                        selectedLowerBoundMaxHRPercent.value = range.start.roundToInt().toFloat()
-                        selectedUpperBoundMaxHRPercent.value = range.endInclusive.roundToInt().toFloat()
-                    },
-                    valueRange = 1f..100f,
-                    steps = 99,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Text(text = "${selectedLowerBoundMaxHRPercent.value}%")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "-")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "${selectedUpperBoundMaxHRPercent.value}%")
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) { // Wrap in column for better spacing
+                    Text(
+                        text = "Custom HR Zone (${selectedLowerBoundMaxHRPercent.value?.toInt()}% - ${selectedUpperBoundMaxHRPercent.value?.toInt()}%)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    RangeSlider(
+                        value =  selectedLowerBoundMaxHRPercent.value!!..selectedUpperBoundMaxHRPercent.value!!,
+                        onValueChange = { range ->
+                            selectedLowerBoundMaxHRPercent.value = range.start.roundToInt().toFloat()
+                            selectedUpperBoundMaxHRPercent.value = range.endInclusive.roundToInt().toFloat()
+                        },
+                        valueRange = 1f..100f,
+                        steps = 99,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                    )
                 }
             }
 
@@ -426,6 +445,7 @@ fun ExerciseForm(
                         upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value,
                         equipmentId = selectedEquipmentId.value,
                         bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
+                        generateWarmUpSets = generateWarmupSets.value // Added generateWarmupSets to Exercise creation
                     )
 
                     onExerciseUpsert(newExercise)
