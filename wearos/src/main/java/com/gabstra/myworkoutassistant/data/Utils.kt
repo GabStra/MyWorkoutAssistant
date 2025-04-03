@@ -106,13 +106,11 @@ fun Modifier.verticalColumnScrollbar(
         val visibleRatio = if (totalContentHeight > viewportHeight) {
             viewportHeight / totalContentHeight
         } else {
-            1f // Everything is visible
+            1f
         }
 
-
-        // If everything is visible, don't draw the scrollbar (only draw track if requested and always visible)
-        if (visibleRatio >= 1f && !showScrollBarTrack) {
-            return@drawWithContent // Don't draw anything if not needed and track isn't shown
+        if (visibleRatio >= 1f) {
+            return@drawWithContent
         }
 
         // Calculate actual track height: Use provided height or default to 2/3 of viewport
@@ -135,12 +133,6 @@ fun Modifier.verticalColumnScrollbar(
                 size = Size(width.toPx(), actualTrackHeight),
             )
         }
-
-        // If everything is visible, we only needed to draw the track (if requested), so exit now.
-        if (visibleRatio >= 1f) {
-            return@drawWithContent
-        }
-
 
         // Calculate scrollbar height (proportional to visible content ratio within the track height)
         // Ensure scrollbar height is at least a minimum size (e.g., width*2) for visibility? - Optional enhancement

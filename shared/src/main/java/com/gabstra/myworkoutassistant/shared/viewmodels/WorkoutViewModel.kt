@@ -1573,20 +1573,31 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
+            if(actualWarmupSets.isEmpty()){
+                chosenWeights.clear()
+                while(true){
+                    val selectableWeights = (availableWeights - chosenWeights).filter { it < workWeight }
+
+                    val minOrNull = selectableWeights.minOrNull()
+                    if(minOrNull == null) break
+
+                    chosenWeights.add(minOrNull)
+                }
+
+                actualWarmupSets = chosenWeights.mapNotNull{
+                    val intensity = it / oneRepMax
+                    val expectedReps = ((1.0278 - intensity) / 0.0278).roundToInt()
+                    val halfCapacityEstimatedReps =  expectedReps / 2
+                    if(halfCapacityEstimatedReps < 2) return@mapNotNull null
+                    Pair(it, halfCapacityEstimatedReps)
+                }
+            }
+
             if(actualWarmupSets.size > 1){
                 val warmupWeights = actualWarmupSets.map { it.first }.toSet()
                 val usableWarmupWeight = filterByDistance(availableWeights.toList(), warmupWeights.toList(), 2)
 
                 actualWarmupSets = actualWarmupSets.filter { it.first in usableWarmupWeight }
-            }
-
-            if(actualWarmupSets.isEmpty()){
-                val lowestPossibleWeight = availableWeights.min()
-                val intensity = lowestPossibleWeight / oneRepMax
-                val expectedReps = ((1.0278 - intensity) / 0.0278).roundToInt() 
-                val halfCapacityEstimatedReps =  expectedReps / 2
-
-                actualWarmupSets = listOf(Pair(lowestPossibleWeight, halfCapacityEstimatedReps))
             }
 
             if (actualWarmupSets.size > numberOfWarmUpSets) {
