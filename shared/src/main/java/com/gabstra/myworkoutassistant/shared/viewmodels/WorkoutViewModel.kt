@@ -1563,7 +1563,7 @@ open class WorkoutViewModel : ViewModel() {
                 val (percentage, reps) = it
                 val weight = workWeight * percentage
 
-                val selectableWeights = (availableWeights - chosenWeights).filter { it <= weight && it < workWeight }
+                val selectableWeights = (availableWeights - chosenWeights).filter { it <= weight }
                 val closestWeight = selectableWeights.minByOrNull { abs(it - weight) }
                 if(closestWeight == null) {
                      null
@@ -1593,12 +1593,12 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            if(actualWarmupSets.size > 1){
+/*            if(actualWarmupSets.size > 1){
                 val warmupWeights = actualWarmupSets.map { it.first }.toSet()
                 val usableWarmupWeight = filterByDistance(availableWeights.toList(), warmupWeights.toList(), 2)
 
                 actualWarmupSets = actualWarmupSets.filter { it.first in usableWarmupWeight }
-            }
+            }*/
 
             if (actualWarmupSets.size > numberOfWarmUpSets) {
                 actualWarmupSets = actualWarmupSets.take(numberOfWarmUpSets)

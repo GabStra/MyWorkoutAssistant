@@ -56,6 +56,7 @@ import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.EnduranceSetScreen
+import com.gabstra.myworkoutassistant.composable.ExerciseDetail
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composable.ExerciseSetsViewer
 import com.gabstra.myworkoutassistant.composable.PageButtons
@@ -207,66 +208,70 @@ fun ExerciseScreen(
                 }
             }
 
-            CustomHorizontalPager(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 22.dp, horizontal = 15.dp),
-                pagerState = pagerState,
-                userScrollEnabled = allowHorizontalScrolling,
-            ) { pageIndex ->
-                // Get the page type for the current index
-                val pageType = pageTypes[pageIndex]
+            ExerciseDetail(
+                updatedState = updatedState,
+                viewModel = viewModel,
+                onEditModeDisabled = { allowHorizontalScrolling = true },
+                onEditModeEnabled = {  allowHorizontalScrolling = false },
+                onTimerDisabled = { },
+                onTimerEnabled = { },
+                extraInfo = { _ ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ){
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
+                            Text(
+                                textAlign = TextAlign.Center,
+                                text =  "${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                                style = captionStyle
+                            )
+                            if(isSuperset){
+                                val supersetExercises = viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
+                                val supersetIndex = supersetExercises.indexOf(exercise)
 
-                when (pageType) {
-                    PageType.PLATES -> PagePlates(updatedState, equipment)
-                    PageType.EXERCISE_DETAIL -> PageExerciseDetail(
-                        updatedState = updatedState,
-                        viewModel = viewModel,
-                        onScrollEnabledChange = {
-                            allowHorizontalScrolling = it
-                        },
-                        exerciseTitleComposable = exerciseTitleComposable,
-                        extraInfoComposable = { _ ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center
-                            ){
-                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text =  "${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                                        style = captionStyle
-                                    )
-                                    if(isSuperset){
-                                        val supersetExercises = viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                                        val supersetIndex = supersetExercises.indexOf(exercise)
-
-                                        Text(
-                                            textAlign = TextAlign.Center,
-                                            text =  "${supersetIndex + 1}/${supersetExercises.size}",
-                                            style = captionStyle
-                                        )
-                                    }
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text =  "${setIndex + 1}/${exerciseSetIds.size}",
-                                        style = captionStyle
-                                    )
-                                    if(updatedState.isWarmupSet){
-                                        Text(
-                                            text = "WARM-UP",
-                                            style = captionStyle
-                                        )
-                                    }
-                                }
+                                Text(
+                                    textAlign = TextAlign.Center,
+                                    text =  "${supersetIndex + 1}/${supersetExercises.size}",
+                                    style = captionStyle
+                                )
+                            }
+                            Text(
+                                textAlign = TextAlign.Center,
+                                text =  "${setIndex + 1}/${exerciseSetIds.size}",
+                                style = captionStyle
+                            )
+                            if(updatedState.isWarmupSet){
+                                Text(
+                                    text = "WARM-UP",
+                                    style = captionStyle
+                                )
                             }
                         }
-                    )
-                    PageType.EXERCISES -> PageExercises(updatedState, viewModel, exercise)
-                    PageType.NOTES -> PageNotes(exercise.notes)
-                    PageType.BUTTONS -> PageButtons(updatedState, viewModel)
+                    }
+                },
+                exerciseTitleComposable = exerciseTitleComposable,
+                customComponentWrapper = { content ->
+                    CustomHorizontalPager(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(vertical = 22.dp, horizontal = 15.dp),
+                        pagerState = pagerState,
+                        userScrollEnabled = allowHorizontalScrolling,
+                    ) { pageIndex ->
+                        // Get the page type for the current index
+                        val pageType = pageTypes[pageIndex]
+
+                        when (pageType) {
+                            PageType.PLATES -> PagePlates(updatedState, equipment)
+                            PageType.EXERCISE_DETAIL -> content()
+                            PageType.EXERCISES -> PageExercises(updatedState, viewModel, exercise)
+                            PageType.NOTES -> PageNotes(exercise.notes)
+                            PageType.BUTTONS -> PageButtons(updatedState, viewModel)
+                        }
+                    }
                 }
-            }
+            )
         }
     }
 

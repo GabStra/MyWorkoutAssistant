@@ -12,6 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.QuestionMark
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -27,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -42,6 +49,7 @@ import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
+import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel.TrendDirection
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -167,6 +175,7 @@ private fun HeartRateView(
 ) {
     val formattedChangeRate by heartRateChangeViewModel.formattedChangeRate.collectAsState()
     val confidenceLevel by heartRateChangeViewModel.confidenceLevel.collectAsState()
+    val hrTrend by heartRateChangeViewModel.heartRateTrend.collectAsState()
 
     val segments = remember { getProgressIndicatorSegments() }
 
@@ -216,16 +225,38 @@ private fun HeartRateView(
                     color = if (hr == 0) Color.DarkGray else Color.White
                 )
             }else{
-                Text(
-                    text =  if (hr == 0) "--" else textToDisplay,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.caption1,
-                    color = if (hr == 0) Color.DarkGray else when {
-                        confidenceLevel >= 0.75f -> MyColors.Green
-                        confidenceLevel >= 0.5f -> MyColors.Yellow
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val textColor = when {
+                        confidenceLevel > 0.7f -> MyColors.Green
+                        confidenceLevel > 0.3f -> MyColors.Yellow
+                        confidenceLevel > 0 -> MyColors.Red
                         else -> Color.White
                     }
-                )
+
+                    Text(
+                        text =  if (hr == 0) "--" else textToDisplay,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption1,
+                        color = if (hr == 0) Color.DarkGray else textColor
+                    )
+                    if(hr != 0) {
+                        val trendIcon = when (hrTrend) {
+                            TrendDirection.INCREASING -> Icons.Filled.ArrowUpward
+                            TrendDirection.DECREASING -> Icons.Filled.ArrowDownward
+                            TrendDirection.STABLE -> Icons.AutoMirrored.Filled.ArrowForward
+                            TrendDirection.UNKNOWN -> Icons.Filled.QuestionMark
+                        }
+                        Icon(
+                            imageVector = trendIcon,
+                            contentDescription = "Heart rate trend: ${hrTrend.name}",
+                            modifier = Modifier.size(15.dp),
+                            tint = textColor
+                        )
+                    }
+                }
             }
         }
 

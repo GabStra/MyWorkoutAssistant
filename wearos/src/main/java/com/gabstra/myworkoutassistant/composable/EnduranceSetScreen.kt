@@ -65,6 +65,7 @@ fun EnduranceSetScreen (
     onTimerDisabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable:  @Composable () -> Unit,
+    customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -298,77 +299,77 @@ fun EnduranceSetScreen (
         }
     }
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = modifier
-    ) {
-        if (isTimerInEditMode) {
-            ControlButtonsVertical(
-                modifier = Modifier
-                    .wrapContentSize()
-                    .clickable(
-                        interactionSource = null,
-                        indication = null
+    customComponentWrapper {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = modifier
+        ) {
+            if (isTimerInEditMode) {
+                ControlButtonsVertical(
+                    modifier = Modifier
+                        .wrapContentSize()
+                        .clickable(
+                            interactionSource = null,
+                            indication = null
+                        ) {
+                            updateInteractionTime()
+                        },
+                    onMinusTap = { onMinusClick() },
+                    onMinusLongPress = { onMinusClick() },
+                    onPlusTap = { onPlusClick() },
+                    onPlusLongPress = { onPlusClick() },
+                    content = {
+                        textComposable()
+                    }
+                )
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    exerciseTitleComposable()
+                    if (extraInfo != null) {
+                        //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
+                    }
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
                     ) {
-                        updateInteractionTime()
-                    },
-                onMinusTap = { onMinusClick() },
-                onMinusLongPress = { onMinusClick() },
-                onPlusTap = { onPlusClick() },
-                onPlusLongPress = { onPlusClick() },
-                content = {
-                    textComposable()
-                }
-            )
-        }
-        else
-        {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ){
-                exerciseTitleComposable()
-                if (extraInfo != null) {
-                    //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    extraInfo(state)
-                }
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.Center
-                ){
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        SetScreen(customModifier = Modifier.weight(1f))
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            SetScreen(customModifier = Modifier.weight(1f))
+                        }
                     }
                 }
             }
         }
+
+        CustomDialogYesOnLongPress(
+            show = showStopDialog,
+            title = "Stop Exercise",
+            message = "Do you want to stop this exercise?",
+            handleYesClick = {
+                VibrateGentle(context)
+                state.currentSetData = currentSet.copy(
+                    endTimer = currentMillis
+                )
+
+                onTimerDisabled()
+                onTimerEnd()
+                showStopDialog = false
+            },
+            handleNoClick = {
+                VibrateGentle(context)
+                showStopDialog = false
+                startTimerJob()
+            },
+            handleOnAutomaticClose = {},
+            holdTimeInMillis = 1000
+        )
     }
-
-    CustomDialogYesOnLongPress(
-        show = showStopDialog,
-        title = "Stop Exercise",
-        message = "Do you want to stop this exercise?",
-        handleYesClick = {
-            VibrateGentle(context)
-            state.currentSetData = currentSet.copy(
-                endTimer = currentMillis
-            )
-
-            onTimerDisabled()
-            onTimerEnd()
-            showStopDialog = false
-        },
-        handleNoClick = {
-            VibrateGentle(context)
-            showStopDialog = false
-            startTimerJob()
-        },
-        handleOnAutomaticClose = {},
-        holdTimeInMillis = 1000
-    )
 }

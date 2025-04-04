@@ -24,6 +24,7 @@ fun ExerciseDetail(
     onTimerEnabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable: @Composable () -> Unit,
+    customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -43,7 +44,8 @@ fun ExerciseDetail(
                 onEditModeDisabled = onEditModeDisabled,
                 onEditModeEnabled = onEditModeEnabled,
                 extraInfo = extraInfo,
-                exerciseTitleComposable = exerciseTitleComposable
+                exerciseTitleComposable = exerciseTitleComposable,
+                customComponentWrapper = customComponentWrapper
             )
         }
 
@@ -62,7 +64,8 @@ fun ExerciseDetail(
                 onEditModeDisabled = onEditModeDisabled,
                 onEditModeEnabled = onEditModeEnabled,
                 extraInfo = extraInfo,
-                exerciseTitleComposable = exerciseTitleComposable
+                exerciseTitleComposable = exerciseTitleComposable,
+                customComponentWrapper = customComponentWrapper
             )
         }
 
@@ -82,7 +85,8 @@ fun ExerciseDetail(
                 onTimerDisabled = onTimerDisabled,
                 onTimerEnabled = onTimerEnabled,
                 extraInfo = extraInfo,
-                exerciseTitleComposable = exerciseTitleComposable
+                exerciseTitleComposable = exerciseTitleComposable,
+                customComponentWrapper = customComponentWrapper
             )
         }
 
@@ -101,7 +105,8 @@ fun ExerciseDetail(
             onTimerDisabled = onTimerDisabled,
             onTimerEnabled = onTimerEnabled,
             extraInfo = extraInfo,
-            exerciseTitleComposable = exerciseTitleComposable
+            exerciseTitleComposable = exerciseTitleComposable,
+            customComponentWrapper = customComponentWrapper
         )
 
         is RestSet -> throw IllegalStateException("Rest set should not be here")

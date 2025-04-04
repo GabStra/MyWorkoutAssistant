@@ -62,6 +62,7 @@ fun BodyWeightSetScreen(
     onEditModeDisabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable:  @Composable () -> Unit,
+    customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -361,48 +362,53 @@ fun BodyWeightSetScreen(
         }
     }
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = modifier
-    ){
-        if (isRepsInEditMode || isWeightInEditMode) {
-            ControlButtonsVertical(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = null,
-                        indication = null
-                    ) {
-                        updateInteractionTime()
-                    },
-                onMinusTap = { onMinusClick() },
-                onMinusLongPress = { onMinusClick() },
-                onPlusTap = { onPlusClick() },
-                onPlusLongPress = { onPlusClick() },
-                content = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        if (isRepsInEditMode) RepsRow(Modifier)
-                        if (isWeightInEditMode) WeightRow(Modifier)
+    customComponentWrapper {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = modifier
+        ){
+            if (isRepsInEditMode || isWeightInEditMode) {
+                ControlButtonsVertical(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = null,
+                            indication = null
+                        ) {
+                            updateInteractionTime()
+                        },
+                    onMinusTap = { onMinusClick() },
+                    onMinusLongPress = { onMinusClick() },
+                    onPlusTap = { onPlusClick() },
+                    onPlusLongPress = { onPlusClick() },
+                    content = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            if (isRepsInEditMode) RepsRow(Modifier)
+                            if (isWeightInEditMode) WeightRow(Modifier)
+                        }
                     }
-                }
-            )
+                )
 
-        }else{
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                exerciseTitleComposable()
-                if (extraInfo != null) {
-                    //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    extraInfo(state)
+            }else{
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    exerciseTitleComposable()
+                    if (extraInfo != null) {
+                        //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
+                    }
+                    SetScreen(customModifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 10.dp))
                 }
-                SetScreen(customModifier = Modifier.weight(1f).padding(horizontal = 10.dp))
             }
         }
     }
+
 }

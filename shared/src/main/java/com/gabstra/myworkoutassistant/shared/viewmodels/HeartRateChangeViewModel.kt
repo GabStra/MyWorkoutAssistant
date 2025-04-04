@@ -96,12 +96,8 @@ class HeartRateChangeViewModel : ViewModel() {
      */
     private fun updateTrendDirection(changeRate: Float) {
         // Skip if confidence (R²) is too low
-        if (_confidenceLevel.value < 0.5f) { // Adjust confidence threshold if needed (e.g., 0.3 or 0.5)
-            // Don't reset to UNKNOWN immediately if confidence dips briefly, maybe only if very low?
-            // Let's reset for now if confidence is low.
+        if (_confidenceLevel.value < 0.3f) {
             _heartRateTrend.value = TrendDirection.UNKNOWN
-            consistentReadingCounter = 0
-            _heartRateChangeRate.value = 0f
             // lastTrendDirection is not reset here to allow quick recovery if confidence improves
             return
         }
@@ -177,17 +173,8 @@ class HeartRateChangeViewModel : ViewModel() {
     @SuppressLint("DefaultLocale")
     private fun updateFormattedChangeRate() {
         val changeRate = _heartRateChangeRate.value // This is BPM/s
-        val confidence = _confidenceLevel.value
-        val trend = _heartRateTrend.value
 
-        val trendIndicator = when (trend) {
-            TrendDirection.INCREASING -> "↑"
-            TrendDirection.DECREASING -> "↓"
-            TrendDirection.STABLE -> "→"
-            TrendDirection.UNKNOWN -> "?"
-        }
-
-        if(changeRate == null || trend == TrendDirection.UNKNOWN) {
+        if(changeRate == null) {
             _formattedChangeRate.value = "--"
             return
         }
@@ -197,6 +184,6 @@ class HeartRateChangeViewModel : ViewModel() {
         // Format rate to 1 or 2 decimal places for BPM/s
         val formattedRate = String.format("%.2f", changeRate).replace(',', '.')
 
-        _formattedChangeRate.value = "$prefix${formattedRate}/s $trendIndicator"
+        _formattedChangeRate.value = "$prefix${formattedRate}/s"
     }
 }

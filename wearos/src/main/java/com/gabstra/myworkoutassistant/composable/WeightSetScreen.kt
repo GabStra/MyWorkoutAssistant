@@ -54,16 +54,17 @@ import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WeightSetScreen (
+fun WeightSetScreen(
     viewModel: AppViewModel,
     modifier: Modifier,
     state: WorkoutState.Set,
     forceStopEditMode: Boolean,
-    onEditModeEnabled : () -> Unit,
+    onEditModeEnabled: () -> Unit,
     onEditModeDisabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
-    exerciseTitleComposable:  @Composable () -> Unit,
-){
+    exerciseTitleComposable: @Composable () -> Unit,
+    customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
+) {
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as WeightSetData
@@ -91,13 +92,13 @@ fun WeightSetScreen (
     var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
     var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
 
-    val cumulativeWeight = remember(currentSetData,equipment){
+    val cumulativeWeight = remember(currentSetData, equipment) {
         currentSetData.getWeight(equipment)
     }
 
-    LaunchedEffect(availableWeights,cumulativeWeight) {
+    LaunchedEffect(availableWeights, cumulativeWeight) {
         withContext(Dispatchers.Default) {
-            if(availableWeights.isEmpty()) return@withContext
+            if (availableWeights.isEmpty()) return@withContext
             closestWeight = availableWeights.minByOrNull { kotlin.math.abs(it - cumulativeWeight) }
             closestWeightIndex = availableWeights.indexOf(closestWeight)
             selectedWeightIndex = closestWeightIndex
@@ -135,17 +136,17 @@ fun WeightSetScreen (
     }
 
     LaunchedEffect(forceStopEditMode) {
-        if(forceStopEditMode){
+        if (forceStopEditMode) {
             isRepsInEditMode = false
             isWeightInEditMode = false
         }
     }
 
-    fun onMinusClick(){
+    fun onMinusClick() {
         updateInteractionTime()
-        if (isRepsInEditMode && (currentSetData.actualReps > 1)){
+        if (isRepsInEditMode && (currentSetData.actualReps > 1)) {
             val newSetData = currentSetData.copy(
-                actualReps = currentSetData.actualReps-1
+                actualReps = currentSetData.actualReps - 1
             )
 
             currentSetData = currentSetData.copy(
@@ -155,15 +156,15 @@ fun WeightSetScreen (
 
             VibrateGentle(context)
         }
-        if (isWeightInEditMode ){
+        if (isWeightInEditMode) {
             selectedWeightIndex?.let {
                 if (it > 0) {
                     selectedWeightIndex = it - 1
 
-                    val newActualWeight = if(equipment is Barbell){
+                    val newActualWeight = if (equipment is Barbell) {
                         (availableWeights!!.elementAt(selectedWeightIndex!!) - equipment.barWeight) / equipmentVolumeMultiplier
-                    }else{
-                        availableWeights!!.elementAt(selectedWeightIndex!!)/ equipmentVolumeMultiplier
+                    } else {
+                        availableWeights!!.elementAt(selectedWeightIndex!!) / equipmentVolumeMultiplier
                     }
 
                     val newSetData = currentSetData.copy(
@@ -182,11 +183,11 @@ fun WeightSetScreen (
 
     }
 
-    fun onPlusClick(){
+    fun onPlusClick() {
         updateInteractionTime()
-        if (isRepsInEditMode){
+        if (isRepsInEditMode) {
             val newSetData = currentSetData.copy(
-                actualReps = currentSetData.actualReps+1
+                actualReps = currentSetData.actualReps + 1
             )
 
             currentSetData = currentSetData.copy(
@@ -196,15 +197,15 @@ fun WeightSetScreen (
 
             VibrateGentle(context)
         }
-        if (isWeightInEditMode){
+        if (isWeightInEditMode) {
             selectedWeightIndex?.let {
                 if (it < availableWeights!!.size - 1) {
                     selectedWeightIndex = it + 1
 
-                    val newActualWeight = if(equipment is Barbell){
+                    val newActualWeight = if (equipment is Barbell) {
                         (availableWeights.elementAt(selectedWeightIndex!!) - equipment.barWeight) / equipmentVolumeMultiplier
-                    }else{
-                        availableWeights.elementAt(selectedWeightIndex!!)/ equipmentVolumeMultiplier
+                    } else {
+                        availableWeights.elementAt(selectedWeightIndex!!) / equipmentVolumeMultiplier
                     }
 
                     val newSetData = currentSetData.copy(
@@ -223,7 +224,7 @@ fun WeightSetScreen (
     }
 
     @Composable
-    fun RepsRow(modifier: Modifier  = Modifier) {
+    fun RepsRow(modifier: Modifier = Modifier) {
         Row(
             modifier = modifier
                 .combinedClickable(
@@ -256,9 +257,9 @@ fun WeightSetScreen (
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
-            val textColor  = when {
+            val textColor = when {
                 currentSetData.actualReps == previousSetData.actualReps -> Color.Unspecified
-                currentSetData.actualReps < previousSetData.actualReps  -> MyColors.Red
+                currentSetData.actualReps < previousSetData.actualReps -> MyColors.Red
                 else -> MyColors.Green
             }
 
@@ -274,53 +275,53 @@ fun WeightSetScreen (
 
     @Composable
     fun WeightRow(modifier: Modifier = Modifier) {
-            Row(
-                modifier = modifier
-                    .combinedClickable(
-                        onClick = {
-                        },
-                        onLongClick = {
-                            if (forceStopEditMode) return@combinedClickable
+        Row(
+            modifier = modifier
+                .combinedClickable(
+                    onClick = {
+                    },
+                    onLongClick = {
+                        if (forceStopEditMode) return@combinedClickable
 
-                            isWeightInEditMode = !isWeightInEditMode
-                            updateInteractionTime()
-                            isRepsInEditMode = false
+                        isWeightInEditMode = !isWeightInEditMode
+                        updateInteractionTime()
+                        isRepsInEditMode = false
 
-                            VibrateGentle(context)
-                        },
-                        onDoubleClick = {
-                            if (isWeightInEditMode) {
-                                val newSetData = currentSetData.copy(
-                                    actualWeight = previousSetData.actualWeight,
-                                )
+                        VibrateGentle(context)
+                    },
+                    onDoubleClick = {
+                        if (isWeightInEditMode) {
+                            val newSetData = currentSetData.copy(
+                                actualWeight = previousSetData.actualWeight,
+                            )
 
-                                currentSetData = currentSetData.copy(
-                                    actualWeight = previousSetData.actualWeight,
-                                    volume = newSetData.calculateVolume(equipment)
-                                )
+                            currentSetData = currentSetData.copy(
+                                actualWeight = previousSetData.actualWeight,
+                                volume = newSetData.calculateVolume(equipment)
+                            )
 
-                                VibrateTwice(context)
-                            }
+                            VibrateTwice(context)
                         }
-                    ),
+                    }
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-                val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
-                val weight = currentSetData.actualWeight
+            val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
+            val weight = currentSetData.actualWeight
 
-                val textColor = when {
-                    currentSetData.actualWeight == previousSetData.actualWeight -> Color.Unspecified
-                    currentSetData.actualWeight < previousSetData.actualWeight  -> MyColors.Red
-                    else -> MyColors.Green
-                }
+            val textColor = when {
+                currentSetData.actualWeight == previousSetData.actualWeight -> Color.Unspecified
+                currentSetData.actualWeight < previousSetData.actualWeight -> MyColors.Red
+                else -> MyColors.Green
+            }
 
-                ScalableText(
-                    modifier = Modifier.fillMaxWidth(),
-                    text = "%.2f".format(weight).replace(',','.'),
-                    style = style,
-                    color =  textColor,
-                    textAlign = TextAlign.Center
-                )
+            ScalableText(
+                modifier = Modifier.fillMaxWidth(),
+                text = "%.2f".format(weight).replace(',', '.'),
+                style = style,
+                color = textColor,
+                textAlign = TextAlign.Center
+            )
         }
     }
 
@@ -333,9 +334,10 @@ fun WeightSetScreen (
             verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             val typography = MaterialTheme.typography
-            val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+            val headerStyle =
+                remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
-            if(equipment!=null){
+            if (equipment != null) {
                 Text(
                     text = equipment.name.toUpperCase(Locale.ROOT),
                     style = headerStyle
@@ -359,7 +361,7 @@ fun WeightSetScreen (
                 )
             }
             Row(
-                modifier =  Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 WeightRow(modifier = Modifier.weight(1f))
@@ -368,52 +370,55 @@ fun WeightSetScreen (
         }
     }
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = modifier
-    ){
-        if (isRepsInEditMode || isWeightInEditMode) {
-            ControlButtonsVertical(
-                modifier = Modifier
-                    .wrapContentSize()
-                    .clickable(
-                        interactionSource = null,
-                        indication = null
-                    ) {
-                        updateInteractionTime()
-                    },
-                onMinusTap = { onMinusClick() },
-                onMinusLongPress = { onMinusClick() },
-                onPlusTap = { onPlusClick() },
-                onPlusLongPress = { onPlusClick() },
-                content = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        if (isRepsInEditMode) RepsRow()
-                        if (isWeightInEditMode) WeightRow()
+    customComponentWrapper {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = modifier
+        ) {
+            if (isRepsInEditMode || isWeightInEditMode) {
+                ControlButtonsVertical(
+                    modifier = Modifier
+                        .wrapContentSize()
+                        .clickable(
+                            interactionSource = null,
+                            indication = null
+                        ) {
+                            updateInteractionTime()
+                        },
+                    onMinusTap = { onMinusClick() },
+                    onMinusLongPress = { onMinusClick() },
+                    onPlusTap = { onPlusClick() },
+                    onPlusLongPress = { onPlusClick() },
+                    content = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            if (isRepsInEditMode) RepsRow()
+                            if (isWeightInEditMode) WeightRow()
+                        }
                     }
+                )
+
+            } else {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    exerciseTitleComposable()
+
+                    if (extraInfo != null) {
+                        //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
+                    }
+                    SetScreen(
+                        customModifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 10.dp)
+                    )
+
                 }
-            )
-
-        }
-        else
-        {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                exerciseTitleComposable()
-
-                if (extraInfo != null) {
-                    //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                    extraInfo(state)
-                }
-                SetScreen(customModifier = Modifier
-                    .weight(1f).padding(horizontal = 10.dp))
-
             }
         }
     }

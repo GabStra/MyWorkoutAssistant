@@ -12,7 +12,8 @@ fun PageExerciseDetail(
     viewModel: AppViewModel,
     onScrollEnabledChange: (Boolean) -> Unit,
     exerciseTitleComposable: @Composable () -> Unit,
-    extraInfoComposable: @Composable (WorkoutState.Set) -> Unit
+    extraInfoComposable: @Composable (WorkoutState.Set) -> Unit,
+    customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     /*val extraInfoComposable: @Composable (WorkoutState.Set) -> Unit = {state ->
         Row(
@@ -41,6 +42,7 @@ fun PageExerciseDetail(
         onTimerDisabled = { },
         onTimerEnabled = { },
         extraInfo = extraInfoComposable,
-        exerciseTitleComposable = exerciseTitleComposable
+        exerciseTitleComposable = exerciseTitleComposable,
+        customComponentWrapper = customComponentWrapper
     )
 }

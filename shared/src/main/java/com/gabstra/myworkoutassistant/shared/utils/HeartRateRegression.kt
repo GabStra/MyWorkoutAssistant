@@ -3,8 +3,8 @@ package com.gabstra.myworkoutassistant.shared.utils
 import kotlin.math.pow
 
 class HeartRateRegression(
-    private val maxDataPoints: Int = 10,
-    private val maxAgeSeconds: Double? = 10.0
+    private val maxDataPoints: Int = 30,
+    private val maxAgeSeconds: Double? = 30.0
 ) {
     private val timePoints = mutableListOf<Double>() // Time in seconds relative to start
     private val heartRates = mutableListOf<Int>() // BPM measurements
@@ -51,11 +51,11 @@ class HeartRateRegression(
      *
      * @return The regression results including slope, intercept, and R-squared
      */
-    fun performRegression(): RegressionResult {
+    fun performRegression(): RegressionResult? {
         val n = timePoints.size
         if (n < 2) {
             // Should not happen if called after addReading check, but safeguard
-            return RegressionResult(0.0, heartRates.firstOrNull()?.toDouble() ?: 0.0, 0.0, "stable")
+            return null
         }
 
         // Calculate means
@@ -130,16 +130,6 @@ class HeartRateRegression(
         val slope: Double,      // BPM per second
         val intercept: Double,
         val rSquared: Double,   // Coefficient of determination (0.0 to 1.0)
-
         val trend: String       // "increasing", "decreasing", "stable"
     )
-
-    fun predictAt(timeInSeconds: Double): Double? {
-        return if (timePoints.size >= 2) {
-            val regression = performRegression()
-            regression.slope * timeInSeconds + regression.intercept
-        } else {
-            null
-        }
-    }
 }
