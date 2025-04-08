@@ -63,6 +63,7 @@ import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.composables.DarkModeContainer
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -131,11 +132,16 @@ fun WorkoutForm(
         }
     ){
             it ->
+        val scrollState = rememberScrollState()
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .verticalScroll(rememberScrollState()),
+                .padding(horizontal = 5.dp)
+                .verticalColumnScrollbar(scrollState)
+                .verticalScroll(scrollState)
+                .padding(horizontal = 10.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             // Workout name field

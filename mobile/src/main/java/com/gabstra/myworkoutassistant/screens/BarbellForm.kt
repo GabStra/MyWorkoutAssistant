@@ -34,6 +34,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,8 +70,10 @@ fun BarbellForm(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(scrollState),
+            .padding(horizontal = 5.dp)
+            .verticalColumnScrollbar(scrollState)
+            .verticalScroll(scrollState)
+            .padding(horizontal = 10.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Barbell name field

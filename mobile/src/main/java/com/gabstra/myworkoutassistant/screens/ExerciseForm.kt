@@ -30,6 +30,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -126,8 +127,10 @@ fun ExerciseForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(horizontal = 8.dp)
-                .verticalScroll(scrollState),
+                .padding(horizontal = 5.dp)
+                .verticalColumnScrollbar(scrollState)
+                .verticalScroll(scrollState)
+                .padding(horizontal = 10.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             // Exercise name field

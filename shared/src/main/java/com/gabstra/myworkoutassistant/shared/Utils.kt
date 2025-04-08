@@ -379,3 +379,4 @@ fun Double.isEqualTo(other: Double, epsilon: Double = 1e-2): Boolean {
 fun calculateOneRepMax(weight: Double, reps: Int): Double {
     return weight / (1.0278 - (0.0278 * reps))
 }
+

@@ -2,6 +2,13 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.os.Build
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,6 +19,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -30,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +51,11 @@ import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.optionalClip
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
 import com.kizitonwose.calendar.compose.CalendarLayoutInfo
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
@@ -91,14 +105,14 @@ fun MonthHeader(
     modifier: Modifier = Modifier,
     daysOfWeek: List<DayOfWeek> = emptyList(),
 ) {
-    Row(modifier.fillMaxWidth()) {
+    Row(modifier.fillMaxWidth().padding(bottom = 5.dp)) {
         for (dayOfWeek in daysOfWeek) {
             Text(
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = .87f),
+                color = VeryLightGray,
                 text = dayOfWeek.displayText(),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
             )
         }
     }
@@ -107,6 +121,7 @@ fun MonthHeader(
 @Composable
 private fun Day(
     day: CalendarDay,
+    currentMonth: YearMonth,
     isToday: Boolean = false,
     isSelected: Boolean = false,
     shouldHighlight: Boolean = false,
@@ -114,39 +129,46 @@ private fun Day(
     onClick: (CalendarDay) -> Unit = {},
 ) {
     val isOutOfBounds = day.position in listOf(DayPosition.InDate, DayPosition.OutDate)
+    val isAfterCurrentMonth = remember(day) { day.date.month > currentMonth.month && day.date.year == currentMonth.year }
+
     Box(
         Modifier
-            .padding(2.dp)
+            .padding(horizontal = 5.dp, vertical = 2.dp)
             .border(
                 width = if (isSelected || isToday) 1.dp else 0.dp,
-                color = if (isSelected) Color.White.copy(alpha = .87f) else (if (isToday) Color(0xFF4CAF50) else Color.Transparent),
+                color = if (isSelected) VeryLightGray else (if (isToday) Color(0xFF4CAF50) else Color.Transparent),
             )
     ){
         Box(
             modifier = Modifier
                 .clickable(
-                    onClick = { onClick(day) },
+                    enabled = !isAfterCurrentMonth,
+                    onClick = {
+                        onClick(day)
+                    },
                 )
-                .alpha(if (isOutOfBounds) 0.25f else 1f)
-
                 .padding(3.dp)
         ) {
-            val textColor =  if(shouldHighlight) Color.Black else Color.White.copy(alpha = .87f)
+            val textColor = if(isOutOfBounds) LightGray else VeryLightGray
 
             val shape = if(shouldHighlight) CircleShape else null
+
+            val backgroundColor = if(isOutOfBounds) MediumDarkGray else highlightColor
 
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .optionalClip(shape)
                     .size(30.dp)
-                    .background(if (shouldHighlight) highlightColor else Color.Transparent),
+                    .background(if (shouldHighlight) backgroundColor else Color.Transparent),
                 contentAlignment = Alignment.Center
             ){
                 Text(
+                    modifier = Modifier.fillMaxWidth(),
                     text = day.date.dayOfMonth.toString(),
                     color = textColor,
-                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
 
@@ -167,87 +189,68 @@ private fun Day(
     }
 }
 
-private val CalendarLayoutInfo.completelyVisibleMonths: List<CalendarMonth>
-    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
-    get() {
-        val visibleItemsInfo = this.visibleMonthsInfo.toMutableList()
-        return if (visibleItemsInfo.isEmpty()) {
-            emptyList()
-        } else {
-            val lastItem = visibleItemsInfo.last()
-            val viewportSize = this.viewportEndOffset + this.viewportStartOffset
-            if (lastItem.offset + lastItem.size > viewportSize) {
-                visibleItemsInfo.removeLast()
-            }
-            val firstItem = visibleItemsInfo.firstOrNull()
-            if (firstItem != null && firstItem.offset < this.viewportStartOffset) {
-                visibleItemsInfo.removeFirst()
-            }
-            visibleItemsInfo.map { it.month }
-        }
-    }
-
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
-@Composable
-fun rememberFirstCompletelyVisibleMonth(state: CalendarState): CalendarMonth {
-    val visibleMonth = remember(state) { mutableStateOf(state.firstVisibleMonth) }
-    // Only take non-null values as null will be produced when the
-    // list is mid-scroll as no index will be completely visible.
-    LaunchedEffect(state) {
-        snapshotFlow { state.layoutInfo.completelyVisibleMonths.firstOrNull() }
-            .filterNotNull()
-            .collect { month -> visibleMonth.value = month }
-    }
-    return visibleMonth.value
-}
-
-
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun SimpleCalendarTitle(
     calendarState: CalendarState,
-    currentMonth: YearMonth
+    currentMonth: YearMonth // Assuming this is the actual current real-world month
 ) {
-    val visibleMonth = rememberFirstCompletelyVisibleMonth(calendarState)
+
     val scope = rememberCoroutineScope()
 
-    val isCurrentMonth = visibleMonth.yearMonth.month == currentMonth.month && visibleMonth.yearMonth.year == currentMonth.year
+    // Use the Month from the state, not the initial currentMonth param for comparison logic
+    var currentVisibleMonthYearMonth by remember(calendarState.firstVisibleMonth.yearMonth) { mutableStateOf(calendarState.firstVisibleMonth.yearMonth) }
+
+    val isRealCurrentMonth = remember(currentVisibleMonthYearMonth) { currentVisibleMonthYearMonth.month == currentMonth.month && currentVisibleMonthYearMonth.year == currentMonth.year }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth() // Good practice for Rows like this
     ) {
         IconButton(
             onClick = {
                 scope.launch {
-                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
+                    currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.previousMonth
+                    calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
                 }
             },
         ) {
-            Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Back",tint = Color.White)
+            Icon(
+                imageVector = Icons.Filled.ArrowBack,
+                contentDescription = "Previous Month", // More descriptive
+                tint = VeryLightGray
+            )
         }
 
         Text(
             modifier = Modifier.weight(1f),
-            text = visibleMonth.yearMonth.displayText(),
+            text = currentVisibleMonthYearMonth.displayText(), // Use the animated month
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = .87f)
+            color = VeryLightGray
         )
 
         IconButton(
-            enabled = !isCurrentMonth,
+            // Disable forward button if the month being displayed is the real-world current month
+            enabled = !isRealCurrentMonth,
             onClick = {
                 scope.launch {
-                    calendarState.animateScrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
+                    currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.nextMonth
+                    calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
                 }
             },
         ) {
-            Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Back",tint = if(isCurrentMonth) Color.DarkGray else Color.White)
+            Icon(
+                imageVector = Icons.Filled.ArrowForward,
+                contentDescription = "Next Month", // More descriptive
+                // Tint based on whether it's the real-world current month
+                tint = if (isRealCurrentMonth) MediumGray else VeryLightGray
+            )
         }
     }
+
+
 }
 
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun WorkoutsCalendar(
     modifier: Modifier = Modifier,
@@ -279,27 +282,28 @@ fun WorkoutsCalendar(
             calendarState = calendarState,
             currentMonth = currentMonth
         )
-        DarkModeContainer(whiteOverlayAlpha = .1f) {
-            HorizontalCalendar(
-                modifier = Modifier.padding(5.dp),
-                state = calendarState,
-                calendarScrollPaged = false,
-                userScrollEnabled = false,
-                dayContent = { day ->
-                    Day(
-                        isToday = day.date == currentDay,
-                        day = day,
-                        isSelected = selectedDate.date == day.date,
-                        shouldHighlight = shouldHighlight(day),
-                        highlightColor = getHighlightColor(day),
-                    ) { selectedCalendarDay ->
-                        onDayClicked(calendarState,selectedCalendarDay)
-                    }
-                },
-                monthHeader = {
-                    MonthHeader(daysOfWeek = daysOfWeek())
-                },
-            )
-        }
+        HorizontalCalendar(
+            modifier = Modifier.padding(5.dp),
+            state = calendarState,
+            calendarScrollPaged = false,
+            userScrollEnabled = false,
+            dayContent = { day ->
+                Day(
+                    isToday = day.date == currentDay,
+                    day = day,
+                    currentMonth = currentMonth,
+                    isSelected = selectedDate.date == day.date,
+                    shouldHighlight = shouldHighlight(day),
+                    highlightColor = getHighlightColor(day),
+                ) { selectedCalendarDay ->
+                    onDayClicked(calendarState,selectedCalendarDay)
+                }
+            },
+            monthHeader = {
+                MonthHeader(daysOfWeek = daysOfWeek())
+            },
+        )
     }
+
+
 }

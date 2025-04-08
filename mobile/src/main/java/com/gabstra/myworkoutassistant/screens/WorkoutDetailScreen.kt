@@ -97,6 +97,10 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -242,6 +246,8 @@ fun SupersetForm(
     val (hours, minutes, seconds) = hms.value
 
     if (displayDialog.value) {
+        val scrollState = rememberScrollState()
+
         AlertDialog(
             onDismissRequest = { displayDialog.value = false },
             title = { Text("Add Superset") },
@@ -249,7 +255,10 @@ fun SupersetForm(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
+                        .padding(horizontal = 5.dp)
+                        .verticalColumnScrollbar(scrollState)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -566,47 +575,45 @@ fun WorkoutDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(),
-                            textAlign = TextAlign.Center,
-                            text = workout.name
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onGoBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-                    actions = {
-                        Menu(
-                            onEditWorkout = {
-                                appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
-                            },
-                            onClearHistory = {
-                                scope.launch {
-                                    withContext(Dispatchers.Main) {
-                                        workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                        Toast.makeText(
-                                            context,
-                                            "History deleted",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                }
-                            }
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(),
+                        textAlign = TextAlign.Center,
+                        text = workout.name
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onGoBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
                         )
                     }
-                )
-            }
+                },
+                actions = {
+                    Menu(
+                        onEditWorkout = {
+                            appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
+                        },
+                        onClearHistory = {
+                            scope.launch {
+                                withContext(Dispatchers.Main) {
+                                    workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                    Toast.makeText(
+                                        context,
+                                        "History deleted",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                    )
+                }
+            )
         },
         bottomBar = {
             if (selectedWorkoutComponents.isNotEmpty()) {
@@ -619,10 +626,12 @@ fun WorkoutDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(DarkGray)
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
                 TabRow(
+                    contentColor = DarkGray,
                     selectedTabIndex = 0,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
@@ -633,6 +642,7 @@ fun WorkoutDetailScreen(
                     }
                 ) {
                     Tab(
+                        modifier = Modifier.background(DarkGray),
                         selected = true,
                         onClick = { },
                         text = {
@@ -641,7 +651,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        unselectedContentColor = MediumGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -653,6 +663,7 @@ fun WorkoutDetailScreen(
                         }
                     )
                     Tab(
+                        modifier = Modifier.background(DarkGray),
                         selected = false,
                         onClick = {
                             appViewModel.setScreenData(
@@ -667,7 +678,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        unselectedContentColor = MediumGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -680,11 +691,15 @@ fun WorkoutDetailScreen(
                     )
                 }
 
+                val scrollState = rememberScrollState()
+
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(5.dp)
-                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 5.dp)
+                        .verticalColumnScrollbar(scrollState)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 10.dp),
                 ) {
                     if (workout.workoutComponents.isEmpty()) {
                         DarkModeContainer(
@@ -809,7 +824,8 @@ fun WorkoutDetailScreen(
                             content = {
                                 Icon(
                                     imageVector = Icons.Filled.Add,
-                                    contentDescription = "Add"
+                                    contentDescription = "Add",
+                                    tint = VeryLightGray,
                                 )
                             }
                         )

@@ -27,7 +27,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -96,6 +98,11 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 import kotlinx.coroutines.Dispatchers
@@ -316,6 +323,7 @@ fun WorkoutHistoryScreen(
             workoutDurationMarkerTarget = workoutDurations.maxBy { it.second }
         }
 
+
         workoutDurationEntryModel =
             CartesianChartModel(LineCartesianLayerModel.build { series(*(workoutDurations.map { it.second }).toTypedArray()) })
     }
@@ -431,7 +439,6 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
                     title = "Total volume over time",
-                    markerPosition = volumeMarkerTarget!!.first.toFloat(),
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                 )
@@ -440,7 +447,6 @@ fun WorkoutHistoryScreen(
                 StandardChart(
                     modifier = Modifier,
                     cartesianChartModel = durationEntryModel!!,
-                    markerPosition = durationMarkerTarget!!.first.toFloat(),
                     title = "Total duration over time",
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
@@ -448,12 +454,12 @@ fun WorkoutHistoryScreen(
                 )
             }
             if (workoutDurationEntryModel != null) {
+                Log.d("WorkoutHistoryScreen", "Workout Durations: $workoutDurations")
                 StandardChart(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = workoutDurationEntryModel!!,
                     title = "Workout duration over time",
-                    markerPosition = workoutDurationMarkerTarget!!.first.toFloat(),
                     markerTextFormatter = { formatTime(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -463,48 +469,48 @@ fun WorkoutHistoryScreen(
     }
 
     val workoutSelector = @Composable {
-        DarkModeContainer(whiteOverlayAlpha = .1f) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = {
+                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                    if (index > 0) { // Check to avoid IndexOutOfBoundsException
+                        isLoading = true
+                        selectedWorkoutHistory = workoutHistories[index - 1]
+                    }
+                },
+                enabled = selectedWorkoutHistory != workoutHistories.first()
             ) {
-                IconButton(
-                    onClick = {
-                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                        if (index > 0) { // Check to avoid IndexOutOfBoundsException
-                            isLoading = true
-                            selectedWorkoutHistory = workoutHistories[index - 1]
-                        }
-                    },
-                    enabled = selectedWorkoutHistory != workoutHistories.first()
-                ) {
-                    val isEnabled = selectedWorkoutHistory != workoutHistories.first()
-                    val color = Color.White.copy(alpha = if (isEnabled) .87f else .3f)
+                val isEnabled = selectedWorkoutHistory != workoutHistories.first()
+                val color =  if (isEnabled) VeryLightGray else MediumGray
 
-                    Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous",tint = color)
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    modifier = Modifier
-                        .weight(1f),
-                    text = selectedWorkoutHistory!!.date.format(dateFormatter),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                IconButton(
-                    onClick = {
-                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                        if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                            isLoading = true
-                            selectedWorkoutHistory = workoutHistories[index + 1]
-                        }
-                    },
-                    enabled = selectedWorkoutHistory != workoutHistories.last()
-                ) {
-                    val isEnabled = selectedWorkoutHistory != workoutHistories.last()
-                    val color = Color.White.copy(alpha = if (isEnabled) .87f else .3f)
+                Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous",tint = color)
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                modifier = Modifier
+                    .weight(1f),
+                text = selectedWorkoutHistory!!.date.format(dateFormatter),
+                textAlign = TextAlign.Center,
+                color = VeryLightGray,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            IconButton(
+                onClick = {
+                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                    if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                        isLoading = true
+                        selectedWorkoutHistory = workoutHistories[index + 1]
+                    }
+                },
+                enabled = selectedWorkoutHistory != workoutHistories.last()
+            ) {
+                val isEnabled = selectedWorkoutHistory != workoutHistories.last()
+                val color =  if (isEnabled) VeryLightGray else MediumGray
 
-                    Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next",tint = color)
-                }
+                Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next",tint = color)
             }
         }
     }
@@ -514,14 +520,6 @@ fun WorkoutHistoryScreen(
             Modifier.padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                modifier = Modifier.fillMaxWidth(),
-                text = "Workout History",
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = .87f)
-            )
-
             workoutSelector()
 
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
@@ -541,7 +539,7 @@ fun WorkoutHistoryScreen(
                             Text(
                                 text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
                                 Modifier.weight(2f),
-                                color = Color.White.copy(alpha = .87f),
+                                color = VeryLightGray,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             Column(modifier = Modifier.weight(1f),) {
@@ -552,12 +550,12 @@ fun WorkoutHistoryScreen(
                                     Text(
                                         text = "Min:",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .87f),
+                                        color = VeryLightGray,
                                     )
                                     Text(
                                         text = "$minHeartRate bpm",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .87f),
+                                        color = VeryLightGray,
                                         textAlign = TextAlign.End
                                     )
                                 }
@@ -568,12 +566,12 @@ fun WorkoutHistoryScreen(
                                     Text(
                                         text = "Max:",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .87f),
+                                        color = VeryLightGray,
                                     )
                                     Text(
                                         text = "$maxHeartRate bpm",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = .87f),
+                                        color = VeryLightGray,
                                         textAlign = TextAlign.End
                                     )
                                 }
@@ -585,12 +583,12 @@ fun WorkoutHistoryScreen(
                                         Text(
                                             text = "kcal:",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color.White.copy(alpha = .87f)
+                                            color = VeryLightGray,
                                         )
                                         Text(
                                             text = "${kiloCaloriesBurned.toInt()}",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color.White.copy(alpha = .87f),
+                                            color = VeryLightGray,
                                             textAlign = TextAlign.End
                                         )
                                     }
@@ -613,7 +611,7 @@ fun WorkoutHistoryScreen(
                                     }
                                     Text(
                                         text = "Zone $zone",
-                                        color = Color.White.copy(alpha = .87f),
+                                        color = VeryLightGray,
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
                                     Spacer(Modifier.height(5.dp))
@@ -624,7 +622,7 @@ fun WorkoutHistoryScreen(
                                         Text(
                                             "$lowHr - $highHr bpm",
                                             Modifier.weight(1f),
-                                            color = Color.White.copy(alpha = .6f),
+                                            color = VeryLightGray,
                                             style = MaterialTheme.typography.bodySmall,
                                         )
                                         Spacer(Modifier.weight(1f))
@@ -635,13 +633,13 @@ fun WorkoutHistoryScreen(
                                             Modifier.weight(1f),
                                             style = MaterialTheme.typography.bodySmall,
                                             textAlign = TextAlign.End,
-                                            color = Color.White.copy(alpha = .6f),
+                                            color = VeryLightGray,
                                         )
                                     }
                                     Spacer(Modifier.height(5.dp))
                                     SimpleProgressIndicator(
                                         progress = progress,
-                                        trackColor = Color.DarkGray,
+                                        trackColor = MediumDarkGray,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(16.dp)
@@ -666,7 +664,7 @@ fun WorkoutHistoryScreen(
                 text = "Exercise Histories:",
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = .87f)
+                color = VeryLightGray,
             )
             setHistoriesByExerciseId.keys.toList().filter { exerciseById.containsKey(it) }.forEach() { key ->
                 val exercise = exerciseById[key]!!
@@ -715,8 +713,8 @@ fun WorkoutHistoryScreen(
                                 .padding(horizontal = 10.dp)
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             text = exercise.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = VeryLightGray,
                         )
                     },
                     content = {
@@ -730,7 +728,7 @@ fun WorkoutHistoryScreen(
 
                                     Text(
                                         text = "Target HR",
-                                        color = Color.White.copy(alpha = .87f),
+                                        color = VeryLightGray,
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
                                     Spacer(Modifier.height(5.dp))
@@ -740,7 +738,7 @@ fun WorkoutHistoryScreen(
                                         Text(
                                             "$lowHr - $highHr bpm",
                                             Modifier.weight(1f),
-                                            color = Color.White.copy(alpha = .6f),
+                                            color = VeryLightGray,
                                             style = MaterialTheme.typography.bodySmall,
                                         )
                                         Spacer(Modifier.weight(1f))
@@ -753,13 +751,13 @@ fun WorkoutHistoryScreen(
                                             Modifier.weight(1f),
                                             style = MaterialTheme.typography.bodySmall,
                                             textAlign = TextAlign.End,
-                                            color = Color.White.copy(alpha = .6f),
+                                            color = VeryLightGray,
                                         )
                                     }
                                     Spacer(Modifier.height(5.dp))
                                     SimpleProgressIndicator(
                                         progress = progress,
-                                        trackColor = Color.DarkGray,
+                                        trackColor = MediumDarkGray,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(16.dp)
@@ -800,10 +798,10 @@ fun WorkoutHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.ShowChart,
                         contentDescription = "Graphs",
-                        tint = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
+                        tint = if (selectedMode == 0) VeryLightGray else MediumGray
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Graphs", color = if (selectedMode != 0) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
+                    Text("Graphs", color =  if (selectedMode == 0) VeryLightGray else MediumGray)
                 }
             }
 
@@ -821,10 +819,10 @@ fun WorkoutHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.List,
                         contentDescription = "Sets",
-                        tint = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background
+                        tint = if (selectedMode == 1) VeryLightGray else MediumGray
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Sets", color = if (selectedMode != 1) Color.White.copy(alpha = .87f) else MaterialTheme.colorScheme.background)
+                    Text("Sets", color =  if (selectedMode == 1) VeryLightGray else MediumGray)
                 }
             }
         }
@@ -832,57 +830,55 @@ fun WorkoutHistoryScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            textAlign = TextAlign.Center,
-                            text = workout.name
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onGoBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-                    actions = {
-                        val modifier = if(selectedWorkoutHistory == null || workoutHistories.isEmpty() || selectedMode == 0) Modifier.alpha(0f) else Modifier
-                        Menu(
-                            modifier = modifier,
-                            onDeleteHistory = {
-                                scope.launch {
-                                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                                    workoutHistoryDao.deleteById(selectedWorkoutHistory!!.id)
-
-                                    if (workoutHistories.size > 1) {
-                                        selectedWorkoutHistory = if (index == workoutHistories.size - 1) {
-                                            workoutHistories[index - 1]
-                                        }else {
-                                            workoutHistories[index + 1]
-                                        }
-                                    }
-
-                                    workoutHistories = workoutHistories.toMutableList().apply { removeAt(index) }
-
-                                    setCharts(workoutHistories)
-
-                                    Toast.makeText(context, "History Deleted", Toast.LENGTH_SHORT).show()
-                                    if(workoutHistories.isEmpty()) {
-                                        onGoBack()
-                                    }
-                                }
-                            }
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
+                        text = workout.name
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onGoBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
                         )
                     }
-                )
-            }
+                },
+                actions = {
+                    val modifier = if(selectedWorkoutHistory == null || workoutHistories.isEmpty() || selectedMode == 0) Modifier.alpha(0f) else Modifier
+                    Menu(
+                        modifier = modifier,
+                        onDeleteHistory = {
+                            scope.launch {
+                                val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                                workoutHistoryDao.deleteById(selectedWorkoutHistory!!.id)
+
+                                if (workoutHistories.size > 1) {
+                                    selectedWorkoutHistory = if (index == workoutHistories.size - 1) {
+                                        workoutHistories[index - 1]
+                                    }else {
+                                        workoutHistories[index + 1]
+                                    }
+                                }
+
+                                workoutHistories = workoutHistories.toMutableList().apply { removeAt(index) }
+
+                                setCharts(workoutHistories)
+
+                                Toast.makeText(context, "History Deleted", Toast.LENGTH_SHORT).show()
+                                if(workoutHistories.isEmpty()) {
+                                    onGoBack()
+                                }
+                            }
+                        }
+                    )
+                }
+            )
         },
         bottomBar = {
             if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
@@ -893,10 +889,12 @@ fun WorkoutHistoryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(DarkGray)
                 .padding(it),
             verticalArrangement = Arrangement.Top,
         ) {
             TabRow(
+                contentColor = DarkGray,
                 selectedTabIndex = 1,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
@@ -907,6 +905,7 @@ fun WorkoutHistoryScreen(
                 }
             ) {
                 Tab(
+                    modifier = Modifier.background(DarkGray),
                     selected = false,
                     onClick = {
                         appViewModel.setScreenData(
@@ -916,7 +915,7 @@ fun WorkoutHistoryScreen(
                     },
                     text = { Text(text = "Overview") },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = Color.White.copy(alpha = .3f),
+                    unselectedContentColor = MediumGray,
                     interactionSource = object : MutableInteractionSource {
                         override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -928,11 +927,12 @@ fun WorkoutHistoryScreen(
                     }
                 )
                 Tab(
+                    modifier = Modifier.background(DarkGray),
                     selected = true,
                     onClick = { },
                     text = { Text(text = "History") },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = Color.White.copy(alpha = .3f),
+                    unselectedContentColor = MediumGray,
                     interactionSource = object : MutableInteractionSource {
                         override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -986,10 +986,20 @@ fun WorkoutHistoryScreen(
                             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
                         }, label = ""
                     ) { updatedSelectedMode ->
-                        LazyColumn(Modifier.padding(end=10.dp)) {
+                        val scrollState = rememberScrollState()
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 5.dp)
+                                .verticalColumnScrollbar(scrollState)
+                                .verticalScroll(scrollState)
+                                .padding(horizontal = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             when (updatedSelectedMode) {
-                                0 -> item { graphsTabContent() }
-                                1 -> item { setsTabContent() }
+                                0 -> graphsTabContent()
+                                1 -> setsTabContent()
                             }
                         }
                     }

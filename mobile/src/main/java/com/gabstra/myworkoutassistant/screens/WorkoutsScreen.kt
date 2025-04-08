@@ -114,6 +114,11 @@ import java.util.UUID
 import kotlinx.coroutines.delay
 import androidx.compose.material.icons.filled.MoveDown
 import androidx.compose.runtime.collectAsState
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -207,7 +212,7 @@ fun WorkoutTitle(
     isDone: Boolean,
     content: @Composable () -> Unit = {},
     enabled: Boolean = true,
-    style: TextStyle = MaterialTheme.typography.bodyMedium
+    style: TextStyle = MaterialTheme.typography.bodyLarge
 ) {
     Row(
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -226,7 +231,7 @@ fun WorkoutTitle(
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name,
-            color = Color.White.copy(alpha = if (enabled) .87f else .3f),
+            color = VeryLightGray,
             style = style,
         )
         content()
@@ -415,29 +420,29 @@ fun WorkoutsScreen(
     }
 
     fun onDayClicked(calendarState: CalendarState, day: CalendarDay) {
-        if (groupedWorkoutsHistories == null || workoutById == null) return
-        isLoading = true
+        scope.launch {
+            if (groupedWorkoutsHistories == null || workoutById == null) return@launch
+            isLoading = true
 
-        selectedDay = day.date
-        val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
+            selectedDay = day.date
+            val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
 
-        selectedCalendarWorkouts = try {
-            workoutHistories?.map { workoutHistory ->
-                Pair(workoutHistory, workoutById?.get(workoutHistory.workoutId)!!)
-            } ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
+            selectedCalendarWorkouts = try {
+                workoutHistories?.map { workoutHistory ->
+                    Pair(workoutHistory, workoutById?.get(workoutHistory.workoutId)!!)
+                } ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
 
-        if (day.position != DayPosition.MonthDate) {
-            scope.launch {
+            if (day.position != DayPosition.MonthDate) {
                 calendarState.scrollToMonth(selectedDay.yearMonth)
                 selectedDate = day
+                return@launch
             }
-            return
-        }
 
-        selectedDate = day
+            selectedDate = day
+        }
     }
 
     fun highlightDay(day: CalendarDay): Boolean {
@@ -596,38 +601,36 @@ fun WorkoutsScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            text = "My Workout Assistant", textAlign = TextAlign.Center,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-                    actions = {
-                        Menu(
-                            onSyncClick = onSyncClick,
-                            onOpenSettingsClick = onOpenSettingsClick,
-                            onBackupClick = onBackupClick,
-                            onRestoreClick = onRestoreClick,
-                            onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
-                            onClearAllHistories = onClearAllHistories,
-                            onSyncToHealthConnectClick = onSyncToHealthConnectClick
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        text = "My Workout Assistant", textAlign = TextAlign.Center,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
                         )
                     }
-                )
-            }
+                },
+                actions = {
+                    Menu(
+                        onSyncClick = onSyncClick,
+                        onOpenSettingsClick = onOpenSettingsClick,
+                        onBackupClick = onBackupClick,
+                        onRestoreClick = onRestoreClick,
+                        onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
+                        onClearAllHistories = onClearAllHistories,
+                        onSyncToHealthConnectClick = onSyncToHealthConnectClick
+                    )
+                }
+            )
         },
         bottomBar = {
             when(selectedTabIndex){
@@ -639,28 +642,31 @@ fun WorkoutsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(DarkGray)
                 .padding(it),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
             TabRow(
+                contentColor = DarkGray,
                 selectedTabIndex = selectedTabIndex,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
                         Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
                         color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                        height = 2.dp // Set the indicator thickness
+                        height = 2.dp,
                     )
                 }
             ) {
                 tabTitles.forEachIndexed { index, title ->
                     val isSelected = index == selectedTabIndex
                     Tab(
+                        modifier = Modifier.background(DarkGray),
                         selected = isSelected,
                         onClick = { appViewModel.setHomeTab(index) },
                         text = { Text(text = title) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        unselectedContentColor = MediumGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -677,6 +683,7 @@ fun WorkoutsScreen(
                 HealthConnectHandler(appViewModel, healthConnectClient)
 
                 AnimatedContent(
+                    modifier = Modifier.background(DarkGray),
                     targetState = selectedTabIndex,
                     transitionSpec = {
                         fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
@@ -688,10 +695,15 @@ fun WorkoutsScreen(
                 ) { updatedSelectedTab ->
                     when (updatedSelectedTab) {
                         0 -> {
+                            val scrollState = rememberScrollState()
+
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 15.dp).verticalScroll(rememberScrollState())
+                                    .padding(horizontal = 5.dp)
+                                    .verticalColumnScrollbar(scrollState)
+                                    .verticalScroll(scrollState)
+                                    .padding(horizontal = 10.dp),
                             ) {
                                 WorkoutsCalendar(
                                     selectedDate = selectedDate,
@@ -734,7 +746,7 @@ fun WorkoutsScreen(
                                                 } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
                                                 style = MaterialTheme.typography.titleMedium,
                                                 textAlign = TextAlign.Center,
-                                                color = Color.White.copy(alpha = .87f)
+                                                color = VeryLightGray
                                             )
                                             ExpandableContainer(
                                                 isOpen = false,
@@ -751,7 +763,7 @@ fun WorkoutsScreen(
                                                             text = "${(objectiveProgress * 100).toInt()}%",
                                                             style = MaterialTheme.typography.titleMedium,
                                                             textAlign = TextAlign.Center,
-                                                            color = Color.White.copy(alpha = .87f),
+                                                            color = VeryLightGray,
                                                         )
                                                         Spacer(modifier = Modifier.width(10.dp))
                                                         ObjectiveProgressBar(
@@ -775,13 +787,13 @@ fun WorkoutsScreen(
                                                                 Text(
                                                                     text = workout.name,
                                                                     modifier = Modifier.weight(1f),
-                                                                    color = Color.White.copy(alpha = .87f),
-                                                                    style = MaterialTheme.typography.bodyMedium,
+                                                                    color = VeryLightGray,
+                                                                    style = MaterialTheme.typography.bodyLarge,
                                                                 )
                                                                 Text(
                                                                     text = "${pair.first}/${pair.second}",
-                                                                    color = Color.White.copy(alpha = .87f),
-                                                                    style = MaterialTheme.typography.bodyMedium,
+                                                                    color = VeryLightGray,
+                                                                    style = MaterialTheme.typography.bodyLarge,
                                                                 )
                                                             }
                                                         }
@@ -802,7 +814,7 @@ fun WorkoutsScreen(
                                             text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
                                             style = MaterialTheme.typography.titleMedium,
                                             textAlign = TextAlign.Center,
-                                            color = Color.White.copy(alpha = .87f)
+                                            color = VeryLightGray
                                         )
 
                                         if (selectedCalendarWorkouts.isNullOrEmpty()) {
@@ -814,14 +826,13 @@ fun WorkoutsScreen(
                                                 DarkModeContainer(
                                                     modifier = Modifier
                                                         .padding(5.dp),
-                                                    whiteOverlayAlpha = .1f
                                                 ) {
                                                     Text(
                                                         modifier = Modifier
                                                             .padding(15.dp),
                                                         text = "No workouts on this day",
                                                         textAlign = TextAlign.Center,
-                                                        color = Color.White.copy(alpha = .87f),
+                                                        color = VeryLightGray,
                                                     )
                                                 }
                                             }
@@ -852,8 +863,15 @@ fun WorkoutsScreen(
                         }
 
                         1 -> {
+                            val scrollState = rememberScrollState()
+
                             Column(
-                                modifier = Modifier.fillMaxSize().padding(5.dp).verticalScroll(rememberScrollState())
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 5.dp)
+                                    .verticalColumnScrollbar(scrollState)
+                                    .verticalScroll(scrollState)
+                                    .padding(horizontal = 10.dp),
                             ) {
                                 if (activeAndEnabledWorkouts.isEmpty()) {
                                     Text(
@@ -919,7 +937,8 @@ fun WorkoutsScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.Add,
-                                            contentDescription = "Add"
+                                            contentDescription = "Add",
+                                            tint = VeryLightGray,
                                         )
                                     }
                                 }
@@ -927,8 +946,15 @@ fun WorkoutsScreen(
                         }
 
                         2 -> {
+                            val scrollState = rememberScrollState()
+
                             Column(
-                                modifier = Modifier.fillMaxSize().padding(5.dp).verticalScroll(rememberScrollState())
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 5.dp)
+                                    .verticalColumnScrollbar(scrollState)
+                                    .verticalScroll(scrollState)
+                                    .padding(horizontal = 10.dp),
                             ) {
                                 if (equipments.isEmpty()) {
                                     Text(
@@ -979,7 +1005,7 @@ fun WorkoutsScreen(
                                                         .basicMarquee(iterations = Int.MAX_VALUE),
                                                     text = it.name,
                                                     color = Color.White.copy(alpha = .87f),
-                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    style = MaterialTheme.typography.bodyLarge,
                                                 )
                                             }
                                         },
@@ -1012,7 +1038,8 @@ fun WorkoutsScreen(
                                         content = {
                                             Icon(
                                                 imageVector = Icons.Filled.Add,
-                                                contentDescription = "Add"
+                                                contentDescription = "Add",
+                                                tint = VeryLightGray,
                                             )
                                         }
                                     )

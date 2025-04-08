@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.DumbbellUnit
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,8 +69,10 @@ fun DumbbellsForm(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(scrollState),
+            .padding(horizontal = 5.dp)
+            .verticalColumnScrollbar(scrollState)
+            .verticalScroll(scrollState)
+            .padding(horizontal = 10.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Dumbbells name field

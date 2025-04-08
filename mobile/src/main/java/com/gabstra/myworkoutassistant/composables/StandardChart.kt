@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
@@ -36,6 +37,7 @@ import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.fill
+import com.patrykandpatrick.vico.core.cartesian.Zoom
 import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
@@ -61,11 +63,11 @@ fun StandardChart(
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
 ) {
-    val shapeComponent =  rememberShapeComponent(fill(Color.White), CorneredShape.Pill)
+    val shapeComponent =  rememberShapeComponent(fill(VeryLightGray), CorneredShape.Pill)
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
-            color = Color.White,
+            color = VeryLightGray,
             padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER
         ),
@@ -87,58 +89,67 @@ fun StandardChart(
 
     cartesianChartModel.models.first().minY
 
-    DarkModeContainer(modifier,whiteOverlayAlpha = .1f) {
-        Column{
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
-                text = title,
-                textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = .87f),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            DarkModeContainer(whiteOverlayAlpha = .05f,isRounded = false) {
-                CartesianChartHost(
-                    modifier = Modifier.padding(10.dp),
-                    zoomState = rememberVicoZoomState(zoomEnabled = isZoomEnabled),
-                    chart = rememberCartesianChart(
-                        rememberLineCartesianLayer(
-                            LineCartesianLayer.LineProvider.series(
-                                listOf(
-                                    LineCartesianLayer.rememberLine(
-                                        fill = LineCartesianLayer.LineFill.single(fill(Color(0xFFff6700))),
-                                        areaFill = null,
-                                        pointProvider = null,
-                                    )
-                                )
-                            ),
-                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = cartesianChartModel.models.firstOrNull()?.minY, maxY = cartesianChartModel.models.firstOrNull()?.maxY)
-                        ),
+    var minY = minValue ?: cartesianChartModel.models.first().minY
+    var maxY = maxValue ?: cartesianChartModel.models.first().maxY
 
-                        startAxis = VerticalAxis.rememberStart(
-                            valueFormatter = startAxisValueFormatter,
-                            itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }
+    if(minY == maxY) {
+        minY -= 1
+        maxY += 1
+    }
+
+    Column{
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp),
+            text = title,
+            textAlign = TextAlign.Center,
+            color = VeryLightGray,
+            style = MaterialTheme.typography.titleMedium,
+        )
+        DarkModeContainer(whiteOverlayAlpha = .05f) {
+            CartesianChartHost(
+                modifier = Modifier.padding(10.dp),
+                zoomState = rememberVicoZoomState(
+                    initialZoom = Zoom.Content,
+                    zoomEnabled = isZoomEnabled
+                ),
+                chart = rememberCartesianChart(
+                    rememberLineCartesianLayer(
+                        LineCartesianLayer.LineProvider.series(
+                            listOf(
+                                LineCartesianLayer.rememberLine(
+                                    fill = LineCartesianLayer.LineFill.single(fill(Color(0xFFff6700))),
+                                    areaFill = null,
+                                    pointProvider = null,
+                                )
+                            )
                         ),
-                        bottomAxis = HorizontalAxis.rememberBottom(
-                            label = rememberTextComponent(
-                                color = Color.White.copy(alpha = .87f),
-                                textSize = 12.sp,
-                                padding = Insets(4f, 4f),
-                                textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
-                                //minWidth = TextComponent.MinWidth.fixed(20f)
-                            ),
-                            labelRotationDegrees = -90f,
-                            valueFormatter = bottomAxisValueFormatter
-                        ),
-                        persistentMarkers = if (markerPosition != null)  { _ ->
-                            marker at markerPosition.toFloat()
-                        } else null,
-                        marker = marker
+                        rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
                     ),
-                    model = cartesianChartModel,
-                )
-            }
+
+                    startAxis = VerticalAxis.rememberStart(
+                        valueFormatter = startAxisValueFormatter,
+                        itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }
+                    ),
+                    bottomAxis = HorizontalAxis.rememberBottom(
+                        label = rememberTextComponent(
+                            color = VeryLightGray,
+                            textSize = 12.sp,
+                            padding = Insets(4f, 4f),
+                            textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                            //minWidth = TextComponent.MinWidth.fixed(20f)
+                        ),
+                        labelRotationDegrees = -90f,
+                        valueFormatter = bottomAxisValueFormatter
+                    ),
+                    persistentMarkers = if (markerPosition != null)  { _ ->
+                        marker at markerPosition.toFloat()
+                    } else null,
+                    marker = marker
+                ),
+                model = cartesianChartModel,
+            )
         }
     }
 }

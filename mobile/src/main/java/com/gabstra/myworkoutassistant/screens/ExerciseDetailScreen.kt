@@ -86,6 +86,10 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import java.util.UUID
@@ -107,7 +111,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         val text = buildString {
-                            append("Weight (KG): ")
+                            append("Weight: ")
                             repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
                                 append(set.weight)
                                 if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
@@ -118,13 +122,13 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 
                         Text(
                             text = text,
-                            color = Color.White.copy(alpha = .87f),
+                             color = VeryLightGray,
                             style = MaterialTheme.typography.bodyMedium,
 
                             )
                         Text(
                             text = "Reps: ${set.reps}",
-                            color = Color.White.copy(alpha = .87f),
+                             color = VeryLightGray,
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.End
                         )
@@ -150,7 +154,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
                             val text = buildString {
-                                append("Weight (KG): ")
+                                append("Weight: ")
                                 repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
                                     append(set.additionalWeight)
                                     if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
@@ -161,13 +165,13 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 
                             Text(
                                 text = text,
-                                color = Color.White.copy(alpha = .87f),
+                                color = VeryLightGray,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         Text(
                             text = "Reps: ${set.reps}",
-                            color = Color.White.copy(alpha = .87f),
+                            color = VeryLightGray,
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.End
                         )
@@ -188,7 +192,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.weight(1f),
                         text = formatTime(set.timeInMillis / 1000),
                         textAlign = TextAlign.Center,
-                        color = Color.White.copy(alpha = .87f),
+                        color = VeryLightGray,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -207,7 +211,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.weight(1f),
                         text = formatTime(set.timeInMillis / 1000),
                         textAlign = TextAlign.Center,
-                        color = Color.White.copy(alpha = .87f),
+                         color = VeryLightGray,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -231,7 +235,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         Text(
                             text = "Rest for: ${formatTime(set.timeInSeconds)}",
                             textAlign = TextAlign.Center,
-                            color = Color.White.copy(alpha = .87f),
+                             color = VeryLightGray,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -267,44 +271,42 @@ fun ExerciseDetailScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            textAlign = TextAlign.Center,
-                            text = exercise.name
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
+                        text = exercise.name
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onGoBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
                         )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onGoBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-
-                    actions = {
-                        IconButton(onClick = {
-                            appViewModel.setScreenData(
-                                ScreenData.EditExercise(
-                                    workout.id,
-                                    exercise.id
-                                )
-                            );
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings"
-                            )
-                        }
                     }
-                )
-            }
+                },
+
+                actions = {
+                    IconButton(onClick = {
+                        appViewModel.setScreenData(
+                            ScreenData.EditExercise(
+                                workout.id,
+                                exercise.id
+                            )
+                        );
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings"
+                        )
+                    }
+                }
+            )
         },
         bottomBar = {
             if (selectedSets.isNotEmpty()) {
@@ -458,10 +460,12 @@ fun ExerciseDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(DarkGray)
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
                 TabRow(
+                    contentColor = DarkGray,
                     selectedTabIndex = 0,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
@@ -472,11 +476,12 @@ fun ExerciseDetailScreen(
                     }
                 ) {
                     Tab(
+                        modifier = Modifier.background(DarkGray),
                         selected = true,
                         onClick = { },
                         text = { Text(text = "Overview") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        unselectedContentColor = MediumGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -488,6 +493,7 @@ fun ExerciseDetailScreen(
                         }
                     )
                     Tab(
+                        modifier = Modifier.background(DarkGray),
                         enabled = !exercise.doNotStoreHistory,
                         selected = false,
                         onClick = {
@@ -498,7 +504,7 @@ fun ExerciseDetailScreen(
                         },
                         text = { Text(text = "History") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
+                        unselectedContentColor = MediumGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -511,8 +517,14 @@ fun ExerciseDetailScreen(
                     )
                 }
 
+                val scrollState = rememberScrollState()
+
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(5.dp).verticalScroll(rememberScrollState())
+                    modifier = Modifier.fillMaxSize()
+                        .padding(5.dp)
+                        .verticalColumnScrollbar(scrollState)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 10.dp),
                 ) {
                     if (sets.isEmpty()) {
                         DarkModeContainer(
@@ -525,7 +537,7 @@ fun ExerciseDetailScreen(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .padding(15.dp),
-                                color = Color.White.copy(alpha = .87f),
+                                 color = VeryLightGray,
                             )
                         }
                     }else{
@@ -534,7 +546,7 @@ fun ExerciseDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp)
+                                .padding(horizontal = 15.dp)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -633,7 +645,8 @@ fun ExerciseDetailScreen(
                             content = {
                                 Icon(
                                     imageVector = Icons.Filled.Add,
-                                    contentDescription = "Add"
+                                    contentDescription = "Add",
+                                    tint = VeryLightGray,
                                 )
                             }
                         )

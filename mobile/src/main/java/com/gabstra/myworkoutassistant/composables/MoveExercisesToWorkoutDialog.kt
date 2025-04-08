@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import androidx.compose.material3.TextButton
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 @Composable
 fun MoveExercisesToWorkoutDialog(
@@ -31,6 +32,8 @@ fun MoveExercisesToWorkoutDialog(
     onMove: (Workout) -> Unit
 ) {
     if (show) {
+        val scrollState = rememberScrollState()
+
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("Move to Workout") },
@@ -38,7 +41,10 @@ fun MoveExercisesToWorkoutDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                        .padding(horizontal = 5.dp)
+                        .verticalColumnScrollbar(scrollState)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Only show other workouts, not the current one

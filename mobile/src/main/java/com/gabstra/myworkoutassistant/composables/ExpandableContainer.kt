@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +18,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
 
 @Composable
 fun ExpandableContainer(
@@ -54,16 +58,16 @@ fun ExpandableContainer(
                                 onClose()
                             }
                         }) {
-                        Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back")
+                        Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = VeryLightGray)
                     }
                 }
             }
             subContent()
             if(openStatus){
-                DarkModeContainer (
-                    whiteOverlayAlpha = 0.05f,
-                    isRounded = false
-                ) {
+                Box(
+                    modifier = Modifier
+                        .background(MediumGray)
+                ){
                     content()
                 }
             }

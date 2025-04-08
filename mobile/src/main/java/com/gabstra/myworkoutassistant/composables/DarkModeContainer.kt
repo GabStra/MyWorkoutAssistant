@@ -18,6 +18,9 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 
 @Composable
 fun DarkModeContainer(
@@ -28,16 +31,8 @@ fun DarkModeContainer(
 ) {
     Box(
         modifier = modifier
-            .background(MaterialTheme.colorScheme.background)
             .then(if (isRounded) Modifier.clip(RoundedCornerShape(10.dp)) else Modifier)
-            .then(if(whiteOverlayAlpha > 0f) Modifier.drawWithCache {
-                onDrawBehind {
-                    drawRect(
-                        color = Color.White.copy(alpha = whiteOverlayAlpha),
-                        size = this.size // This ensures the rectangle covers the entire Box
-                    )
-                }
-            } else Modifier)
+            .background(MediumDarkGray)
             .wrapContentSize(),
         contentAlignment = Alignment.Center,
     ) {

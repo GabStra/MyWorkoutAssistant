@@ -22,6 +22,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -70,6 +71,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
@@ -181,7 +183,7 @@ fun MyWorkoutAssistantNavHost(
     val context = LocalContext.current
 
     val systemUiController = rememberSystemUiController()
-    val backgroundColor = MaterialTheme.colorScheme.background
+    val backgroundColor = DarkGray
 
     DisposableEffect(systemUiController,backgroundColor) {
         // Update all of the system bar colors to be transparent, and use
@@ -326,6 +328,7 @@ fun MyWorkoutAssistantNavHost(
     }
 
     AnimatedContent(
+        modifier = Modifier.fillMaxSize().background(DarkGray),
         targetState = appViewModel.currentScreenData,
         transitionSpec = {
             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))

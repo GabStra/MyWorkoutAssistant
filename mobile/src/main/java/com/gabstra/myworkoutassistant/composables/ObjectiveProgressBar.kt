@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 @Composable
@@ -50,17 +51,11 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
     Box(
         modifier = modifier // Padding around the entire progress bar
             .clip(roundedCornerShape) // Clip the box to have rounded corners
-            .border(
-                width = 3.dp, // Border width
-                color = Color(0xFFff6700), // Border color
-                shape = roundedCornerShape // Apply the same shape to the border
-            )
-
             .fillMaxWidth() // Make the progress bar fill the width of its parent
     ) {
         SimpleProgressIndicator(
             progress = progress,
-            trackColor = Color.DarkGray,
+            trackColor = MediumGray,
             progressBarColor =  Color(0xFFff6700),
             modifier = Modifier
                 .fillMaxWidth()

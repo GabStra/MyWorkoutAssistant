@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +58,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
@@ -223,44 +227,44 @@ fun ExerciseHistoryScreen(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Text(
-                            modifier = Modifier.fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            textAlign = TextAlign.Center,
-                            text = exercise.name
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                title = {
+                    Text(
+                        modifier = Modifier.fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
+                        text = exercise.name,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onGoBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
                         )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onGoBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-                    actions = {
-                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
                     }
-                )
-            }
+                },
+                actions = {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                }
+            )
         },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(DarkGray)
                 .padding(it),
             verticalArrangement = Arrangement.Top,
         ) {
             TabRow(
+                contentColor = DarkGray,
                 selectedTabIndex = 1,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
@@ -270,39 +274,37 @@ fun ExerciseHistoryScreen(
                     )
                 }
             ) {
-                DarkModeContainer(whiteOverlayAlpha =.05f, isRounded = false) {
-                    Tab(
-                        selected = false,
-                        onClick = {
-                            appViewModel.setScreenData(
-                                ScreenData.ExerciseDetail(
-                                    workout.id,
-                                    exercise.id
-                                ), true
-                            )
-                        },
-                        text = {
-                            Text(
-                                text = "Overview"
-                            )
-                        },
-                        selectedContentColor = Color.White.copy(alpha = .87f),
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
-                    )
-                }
-                DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
-                    Tab(
-                        selected = true,
-                        onClick = { },
-                        text = {
-                            Text(
-                                text = "History"
-                            )
-                        },
-                        selectedContentColor = Color.White.copy(alpha = .87f),
-                        unselectedContentColor = Color.White.copy(alpha = .3f),
-                    )
-                }
+                Tab(
+                    modifier = Modifier.background(DarkGray),
+                    selected = false,
+                    onClick = {
+                        appViewModel.setScreenData(
+                            ScreenData.ExerciseDetail(
+                                workout.id,
+                                exercise.id
+                            ), true
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = "Overview"
+                        )
+                    },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = MediumGray,
+                )
+                Tab(
+                    modifier = Modifier.background(DarkGray),
+                    selected = true,
+                    onClick = { },
+                    text = {
+                        Text(
+                            text = "History"
+                        )
+                    },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = MediumGray,
+                )
             }
 
             if (workoutHistories.isEmpty()) {
@@ -348,7 +350,6 @@ fun ExerciseHistoryScreen(
                         StandardChart(
                             cartesianChartModel = volumeEntryModel!!,
                             title = "Volume",
-                            markerPosition = volumeMarkerTarget!!.first.toFloat(),
                             startAxisValueFormatter = volumeAxisValueFormatter,
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                         )
@@ -357,7 +358,6 @@ fun ExerciseHistoryScreen(
                     if (oneRepMaxEntryModel != null) {
                         StandardChart(
                             cartesianChartModel = oneRepMaxEntryModel!!,
-                            markerPosition = oneRepMaxMarkerTarget!!.first.toFloat(),
                             title = "One Rep Max",
                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                         )
@@ -366,7 +366,6 @@ fun ExerciseHistoryScreen(
                     if (durationEntryModel != null) {
                         StandardChart(
                             cartesianChartModel = durationEntryModel!!,
-                            markerPosition = durationMarkerTarget!!.first.toFloat(),
                             title = "Total duration over time",
                             markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
                             startAxisValueFormatter = durationAxisValueFormatter,

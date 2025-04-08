@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
 
 @Composable
 fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHistory>) {
@@ -46,7 +47,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     Text(
                         text = "${index})",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = .87f),
+                        color = VeryLightGray
                     )
                     when (setData) {
                         is WeightSetData -> {
@@ -61,7 +62,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                             Text(
                                 text = "${weightText} kg x ${setData.actualReps} ${repLabel}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .87f),
+                                color = VeryLightGray
                             )
                         }
 
@@ -77,7 +78,7 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                             Text(
                                 text = text,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = .87f),
+                                color = VeryLightGray
                             )
                         }
 
@@ -86,13 +87,13 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                                 Text(
                                     "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = .87f)
+                                    color = VeryLightGray,
                                 )
                             }else{
                                 Text(
                                     "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = .87f)
+                                    color = VeryLightGray,
                                 )
                             }
                         }
@@ -102,13 +103,13 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                                 Text(
                                     "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = .87f)
+                                    color = VeryLightGray,
                                 )
                             }else{
                                 Text(
                                     "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = .87f)
+                                    color = VeryLightGray,
                                 )
                             }
                         }
@@ -126,13 +127,13 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         Text(
                             "Rest for: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f)
+                            color = VeryLightGray,
                         )
                     }else{
                         Text(
                             "Rest from: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = .87f)
+                            color = VeryLightGray,
                         )
                     }
                 }*/

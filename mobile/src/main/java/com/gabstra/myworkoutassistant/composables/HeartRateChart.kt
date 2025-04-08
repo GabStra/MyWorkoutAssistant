@@ -196,69 +196,67 @@ fun HeartRateChart(
             formatTime((value).toInt())
         }
 
-    DarkModeContainer(modifier, whiteOverlayAlpha = .1f) {
-        Column {
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
-                text = title,
-                textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = .87f),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            DarkModeContainer(modifier, whiteOverlayAlpha = .05f, isRounded = false) {
-                CartesianChartHost(
-                    modifier = Modifier.padding(10.dp),
-                    zoomState = rememberVicoZoomState(
-                        initialZoom = Zoom.Content,
-                        zoomEnabled = true
-                    ),
-                    scrollState = rememberVicoScrollState(scrollEnabled = true),
-                    chart = rememberCartesianChart(
-                        rememberLineCartesianLayer(
-                            LineCartesianLayer.LineProvider.series(
-                                listOf(
-                                    LineCartesianLayer.rememberLine(
-                                        fill = LineCartesianLayer.LineFill.single(
-                                            fill(
-                                                Color(
-                                                    0xFFff6700
-                                                )
+    Column {
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp),
+            text = title,
+            textAlign = TextAlign.Center,
+            color = Color.White.copy(alpha = .87f),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        DarkModeContainer(modifier, whiteOverlayAlpha = .05f) {
+            CartesianChartHost(
+                modifier = Modifier.padding(10.dp),
+                zoomState = rememberVicoZoomState(
+                    initialZoom = Zoom.Content,
+                    zoomEnabled = true
+                ),
+                scrollState = rememberVicoScrollState(scrollEnabled = true),
+                chart = rememberCartesianChart(
+                    rememberLineCartesianLayer(
+                        LineCartesianLayer.LineProvider.series(
+                            listOf(
+                                LineCartesianLayer.rememberLine(
+                                    fill = LineCartesianLayer.LineFill.single(
+                                        fill(
+                                            Color(
+                                                0xFFff6700
                                             )
-                                        ),
-                                        areaFill = null,
-                                        pointProvider = null,
-                                    )
+                                        )
+                                    ),
+                                    areaFill = null,
+                                    pointProvider = null,
                                 )
-                            ),
+                            )
+                        ),
 
-                            rangeProvider = CartesianLayerRangeProvider.fixed(
-                                minY = 0.0,
-                                maxY = 105.0
-                            ),
+                        rangeProvider = CartesianLayerRangeProvider.fixed(
+                            minY = 0.0,
+                            maxY = 105.0
                         ),
-                        decorations = listOf(
-                            rememberHorizontalLine(Color.hsl(208f, 0.61f, 0.76f, .5f), 50.0),
-                            rememberHorizontalLine(Color.hsl(200f, 0.66f, 0.49f, .5f), 60.0),
-                            rememberHorizontalLine(Color.hsl(113f, 0.79f, 0.34f, .5f), 70.0),
-                            rememberHorizontalLine(Color.hsl(27f, 0.97f, 0.54f, .5f), 80.0),
-                            rememberHorizontalLine(Color.hsl(9f, 0.88f, 0.45f, .5f), 90.0),
-                            rememberHorizontalLine(MaterialTheme.colorScheme.background, 100.0),
-                        ),
-                        startAxis = VerticalAxis.rememberStart(
-                            guideline = null,
-                            valueFormatter = startAxisValueFormatter,
-                            itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
-                        bottomAxis = HorizontalAxis.rememberBottom(
-                            guideline = null,
-                            valueFormatter = bottomAxisValueFormatter,
-                            itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),
-                        marker = marker
                     ),
-                    model = cartesianChartModel,
-                )
-            }
+                    decorations = listOf(
+                        rememberHorizontalLine(Color.hsl(208f, 0.61f, 0.76f, .5f), 50.0),
+                        rememberHorizontalLine(Color.hsl(200f, 0.66f, 0.49f, .5f), 60.0),
+                        rememberHorizontalLine(Color.hsl(113f, 0.79f, 0.34f, .5f), 70.0),
+                        rememberHorizontalLine(Color.hsl(27f, 0.97f, 0.54f, .5f), 80.0),
+                        rememberHorizontalLine(Color.hsl(9f, 0.88f, 0.45f, .5f), 90.0),
+                        rememberHorizontalLine(MaterialTheme.colorScheme.background, 100.0),
+                    ),
+                    startAxis = VerticalAxis.rememberStart(
+                        guideline = null,
+                        valueFormatter = startAxisValueFormatter,
+                        itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
+                    bottomAxis = HorizontalAxis.rememberBottom(
+                        guideline = null,
+                        valueFormatter = bottomAxisValueFormatter,
+                        itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),
+                    marker = marker
+                ),
+                model = cartesianChartModel,
+            )
         }
     }
 }
