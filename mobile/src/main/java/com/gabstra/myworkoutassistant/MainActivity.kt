@@ -76,8 +76,10 @@ import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -95,12 +97,39 @@ class MyReceiver(
         activity.run {
             try{
                 if(intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null){
-                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore(),false)
-                    appViewModel.triggerUpdate()
+                    val workoutStore = workoutStoreRepository.getWorkoutStore()
+
+                    val healthConnectClient = HealthConnectClient.getOrCreate(this)
+                    val db = AppDatabase.getDatabase(this)
+                    var workoutHistoryDao = db.workoutHistoryDao()
+
+                    val scope = CoroutineScope(Dispatchers.IO)
+
+                    scope.launch {
+                        appViewModel.updateWorkoutStore(workoutStore,false)
+                        appViewModel.triggerUpdate()
+
+                        try{
+                            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                            val workoutStore = workoutStoreRepository.getWorkoutStore()
+
+                            val age =  currentYear - workoutStore.birthDateYear
+                            val weight = workoutStore.weightKg
+
+                            sendWorkoutsToHealthConnect(
+                                healthConnectClient = healthConnectClient,
+                                workouts = workoutStore.workouts,
+                                workoutHistoryDao = workoutHistoryDao,
+                                age = age,
+                                weightKg = weight
+                            )
+                        }catch (exception: Exception){
+                            Log.e("MyWorkoutAssistant", "Error sending workouts to HealthConnect", exception)
+                        }
+                    }
                 }
             }catch (e: Exception) {
-                Toast.makeText(context, "Error receiving workout history", Toast.LENGTH_SHORT)
-                    .show()
+                Log.e("MyWorkoutAssistant", "Error in MyReceiver", e)
             }
         }
     }
@@ -405,9 +434,10 @@ fun MyWorkoutAssistantNavHost(
                     },
                     onClearAllHistories = {
                         scope.launch {
-                            workoutHistoryDao.deleteAll()
-                            setHistoryDao.deleteAll()
-
+                            withContext(Dispatchers.IO) {
+                                workoutHistoryDao.deleteAll()
+                                setHistoryDao.deleteAll()
+                            }
                             Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
 
                             appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
@@ -417,18 +447,20 @@ fun MyWorkoutAssistantNavHost(
                     onSyncToHealthConnectClick = {
                         scope.launch {
                             try{
-                                val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                                val age =  currentYear - appViewModel.workoutStore.birthDateYear
-                                val weight = appViewModel.workoutStore.weightKg
+                                withContext(Dispatchers.IO) {
+                                    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                                    val age = currentYear - appViewModel.workoutStore.birthDateYear
+                                    val weight = appViewModel.workoutStore.weightKg
 
-                                sendWorkoutsToHealthConnect(
-                                    healthConnectClient = healthConnectClient,
-                                    workouts = appViewModel.workouts,
-                                    workoutHistoryDao = workoutHistoryDao,
-                                    updateAll = true,
-                                    age = age,
-                                    weightKg = weight
-                                )
+                                    sendWorkoutsToHealthConnect(
+                                        healthConnectClient = healthConnectClient,
+                                        workouts = appViewModel.workouts,
+                                        workoutHistoryDao = workoutHistoryDao,
+                                        updateAll = true,
+                                        age = age,
+                                        weightKg = weight
+                                    )
+                                }
                                 Toast.makeText(context, "Synced to HealthConnect", Toast.LENGTH_SHORT).show()
                             }catch (e: Exception){
                                 Log.e("MainActivity", "Error syncing to HealthConnect", e)

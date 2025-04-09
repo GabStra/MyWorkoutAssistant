@@ -46,8 +46,6 @@ class DataLayerListenerService : WearableListenerService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
-
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao
@@ -123,22 +121,6 @@ class DataLayerListenerService : WearableListenerService() {
                                         )
                                     )
                                     workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-
-                                    try{
-                                        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                                        val age =  currentYear - updatedWorkoutStore.birthDateYear
-                                        val weight = updatedWorkoutStore.weightKg
-
-                                        sendWorkoutsToHealthConnect(
-                                            healthConnectClient = healthConnectClient,
-                                            workouts = updatedWorkoutStore.workouts,
-                                            workoutHistoryDao = workoutHistoryDao,
-                                            age = age,
-                                            weightKg = weight
-                                        )
-                                    }catch (exception: Exception){
-                                        Log.e("DataLayerListenerService", "Error sending workouts to HealthConnect", exception)
-                                    }
                                 }
 
                                 val intent = Intent(INTENT_ID).apply {

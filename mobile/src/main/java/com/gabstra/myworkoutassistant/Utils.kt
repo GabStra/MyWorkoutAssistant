@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant
 
+import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
@@ -21,6 +22,8 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.Record
+import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
@@ -35,6 +38,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
 import com.google.android.gms.wearable.DataClient
@@ -49,6 +53,7 @@ import java.time.ZoneOffset
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import java.util.concurrent.CancellationException
+import kotlin.math.max
 
 fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
     try {
@@ -222,6 +227,7 @@ fun calculateKiloCaloriesBurned(
     return caloriesBurned * durationMinutes / 4.184
 }
 
+@SuppressLint("RestrictedApi")
 suspend fun sendWorkoutsToHealthConnect(
     workouts: List<Workout>,
     healthConnectClient: HealthConnectClient,
@@ -270,54 +276,62 @@ suspend fun sendWorkoutsToHealthConnect(
         recordIdsList = emptyList()
     )
 
-    val exerciseSessionRecords = workoutHistories
-        .map {
+    val exerciseSessionRecords = workoutHistories.map {
         ExerciseSessionRecord(
             startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
+            startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
             endTime = it.startTime.plusSeconds(it.duration.toLong())
                 .atZone(ZoneId.systemDefault()).toInstant(),
-            startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+
             endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-            title = workoutsById[it.workoutId]!!.name,
             exerciseType = workoutsById[it.workoutId]!!.type,
-            metadata = androidx.health.connect.client.records.metadata.Metadata(
+            title = workoutsById[it.workoutId]!!.name,
+            metadata = Metadata.activelyRecorded(
+                Device(type = Device.TYPE_WATCH),
                 clientRecordId = it.id.toString()
-            )
+            ),
         )
     }
 
     val heartRateRecords = workoutHistories
         .filter { it.heartBeatRecords.isNotEmpty() }
-        .map { workoutHistory ->
+        .mapNotNull { workoutHistory ->
             val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
             val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
             val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
+
+            val samples = workoutHistory.heartBeatRecords.mapIndexedNotNull { index, bpm ->
+                val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 1000))
+                if (sampleTime.isAfter(endTime) || bpm <= 0) {
+                    null
+                } else {
+                    HeartRateRecord.Sample(
+                        time = sampleTime,
+                        beatsPerMinute = bpm.toLong()
+                    )
+                }
+            }
+
+            if(samples.isEmpty()) {
+                return@mapNotNull null
+            }
 
             HeartRateRecord(
                 startTime = startTime,
                 endTime = endTime,
                 startZoneOffset = zoneOffset,
                 endZoneOffset = zoneOffset,
-                samples = workoutHistory.heartBeatRecords.mapIndexedNotNull { index, bpm ->
-                    val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 1000))
-                    if (sampleTime.isAfter(endTime) || bpm <= 0) {
-                        null
-                    } else {
-                        HeartRateRecord.Sample(
-                            time = sampleTime,
-                            beatsPerMinute = bpm.toLong()
-                        )
-                    }
-                },
-                metadata = androidx.health.connect.client.records.metadata.Metadata(
-                    clientRecordId = workoutHistory.id.toString()
+                samples = samples,
+                metadata = Metadata.activelyRecorded(
+                    Device(type = Device.TYPE_WATCH),
+                    clientRecordId =   workoutHistory.id.toString()
                 )
             )
         }
 
     val totalCaloriesBurnedRecords = workoutHistories
         .filter { it.heartBeatRecords.isNotEmpty() }
-        .map { workoutHistory ->
+        .mapNotNull { workoutHistory ->
             val avgHeartRate = workoutHistory.heartBeatRecords.average()
 
             val durationMinutes = workoutHistory.duration.toDouble() / 60
@@ -329,6 +343,10 @@ suspend fun sendWorkoutsToHealthConnect(
                 isMale = true
             )
 
+            if(kiloCaloriesBurned <= 0) {
+                return@mapNotNull null
+            }
+
             val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
             val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
             val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
@@ -339,8 +357,9 @@ suspend fun sendWorkoutsToHealthConnect(
                 endTime = endTime,
                 endZoneOffset = zoneOffset,
                 energy = Energy.kilocalories(kiloCaloriesBurned),
-                metadata = Metadata(
-                    clientRecordId = workoutHistory.id.toString()
+                metadata =  Metadata.activelyRecorded(
+                    Device(type = Device.TYPE_WATCH),
+                    clientRecordId =   workoutHistory.id.toString()
                 )
             )
         }
@@ -349,10 +368,14 @@ suspend fun sendWorkoutsToHealthConnect(
     val weightRecord = androidx.health.connect.client.records.WeightRecord(
         time = Instant.now(),
         zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-        weight = Mass.kilograms(weightKg.toDouble())
+        weight = Mass.kilograms(weightKg.toDouble()),
+        metadata = Metadata.unknownRecordingMethod()
     )
 
-    healthConnectClient.insertRecords(exerciseSessionRecords + heartRateRecords + totalCaloriesBurnedRecords + weightRecord)
+    healthConnectClient.insertRecords(exerciseSessionRecords)
+    healthConnectClient.insertRecords(heartRateRecords)
+    healthConnectClient.insertRecords(totalCaloriesBurnedRecords)
+    healthConnectClient.insertRecords(listOf(weightRecord))
 
     for (workoutHistory in workoutHistories) {
         workoutHistoryDao.updateHasBeenSentToHealth(workoutHistory.id, true)
@@ -379,8 +402,8 @@ fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
-    scrollBarTrackColor: Color = MediumGray,
-    scrollBarColor: Color = VeryLightGray,
+    scrollBarTrackColor: Color = DarkGray,
+    scrollBarColor: Color = MediumGray,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
     /**
@@ -389,75 +412,98 @@ fun Modifier.verticalColumnScrollbar(
      * If provided, the track will use this height. If this provided height is less
      * than the viewport height, it will also be centered vertically.
      */
-    trackHeight: Dp? = null
+    trackHeight: Dp? = null,
+            /**
+             * Controls the starting size ratio of the scrollbar thumb relative to the track.
+             * 0.5f means it starts at half the track height when content just begins to scroll.
+             * 1.0f would mimic the default behavior (starting near full track height).
+             * Values closer to 0 mean it starts smaller.
+             */
+            startSizeRatio: Float = 0.75f,
+    minThumbHeight: Float = 3f
 ): Modifier {
+    // Validate startSizeRatio
+    val clampedStartSizeRatio = startSizeRatio.coerceIn(0.01f, 1.0f) // Ensure it's positive and <= 1
+
+
     return drawWithContent {
         // Draw the column's content
         drawContent()
 
         // Dimensions and calculations
         val viewportHeight = this.size.height
-        val totalContentHeight = scrollState.maxValue.toFloat() + viewportHeight
+        // Ensure totalContentHeight is at least viewportHeight to avoid division issues
+        // and handle cases where maxValue is 0 correctly.
+        val totalContentHeight = max(scrollState.maxValue.toFloat() + viewportHeight, viewportHeight)
         val scrollValue = scrollState.value.toFloat()
 
         // Compute visibility ratio (how much of the total content is visible)
-        // Avoid division by zero if totalContentHeight is equal to viewportHeight (or less, though unlikely)
-        val visibleRatio = if (totalContentHeight > viewportHeight) {
-            viewportHeight / totalContentHeight
-        } else {
-            1f
-        }
+        val visibleRatio = viewportHeight / totalContentHeight
 
-        if (visibleRatio >= 1f) {
+        // Don't draw scrollbar if content fits perfectly or viewport is tiny
+        if (visibleRatio >= 1f || viewportHeight <= 0f || totalContentHeight <= viewportHeight) {
             return@drawWithContent
         }
 
-        // Calculate actual track height: Use provided height or default to 2/3 of viewport
-        val defaultTrackHeight = viewportHeight * 0.95f //(2f / 3f)
-        val actualTrackHeight = trackHeight?.toPx() ?: defaultTrackHeight
+        // Calculate actual track height: Use provided height or default
+        // Use a slightly inset default track height to leave space top/bottom
+        val defaultTrackHeight = viewportHeight * 0.95f
+        val actualTrackHeight = trackHeight?.toPx()?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
+        // Ensure track height is positive
+        if (actualTrackHeight <= 0f) return@drawWithContent
 
-        // Calculate track position (center it if its height is less than the viewport height)
+        // Calculate track position (center it vertically if needed)
         val trackTopOffset = if (actualTrackHeight < viewportHeight) {
             (viewportHeight - actualTrackHeight) / 2f
         } else {
             0f // If track is as tall or taller than viewport, start at the top
         }
 
+        val trackStartX = this.size.width - width.toPx() - endPadding // Adjusted calculation
+
         // Draw the track (optional)
         if (showScrollBarTrack) {
             drawRoundRect(
                 cornerRadius = CornerRadius(scrollBarCornerRadius),
                 color = scrollBarTrackColor,
-                topLeft = Offset(this.size.width - endPadding, trackTopOffset),
+                topLeft = Offset(trackStartX, trackTopOffset),
                 size = Size(width.toPx(), actualTrackHeight),
             )
         }
 
-        // Calculate scrollbar height (proportional to visible content ratio within the track height)
-        // Ensure scrollbar height is at least a minimum size (e.g., width*2) for visibility? - Optional enhancement
-        val scrollBarHeight = (visibleRatio * actualTrackHeight).coerceAtLeast(width.toPx() * 2) // Ensure minimum height
+        // --- Scrollbar Thumb Calculation ---
+
+        // 1. Calculate base height based on visibility ratio AND the desired start size ratio
+        val baseScrollBarHeight = visibleRatio * actualTrackHeight * clampedStartSizeRatio
+
+        // 2. Apply minimum and maximum height constraints
+        // Max height is the track height itself. Min height is specified.
+        val scrollBarHeight = baseScrollBarHeight
+            .coerceAtLeast(minThumbHeight)
+            .coerceAtMost(actualTrackHeight) // Cannot be taller than the track
 
 
         // Calculate scrollbar position within the track
-        val availableTrackSpace = actualTrackHeight - scrollBarHeight
-        val scrollProgress = if (scrollState.maxValue > 0) {
-            scrollValue / scrollState.maxValue.toFloat()
+        val availableScrollSpace = scrollState.maxValue.toFloat() // How many pixels can be scrolled
+        val availableTrackSpace = actualTrackHeight - scrollBarHeight // Space the thumb can move in
+
+        // Avoid division by zero if availableScrollSpace is 0 (though handled by visibleRatio check earlier)
+        val scrollProgress = if (availableScrollSpace > 0) {
+            (scrollValue / availableScrollSpace).coerceIn(0f, 1f)
         } else {
             0f
         }
-        // Ensure scroll progress is clamped between 0 and 1
-        val clampedScrollProgress = scrollProgress.coerceIn(0f, 1f)
 
-        val scrollBarOffsetWithinTrack = clampedScrollProgress * availableTrackSpace
-        val scrollBarStartOffset = trackTopOffset + scrollBarOffsetWithinTrack
+        val scrollBarOffsetWithinTrack = scrollProgress * availableTrackSpace
+        val scrollBarTop = trackTopOffset + scrollBarOffsetWithinTrack
 
         // Draw the scrollbar thumb
         drawRoundRect(
             cornerRadius = CornerRadius(scrollBarCornerRadius),
             color = scrollBarColor,
-            topLeft = Offset(this.size.width - endPadding, scrollBarStartOffset),
-            // Ensure the drawn size doesn't exceed the track boundaries if calculations are slightly off
-            size = Size(width.toPx(), scrollBarHeight.coerceAtMost(actualTrackHeight))
+            topLeft = Offset(trackStartX, scrollBarTop),
+            // Ensure the drawn size doesn't exceed the track boundaries
+            size = Size(width.toPx(), scrollBarHeight)
         )
     }
 }

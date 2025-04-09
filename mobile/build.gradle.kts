@@ -111,7 +111,7 @@ dependencies {
 
     implementation("com.patrykandpatrick.vico:compose:2.0.1")
     implementation("com.kizitonwose.calendar:compose:2.5.0")
-    implementation("androidx.health.connect:connect-client:1.1.0-alpha11")
+    implementation("androidx.health.connect:connect-client:1.1.0-beta01")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
 }
 
