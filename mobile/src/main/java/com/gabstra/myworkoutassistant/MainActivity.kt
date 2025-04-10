@@ -235,6 +235,7 @@ fun MyWorkoutAssistantNavHost(
     val setHistoryDao = db.setHistoryDao()
     val workoutHistoryDao = db.workoutHistoryDao()
     val workoutScheduleDao = db.workoutScheduleDao()
+    val workoutRecordDao = db.workoutRecordDao()
 
     val exerciseInfoDao = db.exerciseInfoDao()
 
@@ -279,6 +280,7 @@ fun MyWorkoutAssistantNavHost(
                                 setHistoryDao.deleteAll()
                                 exerciseInfoDao.deleteAll()
                                 workoutScheduleDao.deleteAll()
+                                workoutRecordDao.deleteAll()
 
                                 val validWorkoutHistories = appBackup.WorkoutHistories.filter { workoutHistory ->
                                     allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
@@ -299,6 +301,11 @@ fun MyWorkoutAssistantNavHost(
 
                                 val validWorkoutSchedules = appBackup.WorkoutSchedules.filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
                                 workoutScheduleDao.insertAll(*validWorkoutSchedules.toTypedArray())
+
+                                if(appBackup.WorkoutRecords != null){
+                                    val validWorkoutRecords = appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
+                                    workoutRecordDao.insertAll(*validWorkoutRecords.toTypedArray())
+                                }
                             }
 
                             // Wait for the delete and insert operations to complete
@@ -339,8 +346,10 @@ fun MyWorkoutAssistantNavHost(
                     workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
                 }
 
+                val workoutRecords = workoutRecordDao.getAll()
+
                 val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
-                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && workoutHistory.isDone
+                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone ||   workoutRecords.any { it.workoutHistoryId == workoutHistory.id })
                 }
 
                 val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
@@ -349,7 +358,9 @@ fun MyWorkoutAssistantNavHost(
 
                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
                 val workoutSchedules = workoutScheduleDao.getAllSchedules()
-                val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules)
+
+
+                val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords)
                 sendAppBackup(dataClient, appBackup)
             }
             Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
@@ -399,13 +410,17 @@ fun MyWorkoutAssistantNavHost(
                                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
                                 val workoutSchedules = workoutScheduleDao.getAllSchedules()
 
+                                val workoutRecords = workoutRecordDao.getAll()
+
                                 val appBackup = AppBackup(
                                     appViewModel.workoutStore.copy(workouts = allowedWorkouts),
                                     validWorkoutHistories,
                                     setHistories,
                                     exerciseInfos,
-                                    workoutSchedules
+                                    workoutSchedules,
+                                    workoutRecords
                                 )
+
                                 val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                                 writeJsonToDownloadsFolder(context, filename, jsonString)
                                 Toast.makeText(
@@ -429,6 +444,7 @@ fun MyWorkoutAssistantNavHost(
                     onClearUnfinishedWorkouts = {
                         scope.launch {
                             workoutHistoryDao.deleteAllUnfinished()
+                            workoutRecordDao.deleteAll()
                             appViewModel.triggerUpdate()
                         }
                     },
@@ -564,6 +580,7 @@ fun MyWorkoutAssistantNavHost(
                 WorkoutDetailScreen(
                     appViewModel,
                     workoutHistoryDao,
+                    workoutRecordDao,
                     setHistoryDao,
                     exerciseInfoDao,
                     selectedWorkout,
@@ -581,6 +598,7 @@ fun MyWorkoutAssistantNavHost(
                 WorkoutHistoryScreen(
                     appViewModel,
                     workoutHistoryDao,
+                    workoutRecordDao,
                     screenData.workoutHistoryId,
                     setHistoryDao,
                     selectedWorkout,

@@ -2,7 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.Screen
-import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import android.Manifest
 import android.os.Build
 import android.widget.Toast

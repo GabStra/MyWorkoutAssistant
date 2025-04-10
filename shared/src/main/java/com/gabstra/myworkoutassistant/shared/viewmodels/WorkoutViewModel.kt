@@ -402,6 +402,8 @@ open class WorkoutViewModel : ViewModel() {
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
 
+                Log.d("WorkoutViewModel", _workoutRecord!!.toString())
+
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
@@ -1535,20 +1537,6 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            fun <T> filterByDistance(original: List<T>, subset: List<T>, minDistance: Int): List<T> {
-                val indices = subset.mapNotNull { original.indexOf(it).takeIf { i -> i != -1 } }.sorted()
-                val result = mutableListOf<T>()
-                var lastAcceptedIndex = -minDistance - 1
-
-                for (i in indices) {
-                    if (i - lastAcceptedIndex >= minDistance) {
-                        result.add(original[i])
-                        lastAcceptedIndex = i
-                    }
-                }
-                return result
-            }
-
             val warmUpProtocols = listOf(
                 Pair(0.4, min(15, workReps+5)),
                 Pair(0.6, min(12, workReps+3)),
@@ -1559,22 +1547,22 @@ open class WorkoutViewModel : ViewModel() {
 
             val chosenWeights = mutableSetOf<Double>()
 
-            var actualWarmupSets = warmUpProtocols.mapNotNull {
+            val actualWarmupSets = mutableListOf<Pair<Double, Int>>()
+
+            warmUpProtocols.forEach {
                 val (percentage, reps) = it
                 val weight = workWeight * percentage
 
                 val selectableWeights = (availableWeights - chosenWeights).filter { it <= weight }
                 val closestWeight = selectableWeights.minByOrNull { abs(it - weight) }
-                if(closestWeight == null) {
-                     null
-                }else{
+
+                if (closestWeight != null) {
                     chosenWeights.add(closestWeight)
-                    Pair(closestWeight, reps)
+                    actualWarmupSets.add(Pair(closestWeight, reps))
                 }
             }
 
-            if(actualWarmupSets.isEmpty()){
-                chosenWeights.clear()
+            if(actualWarmupSets.size < numberOfWarmUpSets){
                 while(true){
                     val selectableWeights = (availableWeights - chosenWeights).filter { it < workWeight }
 
@@ -1584,16 +1572,20 @@ open class WorkoutViewModel : ViewModel() {
                     chosenWeights.add(minOrNull)
                 }
 
-                actualWarmupSets = chosenWeights.mapNotNull{
+                chosenWeights.forEach {
                     val intensity = it / oneRepMax
                     val expectedReps = ((1.0278 - intensity) / 0.0278).roundToInt()
-                    val halfCapacityEstimatedReps =  expectedReps / 2
-                    if(halfCapacityEstimatedReps < 2) return@mapNotNull null
-                    Pair(it, halfCapacityEstimatedReps)
+                    val halfCapacityEstimatedReps = expectedReps / 2
+
+                    if (halfCapacityEstimatedReps >= 2) {
+                        actualWarmupSets.add(Pair(it, halfCapacityEstimatedReps))
+                    }
                 }
+
+                actualWarmupSets.sortBy { it.first }
             }
 
-/*            if(actualWarmupSets.size > 1){
+            /*if(actualWarmupSets.size > 1){
                 val warmupWeights = actualWarmupSets.map { it.first }.toSet()
                 val usableWarmupWeight = filterByDistance(availableWeights.toList(), warmupWeights.toList(), 2)
 
@@ -1601,7 +1593,9 @@ open class WorkoutViewModel : ViewModel() {
             }*/
 
             if (actualWarmupSets.size > numberOfWarmUpSets) {
-                actualWarmupSets = actualWarmupSets.take(numberOfWarmUpSets)
+                val setsToKeep = actualWarmupSets.take(numberOfWarmUpSets)
+                actualWarmupSets.clear()
+                actualWarmupSets.addAll(setsToKeep)
             }
 
             actualWarmupSets.forEach {

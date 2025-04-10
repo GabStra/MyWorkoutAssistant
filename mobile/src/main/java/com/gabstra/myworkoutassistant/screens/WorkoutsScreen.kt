@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -10,7 +8,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +23,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.verticalScroll
 
 import androidx.compose.material.icons.Icons
@@ -73,7 +69,7 @@ import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.DarkModeContainer
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
@@ -91,9 +87,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.kizitonwose.calendar.compose.weekcalendar.WeekCalendarState
-import com.kizitonwose.calendar.core.WeekDay
-import com.kizitonwose.calendar.core.WeekDayPosition
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.Add
@@ -106,18 +99,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.delay
-import androidx.compose.material.icons.filled.MoveDown
-import androidx.compose.runtime.collectAsState
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 
@@ -144,7 +133,7 @@ fun Menu(
                 contentDescription = "More"
             )
         }
-        DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+        StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
@@ -231,7 +220,7 @@ fun WorkoutTitle(
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name,
-            color = VeryLightGray,
+            color = LightGray,
             style = style,
         )
         content()
@@ -420,7 +409,7 @@ fun WorkoutsScreen(
     }
 
     fun onDayClicked(calendarState: CalendarState, day: CalendarDay) {
-        scope.launch {
+        scope.launch(Dispatchers.Main) {
             if (groupedWorkoutsHistories == null || workoutById == null) return@launch
             isLoading = true
 
@@ -440,6 +429,7 @@ fun WorkoutsScreen(
                 selectedDate = day
                 return@launch
             }
+
 
             selectedDate = day
         }
@@ -464,7 +454,7 @@ fun WorkoutsScreen(
     @Composable
     fun workoutsBottomBar(){
         if (selectedWorkouts.isNotEmpty()) {
-            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+            StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
                     containerColor = Color.Transparent,
@@ -557,7 +547,7 @@ fun WorkoutsScreen(
     @Composable
     fun equipmentsBottomBar(){
         if(selectedEquipments.isNotEmpty()){
-            DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+            StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
                     containerColor = Color.Transparent,
@@ -602,7 +592,7 @@ fun WorkoutsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = LightGray),
                 title = {
                     Text(
                         modifier = Modifier
@@ -666,7 +656,7 @@ fun WorkoutsScreen(
                         onClick = { appViewModel.setHomeTab(index) },
                         text = { Text(text = title) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumGray,
+                        unselectedContentColor = MediumLightGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -734,7 +724,7 @@ fun WorkoutsScreen(
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 10.dp),
+                                                .padding(10.dp),
                                             verticalArrangement = Arrangement.spacedBy(5.dp)
                                         ) {
                                             Text(
@@ -746,7 +736,7 @@ fun WorkoutsScreen(
                                                 } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
                                                 style = MaterialTheme.typography.titleMedium,
                                                 textAlign = TextAlign.Center,
-                                                color = VeryLightGray
+                                                color = LightGray
                                             )
                                             ExpandableContainer(
                                                 isOpen = false,
@@ -763,7 +753,7 @@ fun WorkoutsScreen(
                                                             text = "${(objectiveProgress * 100).toInt()}%",
                                                             style = MaterialTheme.typography.titleMedium,
                                                             textAlign = TextAlign.Center,
-                                                            color = VeryLightGray,
+                                                            color = LightGray,
                                                         )
                                                         Spacer(modifier = Modifier.width(10.dp))
                                                         ObjectiveProgressBar(
@@ -787,12 +777,12 @@ fun WorkoutsScreen(
                                                                 Text(
                                                                     text = workout.name,
                                                                     modifier = Modifier.weight(1f),
-                                                                    color = VeryLightGray,
+                                                                    color = LightGray,
                                                                     style = MaterialTheme.typography.bodyLarge,
                                                                 )
                                                                 Text(
                                                                     text = "${pair.first}/${pair.second}",
-                                                                    color = VeryLightGray,
+                                                                    color = LightGray,
                                                                     style = MaterialTheme.typography.bodyLarge,
                                                                 )
                                                             }
@@ -803,6 +793,9 @@ fun WorkoutsScreen(
 
                                     }
                                     Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
                                         verticalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         val currentDate = selectedDate.date
@@ -814,7 +807,7 @@ fun WorkoutsScreen(
                                             text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
                                             style = MaterialTheme.typography.titleMedium,
                                             textAlign = TextAlign.Center,
-                                            color = VeryLightGray
+                                            color = LightGray
                                         )
 
                                         if (selectedCalendarWorkouts.isNullOrEmpty()) {
@@ -823,7 +816,7 @@ fun WorkoutsScreen(
                                                     .fillMaxSize(),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                DarkModeContainer(
+                                                StyledCard(
                                                     modifier = Modifier
                                                         .padding(5.dp),
                                                 ) {
@@ -832,28 +825,54 @@ fun WorkoutsScreen(
                                                             .padding(15.dp),
                                                         text = "No workouts on this day",
                                                         textAlign = TextAlign.Center,
-                                                        color = VeryLightGray,
+                                                        color = LightGray,
                                                     )
                                                 }
                                             }
                                         } else {
+                                            val timeFormatter = remember(currentLocale) {
+                                                DateTimeFormatter.ofPattern("HH:mm", currentLocale)
+                                            }
+
                                             selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
-                                                DarkModeContainer(whiteOverlayAlpha = .1f) {
-                                                    WorkoutTitle(
-                                                        Modifier
-                                                            .padding(15.dp)
-                                                            .clickable {
-                                                                appViewModel.setScreenData(
-                                                                    ScreenData.WorkoutHistory(
-                                                                        workout.id,
-                                                                        workoutHistory.id
-                                                                    )
-                                                                )
-                                                            },
-                                                        workout,
-                                                        workoutHistory.isDone,
-                                                        style = MaterialTheme.typography.bodyLarge
+                                                StyledCard(modifier = Modifier.clickable {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.WorkoutHistory(
+                                                            workout.id,
+                                                            workoutHistory.id
+                                                        )
                                                     )
+                                                }, whiteOverlayAlpha = .1f) {
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        modifier =  Modifier
+                                                            .padding(15.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        if (!workoutHistory.isDone) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Close,
+                                                                contentDescription = "Incomplete",
+                                                            )
+                                                            Spacer(modifier = Modifier.width(8.dp))
+                                                        }
+                                                        Text(
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .basicMarquee(iterations = Int.MAX_VALUE),
+                                                            text = workout.name,
+                                                            color = LightGray,
+                                                            style =  MaterialTheme.typography.bodyLarge,
+                                                        )
+                                                        Text(
+                                                            modifier = Modifier
+                                                                .weight(1f),
+                                                            text =  workoutHistory.time.format(timeFormatter),
+                                                            textAlign = TextAlign.End,
+                                                            color = LightGray,
+                                                            style =  MaterialTheme.typography.bodyLarge,
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -910,7 +929,7 @@ fun WorkoutsScreen(
                                             appViewModel.updateWorkouts(workoutsWithOrderUpdated)
                                         },
                                         itemContent = { it ->
-                                            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                                            StyledCard(whiteOverlayAlpha = .1f) {
                                                 WorkoutTitle(
                                                     Modifier.padding(15.dp),
                                                     it,
@@ -938,7 +957,7 @@ fun WorkoutsScreen(
                                         Icon(
                                             imageVector = Icons.Filled.Add,
                                             contentDescription = "Add",
-                                            tint = VeryLightGray,
+                                            tint = LightGray,
                                         )
                                     }
                                 }
@@ -997,7 +1016,7 @@ fun WorkoutsScreen(
                                         },
                                         onOrderChange = { },
                                         itemContent = { it ->
-                                            DarkModeContainer(whiteOverlayAlpha = .1f) {
+                                            StyledCard(whiteOverlayAlpha = .1f) {
                                                 Text(
                                                     modifier = Modifier
                                                         .fillMaxSize()
@@ -1039,7 +1058,7 @@ fun WorkoutsScreen(
                                             Icon(
                                                 imageVector = Icons.Filled.Add,
                                                 contentDescription = "Add",
-                                                tint = VeryLightGray,
+                                                tint = LightGray,
                                             )
                                         }
                                     )

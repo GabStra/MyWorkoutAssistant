@@ -67,7 +67,7 @@ import com.gabstra.myworkoutassistant.composable.PagePlates
 import com.gabstra.myworkoutassistant.composable.TimedDurationSetScreen
 import com.gabstra.myworkoutassistant.composable.WeightSetScreen
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
@@ -156,12 +156,6 @@ fun ExerciseScreen(
         viewModel.closeCustomDialog()
     }
 
-    LaunchedEffect(allowHorizontalScrolling, pageTypes) {
-        if (!allowHorizontalScrolling && pageTypes.getOrNull(pagerState.currentPage) == PageType.PLATES) {
-            pagerState.scrollToPage(exerciseDetailPageIndex)
-        }
-    }
-
     var marqueeEnabled by remember { mutableStateOf(false) }
 
     val typography = MaterialTheme.typography
@@ -171,6 +165,8 @@ fun ExerciseScreen(
     val exerciseOrSupersetId = remember(state.exerciseId) { if(viewModel.supersetIdByExerciseId.containsKey(state.exerciseId)) viewModel.supersetIdByExerciseId[state.exerciseId] else state.exerciseId }
     val currentExerciseOrSupersetIndex = remember(exerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
     val isSuperset =  remember(exerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId) }
+
+    val context = LocalContext.current
 
     Box(
         modifier = Modifier
@@ -197,7 +193,10 @@ fun ExerciseScreen(
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { marqueeEnabled = !marqueeEnabled }
+                            .clickable {
+                                VibrateGentle(context)
+                                marqueeEnabled = !marqueeEnabled
+                            }
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = exercise.name,
                         textAlign = TextAlign.Center,
@@ -289,8 +288,6 @@ fun ExerciseScreen(
         hearthRateChart()
     }
 
-    val context = LocalContext.current
-
     CustomDialogYesOnLongPress(
         show = showNextDialog,
         title = "Complete Set",
@@ -299,7 +296,6 @@ fun ExerciseScreen(
             VibrateGentle(context)
             viewModel.storeSetData()
             viewModel.pushAndStoreWorkoutData(false, context) {
-                viewModel.upsertWorkoutRecord(state.set.id)
                 viewModel.goToNextState()
                 viewModel.lightScreenUp()
             }

@@ -61,7 +61,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.WorkoutTypes
-import com.gabstra.myworkoutassistant.composables.DarkModeContainer
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.time.Instant
@@ -99,7 +99,7 @@ fun WorkoutForm(
 
     Scaffold(
         topBar = {
-            DarkModeContainer(whiteOverlayAlpha =.1f, isRounded = false) {
+            StyledCard(whiteOverlayAlpha =.1f, isRounded = false) {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {

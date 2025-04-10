@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -94,12 +95,15 @@ open class AppViewModel : WorkoutViewModel() {
                         exerciseInfoDao.getExerciseInfoById(exercise.id)
                     }
 
+                    val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(it.id)
+
                     val result = sendWorkoutHistoryStore(
                         dataClient!!,
                         WorkoutHistoryStore(
                             WorkoutHistory = workoutHistory,
                             SetHistories = setHistories,
-                            ExerciseInfos = exerciseInfos
+                            ExerciseInfos = exerciseInfos,
+                            WorkoutRecord = workoutRecord
                         )
                     )
                     statuses.add(result)
@@ -132,6 +136,8 @@ open class AppViewModel : WorkoutViewModel() {
 
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
 
+            val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(selectedWorkout.value.id)
+
             val exerciseInfos =
                 selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>().mapNotNull {
                     exerciseInfoDao.getExerciseInfoById(it.id)
@@ -144,7 +150,8 @@ open class AppViewModel : WorkoutViewModel() {
                     it, WorkoutHistoryStore(
                         WorkoutHistory = workoutHistory,
                         SetHistories = setHistories,
-                        ExerciseInfos = exerciseInfos
+                        ExerciseInfos = exerciseInfos,
+                        workoutRecord
                     )
                 )
             }
@@ -178,9 +185,12 @@ open class AppViewModel : WorkoutViewModel() {
                 val currentState = workoutState.value
                 val shouldSendData = (currentState != setStates.lastOrNull() || isDone)
 
+                if(currentState is WorkoutState.Set){
+                    upsertWorkoutRecord(currentState.set.id)
+                }
+
                 if (shouldSendData && dataClient != null) {
                     val exerciseInfos = mutableListOf<ExerciseInfo>()
-                    // Get exercise infos for sending
                     val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() +
                             selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
@@ -195,7 +205,8 @@ open class AppViewModel : WorkoutViewModel() {
                         WorkoutHistoryStore(
                             WorkoutHistory = currentWorkoutHistory!!,
                             SetHistories = executedSetsHistory,
-                            ExerciseInfos = exerciseInfos
+                            ExerciseInfos = exerciseInfos,
+                            WorkoutRecord = _workoutRecord
                         )
                     )
 

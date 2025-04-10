@@ -5,9 +5,6 @@ import android.text.Layout
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -16,24 +13,32 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStart
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
+import com.patrykandpatrick.vico.compose.cartesian.rememberFadingEdges
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.fill
+import com.patrykandpatrick.vico.compose.common.shape.dashedShape
 import com.patrykandpatrick.vico.core.cartesian.CartesianDrawingContext
 import com.patrykandpatrick.vico.core.cartesian.Zoom
 
@@ -52,16 +57,12 @@ import com.patrykandpatrick.vico.core.cartesian.marker.DefaultCartesianMarker
 import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
 
 import com.patrykandpatrick.vico.core.common.Insets
-import com.patrykandpatrick.vico.core.common.data.ExtraStore
 import com.patrykandpatrick.vico.core.common.shape.CorneredShape
-import java.text.DecimalFormat
-import kotlin.math.floor
-import kotlin.math.roundToInt
 
 @Composable
 private fun rememberHorizontalLine(color: Color, y: Double): HorizontalLine {
     val fill = fill(color)
-    val line = rememberLineComponent(fill = fill, thickness = 1.dp)
+    val line = rememberLineComponent(fill = fill, thickness = 1.dp, shape = dashedShape(),)
     return remember {
         HorizontalLine(
             y = { y },
@@ -92,7 +93,7 @@ internal class DefaultValueFormatter(
         if (colorCode && color != null) {
             appendCompat(
                 formatter(y),
-                ForegroundColorSpan(color),
+                ForegroundColorSpan(LightGray.toArgb()),
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
         } else {
@@ -185,7 +186,7 @@ fun HeartRateChart(
             padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER
         ),
-        guideline = rememberAxisGuidelineComponent(),
+        guideline =  rememberAxisGuidelineComponent(fill(DarkGray)),
         indicatorSize = 10.dp,
         indicator = { _ -> shapeComponent }
     )
@@ -196,17 +197,21 @@ fun HeartRateChart(
             formatTime((value).toInt())
         }
 
-    Column {
-        Text(
+    ExpandableContainer(
+        isOpen = true,
+        modifier = modifier,
+        isExpandable = false,
+        title = {
+            Text(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 10.dp),
+                .padding(vertical = 10.dp),
             text = title,
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = .87f),
+            color = LightGray,
             style = MaterialTheme.typography.titleMedium,
-        )
-        DarkModeContainer(modifier, whiteOverlayAlpha = .05f) {
+        )},
+        content = {
             CartesianChartHost(
                 modifier = Modifier.padding(10.dp),
                 zoomState = rememberVicoZoomState(
@@ -219,15 +224,10 @@ fun HeartRateChart(
                         LineCartesianLayer.LineProvider.series(
                             listOf(
                                 LineCartesianLayer.rememberLine(
-                                    fill = LineCartesianLayer.LineFill.single(
-                                        fill(
-                                            Color(
-                                                0xFFff6700
-                                            )
-                                        )
-                                    ),
+                                    fill = LineCartesianLayer.LineFill.single(fill(Color(0xFFff6700))),
                                     areaFill = null,
                                     pointProvider = null,
+                                    pointConnector =  LineCartesianLayer.PointConnector.cubic(),
                                 )
                             )
                         ),
@@ -246,17 +246,22 @@ fun HeartRateChart(
                         rememberHorizontalLine(MaterialTheme.colorScheme.background, 100.0),
                     ),
                     startAxis = VerticalAxis.rememberStart(
+                        line = rememberAxisLineComponent(fill(MediumGray)),
+                        tick = rememberAxisTickComponent(fill(MediumGray)),
                         guideline = null,
                         valueFormatter = startAxisValueFormatter,
                         itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
                     bottomAxis = HorizontalAxis.rememberBottom(
+                        line = rememberAxisLineComponent(fill(MediumGray)),
+                        tick = rememberAxisTickComponent(fill(MediumGray)),
                         guideline = null,
                         valueFormatter = bottomAxisValueFormatter,
                         itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),
-                    marker = marker
+                    marker = marker,
+                    fadingEdges = rememberFadingEdges()
                 ),
                 model = cartesianChartModel,
             )
         }
-    }
+    )
 }

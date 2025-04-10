@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,6 +42,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -52,6 +54,8 @@ fun PageExercises(
     viewModel: AppViewModel,
     currentExercise: Exercise,
 ) {
+    val context = LocalContext.current
+
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
     val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
 
@@ -106,6 +110,7 @@ fun PageExercises(
                 modifier = Modifier
                     .fillMaxHeight()
                     .clickable(enabled = !isNavigationLocked && currentIndex > 0) {
+                        VibrateGentle(context)
                         val newIndex = currentIndex - 1
                         selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
                         isNavigationLocked = true
@@ -130,7 +135,10 @@ fun PageExercises(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { marqueeEnabled = !marqueeEnabled }
+                        .clickable {
+                            marqueeEnabled = !marqueeEnabled
+                            VibrateGentle(context)
+                        }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     contentAlignment = Alignment.Center
                 ) {
@@ -200,6 +208,7 @@ fun PageExercises(
                 modifier = Modifier
                     .fillMaxHeight()
                     .clickable(enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1) {
+                        VibrateGentle(context)
                         val newIndex = currentIndex + 1
                         selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
                         isNavigationLocked = true

@@ -34,7 +34,7 @@ import androidx.wear.compose.material.FractionalThreshold
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.rememberSwipeableState
 import androidx.wear.compose.material.swipeable
-import com.gabstra.myworkoutassistant.data.VibrateGentle
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
 
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class,

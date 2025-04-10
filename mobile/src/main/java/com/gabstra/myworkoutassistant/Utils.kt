@@ -16,13 +16,13 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
-import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
@@ -39,8 +39,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.delay
@@ -54,6 +53,7 @@ import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import java.util.concurrent.CancellationException
 import kotlin.math.max
+import kotlin.math.min
 
 fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
     try {
@@ -397,113 +397,85 @@ fun Double.round(decimals: Int): Double {
     return kotlin.math.round(this * multiplier) / multiplier
 }
 
+
 @Composable
 fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
     scrollBarTrackColor: Color = DarkGray,
-    scrollBarColor: Color = MediumGray,
+    scrollBarColor: Color = MediumLightGray,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
-    /**
-     * Optional explicit height for the scrollbar track.
-     * If null (default), the track height will be 2/3 of the viewport height and centered vertically.
-     * If provided, the track will use this height. If this provided height is less
-     * than the viewport height, it will also be centered vertically.
-     */
     trackHeight: Dp? = null,
-            /**
-             * Controls the starting size ratio of the scrollbar thumb relative to the track.
-             * 0.5f means it starts at half the track height when content just begins to scroll.
-             * 1.0f would mimic the default behavior (starting near full track height).
-             * Values closer to 0 mean it starts smaller.
-             */
-            startSizeRatio: Float = 0.75f,
+    startSizeRatio: Float = 0.75f,
     minThumbHeight: Float = 3f
 ): Modifier {
-    // Validate startSizeRatio
-    val clampedStartSizeRatio = startSizeRatio.coerceIn(0.01f, 1.0f) // Ensure it's positive and <= 1
+    val clampedStartSizeRatio = startSizeRatio.coerceIn(0.01f, 1.0f)
 
+    val widthPx = with(LocalDensity.current) { width.toPx() }
+    val trackHeightPx = with(LocalDensity.current) { trackHeight?.toPx() }
 
     return drawWithContent {
-        // Draw the column's content
         drawContent()
 
-        // Dimensions and calculations
         val viewportHeight = this.size.height
-        // Ensure totalContentHeight is at least viewportHeight to avoid division issues
-        // and handle cases where maxValue is 0 correctly.
         val totalContentHeight = max(scrollState.maxValue.toFloat() + viewportHeight, viewportHeight)
         val scrollValue = scrollState.value.toFloat()
 
-        // Compute visibility ratio (how much of the total content is visible)
         val visibleRatio = viewportHeight / totalContentHeight
 
-        // Don't draw scrollbar if content fits perfectly or viewport is tiny
-        if (visibleRatio >= 1f || viewportHeight <= 0f || totalContentHeight <= viewportHeight) {
+        if (visibleRatio >= 1f || viewportHeight <= 0f || totalContentHeight <= viewportHeight || scrollState.maxValue == 0) {
             return@drawWithContent
         }
 
-        // Calculate actual track height: Use provided height or default
-        // Use a slightly inset default track height to leave space top/bottom
         val defaultTrackHeight = viewportHeight * 0.95f
-        val actualTrackHeight = trackHeight?.toPx()?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
-        // Ensure track height is positive
+        val actualTrackHeight = trackHeightPx?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
         if (actualTrackHeight <= 0f) return@drawWithContent
 
-        // Calculate track position (center it vertically if needed)
         val trackTopOffset = if (actualTrackHeight < viewportHeight) {
             (viewportHeight - actualTrackHeight) / 2f
         } else {
-            0f // If track is as tall or taller than viewport, start at the top
+            0f
         }
 
-        val trackStartX = this.size.width - width.toPx() - endPadding // Adjusted calculation
+        val trackStartX = this.size.width - widthPx - endPadding
 
-        // Draw the track (optional)
         if (showScrollBarTrack) {
             drawRoundRect(
                 cornerRadius = CornerRadius(scrollBarCornerRadius),
                 color = scrollBarTrackColor,
                 topLeft = Offset(trackStartX, trackTopOffset),
-                size = Size(width.toPx(), actualTrackHeight),
+                size = Size(widthPx, actualTrackHeight),
             )
         }
 
-        // --- Scrollbar Thumb Calculation ---
-
-        // 1. Calculate base height based on visibility ratio AND the desired start size ratio
-        val baseScrollBarHeight = visibleRatio * actualTrackHeight * clampedStartSizeRatio
-
-        // 2. Apply minimum and maximum height constraints
-        // Max height is the track height itself. Min height is specified.
-        val scrollBarHeight = baseScrollBarHeight
+        val scrollBarHeight = (visibleRatio * actualTrackHeight)
             .coerceAtLeast(minThumbHeight)
-            .coerceAtMost(actualTrackHeight) // Cannot be taller than the track
+            .coerceAtMost(actualTrackHeight)
 
 
-        // Calculate scrollbar position within the track
-        val availableScrollSpace = scrollState.maxValue.toFloat() // How many pixels can be scrolled
-        val availableTrackSpace = actualTrackHeight - scrollBarHeight // Space the thumb can move in
+        val availableScrollSpace = scrollState.maxValue.toFloat()
+        if (availableScrollSpace <= 0f) return@drawWithContent
 
-        // Avoid division by zero if availableScrollSpace is 0 (though handled by visibleRatio check earlier)
-        val scrollProgress = if (availableScrollSpace > 0) {
-            (scrollValue / availableScrollSpace).coerceIn(0f, 1f)
-        } else {
-            0f
+        val availableTrackSpace = actualTrackHeight - scrollBarHeight
+        if (availableTrackSpace <= 0f) {
+            // Thumb fills the track, position is fixed. Draw and return or let calculation proceed.
         }
 
-        val scrollBarOffsetWithinTrack = scrollProgress * availableTrackSpace
+        val effectiveAvailableTrackSpace = min(availableTrackSpace, availableScrollSpace)
+        val nonNegativeEffectiveTrackSpace = max(0f, effectiveAvailableTrackSpace)
+
+        val scrollProgress = (scrollValue / availableScrollSpace).coerceIn(0f, 1f)
+
+        val scrollBarOffsetWithinTrack = scrollProgress * nonNegativeEffectiveTrackSpace
         val scrollBarTop = trackTopOffset + scrollBarOffsetWithinTrack
 
-        // Draw the scrollbar thumb
         drawRoundRect(
             cornerRadius = CornerRadius(scrollBarCornerRadius),
             color = scrollBarColor,
-            topLeft = Offset(trackStartX, scrollBarTop),
-            // Ensure the drawn size doesn't exceed the track boundaries
-            size = Size(width.toPx(), scrollBarHeight)
+            topLeft = Offset(trackStartX, scrollBarTop.coerceAtMost(trackTopOffset + availableTrackSpace)),
+            size = Size(widthPx, scrollBarHeight)
         )
     }
 }

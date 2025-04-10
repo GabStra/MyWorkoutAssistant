@@ -28,6 +28,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import androidx.core.content.edit
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 
 class DataLayerListenerService : WearableListenerService() {
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -36,6 +37,7 @@ class DataLayerListenerService : WearableListenerService() {
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao
+    private lateinit var workoutRecordDao: WorkoutRecordDao
 
     private val sharedPreferences by lazy { getSharedPreferences("backup_state", Context.MODE_PRIVATE) }
 
@@ -81,6 +83,7 @@ class DataLayerListenerService : WearableListenerService() {
         workoutHistoryDao = db.workoutHistoryDao()
         exerciseInfoDao = db.exerciseInfoDao()
         workoutScheduleDao = db.workoutScheduleDao()
+        workoutRecordDao = db.workoutRecordDao()
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -218,11 +221,18 @@ class DataLayerListenerService : WearableListenerService() {
                                             workoutScheduleDao.insertAll(*appBackup.WorkoutSchedules.toTypedArray())
                                         }
 
+                                    val insertWorkoutRecordsJob =
+                                        scope.launch(start = CoroutineStart.LAZY) {
+                                            workoutRecordDao.deleteAll()
+                                            workoutRecordDao.insertAll(*appBackup.WorkoutRecords.toTypedArray())
+                                        }
+
                                     joinAll(
                                         insertWorkoutHistoriesJob,
                                         insertSetHistoriesJob,
                                         insertExerciseInfosJob,
-                                        insertWorkoutSchedulesJob
+                                        insertWorkoutSchedulesJob,
+                                        insertWorkoutRecordsJob
                                     )
 
                                     val intent = Intent(INTENT_ID).apply {

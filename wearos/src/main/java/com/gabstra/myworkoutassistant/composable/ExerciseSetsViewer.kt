@@ -101,14 +101,14 @@ fun SetTableRow(
                     Spacer(modifier = Modifier.width(10.dp))
                 }
                 val weightSetData = (setState.currentSetData as WeightSetData)
-                ScalableText(
+                Text(
                     modifier = Modifier.weight(1f),
                     text = "%.2f".format(weightSetData.actualWeight).replace(',','.'),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
                     color = color
                 )
-                ScalableText(
+                Text(
                     modifier = Modifier.weight(1f),
                     text = "${weightSetData.actualReps}",
                     style = MaterialTheme.typography.body1,
@@ -124,7 +124,7 @@ fun SetTableRow(
                     Spacer(modifier = Modifier.width(10.dp))
                 }
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                ScalableText(
+                Text(
                     modifier = Modifier.weight(1f),
                     text = if (bodyWeightSetData.additionalWeight > 0) {
                         "%.2f".format(bodyWeightSetData.additionalWeight).replace(',','.')
@@ -135,7 +135,7 @@ fun SetTableRow(
                     textAlign = TextAlign.Center,
                     color = color
                 )
-                ScalableText(
+                Text(
                     modifier = Modifier.weight(1f),
                     text = "${bodyWeightSetData.actualReps}",
                     style = MaterialTheme.typography.body1,

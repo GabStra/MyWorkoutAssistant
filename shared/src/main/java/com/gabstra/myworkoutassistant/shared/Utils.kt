@@ -2,8 +2,13 @@ package com.gabstra.myworkoutassistant.shared
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import androidx.compose.ui.graphics.Color
+import androidx.core.content.ContextCompat
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -31,12 +36,22 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.gson.GsonBuilder
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
@@ -380,3 +395,123 @@ fun calculateOneRepMax(weight: Double, reps: Int): Double {
     return weight / (1.0278 - (0.0278 * reps))
 }
 
+@OptIn(DelicateCoroutinesApi::class)
+fun VibrateHard(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+
+    GlobalScope.launch(Dispatchers.Default) {
+        launch{
+            vibrator?.vibrate(VibrationEffect.createOneShot(100,  255))
+        }
+    }
+}
+
+@OptIn(DelicateCoroutinesApi::class)
+fun VibrateGentle(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+
+    GlobalScope.launch(Dispatchers.Default) {
+        launch{
+            vibrator?.vibrate(VibrationEffect.createOneShot(50, 255))
+        }
+    }
+}
+
+@OptIn(DelicateCoroutinesApi::class)
+fun VibrateTwice(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+
+    GlobalScope.launch(Dispatchers.Default) {
+        repeat(2) {
+            val vibratorJob = launch(start = CoroutineStart.LAZY){
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+            }
+            val startTime = System.currentTimeMillis()
+            vibratorJob.join()
+            if(System.currentTimeMillis() - startTime < 200){
+                delay(200 - (System.currentTimeMillis() - startTime))
+            }
+        }
+    }
+}
+
+// Trigger vibration: two short impulses with a gap in between.
+@OptIn(DelicateCoroutinesApi::class)
+fun VibrateShortImpulse(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+
+    GlobalScope.launch(Dispatchers.Default) {
+        repeat(3) {
+            val startTime = System.currentTimeMillis()
+            coroutineScope {
+                // Create a countdown latch
+                val readyCount = AtomicInteger(2)
+
+                // Prepare both effects
+                val job1 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+                }
+
+                val job2 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                }
+
+                joinAll(job1, job2)
+            }
+
+            val elapsedTime = System.currentTimeMillis() - startTime
+            if (elapsedTime < 200) {
+                delay(200 - elapsedTime)
+            }
+        }
+    }
+}
+
+@OptIn(DelicateCoroutinesApi::class)
+fun VibrateTwiceAndBeep(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+
+    GlobalScope.launch(Dispatchers.Default) {
+        repeat(2) {
+            val startTime = System.currentTimeMillis()
+            coroutineScope {
+                // Create a countdown latch
+                val readyCount = AtomicInteger(2)
+
+                // Prepare both effects
+                val job1 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+                }
+
+                val job2 = launch {
+                    readyCount.decrementAndGet()
+                    while (readyCount.get() > 0) {
+                        yield()
+                    }
+                    toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                }
+
+                joinAll(job1, job2)
+            }
+
+            val elapsedTime = System.currentTimeMillis() - startTime
+            if (elapsedTime < 200) {
+                delay(200 - elapsedTime)
+            }
+        }
+    }
+}

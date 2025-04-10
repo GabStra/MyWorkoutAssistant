@@ -1,27 +1,21 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -31,29 +25,23 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,22 +51,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.DarkModeContainer
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.formatTime
-import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
-import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -87,12 +70,11 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
-import java.util.UUID
 
 @Composable
 fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
@@ -100,7 +82,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         is WeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
-            DarkModeContainer(whiteOverlayAlpha = .1f) {
+            StyledCard(whiteOverlayAlpha = .1f) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -122,13 +104,13 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 
                         Text(
                             text = text,
-                             color = VeryLightGray,
+                             color = LightGray,
                             style = MaterialTheme.typography.bodyMedium,
 
                             )
                         Text(
                             text = "Reps: ${set.reps}",
-                             color = VeryLightGray,
+                             color = LightGray,
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.End
                         )
@@ -140,7 +122,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 
         is BodyWeightSet -> {
 
-            DarkModeContainer(whiteOverlayAlpha = .1f) {
+            StyledCard(whiteOverlayAlpha = .1f) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -165,13 +147,13 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 
                             Text(
                                 text = text,
-                                color = VeryLightGray,
+                                color = LightGray,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         Text(
                             text = "Reps: ${set.reps}",
-                            color = VeryLightGray,
+                            color = LightGray,
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.End
                         )
@@ -182,7 +164,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is EnduranceSet -> {
-            DarkModeContainer(whiteOverlayAlpha = .1f) {
+            StyledCard(whiteOverlayAlpha = .1f) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -192,7 +174,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.weight(1f),
                         text = formatTime(set.timeInMillis / 1000),
                         textAlign = TextAlign.Center,
-                        color = VeryLightGray,
+                        color = LightGray,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -201,7 +183,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is TimedDurationSet -> {
-            DarkModeContainer(whiteOverlayAlpha = .1f) {
+            StyledCard(whiteOverlayAlpha = .1f) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -211,7 +193,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.weight(1f),
                         text = formatTime(set.timeInMillis / 1000),
                         textAlign = TextAlign.Center,
-                         color = VeryLightGray,
+                         color = LightGray,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -226,7 +208,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                DarkModeContainer(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
+                StyledCard(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
                     Row(
                         modifier = Modifier.padding(15.dp),
                         horizontalArrangement = Arrangement.Center,
@@ -235,7 +217,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         Text(
                             text = "Rest for: ${formatTime(set.timeInSeconds)}",
                             textAlign = TextAlign.Center,
-                             color = VeryLightGray,
+                             color = LightGray,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -272,7 +254,7 @@ fun ExerciseDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = LightGray),
                 title = {
                     Text(
                         modifier = Modifier
@@ -310,7 +292,7 @@ fun ExerciseDetailScreen(
         },
         bottomBar = {
             if (selectedSets.isNotEmpty()) {
-                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false){
+                StyledCard(whiteOverlayAlpha = .1f, isRounded = false){
                     BottomAppBar(
                         contentPadding = PaddingValues(0.dp),
                         containerColor = Color.Transparent,
@@ -481,7 +463,7 @@ fun ExerciseDetailScreen(
                         onClick = { },
                         text = { Text(text = "Overview") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumGray,
+                        unselectedContentColor = MediumLightGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -504,7 +486,7 @@ fun ExerciseDetailScreen(
                         },
                         text = { Text(text = "History") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumGray,
+                        unselectedContentColor = MediumLightGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -527,7 +509,7 @@ fun ExerciseDetailScreen(
                         .padding(horizontal = 10.dp),
                 ) {
                     if (sets.isEmpty()) {
-                        DarkModeContainer(
+                        StyledCard(
                             modifier = Modifier
                                 .padding(15.dp),
                             whiteOverlayAlpha = .1f
@@ -537,7 +519,7 @@ fun ExerciseDetailScreen(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .padding(15.dp),
-                                 color = VeryLightGray,
+                                 color = LightGray,
                             )
                         }
                     }else{
@@ -646,7 +628,7 @@ fun ExerciseDetailScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Add,
                                     contentDescription = "Add",
-                                    tint = VeryLightGray,
+                                    tint = LightGray,
                                 )
                             }
                         )

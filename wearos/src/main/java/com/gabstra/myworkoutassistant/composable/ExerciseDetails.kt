@@ -77,7 +77,6 @@ fun ExerciseDetail(
                 onTimerEnd = {
                     viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false, context) {
-                        viewModel.upsertWorkoutRecord(updatedState.set.id)
                         viewModel.goToNextState()
                         viewModel.lightScreenUp()
                     }
@@ -97,7 +96,6 @@ fun ExerciseDetail(
             onTimerEnd = {
                 viewModel.storeSetData()
                 viewModel.pushAndStoreWorkoutData(false, context) {
-                    viewModel.upsertWorkoutRecord(updatedState.set.id)
                     viewModel.goToNextState()
                     viewModel.lightScreenUp()
                 }

@@ -14,16 +14,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -46,7 +42,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -67,7 +62,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -75,9 +69,8 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
-import com.gabstra.myworkoutassistant.composables.DarkModeContainer
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
-import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
@@ -90,16 +83,14 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
-import com.gabstra.myworkoutassistant.shared.equipments.Plate
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -169,7 +160,7 @@ fun WorkoutComponentRenderer(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                DarkModeContainer(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
+                StyledCard(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
                     Row(
                         modifier = Modifier.padding(15.dp),
                         horizontalArrangement = Arrangement.Center,
@@ -350,6 +341,7 @@ fun SupersetForm(
 fun WorkoutDetailScreen(
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
+    workoutRecordDao: WorkoutRecordDao,
     setHistoryDao: SetHistoryDao,
     exerciseInfoDao: ExerciseInfoDao,
     workout: Workout,
@@ -576,7 +568,7 @@ fun WorkoutDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = VeryLightGray),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = LightGray),
                 title = {
                     Text(
                         modifier = Modifier
@@ -603,6 +595,7 @@ fun WorkoutDetailScreen(
                             scope.launch {
                                 withContext(Dispatchers.Main) {
                                     workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                    workoutRecordDao.deleteByWorkoutId(workout.id)
                                     Toast.makeText(
                                         context,
                                         "History deleted",
@@ -617,7 +610,7 @@ fun WorkoutDetailScreen(
         },
         bottomBar = {
             if (selectedWorkoutComponents.isNotEmpty()) {
-                DarkModeContainer(whiteOverlayAlpha = .1f, isRounded = false) {
+                StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
                     editModeBottomBar()
                 }
             }
@@ -651,7 +644,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumGray,
+                        unselectedContentColor = MediumLightGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -678,7 +671,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumGray,
+                        unselectedContentColor = MediumLightGray,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -702,7 +695,7 @@ fun WorkoutDetailScreen(
                         .padding(horizontal = 10.dp),
                 ) {
                     if (workout.workoutComponents.isEmpty()) {
-                        DarkModeContainer(
+                        StyledCard(
                             modifier = Modifier
                                 .padding(15.dp),
                             whiteOverlayAlpha = .1f
@@ -825,7 +818,7 @@ fun WorkoutDetailScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Add,
                                     contentDescription = "Add",
-                                    tint = VeryLightGray,
+                                    tint = LightGray,
                                 )
                             }
                         )

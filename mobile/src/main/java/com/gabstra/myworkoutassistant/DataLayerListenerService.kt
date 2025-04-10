@@ -2,8 +2,6 @@ package com.gabstra.myworkoutassistant
 
 import android.content.Intent
 import android.util.Log
-import androidx.health.connect.client.HealthConnectClient
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateSetInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -13,14 +11,13 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
-import com.gabstra.myworkoutassistant.shared.isSetDataValid
-import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -37,7 +34,6 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.util.Calendar
 
 class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
@@ -49,6 +45,7 @@ class DataLayerListenerService : WearableListenerService() {
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao
+    private lateinit var workoutRecordDao: WorkoutRecordDao
 
     override fun onCreate() {
         super.onCreate()
@@ -56,6 +53,7 @@ class DataLayerListenerService : WearableListenerService() {
         setHistoryDao = db.setHistoryDao()
         workoutHistoryDao = db.workoutHistoryDao()
         exerciseInfoDao = db.exerciseInfoDao()
+        workoutRecordDao = db.workoutRecordDao()
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -84,14 +82,24 @@ class DataLayerListenerService : WearableListenerService() {
                                     WorkoutHistoryStore::class.java
                                 )
 
-                                workoutHistoryDao.insertWithVersionCheck(workoutHistoryStore.WorkoutHistory)
-                                setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
-
                                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                                 val workout = workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
 
-                                if (workout != null && workoutHistoryStore.WorkoutHistory.isDone) {
+                                if(workout == null) {
+                                    return@launch
+                                }
+
+                                workoutHistoryDao.insertWithVersionCheck(workoutHistoryStore.WorkoutHistory)
+                                setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
+
+                                if(workoutHistoryStore.WorkoutRecord != null){
+                                    workoutRecordDao.deleteByWorkoutId(workout.id)
+                                    workoutRecordDao.insert(workoutHistoryStore.WorkoutRecord!!)
+                                }
+
+                                if (workoutHistoryStore.WorkoutHistory.isDone) {
                                     exerciseInfoDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseInfos.toTypedArray())
+                                    workoutRecordDao.deleteByWorkoutId(workout.id)
 
                                     val setHistoriesByExerciseId = workoutHistoryStore.SetHistories
                                         .filter { it.exerciseId != null }

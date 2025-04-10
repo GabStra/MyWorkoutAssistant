@@ -1,27 +1,13 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.os.Build
-import androidx.annotation.RequiresApi
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -33,56 +19,38 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.gabstra.myworkoutassistant.getEndOfWeek
-import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.optionalClip
-import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
-import com.kizitonwose.calendar.compose.CalendarLayoutInfo
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
-import com.kizitonwose.calendar.compose.WeekCalendar
 import com.kizitonwose.calendar.compose.rememberCalendarState
-import com.kizitonwose.calendar.compose.weekcalendar.WeekCalendarState
-import com.kizitonwose.calendar.compose.weekcalendar.rememberWeekCalendarState
 import com.kizitonwose.calendar.core.CalendarDay
-import com.kizitonwose.calendar.core.CalendarMonth
 import com.kizitonwose.calendar.core.DayPosition
 import com.kizitonwose.calendar.core.OutDateStyle
-import com.kizitonwose.calendar.core.WeekDay
-import com.kizitonwose.calendar.core.WeekDayPosition
-import com.kizitonwose.calendar.core.atStartOfMonth
 import com.kizitonwose.calendar.core.daysOfWeek
 import com.kizitonwose.calendar.core.nextMonth
 import com.kizitonwose.calendar.core.previousMonth
-import com.kizitonwose.calendar.core.yearMonth
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.Month
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
-import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
 fun YearMonth.displayText(short: Boolean = false): String {
@@ -110,7 +78,7 @@ fun MonthHeader(
             Text(
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center,
-                color = VeryLightGray,
+                color = LightGray,
                 text = dayOfWeek.displayText(),
                 style = MaterialTheme.typography.bodyLarge,
             )
@@ -121,39 +89,43 @@ fun MonthHeader(
 @Composable
 private fun Day(
     day: CalendarDay,
+    currentDate: LocalDate,
     currentMonth: YearMonth,
-    isToday: Boolean = false,
     isSelected: Boolean = false,
     shouldHighlight: Boolean = false,
     highlightColor: Color,
     onClick: (CalendarDay) -> Unit = {},
 ) {
+    val isToday = remember(day) { day.date == currentDate }
+
     val isOutOfBounds = day.position in listOf(DayPosition.InDate, DayPosition.OutDate)
-    val isAfterCurrentMonth = remember(day) { day.date.month > currentMonth.month && day.date.year == currentMonth.year }
+    val isAfterToday = remember(day) { day.date > currentDate }
 
     Box(
         Modifier
             .padding(horizontal = 5.dp, vertical = 2.dp)
             .border(
                 width = if (isSelected || isToday) 1.dp else 0.dp,
-                color = if (isSelected) VeryLightGray else (if (isToday) Color(0xFF4CAF50) else Color.Transparent),
+                color = if (isSelected) LightGray else (if (isToday) Color(0xFF4CAF50) else Color.Transparent),
             )
     ){
         Box(
             modifier = Modifier
                 .clickable(
-                    enabled = !isAfterCurrentMonth,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    enabled = !isAfterToday,
                     onClick = {
                         onClick(day)
                     },
                 )
                 .padding(3.dp)
         ) {
-            val textColor = if(isOutOfBounds) LightGray else VeryLightGray
+            val textColor = if(isOutOfBounds || isAfterToday) MediumGray else LightGray
 
             val shape = if(shouldHighlight) CircleShape else null
 
-            val backgroundColor = if(isOutOfBounds) MediumDarkGray else highlightColor
+            val backgroundColor = if(isOutOfBounds || isAfterToday) MediumDarkGray else highlightColor
 
             Box(
                 modifier = Modifier
@@ -168,7 +140,7 @@ private fun Day(
                     text = day.date.dayOfMonth.toString(),
                     color = textColor,
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge
                 )
             }
 
@@ -194,6 +166,7 @@ fun SimpleCalendarTitle(
     calendarState: CalendarState,
     currentMonth: YearMonth // Assuming this is the actual current real-world month
 ) {
+    val context = LocalContext.current
 
     val scope = rememberCoroutineScope()
 
@@ -217,7 +190,7 @@ fun SimpleCalendarTitle(
             Icon(
                 imageVector = Icons.Filled.ArrowBack,
                 contentDescription = "Previous Month", // More descriptive
-                tint = VeryLightGray
+                tint = LightGray
             )
         }
 
@@ -226,7 +199,7 @@ fun SimpleCalendarTitle(
             text = currentVisibleMonthYearMonth.displayText(), // Use the animated month
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
-            color = VeryLightGray
+            color = LightGray
         )
 
         IconButton(
@@ -243,7 +216,7 @@ fun SimpleCalendarTitle(
                 imageVector = Icons.Filled.ArrowForward,
                 contentDescription = "Next Month", // More descriptive
                 // Tint based on whether it's the real-world current month
-                tint = if (isRealCurrentMonth) MediumGray else VeryLightGray
+                tint = if (isRealCurrentMonth) MediumLightGray else LightGray
             )
         }
     }
@@ -259,7 +232,7 @@ fun WorkoutsCalendar(
     shouldHighlight: (CalendarDay) -> Boolean,
     getHighlightColor: (CalendarDay) -> Color
 ){
-    val currentDay = LocalDate.now()
+    val currentDate = remember { LocalDate.now() }
     val currentMonth = remember { YearMonth.now() }
 
     val startMonth = remember { currentMonth.minusMonths(1200) }
@@ -289,8 +262,8 @@ fun WorkoutsCalendar(
             userScrollEnabled = false,
             dayContent = { day ->
                 Day(
-                    isToday = day.date == currentDay,
                     day = day,
+                    currentDate = currentDate,
                     currentMonth = currentMonth,
                     isSelected = selectedDate.date == day.date,
                     shouldHighlight = shouldHighlight(day),

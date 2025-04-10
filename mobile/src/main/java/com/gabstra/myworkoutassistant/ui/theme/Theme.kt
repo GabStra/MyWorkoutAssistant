@@ -8,17 +8,15 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 
-val DarkGray = Color(40, 40, 40)
-val MediumDarkGray = Color(80, 80, 80)
-val MediumGray = Color(120, 120, 120)
-val LightGray = Color(180, 180, 180)    
-val VeryLightGray = Color(240, 240, 240)
+val DarkGray = Color(30, 30, 30)
+val MediumDarkGray = Color(60, 60, 60)
+val MediumGray = Color(90, 90, 90)
+val MediumLightGray = Color(120, 120, 120)
+val LightGray = Color(240, 240, 240)
 
 private val DarkColorScheme = darkColorScheme(
     primary = Color(0xFFff6700), // Orange

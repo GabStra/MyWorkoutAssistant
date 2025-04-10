@@ -72,9 +72,6 @@ interface WorkoutHistoryDao {
     @Query("UPDATE workout_history SET workoutId = :workoutId, date = :date, time = :time, duration = :duration, heartBeatRecords = :heartBeatRecords, isDone = :isDone WHERE id = :id")
     suspend fun updateWorkoutHistory(id: UUID, workoutId: UUID, date: LocalDate, time: LocalTime, duration: Int, heartBeatRecords: List<Int>, isDone: Boolean)
 
-    @Query("UPDATE workout_history SET version = version + 1 WHERE id = :id")
-    suspend fun raiseVersionById(id: UUID)
-
     @Transaction
     suspend fun insertWithVersionCheck(workoutHistory: WorkoutHistory) {
         val existingWorkoutHistory = getWorkoutHistoryById(workoutHistory.id)

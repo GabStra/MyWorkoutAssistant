@@ -17,9 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.VeryLightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 
 @Composable
 fun ExpandableContainer(
@@ -36,7 +35,7 @@ fun ExpandableContainer(
         mutableStateOf(isOpen)
     }
 
-    DarkModeContainer (
+    StyledCard (
         modifier = modifier,
         whiteOverlayAlpha = 0.1f
     ){
@@ -58,7 +57,7 @@ fun ExpandableContainer(
                                 onClose()
                             }
                         }) {
-                        Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = VeryLightGray)
+                        Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = LightGray)
                     }
                 }
             }
@@ -66,7 +65,7 @@ fun ExpandableContainer(
             if(openStatus){
                 Box(
                     modifier = Modifier
-                        .background(MediumGray)
+                        .background(MediumDarkGray)
                 ){
                     content()
                 }
