@@ -88,79 +88,80 @@ fun StandardChart(
     var minY = minValue ?: cartesianChartModel.models.first().minY * 0.75f
     var maxY = maxValue ?: cartesianChartModel.models.first().maxY * 1.25f
 
-
-    ExpandableContainer(
-        isOpen = true,
-        modifier = modifier,
-        isExpandable = false,
-        title = {
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 10.dp),
-                text = title,
-                textAlign = TextAlign.Center,
-                color = LightGray,
-                style = MaterialTheme.typography.titleMedium,
-            )
-        },
-        content = {
-            CartesianChartHost(
-                modifier = Modifier.padding(10.dp),
-                zoomState = rememberVicoZoomState(
-                    initialZoom = Zoom.Content,
-                    zoomEnabled = isZoomEnabled
-                ),
-                chart = rememberCartesianChart(
-                    rememberLineCartesianLayer(
-                        LineCartesianLayer.LineProvider.series(
-                            listOf(
-                                LineCartesianLayer.rememberLine(
-                                    fill = LineCartesianLayer.LineFill.single(fill(Color(0xFFff6700))),
-                                    pointConnector =  LineCartesianLayer.PointConnector.cubic(),
-                                    areaFill = null,
-                                    pointProvider = null,
+    StyledCard{
+        ExpandableContainer(
+            isOpen = true,
+            modifier = modifier,
+            isExpandable = false,
+            title = {
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp),
+                    text = title,
+                    textAlign = TextAlign.Center,
+                    color = LightGray,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            },
+            content = {
+                CartesianChartHost(
+                    modifier = Modifier.padding(10.dp),
+                    zoomState = rememberVicoZoomState(
+                        initialZoom = Zoom.Content,
+                        zoomEnabled = isZoomEnabled
+                    ),
+                    chart = rememberCartesianChart(
+                        rememberLineCartesianLayer(
+                            LineCartesianLayer.LineProvider.series(
+                                listOf(
+                                    LineCartesianLayer.rememberLine(
+                                        fill = LineCartesianLayer.LineFill.single(fill(Color(0xFFff6700))),
+                                        pointConnector =  LineCartesianLayer.PointConnector.cubic(),
+                                        areaFill = null,
+                                        pointProvider = null,
+                                    )
                                 )
-                            )
+                            ),
+                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
                         ),
-                        rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
-                    ),
-                    startAxis = VerticalAxis.rememberStart(
-                        line = rememberAxisLineComponent(fill(MediumGray)),
-                        label = rememberTextComponent(
-                            color = LightGray,
-                            textSize = 12.sp,
-                            padding = Insets(4f, 4f),
-                            textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                        startAxis = VerticalAxis.rememberStart(
+                            line = rememberAxisLineComponent(fill(MediumGray)),
+                            label = rememberTextComponent(
+                                color = LightGray,
+                                textSize = 12.sp,
+                                padding = Insets(4f, 4f),
+                                textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                            ),
+                            valueFormatter = startAxisValueFormatter,
+                            itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) },
+                            tick = rememberAxisTickComponent(fill(MediumGray)),
+                            guideline = null,
                         ),
-                        valueFormatter = startAxisValueFormatter,
-                        itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) },
-                        tick = rememberAxisTickComponent(fill(MediumGray)),
-                        guideline = null,
-                    ),
-                    bottomAxis = HorizontalAxis.rememberBottom(
-                        line = rememberAxisLineComponent(fill(MediumGray)),
-                        label = rememberTextComponent(
-                            color = LightGray,
-                            textSize = 12.sp,
-                            padding = Insets(4f, 4f),
-                            textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
-                            //minWidth = TextComponent.MinWidth.fixed(20f)
-                        ),
-                        labelRotationDegrees = -90f,
-                        valueFormatter = bottomAxisValueFormatter,
-                        guideline = null,
-                        tick = rememberAxisTickComponent(fill(MediumGray)),
+                        bottomAxis = HorizontalAxis.rememberBottom(
+                            line = rememberAxisLineComponent(fill(MediumGray)),
+                            label = rememberTextComponent(
+                                color = LightGray,
+                                textSize = 12.sp,
+                                padding = Insets(4f, 4f),
+                                textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                                //minWidth = TextComponent.MinWidth.fixed(20f)
+                            ),
+                            labelRotationDegrees = -90f,
+                            valueFormatter = bottomAxisValueFormatter,
+                            guideline = null,
+                            tick = rememberAxisTickComponent(fill(MediumGray)),
 
-                        ),
-                    persistentMarkers = if (markerPosition != null)  { _ ->
-                        marker at markerPosition.toFloat()
-                    } else null,
-                    marker = marker,
-                    fadingEdges = rememberFadingEdges()
-                ),
-                model = cartesianChartModel,
-            )
-        }
-    )
+                            ),
+                        persistentMarkers = if (markerPosition != null)  { _ ->
+                            marker at markerPosition.toFloat()
+                        } else null,
+                        marker = marker,
+                        fadingEdges = rememberFadingEdges()
+                    ),
+                    model = cartesianChartModel,
+                )
+            }
+        )
+    }
 }

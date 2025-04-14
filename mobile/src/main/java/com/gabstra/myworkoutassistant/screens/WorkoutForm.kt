@@ -99,7 +99,7 @@ fun WorkoutForm(
 
     Scaffold(
         topBar = {
-            StyledCard(whiteOverlayAlpha =.1f, isRounded = false) {
+            StyledCard {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = {
@@ -141,7 +141,7 @@ fun WorkoutForm(
                 .padding(horizontal = 5.dp)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
-                .padding(horizontal = 10.dp),
+                .padding(horizontal = 15.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             // Workout name field

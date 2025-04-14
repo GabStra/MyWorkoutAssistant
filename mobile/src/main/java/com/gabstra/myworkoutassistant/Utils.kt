@@ -132,6 +132,27 @@ fun formatMillisecondsToMinutesSeconds(milliseconds: Int): String {
     return String.format("%02d:%02d:%03d", minutes, remainingSeconds, remainingMilliseconds)
 }
 
+fun findWorkoutComponentByIdInWorkouts(workouts: List<Workout>, id: UUID): WorkoutComponent? {
+    for(workout in workouts){
+        for (workoutComponent in workout.workoutComponents) {
+            if (workoutComponent.id == id) {
+                return workoutComponent
+            }
+
+            if(workoutComponent is Superset){
+                workoutComponent.exercises.forEach { exercise ->
+                    if(exercise.id == id){
+                        return exercise
+                    }
+                }
+            }
+        }
+    }
+
+
+    return null
+}
+
 fun findWorkoutComponentByIdInWorkout(workout: Workout, id: UUID): WorkoutComponent? {
     for (workoutComponent in workout.workoutComponents) {
         if (workoutComponent.id == id) {
@@ -146,6 +167,7 @@ fun findWorkoutComponentByIdInWorkout(workout: Workout, id: UUID): WorkoutCompon
             }
         }
     }
+
     return null
 }
 

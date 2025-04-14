@@ -11,18 +11,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 
+
 @Composable
-fun StyledCard(
+fun RoundedCard(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     Box(
         modifier = modifier
-            .border(1.dp, MediumGray)
-            .background(DarkGray)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MediumGray)
             .wrapContentSize(),
         contentAlignment = Alignment.Center,
     ) {

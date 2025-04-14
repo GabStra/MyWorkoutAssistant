@@ -90,7 +90,9 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
+import com.gabstra.myworkoutassistant.composables.RoundedCard
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
 import com.kizitonwose.calendar.core.DayPosition
@@ -107,6 +109,7 @@ import kotlinx.coroutines.delay
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 
@@ -133,7 +136,7 @@ fun Menu(
                 contentDescription = "More"
             )
         }
-        StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
+        StyledCard {
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
@@ -454,7 +457,7 @@ fun WorkoutsScreen(
     @Composable
     fun workoutsBottomBar(){
         if (selectedWorkouts.isNotEmpty()) {
-            StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
+            StyledCard{
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
                     containerColor = Color.Transparent,
@@ -547,7 +550,7 @@ fun WorkoutsScreen(
     @Composable
     fun equipmentsBottomBar(){
         if(selectedEquipments.isNotEmpty()){
-            StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
+            StyledCard {
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
                     containerColor = Color.Transparent,
@@ -693,16 +696,20 @@ fun WorkoutsScreen(
                                     .padding(horizontal = 5.dp)
                                     .verticalColumnScrollbar(scrollState)
                                     .verticalScroll(scrollState)
-                                    .padding(horizontal = 10.dp),
+                                    .padding(horizontal = 15.dp)
+                                    .padding(top=10.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                WorkoutsCalendar(
-                                    selectedDate = selectedDate,
-                                    onDayClicked = { calendarState, day ->
-                                        onDayClicked(calendarState, day)
-                                    },
-                                    shouldHighlight = { day -> highlightDay(day) },
-                                    getHighlightColor = { day -> getHighlightColor(day) }
-                                )
+                                StyledCard {
+                                    WorkoutsCalendar(
+                                        selectedDate = selectedDate,
+                                        onDayClicked = { calendarState, day ->
+                                            onDayClicked(calendarState, day)
+                                        },
+                                        shouldHighlight = { day -> highlightDay(day) },
+                                        getHighlightColor = { day -> getHighlightColor(day) }
+                                    )
+                                }
                                 if (isLoading) {
                                     Box(
                                         modifier = Modifier
@@ -721,141 +728,137 @@ fun WorkoutsScreen(
                                         val currentMonth =
                                             currentDate.format(DateTimeFormatter.ofPattern("MMM"))
 
+                                        StyledCard{
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(10.dp),
+                                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Text(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    text = "Weekly progress (${
+                                                        getStartOfWeek(
+                                                            currentDate
+                                                        ).dayOfMonth
+                                                    } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    textAlign = TextAlign.Center,
+                                                    color = LightGray
+                                                )
+                                                ExpandableContainer(
+                                                    isOpen = false,
+                                                    isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
+                                                    title = { modifier ->
+                                                        Row(
+                                                            modifier = modifier
+                                                                .fillMaxWidth()
+                                                                .padding(10.dp),
+                                                            horizontalArrangement = Arrangement.Center,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                text = "${(objectiveProgress * 100).toInt()}%",
+                                                                style = MaterialTheme.typography.titleMedium,
+                                                                textAlign = TextAlign.Center,
+                                                                color = LightGray,
+                                                            )
+                                                            Spacer(modifier = Modifier.width(10.dp))
+                                                            ObjectiveProgressBar(
+                                                                Modifier.weight(1f),
+                                                                progress = objectiveProgress.toFloat()
+                                                            )
+                                                        }
+                                                    }, content = {
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(10.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(
+                                                                10.dp
+                                                            )
+                                                        ) {
+                                                            weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
+                                                                Row(
+                                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                                ) {
+                                                                    Text(
+                                                                        text = workout.name,
+                                                                        modifier = Modifier.weight(1f),
+                                                                        color = LightGray,
+                                                                        style = MaterialTheme.typography.bodyLarge,
+                                                                    )
+                                                                    Text(
+                                                                        text = "${pair.first}/${pair.second}",
+                                                                        color = LightGray,
+                                                                        style = MaterialTheme.typography.bodyLarge,
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    })
+                                            }
+                                        }
+                                    }
+                                    StyledCard {
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(10.dp),
-                                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
                                         ) {
+                                            val currentDate = selectedDate.date
+                                            val currentMonth =
+                                                currentDate.format(DateTimeFormatter.ofPattern("MMM"))
+
                                             Text(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                text = "Weekly progress (${
-                                                    getStartOfWeek(
-                                                        currentDate
-                                                    ).dayOfMonth
-                                                } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
+                                                text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
                                                 style = MaterialTheme.typography.titleMedium,
                                                 textAlign = TextAlign.Center,
                                                 color = LightGray
                                             )
-                                            ExpandableContainer(
-                                                isOpen = false,
-                                                isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
-                                                title = { modifier ->
-                                                    Row(
-                                                        modifier = modifier
-                                                            .fillMaxWidth()
-                                                            .padding(10.dp),
-                                                        horizontalArrangement = Arrangement.Center,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Text(
-                                                            text = "${(objectiveProgress * 100).toInt()}%",
-                                                            style = MaterialTheme.typography.titleMedium,
-                                                            textAlign = TextAlign.Center,
-                                                            color = LightGray,
-                                                        )
-                                                        Spacer(modifier = Modifier.width(10.dp))
-                                                        ObjectiveProgressBar(
-                                                            Modifier.weight(1f),
-                                                            progress = objectiveProgress.toFloat()
-                                                        )
-                                                    }
-                                                }, content = {
-                                                    Column(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(10.dp),
-                                                        verticalArrangement = Arrangement.spacedBy(
-                                                            10.dp
-                                                        )
-                                                    ) {
-                                                        weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
-                                                            Row(
-                                                                horizontalArrangement = Arrangement.SpaceBetween
-                                                            ) {
-                                                                Text(
-                                                                    text = workout.name,
-                                                                    modifier = Modifier.weight(1f),
-                                                                    color = LightGray,
-                                                                    style = MaterialTheme.typography.bodyLarge,
-                                                                )
-                                                                Text(
-                                                                    text = "${pair.first}/${pair.second}",
-                                                                    color = LightGray,
-                                                                    style = MaterialTheme.typography.bodyLarge,
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                })
-                                        }
 
-                                    }
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        val currentDate = selectedDate.date
-                                        val currentMonth =
-                                            currentDate.format(DateTimeFormatter.ofPattern("MMM"))
-
-                                        Text(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            textAlign = TextAlign.Center,
-                                            color = LightGray
-                                        )
-
-                                        if (selectedCalendarWorkouts.isNullOrEmpty()) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize(),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                StyledCard(
+                                            if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                                                Box(
                                                     modifier = Modifier
-                                                        .padding(5.dp),
+                                                        .fillMaxSize(),
+                                                    contentAlignment = Alignment.Center
                                                 ) {
                                                     Text(
                                                         modifier = Modifier
                                                             .padding(15.dp),
                                                         text = "No workouts on this day",
                                                         textAlign = TextAlign.Center,
-                                                        color = LightGray,
+                                                        color = MediumDarkGray,
                                                     )
                                                 }
-                                            }
-                                        } else {
-                                            val timeFormatter = remember(currentLocale) {
-                                                DateTimeFormatter.ofPattern("HH:mm", currentLocale)
-                                            }
+                                            } else {
+                                                val timeFormatter = remember(currentLocale) {
+                                                    DateTimeFormatter.ofPattern("HH:mm", currentLocale)
+                                                }
 
-                                            selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
-                                                StyledCard(modifier = Modifier.clickable {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.WorkoutHistory(
-                                                            workout.id,
-                                                            workoutHistory.id
-                                                        )
-                                                    )
-                                                }, whiteOverlayAlpha = .1f) {
-                                                    Row(
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        modifier =  Modifier
-                                                            .padding(15.dp),
+                                                selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
+                                                    StyledCard {  Row(
+                                                        modifier = Modifier.padding(end = 15.dp),
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        if (!workoutHistory.isDone) {
+                                                        IconButton(
+                                                            onClick = {
+                                                                appViewModel.setScreenData(
+                                                                    ScreenData.WorkoutHistory(
+                                                                        workout.id,
+                                                                        workoutHistory.id
+                                                                    )
+                                                                )
+                                                            }) {
                                                             Icon(
-                                                                imageVector = Icons.Default.Close,
-                                                                contentDescription = "Incomplete",
+                                                                imageVector = Icons.Filled.Search,
+                                                                contentDescription = "Details",
+                                                                tint = LightGray
                                                             )
-                                                            Spacer(modifier = Modifier.width(8.dp))
                                                         }
+
                                                         Text(
                                                             modifier = Modifier
                                                                 .weight(1f)
@@ -872,7 +875,17 @@ fun WorkoutsScreen(
                                                             color = LightGray,
                                                             style =  MaterialTheme.typography.bodyLarge,
                                                         )
-                                                    }
+                                                        if(!workoutHistory.isDone){
+                                                            Spacer(modifier = Modifier.width(15.dp))
+                                                            Icon(
+                                                                imageVector = Icons.Default.Close,
+                                                                contentDescription = "Incomplete",
+                                                                tint = LightGray
+                                                            )
+                                                            Spacer(modifier = Modifier.width(10.dp))
+                                                        }
+                                                    } }
+
                                                 }
                                             }
                                         }
@@ -890,7 +903,7 @@ fun WorkoutsScreen(
                                     .padding(horizontal = 5.dp)
                                     .verticalColumnScrollbar(scrollState)
                                     .verticalScroll(scrollState)
-                                    .padding(horizontal = 10.dp),
+                                    .padding(horizontal = 15.dp),
                             ) {
                                 if (activeAndEnabledWorkouts.isEmpty()) {
                                     Text(
@@ -929,7 +942,7 @@ fun WorkoutsScreen(
                                             appViewModel.updateWorkouts(workoutsWithOrderUpdated)
                                         },
                                         itemContent = { it ->
-                                            StyledCard(whiteOverlayAlpha = .1f) {
+                                            StyledCard {
                                                 WorkoutTitle(
                                                     Modifier.padding(15.dp),
                                                     it,
@@ -973,7 +986,7 @@ fun WorkoutsScreen(
                                     .padding(horizontal = 5.dp)
                                     .verticalColumnScrollbar(scrollState)
                                     .verticalScroll(scrollState)
-                                    .padding(horizontal = 10.dp),
+                                    .padding(horizontal = 15.dp)
                             ) {
                                 if (equipments.isEmpty()) {
                                     Text(
@@ -1016,7 +1029,7 @@ fun WorkoutsScreen(
                                         },
                                         onOrderChange = { },
                                         itemContent = { it ->
-                                            StyledCard(whiteOverlayAlpha = .1f) {
+                                            StyledCard {
                                                 Text(
                                                     modifier = Modifier
                                                         .fillMaxSize()

@@ -313,7 +313,7 @@ fun ExerciseHistoryScreen(
                     StyledCard(
                         modifier = Modifier
                             .padding(15.dp),
-                        whiteOverlayAlpha = .1f
+                        
                     ) {
                         Text(
                             modifier = Modifier

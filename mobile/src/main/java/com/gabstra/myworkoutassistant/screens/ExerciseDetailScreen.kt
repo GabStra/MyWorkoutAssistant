@@ -82,7 +82,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         is WeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
-            StyledCard(whiteOverlayAlpha = .1f) {
+            StyledCard {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -121,8 +121,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is BodyWeightSet -> {
-
-            StyledCard(whiteOverlayAlpha = .1f) {
+            StyledCard {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -164,7 +163,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is EnduranceSet -> {
-            StyledCard(whiteOverlayAlpha = .1f) {
+            StyledCard {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -183,7 +182,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is TimedDurationSet -> {
-            StyledCard(whiteOverlayAlpha = .1f) {
+            StyledCard {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -208,7 +207,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                StyledCard(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
+                StyledCard(modifier = Modifier.wrapContentSize(), ) {
                     Row(
                         modifier = Modifier.padding(15.dp),
                         horizontalArrangement = Arrangement.Center,
@@ -292,7 +291,7 @@ fun ExerciseDetailScreen(
         },
         bottomBar = {
             if (selectedSets.isNotEmpty()) {
-                StyledCard(whiteOverlayAlpha = .1f, isRounded = false){
+                StyledCard(){
                     BottomAppBar(
                         contentPadding = PaddingValues(0.dp),
                         containerColor = Color.Transparent,
@@ -506,13 +505,13 @@ fun ExerciseDetailScreen(
                         .padding(5.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 15.dp),
                 ) {
                     if (sets.isEmpty()) {
                         StyledCard(
                             modifier = Modifier
                                 .padding(15.dp),
-                            whiteOverlayAlpha = .1f
+                            
                         ) {
                             Text(
                                 text = "Add a new set",

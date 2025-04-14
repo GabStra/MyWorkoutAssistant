@@ -44,7 +44,7 @@ fun MoveExercisesToWorkoutDialog(
                         .padding(horizontal = 5.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 15.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Only show other workouts, not the current one

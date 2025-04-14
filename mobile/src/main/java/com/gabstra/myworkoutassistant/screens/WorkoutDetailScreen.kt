@@ -91,6 +91,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -148,11 +150,13 @@ fun WorkoutComponentRenderer(
     appViewModel: AppViewModel
 ) {
     when (workoutComponent) {
-        is Exercise -> ExerciseRenderer(
-            exercise = workoutComponent,
-            showRest = showRest,
-            appViewModel = appViewModel
-        )
+        is Exercise -> {
+            ExerciseRenderer(
+                exercise = workoutComponent,
+                showRest = showRest,
+                appViewModel = appViewModel
+            )
+        }
 
         is Rest ->
             Row(
@@ -160,7 +164,7 @@ fun WorkoutComponentRenderer(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                StyledCard(modifier = Modifier.wrapContentSize(), whiteOverlayAlpha = .1f) {
+                StyledCard(modifier = Modifier.wrapContentSize()) {
                     Row(
                         modifier = Modifier.padding(15.dp),
                         horizontalArrangement = Arrangement.Center,
@@ -182,7 +186,7 @@ fun WorkoutComponentRenderer(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, Color.DarkGray),
+                    .border(1.dp, MediumGray),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Row(
@@ -197,7 +201,7 @@ fun WorkoutComponentRenderer(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         text = "Super Set",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = Color.White.copy(alpha = if (superSet.enabled) .87f else .3f),
+                        color =  if (superSet.enabled) LightGray else MediumDarkGray,
                     )
                 }
                 Column(
@@ -249,7 +253,7 @@ fun SupersetForm(
                         .padding(horizontal = 5.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 15.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -610,7 +614,7 @@ fun WorkoutDetailScreen(
         },
         bottomBar = {
             if (selectedWorkoutComponents.isNotEmpty()) {
-                StyledCard(whiteOverlayAlpha = .1f, isRounded = false) {
+                StyledCard {
                     editModeBottomBar()
                 }
             }
@@ -692,13 +696,13 @@ fun WorkoutDetailScreen(
                         .padding(horizontal = 5.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 15.dp),
                 ) {
                     if (workout.workoutComponents.isEmpty()) {
                         StyledCard(
                             modifier = Modifier
                                 .padding(15.dp),
-                            whiteOverlayAlpha = .1f
+                            
                         ) {
                             Text(
                                 text = "Add a new workout component",

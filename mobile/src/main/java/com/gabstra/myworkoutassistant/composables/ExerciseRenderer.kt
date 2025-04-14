@@ -35,7 +35,7 @@ fun ExerciseRenderer(
         sets = sets.filter { it !is RestSet }
 
     if(sets.isEmpty()){
-        StyledCard(modifier = modifier, whiteOverlayAlpha = .1f) {
+        StyledCard(modifier = modifier, ) {
             Row(
                 modifier = Modifier.padding(15.dp),
                 horizontalArrangement = Arrangement.Center,
@@ -53,6 +53,7 @@ fun ExerciseRenderer(
             }
         }
     }else{
+        StyledCard{
         ExpandableContainer(
             isOpen = false,
             modifier = modifier,
@@ -148,5 +149,6 @@ fun ExerciseRenderer(
                 }
             }
         )
+        }
     }
 }

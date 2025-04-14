@@ -35,40 +35,32 @@ fun ExpandableContainer(
         mutableStateOf(isOpen)
     }
 
-    StyledCard (
+    Column(
         modifier = modifier,
-        whiteOverlayAlpha = 0.1f
     ){
-        Column(
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
         ){
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ){
-                title(Modifier.weight(1f))
-                if(isExpandable){
-                    IconButton(
-                        onClick = {
-                            openStatus = !openStatus
-                            if(openStatus){
-                                onOpen()
-                            }else{
-                                onClose()
-                            }
-                        }) {
-                        Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = LightGray)
-                    }
+            title(Modifier.weight(1f))
+            if(isExpandable){
+                IconButton(
+                    onClick = {
+                        openStatus = !openStatus
+                        if(openStatus){
+                            onOpen()
+                        }else{
+                            onClose()
+                        }
+                    }) {
+                    Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = LightGray)
                 }
             }
-            subContent()
-            if(openStatus){
-                Box(
-                    modifier = Modifier
-                        .background(MediumDarkGray)
-                ){
-                    content()
-                }
+        }
+        subContent()
+        if(openStatus){
+            Box{
+                content()
             }
         }
     }
