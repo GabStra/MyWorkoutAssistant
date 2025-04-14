@@ -63,8 +63,7 @@ fun PageButtons(
             .padding(10.dp)
             .verticalColumnScrollbar(
                 scrollState = scrollState,
-                scrollBarColor = Color.White,
-                scrollBarTrackColor = Color.DarkGray,
+                scrollBarColor = Color.White
             )
             .padding(horizontal = 10.dp)
             .verticalScroll(scrollState),

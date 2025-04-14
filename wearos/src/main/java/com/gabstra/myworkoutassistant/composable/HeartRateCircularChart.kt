@@ -15,13 +15,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.QuestionMark
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel.TrendDirection
+import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
@@ -57,7 +58,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 private fun getProgressIndicatorSegments() = listOf(
     ProgressIndicatorSegment(.166f, colorsByZone[0]),
@@ -161,6 +161,180 @@ fun HeartRateCircularChart(
     HeartRateView(modifier,appViewModel,heartRateChangeViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
 }
 
+@Composable
+private fun HeartRateDisplay(
+    modifier: Modifier = Modifier,
+    hr: Int,
+    displayMode: Int,
+    textToDisplay: String,
+    currentZone: Int,
+    colorsByZone: Array<Color>,
+    confidenceLevel: Float,
+    hrTrend: TrendDirection,
+) {
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+    ) {
+        HeartIcon(
+            modifier = Modifier.size(15.dp),
+            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) Color.DarkGray else colorsByZone[currentZone]
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+
+        if (displayMode != 1) {
+            Text(
+                text = textToDisplay,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.caption1,
+                color = if (hr == 0) Color.DarkGray else Color.White
+            )
+        } else {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val textColor by remember(confidenceLevel, hr) {
+                    derivedStateOf {
+                        when {
+                            hr == 0 -> Color.DarkGray
+                            confidenceLevel > 0.7f -> MyColors.Green
+                            confidenceLevel > 0.3f -> MyColors.Yellow
+                            confidenceLevel >= 0f -> MyColors.Red // Include 0 confidence in Red
+                            else -> Color.White // Fallback
+                        }
+                    }
+                }
+
+                Text(
+                    text = if (hr == 0) "--" else textToDisplay,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1,
+                    color = textColor
+                )
+                if (hr != 0) {
+                    val trendIcon = when (hrTrend) {
+                        TrendDirection.INCREASING -> Icons.Filled.ArrowUpward
+                        TrendDirection.DECREASING -> Icons.Filled.ArrowDownward
+                        TrendDirection.STABLE -> Icons.AutoMirrored.Filled.ArrowForward
+                        TrendDirection.UNKNOWN -> Icons.Filled.QuestionMark
+                    }
+                    Icon(
+                        imageVector = trendIcon,
+                        contentDescription = "Heart rate trend: ${hrTrend.name}",
+                        modifier = Modifier.size(15.dp),
+                        tint = textColor
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalHorologistApi::class)
+@Composable
+private fun ZoneSegment(
+    modifier: Modifier = Modifier,
+    index: Int,
+    currentZone: Int,
+    hr: Int,
+    mhrPercentage: Float,
+    zoneRanges: Array<Pair<Float, Float>>,
+    colorsByZone: Array<Color>,
+    totalStartAngle: Float,
+    segmentArcAngle: Float,
+    paddingAngle: Float,
+    lowerBoundMaxHRPercent: Float?,
+    upperBoundMaxHRPercent: Float?,
+) {
+    if (index !in zoneRanges.indices || index !in colorsByZone.indices) return
+
+    val (lowerBound, upperBound) = zoneRanges[index]
+
+    val indicatorProgress by remember(hr, currentZone, index, mhrPercentage, lowerBound, upperBound) {
+        derivedStateOf {
+            when {
+                hr == 0 -> 0f
+                index == currentZone -> {
+                    if (upperBound > lowerBound) {
+                        ((mhrPercentage - lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
+                    } else {
+                        if (mhrPercentage >= lowerBound) 1f else 0f
+                    }
+                }
+                index < currentZone -> 1f
+                else -> 0f
+            }
+        }
+    }
+
+    val trackSegment = remember(colorsByZone, index) {
+        ProgressIndicatorSegment(
+            weight = 1f,
+            indicatorColor = colorsByZone[index]
+        )
+    }
+
+    val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
+    val endAngle = startAngle + segmentArcAngle
+
+    SegmentedProgressIndicator(
+        trackSegments = listOf(trackSegment),
+        progress = indicatorProgress,
+        modifier = modifier,
+        strokeWidth = 4.dp,
+        paddingAngle = 0f,
+        startAngle = startAngle,
+        endAngle = endAngle,
+        trackColor = Color.DarkGray,
+    )
+
+    // --- Boundary Indicator Logic (Handles within-zone and boundaries correctly) ---
+
+    // Check if the LOWER bound target falls within this zone's range [lower, upper)
+    // OR exactly at the upper bound IF this is the last zone [lower, upper]
+    val shouldDrawLowerBoundIndicator = lowerBoundMaxHRPercent != null &&
+            (lowerBoundMaxHRPercent >= lowerBound && lowerBoundMaxHRPercent < upperBound)
+
+
+    // Check if the UPPER bound target falls within this zone's range [lower, upper)
+    // OR exactly at the upper bound IF this is the last zone [lower, upper]
+    val shouldDrawUpperBoundIndicator = upperBoundMaxHRPercent != null &&
+            (upperBoundMaxHRPercent > lowerBound && upperBoundMaxHRPercent <= upperBound)
+
+
+    if (shouldDrawLowerBoundIndicator && lowerBoundMaxHRPercent != null) {
+        val lowerBoundRotationAngle by remember(lowerBoundMaxHRPercent, lowerBound, upperBound, startAngle, endAngle) {
+            derivedStateOf {
+                val percentageInZone = if (upperBound > lowerBound) {
+                    ((lowerBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
+                } else {
+                    if (lowerBoundMaxHRPercent == lowerBound) 0f else 0f // Default to 0 if bounds are equal
+                }
+                getValueInRange(startAngle, endAngle, percentageInZone)
+            }
+        }
+        RotatingIndicator(lowerBoundRotationAngle, MyColors.Green)
+    }
+
+    if (shouldDrawUpperBoundIndicator && upperBoundMaxHRPercent != null) {
+        val upperBoundRotationAngle by remember(upperBoundMaxHRPercent, lowerBound, upperBound, startAngle, endAngle) {
+            derivedStateOf {
+                // Calculate percentage *within this specific zone*
+                val percentageInZone = if (upperBound > lowerBound) {
+                    ((upperBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
+                } else {
+                    // Handle zero-width zone: only possible if target == bound
+                    if (upperBoundMaxHRPercent == lowerBound) 0f else 0f // Default to 0 if bounds are equal
+                }
+                getValueInRange(startAngle, endAngle, percentageInZone)
+            }
+        }
+        RotatingIndicator(upperBoundRotationAngle, MyColors.Red)
+    }
+}
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HeartRateView(
@@ -176,115 +350,82 @@ private fun HeartRateView(
     val formattedChangeRate by heartRateChangeViewModel.formattedChangeRate.collectAsState()
     val confidenceLevel by heartRateChangeViewModel.confidenceLevel.collectAsState()
     val hrTrend by heartRateChangeViewModel.heartRateTrend.collectAsState()
-
-    val segments = remember { getProgressIndicatorSegments() }
-
-    val progress = remember(mhrPercentage) { mapPercentage(mhrPercentage) }
-    val zone = remember(mhrPercentage) { mapPercentageToZone(mhrPercentage) }
-
     val displayMode by appViewModel.hrDisplayMode
 
-    val textToDisplay = when(displayMode) {
-        0 -> if (hr == 0) "-" else hr.toString()
-        1 -> formattedChangeRate
-        else ->  "${"%.1f".format(mhrPercentage).replace(',','.')}%"
+    val textToDisplay by remember {
+        derivedStateOf {
+            when (displayMode) {
+                0 -> if (hr == 0) "-" else hr.toString()
+                1 -> formattedChangeRate
+                else -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
+            }
+        }
+    }
+
+    val currentZone by remember(mhrPercentage) {
+        derivedStateOf { mapPercentageToZone(mhrPercentage) }
+    }
+
+    val zoneCount = colorsByZone.size
+    val totalStartAngle = 120f
+    val totalEndAngle = 240f
+    val paddingAngle = 2f
+
+    val totalArcAngle by remember { derivedStateOf { totalEndAngle - totalStartAngle } }
+    val segmentArcAngle by remember(zoneCount, totalArcAngle, paddingAngle) {
+        derivedStateOf {
+            if (zoneCount > 0) {
+                (totalArcAngle - (zoneCount - 1).coerceAtLeast(0) * paddingAngle) / zoneCount
+            } else {
+                0f
+            }
+        }
     }
 
     val context = LocalContext.current
-
-    val startAngle = 120f
-    val endAngle = 235f
+    val onSwitchClick = remember(appViewModel, context) {
+        {
+            appViewModel.switchHrDisplayMode()
+            VibrateGentle(context)
+        }
+    }
 
     Box(
         modifier = modifier,
         contentAlignment = Alignment.BottomCenter
     ) {
-        Row(
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
+        HeartRateDisplay(
             modifier = Modifier
                 .width(90.dp)
                 .height(20.dp)
                 .padding(top = 5.dp)
-                .clickable {
-                    appViewModel.switchHrDisplayMode()
-                    VibrateGentle(context)
-                }
-        ) {
-            HeartIcon(
-                modifier = Modifier.size(15.dp),
-                tint = if (hr == 0) Color.DarkGray else colorsByZone[zone]
-            )
-            Spacer(modifier = Modifier.width(5.dp))
-
-            if(displayMode != 1){
-                Text(
-                    text = textToDisplay,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.caption1,
-                    color = if (hr == 0) Color.DarkGray else Color.White
-                )
-            }else{
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val textColor = when {
-                        confidenceLevel > 0.7f -> MyColors.Green
-                        confidenceLevel > 0.3f -> MyColors.Yellow
-                        confidenceLevel > 0 -> MyColors.Red
-                        else -> Color.White
-                    }
-
-                    Text(
-                        text =  if (hr == 0) "--" else textToDisplay,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.caption1,
-                        color = if (hr == 0) Color.DarkGray else textColor
-                    )
-                    if(hr != 0) {
-                        val trendIcon = when (hrTrend) {
-                            TrendDirection.INCREASING -> Icons.Filled.ArrowUpward
-                            TrendDirection.DECREASING -> Icons.Filled.ArrowDownward
-                            TrendDirection.STABLE -> Icons.AutoMirrored.Filled.ArrowForward
-                            TrendDirection.UNKNOWN -> Icons.Filled.QuestionMark
-                        }
-                        Icon(
-                            imageVector = trendIcon,
-                            contentDescription = "Heart rate trend: ${hrTrend.name}",
-                            modifier = Modifier.size(15.dp),
-                            tint = textColor
-                        )
-                    }
-                }
-            }
-        }
-
-        SegmentedProgressIndicator(
-            trackSegments = segments,
-            progress = progress,
-            modifier = Modifier.fillMaxSize(),
-            strokeWidth = 4.dp,
-            paddingAngle = 2f,
-            startAngle = startAngle,
-            endAngle = endAngle,
-            trackColor = Color.DarkGray,
+                .clickable(onClick = onSwitchClick),
+            hr = hr,
+            displayMode = displayMode,
+            textToDisplay = textToDisplay,
+            currentZone = currentZone,
+            colorsByZone = colorsByZone,
+            confidenceLevel = confidenceLevel,
+            hrTrend = hrTrend
         )
 
-        if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null){
-            val lowerBoundRotationAngle = remember {
-                val lowerBoundPercentage = mapPercentage(lowerBoundMaxHRPercent)
-                getValueInRange(startAngle, endAngle, lowerBoundPercentage)
+        if (segmentArcAngle > 0f && zoneCount > 0 && zoneRanges.size == zoneCount) {
+            for (index in 0 until zoneCount) {
+                ZoneSegment(
+                    modifier = Modifier.fillMaxSize(),
+                    index = index,
+                    currentZone = currentZone,
+                    hr = hr,
+                    mhrPercentage = mhrPercentage,
+                    zoneRanges = zoneRanges,
+                    colorsByZone = colorsByZone,
+                    totalStartAngle = totalStartAngle,
+                    segmentArcAngle = segmentArcAngle,
+                    paddingAngle = paddingAngle,
+                    lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+                    upperBoundMaxHRPercent = upperBoundMaxHRPercent
+                )
             }
-
-            RotatingIndicator(lowerBoundRotationAngle, MyColors.Green)
-
-            val upperBoundRotationAngle = remember {
-                val upperBoundPercentage = mapPercentage(upperBoundMaxHRPercent)
-                getValueInRange(startAngle, endAngle, upperBoundPercentage)
-            }
-
-            RotatingIndicator(upperBoundRotationAngle, MyColors.Red)
         }
     }
 }

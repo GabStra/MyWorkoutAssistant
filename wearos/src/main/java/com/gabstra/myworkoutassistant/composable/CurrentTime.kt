@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -46,12 +47,11 @@ fun CurrentTime() {
     }
 
     Row(
-        modifier = Modifier.width(50.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         Text(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier,
             text = String.format("%02d", currentTime.hour),
             style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.End
@@ -73,7 +73,7 @@ fun CurrentTime() {
         }
 
         Text(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier,
             text = String.format("%02d", currentTime.minute),
             style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.Start

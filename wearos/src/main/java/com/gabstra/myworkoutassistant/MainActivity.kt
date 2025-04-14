@@ -139,7 +139,6 @@ class MyReceiver(
 
             }catch (exception: Exception) {
                 Log.e("MyReceiver", "Error processing data", exception)
-                throw exception
             }
         }
     }

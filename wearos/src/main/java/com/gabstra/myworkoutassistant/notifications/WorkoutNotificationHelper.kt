@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.RingtoneManager
 import android.os.Build
+import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
 import com.gabstra.myworkoutassistant.MainActivity
 import com.gabstra.myworkoutassistant.R
@@ -18,7 +19,9 @@ class WorkoutNotificationHelper(private val context: Context) {
     companion object {
         const val CHANNEL_ID = "workout_reminders"
     }
-    
+
+    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
     init {
         createNotificationChannel()
     }
@@ -32,14 +35,10 @@ class WorkoutNotificationHelper(private val context: Context) {
             description = descriptionText
         }
 
-
-
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.createNotificationChannel(channel)
     }
     
     fun buildWorkoutNotification(schedule: WorkoutSchedule, workout: Workout): Notification {
-        // Create an explicit intent for the workout activity
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             putExtra("WORKOUT_ID", schedule.workoutId.toString())
@@ -53,36 +52,7 @@ class WorkoutNotificationHelper(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val vibrationPattern = longArrayOf(
-            0,      // Start immediately
 
-            // First set of 3 pulses
-            200,    // Short pulse 1
-            200,    // Pause
-            200,    // Short pulse 2
-            200,    // Pause
-            200,    // Short pulse 3
-
-            500,    // Longer pause between sets
-
-            // Second set of 3 pulses
-            200,    // Short pulse 1
-            200,    // Pause
-            200,    // Short pulse 2
-            200,    // Pause
-            200,    // Short pulse 3
-
-            500,    // Longer pause between sets
-
-            // Third set of 3 pulses
-            200,    // Short pulse 1
-            200,    // Pause
-            200,    // Short pulse 2
-            200,    // Pause
-            200     // Short pulse 3
-        )
-
-        // Build the notification
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_workout)
             .setContentTitle(workout.name)
@@ -90,7 +60,6 @@ class WorkoutNotificationHelper(private val context: Context) {
             .setContentIntent(pendingIntent)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setFullScreenIntent(pendingIntent, true)
-            .setVibrate(vibrationPattern)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
@@ -98,11 +67,21 @@ class WorkoutNotificationHelper(private val context: Context) {
 
         return builder.build()
     }
-    
+
+    fun clearChannelNotifications() {
+        val activeNotifications: Array<StatusBarNotification>? = notificationManager.activeNotifications
+
+        activeNotifications?.forEach { sbn ->
+            if (sbn.notification.channelId == CHANNEL_ID) {
+                notificationManager.cancel(sbn.id)
+            }
+        }
+    }
+
     fun showNotification(schedule: WorkoutSchedule, workout: Workout) {
         val notification = buildWorkoutNotification(schedule, workout)
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+        clearChannelNotifications()
         notificationManager.notify(schedule.id.hashCode(), notification)
     }
 }

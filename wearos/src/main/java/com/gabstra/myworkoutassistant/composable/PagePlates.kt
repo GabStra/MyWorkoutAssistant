@@ -94,8 +94,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                                 .fillMaxWidth()
                                 .verticalColumnScrollbar(
                                     scrollState = scrollState,
-                                    scrollBarColor = Color.White,
-                                    scrollBarTrackColor = Color.DarkGray
+                                    scrollBarColor = Color.White
                                 )
                                 .verticalScroll(scrollState),
                             verticalArrangement = Arrangement.spacedBy(3.dp),

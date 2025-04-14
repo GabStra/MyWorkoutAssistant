@@ -30,12 +30,6 @@ fun ExerciseIndicator(
     val exerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(set.exerciseId)) viewModel.supersetIdByExerciseId[set.exerciseId] else set.exerciseId
     val currentExerciseIndex = exerciseOrSupersetIds.indexOf(exerciseOrSupersetId)
 
-    val step = (1f / exerciseCount)
-
-    val halfStep = (step / 2)
-
-    val progress = (currentExerciseIndex + 1).toFloat() / exerciseCount
-
     val totalArcAngle = 120f
     val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
 
@@ -73,74 +67,7 @@ fun ExerciseIndicator(
     val startAngle = -60f + currentExerciseIndex * (segmentArcAngle + 2f)
     val middleAngle = startAngle + (segmentArcAngle / 2f)
 
-    // Place the indicator exactly at the middle of the current segment
     RotatingIndicator(middleAngle, Color.White)
-
-    /*val parentIndex = viewModel.setsByExerciseId.keys.indexOf(set.exerciseId)
-    val totalGroups = viewModel.setsByExerciseId.keys.count()
-    val maxCount = 1
-
-    // Determine the range of elements to display based on parentIndex and total available elements
-    val elementsToSkip = (parentIndex ).coerceAtLeast(0).coerceAtMost((totalGroups - maxCount).coerceAtLeast(0))
-    val areMoreElementsAvailable = totalGroups > elementsToSkip + maxCount
-
-    val exerciseSelection = viewModel.setsByExerciseId.keys.drop(elementsToSkip).take(maxCount)
-
-    val numberOfElementsLeft = totalGroups - (elementsToSkip + exerciseSelection.size)
-
-    // Calculate gaps and angles
-    val baseGapAngle = 1f
-    val size= 25f
-
-    val availableAngle = 125f - (if (elementsToSkip >0) size + baseGapAngle else 0f) - (if (areMoreElementsAvailable) size + baseGapAngle else 0f)
-    var angleForCurrentExercise = availableAngle / exerciseSelection.size.coerceAtLeast(1)
-
-
-    Box(modifier = modifier.fillMaxSize()) {
-        var accumulatedAngle = -60f // Starting angle
-
-        // Indicate skipped elements at the start
-        if (elementsToSkip > 0) {
-            SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, MyColors.Orange)),
-                progress = 1f,
-                modifier = Modifier.fillMaxSize(),
-                strokeWidth = 4.dp,
-                paddingAngle = 2f,
-                startAngle = accumulatedAngle,
-                endAngle = accumulatedAngle + size,
-                trackColor =  MyColors.Orange,
-            )
-
-            if(elementsToSkip > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = MyColors.Orange, number = elementsToSkip, transparency = 1f)
-            }
-            accumulatedAngle += size + baseGapAngle
-        }
-
-        val allSets = viewModel.setsByExerciseId[set.exerciseId] ?: listOf()
-        val filteredSets = allSets.filter { it.set !is RestSet }
-        SetIndicator(accumulatedAngle + baseGapAngle,angleForCurrentExercise -  (baseGapAngle*2), set, filteredSets, Modifier.fillMaxSize())
-        accumulatedAngle += angleForCurrentExercise + baseGapAngle
-        // Indicate more elements available at the end
-        if (areMoreElementsAvailable) {
-
-            SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.White)),
-                progress = 1f,
-                modifier = Modifier.fillMaxSize().alpha(1f),
-                strokeWidth = 4.dp,
-                paddingAngle = 2f,
-                startAngle = accumulatedAngle,
-                endAngle = accumulatedAngle + size,
-                trackColor = Color.White,
-            )
-
-            if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+size/2, circleRadius = 20f, circleColor = Color.White, number = numberOfElementsLeft, transparency = 1f)
-            }
-        }
-    }*/
 }
 
 @OptIn(ExperimentalHorologistApi::class)
