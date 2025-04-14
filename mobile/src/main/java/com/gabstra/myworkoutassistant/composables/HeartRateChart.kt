@@ -241,7 +241,7 @@ fun HeartRateChart(
                             ),
 
                             rangeProvider = CartesianLayerRangeProvider.fixed(
-                                minY = 0.0,
+                                minY = 40.0,
                                 maxY = 105.0
                             ),
                         ),
