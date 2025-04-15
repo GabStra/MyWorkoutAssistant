@@ -93,9 +93,9 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         val text = buildString {
-                            append("Weight: ")
                             repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
                                 append(set.weight)
+                                append(" kg")
                                 if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
                                     append(" + ")
                                 }
@@ -135,9 +135,9 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
                             val text = buildString {
-                                append("Weight: ")
                                 repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
                                     append(set.additionalWeight)
+                                    append(" kg")
                                     if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
                                         append(" + ")
                                     }

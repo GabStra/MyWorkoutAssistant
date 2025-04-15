@@ -307,7 +307,9 @@ fun WorkoutHistoryScreen(
             }
 
             volumeEntryModel =
-                CartesianChartModel(LineCartesianLayerModel.build { series(*(volumes.map { it.second }).toTypedArray()) })
+                CartesianChartModel(LineCartesianLayerModel.build {
+                    series(volumes.map { it.first },volumes.map { it.second })
+                })
         }
 
         if (durations.any { it.second != 0f }) {
@@ -318,7 +320,9 @@ fun WorkoutHistoryScreen(
             }
 
             durationEntryModel =
-                CartesianChartModel(LineCartesianLayerModel.build { series(*(durations.map { it.second }).toTypedArray()) })
+                CartesianChartModel(LineCartesianLayerModel.build {
+                    series(durations.map { it.first },durations.map { it.second })
+                })
         }
 
         if (workoutDurations.count() == 1) {
@@ -675,7 +679,7 @@ fun WorkoutHistoryScreen(
                 Column{
                     Text(
                         modifier = Modifier.fillMaxWidth().padding(vertical= 10.dp),
-                        text = "Exercise Histories:",
+                        text = "Exercise Histories",
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Center,
                         color = LightGray,

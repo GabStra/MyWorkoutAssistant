@@ -212,7 +212,7 @@ fun ExerciseScreen(
                     CustomHorizontalPager(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(vertical = 22.dp, horizontal = 15.dp),
+                            .padding(vertical = 20.dp, horizontal = 15.dp),
                         pagerState = pagerState,
                         userScrollEnabled = allowHorizontalScrolling,
                     ) { pageIndex ->

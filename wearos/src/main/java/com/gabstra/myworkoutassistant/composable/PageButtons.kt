@@ -60,7 +60,7 @@ fun PageButtons(
                 scrollState = scrollState,
                 scrollBarColor = Color.White
             )
-            .padding(horizontal = 10.dp)
+            .padding(horizontal = 15.dp)
             .verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {

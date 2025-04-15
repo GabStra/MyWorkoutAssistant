@@ -31,7 +31,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
     val scrollState = rememberScrollState()
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 15.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 5.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -69,7 +69,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
@@ -96,6 +96,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                                     scrollState = scrollState,
                                     scrollBarColor = Color.White
                                 )
+                                .padding(horizontal = 10.dp)
                                 .verticalScroll(scrollState),
                             verticalArrangement = Arrangement.spacedBy(3.dp),
                             horizontalAlignment = Alignment.CenterHorizontally

@@ -55,26 +55,7 @@ object VolumeDistributionHelper {
             return null
         }
 
-        //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
-
-        //val maxSetVolume = possibleSets.maxOf { it.volume }
-
-
         var validSetCombination = emptyList<ExerciseSet>()
-
-        //Log.d("WorkoutViewModel", "Max possible volume: $maxPossibleVolume Exercise volume: ${params.exerciseVolume}")
-
-/*
-        val maxPossibleVolume = maxSetVolume * params.maxSets
-        if(maxPossibleVolume < params.SessionWorkload) {
-            val maxSet = possibleSets.maxByOrNull { it.volume }!!
-            validSetCombination = List(params.maxSets) { maxSet }
-        }*/
-
-        //Log.d("WorkoutViewModel", "Possible sets: ${possibleSets.joinToString { "${it.weight} kg x ${it.reps}" }}")
-
-        //Log.d("WorkoutViewModel", "Volume progression range: ${params.volumeProgressionRange}")
-        //Log.d("WorkoutViewModel", "Average load per rep progression range: ${params.averageLoadPerRepProgressionRange}")
 
         validSetCombination = findBestProgressions(
             possibleSets,
@@ -165,7 +146,7 @@ object VolumeDistributionHelper {
             val workloadDifferenceScore = 1 + (combo.maxOf { it.workload } - combo.minOf { it.workload })
             val relativeLoadScore = 1 + abs(currentAverageLoadPerRep - averageRelativeLoadPerRep)
 
-            return currentWorkload * workloadDifferenceScore * relativeLoadScore  * 10.0.pow(combo.size)
+            return currentWorkload * workloadDifferenceScore * relativeLoadScore
         }
 
         suspend fun exploreCombinations(

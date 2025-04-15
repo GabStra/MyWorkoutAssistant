@@ -258,7 +258,9 @@ fun ExerciseSetsViewer(
                     .fillMaxWidth()
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
-                        scrollBarColor = Color.White
+                        scrollBarColor = Color.White,
+                        enableTopFade = false,
+                        enableBottomFade = false
                     )
                     .padding(horizontal = 2.dp)
                     .verticalScroll(scrollState),
