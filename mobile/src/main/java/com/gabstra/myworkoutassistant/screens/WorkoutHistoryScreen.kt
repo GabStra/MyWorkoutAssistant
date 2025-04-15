@@ -872,7 +872,7 @@ fun WorkoutHistoryScreen(
                         tint = if (selectedMode == 0) LightGray else MediumLightGray
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Graphs", color =  if (selectedMode == 0) LightGray else MediumLightGray)
+                    Text("Graphs", color =  if (selectedMode == 0) LightGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
                 }
             }
 
@@ -893,7 +893,7 @@ fun WorkoutHistoryScreen(
                         tint = if (selectedMode == 1) LightGray else MediumLightGray
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Sets", color =  if (selectedMode == 1) LightGray else MediumLightGray)
+                    Text("Sets", color =  if (selectedMode == 1) LightGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
                 }
             }
         }
@@ -1066,8 +1066,9 @@ fun WorkoutHistoryScreen(
                                 .padding(horizontal = 5.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
-                                .padding(horizontal = 15.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .padding(horizontal = 15.dp)
+                                .padding(top=10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             when (updatedSelectedMode) {
                                 0 -> graphsTabContent()

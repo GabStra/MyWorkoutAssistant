@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.verticalScroll
 
 import androidx.compose.material.icons.Icons
@@ -592,6 +594,17 @@ fun WorkoutsScreen(
         }
     }
 
+    val pagerState = rememberPagerState(
+        initialPage = selectedTabIndex,
+        pageCount = {
+            3
+        }
+    )
+
+    LaunchedEffect(selectedTabIndex) {
+        pagerState.scrollToPage(selectedTabIndex)
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -626,12 +639,13 @@ fun WorkoutsScreen(
             )
         },
         bottomBar = {
-            when(selectedTabIndex){
+            when(pagerState.currentPage){
                 1 -> workoutsBottomBar()
                 2 -> equipmentsBottomBar()
             }
         },
     ) {
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -642,21 +656,23 @@ fun WorkoutsScreen(
 
             TabRow(
                 contentColor = DarkGray,
-                selectedTabIndex = selectedTabIndex,
+                selectedTabIndex = pagerState.currentPage,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
-                        Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                        Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
                         color = MaterialTheme.colorScheme.primary, // Set the indicator color
                         height = 2.dp,
                     )
                 }
             ) {
                 tabTitles.forEachIndexed { index, title ->
-                    val isSelected = index == selectedTabIndex
+                    val isSelected = index == pagerState.currentPage
                     Tab(
                         modifier = Modifier.background(DarkGray),
                         selected = isSelected,
-                        onClick = { appViewModel.setHomeTab(index) },
+                        onClick = {
+                            appViewModel.setHomeTab(index)
+                        },
                         text = { Text(text = title) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
                         unselectedContentColor = MediumLightGray,
@@ -673,414 +689,454 @@ fun WorkoutsScreen(
                 }
             }
 
-                HealthConnectHandler(appViewModel, healthConnectClient)
+            HorizontalPager(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(DarkGray),
+                state = pagerState,
+            ) { pageIndex ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(DarkGray),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    HealthConnectHandler(appViewModel, healthConnectClient)
 
-                AnimatedContent(
-                    modifier = Modifier.background(DarkGray),
-                    targetState = selectedTabIndex,
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
-                            animationSpec = tween(
-                                500
+                    AnimatedContent(
+                        modifier = Modifier.background(DarkGray),
+                        targetState = pageIndex,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
+                                animationSpec = tween(
+                                    500
+                                )
                             )
-                        )
-                    }, label = ""
-                ) { updatedSelectedTab ->
-                    when (updatedSelectedTab) {
-                        0 -> {
-                            val scrollState = rememberScrollState()
+                        }, label = ""
+                    ) { updatedSelectedTab ->
+                        when (updatedSelectedTab) {
+                            0 -> {
+                                val scrollState = rememberScrollState()
 
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 5.dp)
-                                    .verticalColumnScrollbar(scrollState)
-                                    .verticalScroll(scrollState)
-                                    .padding(horizontal = 15.dp)
-                                    .padding(top=10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                StyledCard {
-                                    WorkoutsCalendar(
-                                        selectedDate = selectedDate,
-                                        onDayClicked = { calendarState, day ->
-                                            onDayClicked(calendarState, day)
-                                        },
-                                        shouldHighlight = { day -> highlightDay(day) },
-                                        getHighlightColor = { day -> getHighlightColor(day) }
-                                    )
-                                }
-                                if (isLoading) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize().padding(10.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.width(32.dp),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            trackColor = Color.DarkGray,
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 5.dp)
+                                        .verticalColumnScrollbar(scrollState)
+                                        .verticalScroll(scrollState)
+                                        .padding(horizontal = 15.dp)
+                                        .padding(top = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    StyledCard {
+                                        WorkoutsCalendar(
+                                            selectedDate = selectedDate,
+                                            onDayClicked = { calendarState, day ->
+                                                onDayClicked(calendarState, day)
+                                            },
+                                            shouldHighlight = { day -> highlightDay(day) },
+                                            getHighlightColor = { day -> getHighlightColor(day) }
                                         )
                                     }
-                                } else {
-                                    if (hasObjectives) {
-                                        val currentDate = selectedDate.date
-                                        val currentMonth =
-                                            currentDate.format(DateTimeFormatter.ofPattern("MMM"))
-
-                                        StyledCard{
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(10.dp),
-                                                verticalArrangement = Arrangement.spacedBy(5.dp)
-                                            ) {
-                                                Text(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    text = "Weekly progress (${
-                                                        getStartOfWeek(
-                                                            currentDate
-                                                        ).dayOfMonth
-                                                    } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    textAlign = TextAlign.Center,
-                                                    color = LightGray
-                                                )
-                                                ExpandableContainer(
-                                                    isOpen = false,
-                                                    isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
-                                                    title = { modifier ->
-                                                        Row(
-                                                            modifier = modifier
-                                                                .fillMaxWidth()
-                                                                .padding(10.dp),
-                                                            horizontalArrangement = Arrangement.Center,
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            Text(
-                                                                text = "${(objectiveProgress * 100).toInt()}%",
-                                                                style = MaterialTheme.typography.titleMedium,
-                                                                textAlign = TextAlign.Center,
-                                                                color = LightGray,
-                                                            )
-                                                            Spacer(modifier = Modifier.width(10.dp))
-                                                            ObjectiveProgressBar(
-                                                                Modifier.weight(1f),
-                                                                progress = objectiveProgress.toFloat()
-                                                            )
-                                                        }
-                                                    }, content = {
-                                                        Column(
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .padding(10.dp),
-                                                            verticalArrangement = Arrangement.spacedBy(
-                                                                10.dp
-                                                            )
-                                                        ) {
-                                                            weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
-                                                                Row(
-                                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                                ) {
-                                                                    Text(
-                                                                        text = workout.name,
-                                                                        modifier = Modifier.weight(1f),
-                                                                        color = LightGray,
-                                                                        style = MaterialTheme.typography.bodyLarge,
-                                                                    )
-                                                                    Text(
-                                                                        text = "${pair.first}/${pair.second}",
-                                                                        color = LightGray,
-                                                                        style = MaterialTheme.typography.bodyLarge,
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                    })
-                                            }
-                                        }
-                                    }
-                                    StyledCard {
-                                        Column(
+                                    if (isLoading) {
+                                        Box(
                                             modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(10.dp),
-                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                                .fillMaxSize().padding(10.dp),
+                                            contentAlignment = Alignment.Center
                                         ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.width(32.dp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                trackColor = Color.DarkGray,
+                                            )
+                                        }
+                                    } else {
+                                        if (hasObjectives) {
                                             val currentDate = selectedDate.date
                                             val currentMonth =
                                                 currentDate.format(DateTimeFormatter.ofPattern("MMM"))
 
-                                            Text(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                textAlign = TextAlign.Center,
-                                                color = LightGray
-                                            )
-
-                                            if (selectedCalendarWorkouts.isNullOrEmpty()) {
-                                                Box(
+                                            StyledCard {
+                                                Column(
                                                     modifier = Modifier
-                                                        .fillMaxSize(),
-                                                    contentAlignment = Alignment.Center
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(5.dp)
                                                 ) {
                                                     Text(
-                                                        modifier = Modifier
-                                                            .padding(15.dp),
-                                                        text = "No workouts on this day",
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        text = "Weekly progress (${
+                                                            getStartOfWeek(
+                                                                currentDate
+                                                            ).dayOfMonth
+                                                        } - ${getEndOfWeek(currentDate).dayOfMonth} $currentMonth):",
+                                                        style = MaterialTheme.typography.titleMedium,
                                                         textAlign = TextAlign.Center,
-                                                        color = MediumDarkGray,
+                                                        color = LightGray
                                                     )
-                                                }
-                                            } else {
-                                                val timeFormatter = remember(currentLocale) {
-                                                    DateTimeFormatter.ofPattern("HH:mm", currentLocale)
-                                                }
-
-                                                selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
-                                                    StyledCard {  Row(
-                                                        modifier = Modifier.padding(end = 15.dp),
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        IconButton(
-                                                            onClick = {
-                                                                appViewModel.setScreenData(
-                                                                    ScreenData.WorkoutHistory(
-                                                                        workout.id,
-                                                                        workoutHistory.id
-                                                                    )
+                                                    ExpandableContainer(
+                                                        isOpen = false,
+                                                        isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
+                                                        title = { modifier ->
+                                                            Row(
+                                                                modifier = modifier
+                                                                    .fillMaxWidth()
+                                                                    .padding(10.dp),
+                                                                horizontalArrangement = Arrangement.Center,
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Text(
+                                                                    text = "${(objectiveProgress * 100).toInt()}%",
+                                                                    style = MaterialTheme.typography.titleMedium,
+                                                                    textAlign = TextAlign.Center,
+                                                                    color = LightGray,
                                                                 )
-                                                            }) {
-                                                            Icon(
-                                                                imageVector = Icons.Filled.Search,
-                                                                contentDescription = "Details",
-                                                                tint = LightGray
-                                                            )
-                                                        }
+                                                                Spacer(modifier = Modifier.width(10.dp))
+                                                                ObjectiveProgressBar(
+                                                                    Modifier.weight(1f),
+                                                                    progress = objectiveProgress.toFloat()
+                                                                )
+                                                            }
+                                                        }, content = {
+                                                            Column(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .padding(10.dp),
+                                                                verticalArrangement = Arrangement.spacedBy(
+                                                                    10.dp
+                                                                )
+                                                            ) {
+                                                                weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
+                                                                    Row(
+                                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                                    ) {
+                                                                        Text(
+                                                                            text = workout.name,
+                                                                            modifier = Modifier.weight(
+                                                                                1f
+                                                                            ),
+                                                                            color = LightGray,
+                                                                            style = MaterialTheme.typography.bodyLarge,
+                                                                        )
+                                                                        Text(
+                                                                            text = "${pair.first}/${pair.second}",
+                                                                            color = LightGray,
+                                                                            style = MaterialTheme.typography.bodyLarge,
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        })
+                                                }
+                                            }
+                                        }
+                                        StyledCard {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(10.dp),
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                val currentDate = selectedDate.date
+                                                val currentMonth =
+                                                    currentDate.format(DateTimeFormatter.ofPattern("MMM"))
 
+                                                Text(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    textAlign = TextAlign.Center,
+                                                    color = LightGray
+                                                )
+
+                                                if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxSize(),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
                                                         Text(
                                                             modifier = Modifier
-                                                                .weight(1f)
-                                                                .basicMarquee(iterations = Int.MAX_VALUE),
-                                                            text = workout.name,
-                                                            color = LightGray,
-                                                            style =  MaterialTheme.typography.bodyLarge,
+                                                                .padding(15.dp),
+                                                            text = "No workouts on this day",
+                                                            textAlign = TextAlign.Center,
+                                                            color = MediumDarkGray,
                                                         )
-                                                        Text(
-                                                            modifier = Modifier
-                                                                .weight(1f),
-                                                            text =  workoutHistory.time.format(timeFormatter),
-                                                            textAlign = TextAlign.End,
-                                                            color = LightGray,
-                                                            style =  MaterialTheme.typography.bodyLarge,
+                                                    }
+                                                } else {
+                                                    val timeFormatter = remember(currentLocale) {
+                                                        DateTimeFormatter.ofPattern(
+                                                            "HH:mm",
+                                                            currentLocale
                                                         )
-                                                        if(!workoutHistory.isDone){
-                                                            Spacer(modifier = Modifier.width(15.dp))
-                                                            Icon(
-                                                                imageVector = Icons.Default.Close,
-                                                                contentDescription = "Incomplete",
-                                                                tint = LightGray
-                                                            )
-                                                            Spacer(modifier = Modifier.width(10.dp))
-                                                        }
-                                                    } }
+                                                    }
 
+                                                    selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
+                                                        StyledCard {
+                                                            Row(
+                                                                modifier = Modifier.padding(end = 15.dp),
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                IconButton(
+                                                                    onClick = {
+                                                                        appViewModel.setScreenData(
+                                                                            ScreenData.WorkoutHistory(
+                                                                                workout.id,
+                                                                                workoutHistory.id
+                                                                            )
+                                                                        )
+                                                                    }) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Filled.Search,
+                                                                        contentDescription = "Details",
+                                                                        tint = LightGray
+                                                                    )
+                                                                }
+
+                                                                Text(
+                                                                    modifier = Modifier
+                                                                        .weight(1f)
+                                                                        .basicMarquee(iterations = Int.MAX_VALUE),
+                                                                    text = workout.name,
+                                                                    color = LightGray,
+                                                                    style = MaterialTheme.typography.bodyLarge,
+                                                                )
+                                                                Text(
+                                                                    modifier = Modifier
+                                                                        .weight(1f),
+                                                                    text = workoutHistory.time.format(
+                                                                        timeFormatter
+                                                                    ),
+                                                                    textAlign = TextAlign.End,
+                                                                    color = LightGray,
+                                                                    style = MaterialTheme.typography.bodyLarge,
+                                                                )
+                                                                if (!workoutHistory.isDone) {
+                                                                    Spacer(
+                                                                        modifier = Modifier.width(
+                                                                            15.dp
+                                                                        )
+                                                                    )
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Close,
+                                                                        contentDescription = "Incomplete",
+                                                                        tint = LightGray
+                                                                    )
+                                                                    Spacer(
+                                                                        modifier = Modifier.width(
+                                                                            10.dp
+                                                                        )
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        1 -> {
-                            val scrollState = rememberScrollState()
+                            1 -> {
+                                val scrollState = rememberScrollState()
 
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 5.dp)
-                                    .verticalColumnScrollbar(scrollState)
-                                    .verticalScroll(scrollState)
-                                    .padding(horizontal = 15.dp),
-                            ) {
-                                if (activeAndEnabledWorkouts.isEmpty()) {
-                                    Text(
-                                        text = "Add a new workout",
-                                        textAlign = TextAlign.Center,
-                                        color = Color.White.copy(alpha = .87f),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(15.dp),
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
-                                } else {
-                                    GenericSelectableList(
-                                        PaddingValues(5.dp, 10.dp),
-                                        items = activeWorkouts,
-                                        selectedItems = selectedWorkouts,
-                                        isWorkoutSelectionModeActive,
-                                        onItemClick = {
-                                            if (isCardExpanded) return@GenericSelectableList
-                                            appViewModel.setScreenData(ScreenData.WorkoutDetail(it.id))
-                                        },
-                                        onEnableSelection = { isWorkoutSelectionModeActive = true },
-                                        onDisableSelection = {
-                                            isWorkoutSelectionModeActive = false
-                                        },
-                                        onSelectionChange = { newSelection ->
-                                            selectedWorkouts = newSelection
-                                        },
-                                        onOrderChange = { newWorkouts ->
-                                            val workoutsWithOrderUpdated =
-                                                newWorkouts.mapIndexed { index, workout ->
-                                                    workout.copy(
-                                                        order = index
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 5.dp)
+                                        .verticalColumnScrollbar(scrollState)
+                                        .verticalScroll(scrollState)
+                                        .padding(horizontal = 15.dp),
+                                ) {
+                                    if (activeAndEnabledWorkouts.isEmpty()) {
+                                        Text(
+                                            text = "Add a new workout",
+                                            textAlign = TextAlign.Center,
+                                            color = Color.White.copy(alpha = .87f),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(15.dp),
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                    } else {
+                                        GenericSelectableList(
+                                            PaddingValues(5.dp, 10.dp),
+                                            items = activeWorkouts,
+                                            selectedItems = selectedWorkouts,
+                                            isWorkoutSelectionModeActive,
+                                            onItemClick = {
+                                                if (isCardExpanded) return@GenericSelectableList
+                                                appViewModel.setScreenData(
+                                                    ScreenData.WorkoutDetail(
+                                                        it.id
+                                                    )
+                                                )
+                                            },
+                                            onEnableSelection = {
+                                                isWorkoutSelectionModeActive = true
+                                            },
+                                            onDisableSelection = {
+                                                isWorkoutSelectionModeActive = false
+                                            },
+                                            onSelectionChange = { newSelection ->
+                                                selectedWorkouts = newSelection
+                                            },
+                                            onOrderChange = { newWorkouts ->
+                                                val workoutsWithOrderUpdated =
+                                                    newWorkouts.mapIndexed { index, workout ->
+                                                        workout.copy(
+                                                            order = index
+                                                        )
+                                                    }
+                                                appViewModel.updateWorkouts(workoutsWithOrderUpdated)
+                                            },
+                                            itemContent = { it ->
+                                                StyledCard {
+                                                    WorkoutTitle(
+                                                        Modifier.padding(15.dp),
+                                                        it,
+                                                        true,
+                                                        enabled = it.enabled
                                                     )
                                                 }
-                                            appViewModel.updateWorkouts(workoutsWithOrderUpdated)
-                                        },
-                                        itemContent = { it ->
-                                            StyledCard {
-                                                WorkoutTitle(
-                                                    Modifier.padding(15.dp),
-                                                    it,
-                                                    true,
-                                                    enabled = it.enabled
-                                                )
-                                            }
-                                        },
-                                        isDragDisabled = true
-                                    )
-
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                    verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                                ) {
-
-                                    Button(
-                                        colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                                        onClick = {
-                                            appViewModel.setScreenData(ScreenData.NewWorkout());
-                                        },
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Add,
-                                            contentDescription = "Add",
-                                            tint = LightGray,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        2 -> {
-                            val scrollState = rememberScrollState()
-
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 5.dp)
-                                    .verticalColumnScrollbar(scrollState)
-                                    .verticalScroll(scrollState)
-                                    .padding(horizontal = 15.dp)
-                            ) {
-                                if (equipments.isEmpty()) {
-                                    Text(
-                                        text = "Add new equipment",
-                                        textAlign = TextAlign.Center,
-                                        color = Color.White.copy(alpha = .87f),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(15.dp),
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
-                                } else {
-                                    GenericSelectableList(
-                                        PaddingValues(5.dp, 10.dp),
-                                        items = equipments,
-                                        selectedItems = selectedEquipments,
-                                        isEquipmentSelectionModeActive,
-                                        onItemClick = { equipment ->
-                                            val equipmentType = when (equipment) {
-                                                is Barbell -> EquipmentType.BARBELL
-                                                is Dumbbells -> EquipmentType.DUMBBELLS
-                                                else -> throw IllegalArgumentException("Unknown equipment type")
-                                            }
-
-                                            appViewModel.setScreenData(
-                                                ScreenData.EditEquipment(
-                                                    equipment.id,
-                                                    equipment.type
-                                                )
-                                            )
-                                        },
-                                        onEnableSelection = {
-                                            isEquipmentSelectionModeActive = true
-                                        },
-                                        onDisableSelection = {
-                                            isEquipmentSelectionModeActive = false
-                                        },
-                                        onSelectionChange = { newSelection ->
-                                            selectedEquipments = newSelection
-                                        },
-                                        onOrderChange = { },
-                                        itemContent = { it ->
-                                            StyledCard {
-                                                Text(
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .padding(15.dp)
-                                                        .basicMarquee(iterations = Int.MAX_VALUE),
-                                                    text = it.name,
-                                                    color = Color.White.copy(alpha = .87f),
-                                                    style = MaterialTheme.typography.bodyLarge,
-                                                )
-                                            }
-                                        },
-                                        isDragDisabled = true
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                    verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                                ) {
-                                    GenericButtonWithMenu(
-                                        menuItems = listOf(
-                                            MenuItem("Add Barbell") {
-                                                appViewModel.setScreenData(
-                                                    ScreenData.NewEquipment(
-                                                        EquipmentType.BARBELL
-                                                    )
-                                                );
                                             },
-                                            MenuItem("Add Dumbbells") {
-                                                appViewModel.setScreenData(
-                                                    ScreenData.NewEquipment(
-                                                        EquipmentType.DUMBBELLS
-                                                    )
-                                                );
-                                            }
+                                            isDragDisabled = true
+                                        )
 
-                                        ),
-                                        content = {
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                                    ) {
+
+                                        Button(
+                                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                            onClick = {
+                                                appViewModel.setScreenData(ScreenData.NewWorkout());
+                                            },
+                                        ) {
                                             Icon(
                                                 imageVector = Icons.Filled.Add,
                                                 contentDescription = "Add",
                                                 tint = LightGray,
                                             )
                                         }
-                                    )
+                                    }
+                                }
+                            }
+
+                            2 -> {
+                                val scrollState = rememberScrollState()
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 5.dp)
+                                        .verticalColumnScrollbar(scrollState)
+                                        .verticalScroll(scrollState)
+                                        .padding(horizontal = 15.dp)
+                                ) {
+                                    if (equipments.isEmpty()) {
+                                        Text(
+                                            text = "Add new equipment",
+                                            textAlign = TextAlign.Center,
+                                            color = Color.White.copy(alpha = .87f),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(15.dp),
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                    } else {
+                                        GenericSelectableList(
+                                            PaddingValues(5.dp, 10.dp),
+                                            items = equipments,
+                                            selectedItems = selectedEquipments,
+                                            isEquipmentSelectionModeActive,
+                                            onItemClick = { equipment ->
+                                                val equipmentType = when (equipment) {
+                                                    is Barbell -> EquipmentType.BARBELL
+                                                    is Dumbbells -> EquipmentType.DUMBBELLS
+                                                    else -> throw IllegalArgumentException("Unknown equipment type")
+                                                }
+
+                                                appViewModel.setScreenData(
+                                                    ScreenData.EditEquipment(
+                                                        equipment.id,
+                                                        equipment.type
+                                                    )
+                                                )
+                                            },
+                                            onEnableSelection = {
+                                                isEquipmentSelectionModeActive = true
+                                            },
+                                            onDisableSelection = {
+                                                isEquipmentSelectionModeActive = false
+                                            },
+                                            onSelectionChange = { newSelection ->
+                                                selectedEquipments = newSelection
+                                            },
+                                            onOrderChange = { },
+                                            itemContent = { it ->
+                                                StyledCard {
+                                                    Text(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .padding(15.dp)
+                                                            .basicMarquee(iterations = Int.MAX_VALUE),
+                                                        text = it.name,
+                                                        color = Color.White.copy(alpha = .87f),
+                                                        style = MaterialTheme.typography.bodyLarge,
+                                                    )
+                                                }
+                                            },
+                                            isDragDisabled = true
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                                    ) {
+                                        GenericButtonWithMenu(
+                                            menuItems = listOf(
+                                                MenuItem("Add Barbell") {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.NewEquipment(
+                                                            EquipmentType.BARBELL
+                                                        )
+                                                    );
+                                                },
+                                                MenuItem("Add Dumbbells") {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.NewEquipment(
+                                                            EquipmentType.DUMBBELLS
+                                                        )
+                                                    );
+                                                }
+
+                                            ),
+                                            content = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Add,
+                                                    contentDescription = "Add",
+                                                    tint = LightGray,
+                                                )
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+
                 }
+            }
 
         }
+
+
     }
 }

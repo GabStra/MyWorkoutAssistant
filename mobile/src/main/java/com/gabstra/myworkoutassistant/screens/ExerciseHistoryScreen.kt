@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -59,6 +61,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
@@ -113,9 +116,6 @@ fun ExerciseHistoryScreen(
     }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
-    val selectedWorkout = workouts.find { it.id == workout.id }!!
-
-    val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
 
     val volumes = remember { mutableListOf<Pair<Int, Double>>() }
     val durations = remember { mutableListOf<Pair<Int, Float>>() }
@@ -123,8 +123,8 @@ fun ExerciseHistoryScreen(
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            workoutHistories = workoutVersions.flatMap { workoutVersion ->
-                workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
+            workoutHistories = workouts.flatMap { workout ->
+                workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
             }.filter { it.isDone }.sortedBy { it.date }
 
             if (workoutHistories.isEmpty()) {
@@ -143,6 +143,11 @@ fun ExerciseHistoryScreen(
                     workoutHistory.id,
                     exercise.id
                 )
+
+                if (setHistories.isEmpty()) {
+                    continue
+                }
+
                 var volume = 0.0
                 var duration = 0f
                 var oneRepMax = 0.0
@@ -304,27 +309,8 @@ fun ExerciseHistoryScreen(
                 )
             }
 
-            if (workoutHistories.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ){
-                    StyledCard(
-                        modifier = Modifier
-                            .padding(15.dp),
-                        
-                    ) {
-                        Text(
-                            modifier = Modifier
-                                .padding(15.dp),
-                            text = "No history found",
-                            textAlign = TextAlign.Center,
-                            color = Color.White.copy(alpha = .87f),
-                        )
-                    }
-                }
-            }else if(isLoading){
+
+            if(isLoading){
                 Box(
                     modifier = Modifier
                         .fillMaxSize(),
@@ -337,37 +323,65 @@ fun ExerciseHistoryScreen(
                     )
                 }
             } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (volumeEntryModel != null) {
-                        StandardChart(
-                            cartesianChartModel = volumeEntryModel!!,
-                            title = "Volume",
-                            startAxisValueFormatter = volumeAxisValueFormatter,
-                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                        )
-                    }
+                if (workoutHistories.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        StyledCard(
+                            modifier = Modifier
+                                .padding(15.dp),
 
-                    if (oneRepMaxEntryModel != null) {
-                        StandardChart(
-                            cartesianChartModel = oneRepMaxEntryModel!!,
-                            title = "One Rep Max",
-                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                        )
+                            ) {
+                            Text(
+                                modifier = Modifier
+                                    .padding(15.dp),
+                                text = "No history found",
+                                textAlign = TextAlign.Center,
+                                color = Color.White.copy(alpha = .87f),
+                            )
+                        }
                     }
+                }else{
+                    val scrollState = rememberScrollState()
 
-                    if (durationEntryModel != null) {
-                        StandardChart(
-                            cartesianChartModel = durationEntryModel!!,
-                            title = "Total duration over time",
-                            markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
-                            startAxisValueFormatter = durationAxisValueFormatter,
-                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                        )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 5.dp)
+                            .verticalColumnScrollbar(scrollState)
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 15.dp)
+                            .padding(top=10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (volumeEntryModel != null) {
+                            StandardChart(
+                                cartesianChartModel = volumeEntryModel!!,
+                                title = "Volume",
+                                startAxisValueFormatter = volumeAxisValueFormatter,
+                                bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                            )
+                        }
+
+                        if (oneRepMaxEntryModel != null) {
+                            StandardChart(
+                                cartesianChartModel = oneRepMaxEntryModel!!,
+                                title = "One Rep Max",
+                                bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                            )
+                        }
+
+                        if (durationEntryModel != null) {
+                            StandardChart(
+                                cartesianChartModel = durationEntryModel!!,
+                                title = "Total duration over time",
+                                markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
+                                startAxisValueFormatter = durationAxisValueFormatter,
+                                bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                            )
+                        }
                     }
                 }
             }

@@ -9,12 +9,15 @@ import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -39,6 +42,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -419,6 +423,8 @@ fun Double.round(decimals: Int): Double {
     return kotlin.math.round(this * multiplier) / multiplier
 }
 
+// Default height for the content fade gradient
+private val DEFAULT_CONTENT_FADE_HEIGHT = 10.dp
 
 @Composable
 fun Modifier.verticalColumnScrollbar(
@@ -426,78 +432,139 @@ fun Modifier.verticalColumnScrollbar(
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
     scrollBarTrackColor: Color = DarkGray,
-    scrollBarColor: Color = MediumLightGray,
+    scrollBarColor: Color = MediumGray,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
     trackHeight: Dp? = null,
-    startSizeRatio: Float = 0.75f,
-    minThumbHeight: Float = 3f
+    // Content fade effect parameters
+    enableTopFade: Boolean = true,
+    enableBottomFade: Boolean = true,
+    contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
+    contentFadeColor: Color = DarkGray
 ): Modifier {
-    val clampedStartSizeRatio = startSizeRatio.coerceIn(0.01f, 1.0f)
+    // Remember updated state for all parameters accessed within draw lambda
+    val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)
+    val rememberedTrackColor by rememberUpdatedState(scrollBarTrackColor)
+    val rememberedScrollBarColor by rememberUpdatedState(scrollBarColor)
+    val rememberedWidth by rememberUpdatedState(width)
+    val rememberedCornerRadius by rememberUpdatedState(scrollBarCornerRadius)
+    val rememberedEndPadding by rememberUpdatedState(endPadding)
+    val rememberedTrackHeight by rememberUpdatedState(trackHeight)
+    val rememberedEnableTopFade by rememberUpdatedState(enableTopFade)
+    val rememberedEnableBottomFade by rememberUpdatedState(enableBottomFade)
+    val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
+    val rememberedContentFadeColor by rememberUpdatedState(contentFadeColor)
 
-    val widthPx = with(LocalDensity.current) { width.toPx() }
-    val trackHeightPx = with(LocalDensity.current) { trackHeight?.toPx() }
-
-    return drawWithContent {
+    return this.drawWithContent {
+        // --- Draw the actual content first ---
         drawContent()
 
-        val viewportHeight = this.size.height
-        val totalContentHeight = max(scrollState.maxValue.toFloat() + viewportHeight, viewportHeight)
-        val scrollValue = scrollState.value.toFloat()
+        // --- Content Fade Logic ---
+        val fadeHeightPx = rememberedContentFadeHeight.toPx()
+        val componentWidth = size.width
+        val componentHeight = size.height
+        val currentScrollValue = scrollState.value.toFloat()
+        val maxScrollValue = scrollState.maxValue.toFloat()
 
-        val visibleRatio = viewportHeight / totalContentHeight
+        // Only proceed with fade drawing if fade height is positive
+        if (fadeHeightPx > 0f) {
 
-        if (visibleRatio >= 1f || viewportHeight <= 0f || totalContentHeight <= viewportHeight || scrollState.maxValue == 0) {
+            // --- Top Fade Calculation ---
+            if (rememberedEnableTopFade) {
+                // Calculate alpha based on proximity to the top edge (within fadeHeightPx)
+                // Alpha is 0.0 when scrollValue is 0, 1.0 when scrollValue >= fadeHeightPx
+                val topAlpha = (currentScrollValue / fadeHeightPx).coerceIn(0f, 1f)
+
+                // Only draw if alpha is > 0 (i.e., not exactly at the top)
+                if (topAlpha > 0f) {
+                    val topFadeBrush = Brush.verticalGradient(
+                        colors = listOf(rememberedContentFadeColor, Color.Transparent),
+                        startY = 0f,
+                        endY = fadeHeightPx.coerceAtMost(componentHeight)
+                    )
+                    drawRect(
+                        brush = topFadeBrush,
+                        alpha = topAlpha,
+                        topLeft = Offset.Zero,
+                        size = Size(componentWidth, fadeHeightPx.coerceAtMost(componentHeight))
+                    )
+                }
+            }
+
+            // --- Bottom Fade Calculation ---
+            if (rememberedEnableBottomFade && maxScrollValue > 0) { // Also check if scrolling is possible at all
+                // Calculate distance from the bottom edge
+                val distanceToBottom = maxScrollValue - currentScrollValue
+
+                // Calculate alpha based on proximity to the bottom edge (within fadeHeightPx)
+                // Alpha is 0.0 when distance is 0 (at bottom), 1.0 when distance >= fadeHeightPx
+                val bottomAlpha = (distanceToBottom / fadeHeightPx).coerceIn(0f, 1f)
+
+                // Only draw if alpha is > 0 (i.e., not exactly at the bottom)
+                if (bottomAlpha > 0f) {
+                    val bottomFadeBrush = Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, rememberedContentFadeColor),
+                        startY = (componentHeight - fadeHeightPx).coerceAtLeast(0f),
+                        endY = componentHeight
+                    )
+                    drawRect(
+                        brush = bottomFadeBrush,
+                        alpha = bottomAlpha,
+                        topLeft = Offset(0f, (componentHeight - fadeHeightPx).coerceAtLeast(0f)),
+                        size = Size(componentWidth, fadeHeightPx.coerceAtMost(componentHeight))
+                    )
+                }
+            }
+        }
+
+
+        // --- Scrollbar Logic (remains the same, drawn on top) ---
+        val viewportHeight = componentHeight
+        val totalContentHeight = (maxScrollValue + viewportHeight).coerceAtLeast(viewportHeight)
+        val scrollValue = currentScrollValue // Use already fetched value
+        val visibleRatio = (viewportHeight / totalContentHeight).coerceIn(0f, 1f)
+
+        if (visibleRatio >= 1f || maxScrollValue <= 0) {
             return@drawWithContent
         }
 
-        val defaultTrackHeight = viewportHeight * 0.95f
-        val actualTrackHeight = trackHeightPx?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
-        if (actualTrackHeight <= 0f) return@drawWithContent
-
+        val defaultTrackHeight = viewportHeight * (2f / 3f)
+        val actualTrackHeight = rememberedTrackHeight?.toPx()?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
         val trackTopOffset = if (actualTrackHeight < viewportHeight) {
             (viewportHeight - actualTrackHeight) / 2f
         } else {
             0f
         }
 
-        val trackStartX = this.size.width - widthPx - endPadding
-
-        if (showScrollBarTrack) {
-            drawRoundRect(
-                cornerRadius = CornerRadius(scrollBarCornerRadius),
-                color = scrollBarTrackColor,
-                topLeft = Offset(trackStartX, trackTopOffset),
-                size = Size(widthPx, actualTrackHeight),
-            )
-        }
-
+        val minThumbHeight = rememberedWidth.toPx() * 2
         val scrollBarHeight = (visibleRatio * actualTrackHeight)
             .coerceAtLeast(minThumbHeight)
             .coerceAtMost(actualTrackHeight)
+        val availableScrollSpace = maxScrollValue
+        val availableTrackSpace = (actualTrackHeight - scrollBarHeight).coerceAtLeast(0f)
+        val scrollProgress = if (availableScrollSpace > 0) scrollValue / availableScrollSpace else 0f
+        val clampedScrollProgress = scrollProgress.coerceIn(0f, 1f)
+        val scrollBarOffsetWithinTrack = clampedScrollProgress * availableTrackSpace
+        val scrollBarTopOffset = trackTopOffset + scrollBarOffsetWithinTrack
 
+        val cornerRadius = CornerRadius(rememberedCornerRadius)
+        val barWidthPx = rememberedWidth.toPx()
+        val paddingPx = rememberedEndPadding
 
-        val availableScrollSpace = scrollState.maxValue.toFloat()
-        if (availableScrollSpace <= 0f) return@drawWithContent
-
-        val availableTrackSpace = actualTrackHeight - scrollBarHeight
-        if (availableTrackSpace <= 0f) {
-            // Thumb fills the track, position is fixed. Draw and return or let calculation proceed.
+        if (rememberedShowTrack) {
+            drawRoundRect(
+                color = rememberedTrackColor,
+                topLeft = Offset(componentWidth - paddingPx - barWidthPx, trackTopOffset),
+                size = Size(barWidthPx, actualTrackHeight),
+                cornerRadius = cornerRadius
+            )
         }
 
-        val effectiveAvailableTrackSpace = min(availableTrackSpace, availableScrollSpace)
-        val nonNegativeEffectiveTrackSpace = max(0f, effectiveAvailableTrackSpace)
-
-        val scrollProgress = (scrollValue / availableScrollSpace).coerceIn(0f, 1f)
-
-        val scrollBarOffsetWithinTrack = scrollProgress * nonNegativeEffectiveTrackSpace
-        val scrollBarTop = trackTopOffset + scrollBarOffsetWithinTrack
-
         drawRoundRect(
-            cornerRadius = CornerRadius(scrollBarCornerRadius),
-            color = scrollBarColor,
-            topLeft = Offset(trackStartX, scrollBarTop.coerceAtMost(trackTopOffset + availableTrackSpace)),
-            size = Size(widthPx, scrollBarHeight)
+            color = rememberedScrollBarColor,
+            topLeft = Offset(componentWidth - paddingPx - barWidthPx, scrollBarTopOffset),
+            size = Size(barWidthPx, scrollBarHeight),
+            cornerRadius = cornerRadius
         )
     }
 }
