@@ -352,7 +352,7 @@ private fun HeartRateView(
     val hrTrend by heartRateChangeViewModel.heartRateTrend.collectAsState()
     val displayMode by appViewModel.hrDisplayMode
 
-    val textToDisplay by remember {
+    val textToDisplay by remember(hr, mhrPercentage) {
         derivedStateOf {
             when (displayMode) {
                 0 -> if (hr == 0) "-" else hr.toString()
