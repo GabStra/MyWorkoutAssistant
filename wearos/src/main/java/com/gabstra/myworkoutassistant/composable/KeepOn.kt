@@ -1,13 +1,10 @@
 package com.gabstra.myworkoutassistant.composable
 
-import android.util.Log
 import android.view.WindowManager
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -33,7 +30,7 @@ fun KeepOn(
     var dimmingJob by remember { mutableStateOf<Job?>(null) }
 
     val scope = rememberCoroutineScope()
-    val appDimmingEnabled by appViewModel.enableScreenDimming
+    val appDimmingEnabled by appViewModel.currentScreenDimmingState
 
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
@@ -120,8 +117,7 @@ fun KeepOn(
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        // Check if any pointer is down
-                        if (event.changes.any { it.pressed }) {
+                        if (event.changes.any { it.pressed && !it.previousPressed }) {
                             if (isDimmed) {
                                 setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
                                 isDimmed = false

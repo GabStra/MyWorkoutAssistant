@@ -19,8 +19,6 @@ import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,10 +52,12 @@ open class AppViewModel : WorkoutViewModel() {
     val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
     private val _headerDisplayMode = mutableStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
-    private val _enableScreenDimming = mutableStateOf(true)
-    val enableScreenDimming: State<Boolean> = _enableScreenDimming
+    private val _currentScreenDimmingState = mutableStateOf(true)
+    val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
     val lightScreenUp = _lightScreenUp.receiveAsFlow()
+
+    private val _previousScreenDimmingState = mutableStateOf(true)
 
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 3
@@ -68,7 +68,17 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     fun toggleScreenDimming() {
-        _enableScreenDimming.value = !_enableScreenDimming.value
+        _currentScreenDimmingState.value = !_currentScreenDimmingState.value
+        _previousScreenDimmingState.value = _currentScreenDimmingState.value
+    }
+
+    fun lightScreenPermanently() {
+        _previousScreenDimmingState.value = _currentScreenDimmingState.value
+        _currentScreenDimmingState.value = true
+    }
+
+    fun restoreScreenDimmingState() {
+        _currentScreenDimmingState.value = _previousScreenDimmingState.value
     }
 
     fun lightScreenUp() {

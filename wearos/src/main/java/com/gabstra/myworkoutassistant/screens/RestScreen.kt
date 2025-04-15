@@ -29,21 +29,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composable.PageButtons
-import com.gabstra.myworkoutassistant.composable.PageExerciseDetail
 import com.gabstra.myworkoutassistant.composable.PageExercises
-import com.gabstra.myworkoutassistant.composable.PageNotes
 import com.gabstra.myworkoutassistant.composable.PagePlates
 import com.gabstra.myworkoutassistant.composable.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -58,11 +51,8 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import kotlinx.coroutines.Job
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
-import java.util.UUID
-import kotlin.collections.get
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -332,6 +322,14 @@ fun RestScreen(
         )
 
         hearthRateChart()
+    }
+
+    LaunchedEffect(showSkipDialog) {
+        if(showSkipDialog){
+            viewModel.lightScreenPermanently()
+        }else{
+            viewModel.restoreScreenDimmingState()
+        }
     }
 
     CustomDialogYesOnLongPress(

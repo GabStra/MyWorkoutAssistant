@@ -4,11 +4,9 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import android.Manifest
-import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
@@ -36,7 +34,6 @@ import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import kotlinx.coroutines.delay
 
 @Composable
 fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel, hrViewModel : SensorDataViewModel) {
@@ -173,6 +170,13 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
         }
     }
 
+    LaunchedEffect(showDeleteDialog) {
+        if(showDeleteDialog){
+            appViewModel.lightScreenPermanently()
+        }else{
+            appViewModel.restoreScreenDimmingState()
+        }
+    }
 
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,

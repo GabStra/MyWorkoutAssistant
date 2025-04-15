@@ -92,6 +92,14 @@ fun WorkoutScreen(
         }
     }
 
+    LaunchedEffect(showWorkoutInProgressDialog) {
+        if(showWorkoutInProgressDialog){
+            viewModel.lightScreenPermanently()
+        }else{
+            viewModel.restoreScreenDimmingState()
+        }
+    }
+
     CustomDialogYesOnLongPress(
         show = showWorkoutInProgressDialog,
         title = "Workout in progress",

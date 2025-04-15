@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,11 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.PositionIndicator
-import androidx.wear.compose.material.Scaffold
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
@@ -78,7 +73,7 @@ fun PageButtons(
             enabled = !isHistoryEmpty,
             backgroundColor = MaterialTheme.colors.background
         )
-        val dimmingEnabled by viewModel.enableScreenDimming
+        val dimmingEnabled by viewModel.currentScreenDimmingState
         ButtonWithText(
             text = if (dimmingEnabled) "Disable Dimming" else "Enable Dimming",
             onClick = {
@@ -129,6 +124,14 @@ fun PageButtons(
                 },
                 backgroundColor = MaterialTheme.colors.background
             )
+        }
+    }
+
+    LaunchedEffect(showGoBackDialog) {
+        if(showGoBackDialog){
+            viewModel.lightScreenPermanently()
+        }else{
+            viewModel.restoreScreenDimmingState()
         }
     }
 
