@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -22,7 +21,6 @@ import java.time.temporal.ChronoUnit
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.ui.Alignment
@@ -66,7 +64,7 @@ fun CurrentTime() {
             Text(
                 text = ":",
                 style = MaterialTheme.typography.caption1,
-                color = if (showColon) Color.White else MyColors.MediumGray,
+                color = if (showColon) Color.White else MyColors.LightGray,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.wrapContentHeight(align = Alignment.CenterVertically)
             )

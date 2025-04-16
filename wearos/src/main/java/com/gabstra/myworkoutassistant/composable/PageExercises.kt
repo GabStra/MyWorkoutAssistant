@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composable
 
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -12,13 +11,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
@@ -26,7 +23,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,7 +39,6 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.delay
@@ -121,7 +116,7 @@ fun PageExercises(
                         .padding(2.dp),
                     imageVector = Icons.Filled.ArrowBack,
                     contentDescription = "Previous",
-                    tint = if (currentIndex > 0) Color.White else MyColors.MediumGray
+                    tint = if (currentIndex > 0) Color.White else MyColors.LightGray
                 )
             }
 
@@ -194,7 +189,7 @@ fun PageExercises(
                     currentSet = currentStateSet.set,
                     customColor = when{
                         updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
-                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.MediumGray
+                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.LightGray
                         else -> null
                     },
                     overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
@@ -219,7 +214,7 @@ fun PageExercises(
                         .padding(2.dp),
                     imageVector = Icons.Filled.ArrowForward,
                     contentDescription = "Next",
-                    tint = if (currentIndex < exerciseIds.size - 1) Color.White else MyColors.MediumGray
+                    tint = if (currentIndex < exerciseIds.size - 1) Color.White else MyColors.LightGray
                 )
             }
 

@@ -1,6 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,14 +49,15 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
 @Composable
 fun PreparingPolarScreen(
     viewModel: AppViewModel,
     navController: NavController,
     polarViewModel: PolarViewModel,
     state: WorkoutState.Preparing,
-    onReady: () -> Unit  = {}
-){
+    onReady: () -> Unit = {}
+) {
     val deviceConnectionInfo by polarViewModel.deviceConnectionState.collectAsState()
 
     val scope = rememberCoroutineScope()
@@ -62,22 +67,22 @@ fun PreparingPolarScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit){
-        if(viewModel.polarDeviceId.isEmpty()){
+    LaunchedEffect(Unit) {
+        if (viewModel.polarDeviceId.isEmpty()) {
             Toast.makeText(context, "No polar device id set", Toast.LENGTH_SHORT).show()
             navController.popBackStack()
             VibrateShortImpulse(context);
             return@LaunchedEffect
         }
 
-        polarViewModel.initialize(context,viewModel.polarDeviceId)
+        polarViewModel.initialize(context, viewModel.polarDeviceId)
         polarViewModel.connectToDevice()
 
         scope.launch {
             while (true) {
                 delay(1000) // Update every sec.
                 currentMillis += 1000
-                if(currentMillis >= 5000){
+                if (currentMillis >= 5000) {
                     canSkip = true
                     break
                 }
@@ -85,8 +90,8 @@ fun PreparingPolarScreen(
         }
     }
 
-    LaunchedEffect(deviceConnectionInfo, state.dataLoaded,currentMillis,hasWorkoutRecord) {
-        if(hasTriggeredNextState){
+    LaunchedEffect(deviceConnectionInfo, state.dataLoaded, currentMillis, hasWorkoutRecord) {
+        if (hasTriggeredNextState) {
             return@LaunchedEffect
         }
 
@@ -94,9 +99,9 @@ fun PreparingPolarScreen(
         if (isReady) {
             hasTriggeredNextState = true
 
-            if(hasWorkoutRecord){
+            if (hasWorkoutRecord) {
                 viewModel.resumeLastState()
-            }else{
+            } else {
                 viewModel.goToNextState()
                 viewModel.setWorkoutStart()
                 VibrateHard(context)
@@ -110,29 +115,44 @@ fun PreparingPolarScreen(
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.CenterStart
-    ){
-        Column(horizontalAlignment = Alignment.CenterHorizontally){
-            Text(modifier = Modifier.fillMaxWidth(),text = "Preparing\nPolar Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = "Preparing\nPolar Sensor",
+                style = MaterialTheme.typography.body2,
+                textAlign = TextAlign.Center
+            )
             Spacer(modifier = Modifier.height(15.dp))
-            LoadingText(baseText =  if(deviceConnectionInfo == null) "Connecting" else "Please Wait")
-            if(canSkip && deviceConnectionInfo == null && state.dataLoaded) {
-                Spacer(modifier = Modifier.height(25.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ){
-                    Button(
-                        onClick = {
-                            VibrateGentle(context)
-                            viewModel.goToNextState()
-                            viewModel.lightScreenUp()
-                            viewModel.setWorkoutStart()
-                            onReady()
-                        },
-                        modifier = Modifier.size(35.dp),
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+            LoadingText(baseText = if (deviceConnectionInfo == null) "Connecting" else "Please Wait")
+
+            AnimatedVisibility(
+                visible = canSkip && deviceConnectionInfo == null && state.dataLoaded,
+                enter = fadeIn(animationSpec = tween(500)),
+                exit = fadeOut(animationSpec = tween(500))
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Spacer(modifier = Modifier.height(25.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Icon(imageVector = Icons.Default.DoubleArrow, contentDescription = "skip")
+                        Button(
+                            onClick = {
+                                VibrateGentle(context)
+                                viewModel.goToNextState()
+                                viewModel.lightScreenUp()
+                                viewModel.setWorkoutStart()
+                                onReady()
+                            },
+                            modifier = Modifier.size(35.dp),
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DoubleArrow,
+                                contentDescription = "skip"
+                            )
+                        }
                     }
                 }
             }

@@ -1,10 +1,15 @@
 package com.gabstra.myworkoutassistant.composable
 
-import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.QuestionMark
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -33,6 +39,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
@@ -46,7 +54,6 @@ import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
-import com.gabstra.myworkoutassistant.shared.mapPercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel.TrendDirection
@@ -68,6 +75,68 @@ private fun getProgressIndicatorSegments() = listOf(
     ProgressIndicatorSegment(.166f, colorsByZone[5]),
 )
 
+enum class HeartRateStatus {
+    HIGHER_THAN_TARGET,
+    LOWER_THAN_TARGET,
+    OUT_OF_MAX,
+}
+
+@Composable
+fun HrStatusDialog(
+    show: Boolean,
+    heartRateStatus: HeartRateStatus,
+){
+    AnimatedVisibility(
+        visible = show,
+        enter = fadeIn(animationSpec = tween(500)),
+        exit = fadeOut(animationSpec = tween(500))
+    ) {
+        Dialog(
+            onDismissRequest = {  },
+            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.75f))
+                    .fillMaxSize()
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Top,
+                ) {
+
+                    var message = when (heartRateStatus) {
+                        HeartRateStatus.HIGHER_THAN_TARGET -> "Heart rate higher than target zone"
+                        HeartRateStatus.LOWER_THAN_TARGET -> "Heart rate lower than target zone"
+                        HeartRateStatus.OUT_OF_MAX -> "Heart rate exceeding maximum"
+                    }
+
+                    var icon = when (heartRateStatus) {
+                        HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
+                        HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
+                        HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
+                    }
+
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = "Heart rate status",
+                        modifier = Modifier.size(50.dp),
+                        tint = MyColors.Red
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = message,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.body1,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
@@ -85,12 +154,23 @@ fun HeartRateCircularChart(
     var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
     var alarmJob by remember { mutableStateOf<Job?>(null) }
 
-    val alertCooldown = 1000L //5 seconds in milliseconds
+    val alertCooldown = 1000L
+
+    var showHrStatusDialog by remember { mutableStateOf(false) }
+    var hrStatus by remember { mutableStateOf(HeartRateStatus.LOWER_THAN_TARGET) }
+
+    LaunchedEffect(showHrStatusDialog) {
+        if(showHrStatusDialog){
+            appViewModel.lightScreenPermanently()
+        }else{
+            appViewModel.restoreScreenDimmingState()
+        }
+    }
+
 
     fun startAlertJob() {
         alertJob = scope.launch {
             delay(2000)
-            Toast.makeText(context, "Heart rate over limit", Toast.LENGTH_LONG).show()
             while (isActive) {
                 VibrateShortImpulse(context)
                 delay(alertCooldown)
@@ -101,16 +181,16 @@ fun HeartRateCircularChart(
     if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null) {
         var reachedTargetOnce by remember { mutableStateOf(false) }
 
-
         LaunchedEffect(mhrPercentage) {
             if(alertJob?.isActive == true) return@LaunchedEffect
 
             if(mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
                 if(alarmJob?.isActive == true) {
                     alarmJob?.cancel()
+                    showHrStatusDialog = false
                 }
 
-                if(zoneTrackingJob?.isActive == true) {
+                if(zoneTrackingJob?.isActive == true || reachedTargetOnce) {
                     return@LaunchedEffect
                 }
 
@@ -128,7 +208,15 @@ fun HeartRateCircularChart(
                 alarmJob = scope.launch {
                     delay(5000)
                     appViewModel.lightScreenUp()
-                    Toast.makeText(context, "HR outside target zone", Toast.LENGTH_LONG).show()
+
+                    if(mhrPercentage < lowerBoundMaxHRPercent) {
+                        hrStatus = HeartRateStatus.LOWER_THAN_TARGET
+                    } else {
+                        hrStatus = HeartRateStatus.HIGHER_THAN_TARGET
+                    }
+
+                    showHrStatusDialog = true
+
                     while (isActive) {
                         VibrateTwiceAndBeep(context)
                         delay(2500)
@@ -136,16 +224,19 @@ fun HeartRateCircularChart(
                 }
             }
         }
+
+        HrStatusDialog(showHrStatusDialog, hrStatus)
     }
 
     LaunchedEffect(mhrPercentage) {
-        if (mhrPercentage >= 100) {
-            if(alertJob?.isActive == false){
-                startAlertJob()
-                zoneTrackingJob?.cancel()
-                alarmJob?.cancel()
-            }
-        }else{
+        if (mhrPercentage > 100 && alertJob?.isActive == false) {
+            startAlertJob()
+            hrStatus = HeartRateStatus.OUT_OF_MAX
+            showHrStatusDialog = true
+            zoneTrackingJob?.cancel()
+            alarmJob?.cancel()
+        }else if(alertJob?.isActive == true){
+            showHrStatusDialog = false
             alertJob?.cancel()
         }
     }
@@ -242,15 +333,12 @@ private fun ZoneSegment(
     mhrPercentage: Float,
     zoneRanges: Array<Pair<Float, Float>>,
     colorsByZone: Array<Color>,
-    totalStartAngle: Float,
-    segmentArcAngle: Float,
-    paddingAngle: Float,
-    lowerBoundMaxHRPercent: Float?,
-    upperBoundMaxHRPercent: Float?,
+    startAngle: Float,
+    endAngle: Float,
+    lowerBound: Float,
+    upperBound: Float,
 ) {
     if (index !in zoneRanges.indices || index !in colorsByZone.indices) return
-
-    val (lowerBound, upperBound) = zoneRanges[index]
 
     val indicatorProgress by remember(hr, currentZone, index, mhrPercentage, lowerBound, upperBound) {
         derivedStateOf {
@@ -276,9 +364,6 @@ private fun ZoneSegment(
         )
     }
 
-    val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
-    val endAngle = startAngle + segmentArcAngle
-
     SegmentedProgressIndicator(
         trackSegments = listOf(trackSegment),
         progress = indicatorProgress,
@@ -289,50 +374,57 @@ private fun ZoneSegment(
         endAngle = endAngle,
         trackColor = Color.DarkGray,
     )
+}
 
-    // --- Boundary Indicator Logic (Handles within-zone and boundaries correctly) ---
-
-    // Check if the LOWER bound target falls within this zone's range [lower, upper)
-    // OR exactly at the upper bound IF this is the last zone [lower, upper]
-    val shouldDrawLowerBoundIndicator = lowerBoundMaxHRPercent != null &&
-            (lowerBoundMaxHRPercent >= lowerBound && lowerBoundMaxHRPercent < upperBound)
-
-
-    // Check if the UPPER bound target falls within this zone's range [lower, upper)
-    // OR exactly at the upper bound IF this is the last zone [lower, upper]
-    val shouldDrawUpperBoundIndicator = upperBoundMaxHRPercent != null &&
-            (upperBoundMaxHRPercent > lowerBound && upperBoundMaxHRPercent <= upperBound)
-
-
-    if (shouldDrawLowerBoundIndicator && lowerBoundMaxHRPercent != null) {
-        val lowerBoundRotationAngle by remember(lowerBoundMaxHRPercent, lowerBound, upperBound, startAngle, endAngle) {
-            derivedStateOf {
-                val percentageInZone = if (upperBound > lowerBound) {
-                    ((lowerBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
-                } else {
-                    if (lowerBoundMaxHRPercent == lowerBound) 0f else 0f // Default to 0 if bounds are equal
-                }
-                getValueInRange(startAngle, endAngle, percentageInZone)
-            }
-        }
-        RotatingIndicator(lowerBoundRotationAngle, MyColors.Green)
+fun extractRotationAngles(
+    zoneCount: Int,
+    zoneRanges: Array<Pair<Float, Float>>,
+    lowerBoundMaxHRPercent: Float?,
+    upperBoundMaxHRPercent: Float?,
+    totalStartAngle: Float,
+    segmentArcAngle: Float,
+    paddingAngle: Float
+): Pair<Float?, Float?> {
+    // Sanity check to make sure we have valid zone data
+    if (segmentArcAngle <= 0f || zoneCount <= 0 || zoneRanges.size != zoneCount) {
+        return Pair(null, null)
     }
 
-    if (shouldDrawUpperBoundIndicator && upperBoundMaxHRPercent != null) {
-        val upperBoundRotationAngle by remember(upperBoundMaxHRPercent, lowerBound, upperBound, startAngle, endAngle) {
-            derivedStateOf {
-                // Calculate percentage *within this specific zone*
-                val percentageInZone = if (upperBound > lowerBound) {
-                    ((upperBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
-                } else {
-                    // Handle zero-width zone: only possible if target == bound
-                    if (upperBoundMaxHRPercent == lowerBound) 0f else 0f // Default to 0 if bounds are equal
-                }
-                getValueInRange(startAngle, endAngle, percentageInZone)
+    var foundLowerBoundRotationAngle: Float? = null
+    var foundUpperBoundRotationAngle: Float? = null
+
+    // Check each zone to find where the indicators should be placed
+    for (index in 0 until zoneCount) {
+        val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
+        val endAngle = startAngle + segmentArcAngle
+        val (lowerBound, upperBound) = zoneRanges[index]
+
+        // Check for lower bound indicator
+        if (lowerBoundMaxHRPercent != null &&
+            lowerBoundMaxHRPercent >= lowerBound && lowerBoundMaxHRPercent < upperBound) {
+
+            val percentageInZone = if (upperBound > lowerBound) {
+                ((lowerBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
+            } else {
+                if (lowerBoundMaxHRPercent == lowerBound) 0f else 0f
             }
+            foundLowerBoundRotationAngle = getValueInRange(startAngle, endAngle, percentageInZone)
         }
-        RotatingIndicator(upperBoundRotationAngle, MyColors.Red)
+
+        // Check for upper bound indicator
+        if (upperBoundMaxHRPercent != null &&
+            upperBoundMaxHRPercent > lowerBound && upperBoundMaxHRPercent <= upperBound) {
+
+            val percentageInZone = if (upperBound > lowerBound) {
+                ((upperBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
+            } else {
+                if (upperBoundMaxHRPercent == lowerBound) 0f else 0f
+            }
+            foundUpperBoundRotationAngle = getValueInRange(startAngle, endAngle, percentageInZone)
+        }
     }
+
+    return Pair(foundLowerBoundRotationAngle, foundUpperBoundRotationAngle)
 }
 
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
@@ -409,8 +501,23 @@ private fun HeartRateView(
             hrTrend = hrTrend
         )
 
+        val (lowerBoundRotationAngle, upperBoundRotationAngle) = extractRotationAngles(
+            zoneCount = zoneCount,
+            zoneRanges = zoneRanges,
+            lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+            upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+            totalStartAngle = totalStartAngle,
+            segmentArcAngle = segmentArcAngle,
+            paddingAngle = paddingAngle
+        )
+
         if (segmentArcAngle > 0f && zoneCount > 0 && zoneRanges.size == zoneCount) {
             for (index in 0 until zoneCount) {
+                val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
+                val endAngle = startAngle + segmentArcAngle
+
+                val (lowerBound, upperBound) = zoneRanges[index]
+
                 ZoneSegment(
                     modifier = Modifier.fillMaxSize(),
                     index = index,
@@ -419,13 +526,17 @@ private fun HeartRateView(
                     mhrPercentage = mhrPercentage,
                     zoneRanges = zoneRanges,
                     colorsByZone = colorsByZone,
-                    totalStartAngle = totalStartAngle,
-                    segmentArcAngle = segmentArcAngle,
-                    paddingAngle = paddingAngle,
-                    lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
-                    upperBoundMaxHRPercent = upperBoundMaxHRPercent
+                    startAngle = startAngle,
+                    endAngle = endAngle,
+                    lowerBound = lowerBound,
+                    upperBound = upperBound
                 )
             }
+        }
+
+        if(lowerBoundRotationAngle != null && upperBoundRotationAngle != null){
+            RotatingIndicator(lowerBoundRotationAngle, MyColors.Green)
+            RotatingIndicator(upperBoundRotationAngle, MyColors.Red)
         }
     }
 }

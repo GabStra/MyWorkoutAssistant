@@ -65,9 +65,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.collections.setOf
 import kotlin.math.abs
 import kotlin.math.exp
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
+import kotlin.math.floor
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -609,6 +607,22 @@ open class WorkoutViewModel : ViewModel() {
 
         val exerciseVolume = setVolumes.sum()
 
+        val setWeights = exerciseSets.map {
+            when (it) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    it.getWeight(equipment, relativeBodyWeight)
+                }
+
+                is WeightSet -> {
+                    it.getWeight(equipment)
+                }
+
+                else -> 0.0
+            }
+        }
+
         val setWorkloads = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> {
@@ -720,6 +734,7 @@ open class WorkoutViewModel : ViewModel() {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
                 setVolumes = setVolumes,
                 setWorkloads = setWorkloads,
+                setWeights = setWeights,
                 totalReps = totalReps,
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
@@ -1537,66 +1552,54 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            val warmUpProtocols = listOf(
-                Pair(0.4, min(15, workReps+5)),
-                Pair(0.6, min(12, workReps+3)),
-                Pair(0.75, min(8, workReps+1)),
-                Pair(0.85, min(5, workReps)),
-                Pair(0.95,  max(2, min(3, workReps - 2))),
-            )
+            fun buildWarmupSets(
+                workWeight: Double,
+                workReps: Int,
+                oneRepMax: Double,
+                availableWeights: Collection<Double>,
+                numberOfWarmUpSets: Int
+            ): List<Pair<Double, Int>> {
+                // 1) Define your ideal protocol
+                val protocols = listOf(
+                    0.5 to 0.25,
+                    0.6 to 0.25,
+                    0.75 to 0.25,
+                    0.9 to 0.25,
+                )
 
-            val chosenWeights = mutableSetOf<Double>()
+                val workWorkload = workWeight * workReps * exp(2.0 *  workWeight / oneRepMax)
 
-            val actualWarmupSets = mutableListOf<Pair<Double, Int>>()
+                val sortedWeights = availableWeights.sorted()
+                val chosen = mutableSetOf<Double>()
 
-            warmUpProtocols.forEach {
-                val (percentage, reps) = it
-                val weight = workWeight * percentage
+                val sets = mutableListOf<Pair<Double, Int>>()
+                for ((weightPercentage, workloadPercentage) in protocols) {
+                    if (sets.size >= numberOfWarmUpSets) break
 
-                val selectableWeights = (availableWeights - chosenWeights).filter { it <= weight }
-                val closestWeight = selectableWeights.minByOrNull { abs(it - weight) }
+                    val target = workWeight * weightPercentage
+                    var weight = sortedWeights
+                        .asSequence()
+                        .filter { it !in chosen}
+                        .minByOrNull { abs(it - target) }
 
-                if (closestWeight != null) {
-                    chosenWeights.add(closestWeight)
-                    actualWarmupSets.add(Pair(closestWeight, reps))
-                }
-            }
-
-            if(actualWarmupSets.size < numberOfWarmUpSets){
-                while(true){
-                    val selectableWeights = (availableWeights - chosenWeights).filter { it < workWeight }
-
-                    val minOrNull = selectableWeights.minOrNull()
-                    if(minOrNull == null) break
-
-                    chosenWeights.add(minOrNull)
-                }
-
-                chosenWeights.forEach {
-                    val intensity = it / oneRepMax
-                    val expectedReps = ((1.0278 - intensity) / 0.0278).roundToInt()
-                    val halfCapacityEstimatedReps = expectedReps / 2
-
-                    if (halfCapacityEstimatedReps >= 2) {
-                        actualWarmupSets.add(Pair(it, halfCapacityEstimatedReps))
+                    if (weight != null) {
+                        val maxWorkload = workWorkload * workloadPercentage
+                        var reps = floor(maxWorkload/(weight* exp(2.0 *  weight / oneRepMax))).toInt().coerceAtLeast(2)
+                        chosen += weight
+                        sets += weight to reps
                     }
                 }
 
-                actualWarmupSets.sortBy { it.first }
+                return sets
             }
 
-            /*if(actualWarmupSets.size > 1){
-                val warmupWeights = actualWarmupSets.map { it.first }.toSet()
-                val usableWarmupWeight = filterByDistance(availableWeights.toList(), warmupWeights.toList(), 2)
-
-                actualWarmupSets = actualWarmupSets.filter { it.first in usableWarmupWeight }
-            }*/
-
-            if (actualWarmupSets.size > numberOfWarmUpSets) {
-                val setsToKeep = actualWarmupSets.take(numberOfWarmUpSets)
-                actualWarmupSets.clear()
-                actualWarmupSets.addAll(setsToKeep)
-            }
+            val actualWarmupSets = buildWarmupSets(
+                workWeight,
+                workReps,
+                oneRepMax,
+                availableWeights,
+                numberOfWarmUpSets
+            )
 
             actualWarmupSets.forEach {
                 val (weight, reps) = it

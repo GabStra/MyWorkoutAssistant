@@ -66,7 +66,7 @@ fun ControlButtonsVertical(
                     .background(MyColors.Green),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
+                Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add", tint = Color.Black)
             }
         }
         Box(
@@ -95,7 +95,7 @@ fun ControlButtonsVertical(
                     .background(MyColors.Red),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
+                Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract", tint = Color.Black)
             }
         }
 

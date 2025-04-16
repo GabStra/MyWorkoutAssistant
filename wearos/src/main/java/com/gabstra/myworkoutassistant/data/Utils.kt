@@ -81,7 +81,7 @@ fun FormatTime(seconds: Int): String {
 
 
 // Default height for the content fade gradient
-private val DEFAULT_CONTENT_FADE_HEIGHT = 10.dp
+private val DEFAULT_CONTENT_FADE_HEIGHT = 5.dp
 
 @Composable
 fun Modifier.verticalColumnScrollbar(
