@@ -302,7 +302,7 @@ fun EnduranceSetScreen (
             if (isTimerInEditMode) {
                 ControlButtonsVertical(
                     modifier = Modifier
-                        .wrapContentSize()
+                        .fillMaxSize()
                         .clickable(
                             interactionSource = null,
                             indication = null

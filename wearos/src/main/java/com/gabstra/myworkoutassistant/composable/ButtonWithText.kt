@@ -25,11 +25,7 @@ fun ButtonWithText(
     backgroundColor: Color = MaterialTheme.colors.background,
     onClick: () -> Unit
 ) {
-    val textColor = if (getContrastRatio(backgroundColor, Color.Black) > getContrastRatio(backgroundColor, Color.White)) {
-        Color.Black
-    } else {
-        Color.White
-    }
+    val textColor = Color.White
 
     Button(
         onClick,

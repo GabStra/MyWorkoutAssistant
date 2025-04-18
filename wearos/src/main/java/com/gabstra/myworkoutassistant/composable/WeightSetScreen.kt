@@ -379,7 +379,7 @@ fun WeightSetScreen(
             if (isRepsInEditMode || isWeightInEditMode) {
                 ControlButtonsVertical(
                     modifier = Modifier
-                        .wrapContentSize()
+                        .fillMaxSize()
                         .clickable(
                             interactionSource = null,
                             indication = null

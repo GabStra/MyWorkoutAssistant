@@ -146,7 +146,7 @@ fun PreparingPolarScreen(
                                 onReady()
                             },
                             modifier = Modifier.size(35.dp),
-                            colors = ButtonDefaults.buttonColors(backgroundColor = Color.Gray)
+                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.background)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.DoubleArrow,

@@ -248,6 +248,7 @@ fun RestScreen(
             ) {
                 ControlButtonsVertical(
                     modifier = Modifier
+                        .fillMaxSize()
                         .clickable(
                             interactionSource = null,
                             indication = null

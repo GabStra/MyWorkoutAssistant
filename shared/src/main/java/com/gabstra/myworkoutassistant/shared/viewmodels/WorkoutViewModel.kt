@@ -740,8 +740,7 @@ open class WorkoutViewModel : ViewModel() {
                 availableWeights = availableWeights,
                 maxLoadPercent = maxLoadPercent,
                 repsRange = repsRange,
-                minSets = minOf(3, exerciseSets.size),
-                maxSets = exerciseSets.size,
+                sets = maxOf(3, exerciseSets.size),
                 workloadProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
             )
         }
@@ -1567,7 +1566,7 @@ open class WorkoutViewModel : ViewModel() {
                     0.9 to 0.25,
                 )
 
-                val workWorkload = workWeight * workReps * exp(2.0 *  workWeight / oneRepMax)
+                val workVolume = workWeight * workReps
 
                 val sortedWeights = availableWeights.sorted()
                 val chosen = mutableSetOf<Double>()
@@ -1583,8 +1582,8 @@ open class WorkoutViewModel : ViewModel() {
                         .minByOrNull { abs(it - target) }
 
                     if (weight != null) {
-                        val maxWorkload = workWorkload * workloadPercentage
-                        var reps = floor(maxWorkload/(weight* exp(2.0 *  weight / oneRepMax))).toInt().coerceAtLeast(2)
+                        val maxVolume = workVolume * workloadPercentage
+                        var reps = floor(maxVolume/weight).toInt().coerceAtLeast(2)
                         chosen += weight
                         sets += weight to reps
                     }

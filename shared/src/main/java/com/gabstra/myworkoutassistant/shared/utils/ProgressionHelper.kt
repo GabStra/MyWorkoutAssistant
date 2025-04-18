@@ -42,8 +42,7 @@ object VolumeDistributionHelper {
         val maxLoadPercent: Double,
         val repsRange: IntRange,
         val workloadProgressionRange: FloatRange,
-        val minSets: Int,
-        val maxSets: Int,
+        val sets: Int,
     )
 
     private  suspend fun findValidProgression(
@@ -53,66 +52,50 @@ object VolumeDistributionHelper {
         val minWorkload = params.totalWorkload * (1 + params.workloadProgressionRange.from / 100)
         val maxWorkload = params.totalWorkload * (1 + params.workloadProgressionRange.to / 100)
 
-        val maxIntensity = params.setWeights.max() / params.oneRepMax
+        var result = emptyList<ExerciseSet>()
 
-        var result = findBestProgressions(
-            possibleSets,
-            params.minSets,
-            params.maxSets,
-            { combo ->
-                val currentTotalWorkload = combo.sumOf { it.workload }
-                val currentMaxIntensity = combo.maxOf { it.weight } / params.oneRepMax
+        var currentSets = params.sets
 
-                ValidationResult(
-                    shouldReturn = currentTotalWorkload.isEqualTo(params.totalWorkload)
-                            || currentTotalWorkload < minWorkload
-                            || currentTotalWorkload > maxWorkload
-                            || currentMaxIntensity > maxIntensity * 1.01
-                )
-            }
-        )
-
-        if (result.isNotEmpty()) return result
-
-        // Strategy 2: Try with filtered sets but extended set range (up to 5)
-        if (params.maxSets < 5) {
-            result = findBestProgressions(
+        while(currentSets <=5){
+            var result = findBestProgressions(
                 possibleSets,
-                params.maxSets,
-                5,
+                currentSets,
+                currentSets,
+                params,
                 { combo ->
                     val currentTotalWorkload = combo.sumOf { it.workload }
-                    val currentMaxIntensity = combo.maxOf { it.weight } / params.oneRepMax
 
                     ValidationResult(
                         shouldReturn = currentTotalWorkload.isEqualTo(params.totalWorkload)
                                 || currentTotalWorkload < minWorkload
                                 || currentTotalWorkload > maxWorkload
-                                || currentMaxIntensity > maxIntensity * 1.01
                     )
                 }
             )
-
             if (result.isNotEmpty()) return result
+            currentSets++
         }
 
-        result = findBestProgressions(
-            possibleSets,
-            params.minSets,
-            params.maxSets,
-            { combo ->
-                val currentTotalWorkload = combo.sumOf { it.workload }
-                val currentMaxIntensity = combo.maxOf { it.weight } / params.oneRepMax
+        currentSets = params.sets
 
-                ValidationResult(
-                    shouldReturn = currentTotalWorkload.isEqualTo(params.totalWorkload)
-                            || currentTotalWorkload < minWorkload
-                            || currentMaxIntensity > maxIntensity * 1.01
-                )
-            }
-        )
+        while(currentSets <=5){
+            var result = findBestProgressions(
+                possibleSets,
+                currentSets,
+                currentSets,
+                params,
+                { combo ->
+                    val currentTotalWorkload = combo.sumOf { it.workload }
 
-        if (result.isNotEmpty()) return result
+                    ValidationResult(
+                        shouldReturn = currentTotalWorkload.isEqualTo(params.totalWorkload)
+                                || currentTotalWorkload < minWorkload
+                    )
+                }
+            )
+            if (result.isNotEmpty()) return result
+            currentSets++
+        }
 
         return result
     }
@@ -151,6 +134,7 @@ object VolumeDistributionHelper {
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
+        params: WeightExerciseParameters,
         validationRules: (List<ExerciseSet>) -> ValidationResult,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
@@ -172,9 +156,9 @@ object VolumeDistributionHelper {
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val currentWorkload = combo.sumOf { it.workload }
-            //val workloadDifferenceScore = 1 + (combo.maxOf { it.workload } - combo.minOf { it.workload })
+            val workloadDifferenceScore = 1 + (combo.maxOf { it.workload } - combo.minOf { it.workload })
 
-            return currentWorkload
+            return currentWorkload * workloadDifferenceScore
         }
 
         suspend fun exploreCombinations(
@@ -261,13 +245,12 @@ object VolumeDistributionHelper {
         coroutineScope {
             var nearAverageWeights = getNearAverageWeights(params)
 
-            /*
             val maxIntensity = params.setWeights.max() / params.oneRepMax
             val maxWeight = (maxIntensity * 1.01) * params.oneRepMax
 
+            // Filter out weights that are too high
             nearAverageWeights = nearAverageWeights.filter { it <= maxWeight }
-             */
-
+            
             nearAverageWeights.map { weight ->
                 async(Dispatchers.Default) {
                     val intensity = weight / params.oneRepMax
@@ -313,8 +296,7 @@ object VolumeDistributionHelper {
         maxLoadPercent: Double,
         repsRange: IntRange,
         workloadProgressionRange: FloatRange,
-        minSets: Int = 3,
-        maxSets: Int = 5,
+        sets: Int
     ): ExerciseProgression? {
         val exerciseVolume = setVolumes.sum()
         val exerciseWorkload = setWorkloads.sum()
@@ -332,8 +314,7 @@ object VolumeDistributionHelper {
             maxLoadPercent = maxLoadPercent,
             repsRange = repsRange,
             totalWorkload = exerciseWorkload,
-            minSets = minSets,
-            maxSets = maxSets,
+            sets = sets,
             averageLoadPerRep =  averageLoadPerRep,
             averageWorkloadPerRep = averateWorkloadPerRep,
             workloadProgressionRange = workloadProgressionRange,

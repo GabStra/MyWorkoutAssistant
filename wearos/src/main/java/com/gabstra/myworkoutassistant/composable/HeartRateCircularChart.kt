@@ -535,8 +535,26 @@ private fun HeartRateView(
         }
 
         if(lowerBoundRotationAngle != null && upperBoundRotationAngle != null){
-            RotatingIndicator(lowerBoundRotationAngle, MyColors.Green)
-            RotatingIndicator(upperBoundRotationAngle, MyColors.Red)
+
+            var progress = if(mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!!) {
+                1f
+            } else {
+                0f
+            }
+
+            SegmentedProgressIndicator(
+                trackSegments = listOf( ProgressIndicatorSegment(
+                    weight = 1f,
+                    indicatorColor = MyColors.Green
+                )),
+                progress = progress,
+                modifier = Modifier.fillMaxSize().padding(10.dp),
+                strokeWidth = 2.dp,
+                paddingAngle = 0f,
+                startAngle = lowerBoundRotationAngle ,
+                endAngle = upperBoundRotationAngle,
+                trackColor = Color.DarkGray,
+            )
         }
     }
 }
