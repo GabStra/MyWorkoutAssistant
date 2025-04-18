@@ -250,7 +250,7 @@ object VolumeDistributionHelper {
 
             // Filter out weights that are too high
             nearAverageWeights = nearAverageWeights.filter { it <= maxWeight }
-            
+
             nearAverageWeights.map { weight ->
                 async(Dispatchers.Default) {
                     val intensity = weight / params.oneRepMax
