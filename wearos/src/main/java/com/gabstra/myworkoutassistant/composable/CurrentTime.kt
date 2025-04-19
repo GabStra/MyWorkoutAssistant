@@ -1,8 +1,8 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -22,8 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 @SuppressLint("DefaultLocale")
@@ -31,14 +31,14 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 fun CurrentTime() {
     var currentTime by remember { mutableStateOf(LocalDateTime.now()) }
 
-    var showColon by remember { mutableStateOf(true) }
+    var showDots by remember { mutableStateOf(true) }
 
     // Coroutine that updates the time every minute
     LaunchedEffect(Unit) {
         while (true) {
             val now = LocalDateTime.now()
             currentTime = now
-            showColon = !showColon
+            showDots = !showDots
             val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
             delay(java.time.Duration.between(now, nextSecond).toMillis())
         }
@@ -49,32 +49,49 @@ fun CurrentTime() {
         horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         Text(
-            modifier = Modifier,
+            modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.hour),
             style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.End
         )
 
-        Box(
+        ClockSeparator(
+            showDots = showDots,
             modifier = Modifier
                 .width(6.dp)
-                .fillMaxHeight(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = ":",
-                style = MaterialTheme.typography.caption1,
-                color = if (showColon) Color.White else MyColors.LightGray,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.wrapContentHeight(align = Alignment.CenterVertically)
-            )
-        }
+                .fillMaxHeight()
+        )
 
         Text(
-            modifier = Modifier,
+            modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.minute),
             style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.Start
+        )
+    }
+}
+
+@Composable
+fun ClockSeparator(
+    showDots: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val dotRadius = size.height / 12f
+        val centerX = size.width / 2f
+        val centerY = size.height / 2f
+        val gap = size.height / 5f
+        val color = if (showDots) Color.White else MyColors.LightGray
+
+        drawCircle(
+            color = color,
+            radius = dotRadius,
+            center = Offset(centerX, centerY - gap)
+        )
+        drawCircle(
+            color = color,
+            radius = dotRadius,
+            center = Offset(centerX, centerY + gap)
         )
     }
 }

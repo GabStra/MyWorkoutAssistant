@@ -413,9 +413,8 @@ fun calculateVolume(weight: Double, reps: Int): Double {
     return weight * reps
 }
 
-fun calculateOneRepMax(weight: Double, reps: Int): Double {
-    return weight / (1.0278 - (0.0278 * reps))
-}
+fun calculateOneRepMax(weight: Double, reps: Int): Double =
+    weight * reps.toDouble().pow(0.10)
 
 fun Double.round(decimals: Int): Double {
     var multiplier = 1.0

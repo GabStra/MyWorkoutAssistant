@@ -2,12 +2,17 @@ package com.gabstra.myworkoutassistant.shared.utils
 
 import android.util.Log
 import androidx.annotation.FloatRange
+import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
+import com.gabstra.myworkoutassistant.shared.maxRepsForWeight
+import com.gabstra.myworkoutassistant.shared.median
+import com.gabstra.myworkoutassistant.shared.round
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
 import kotlin.math.exp
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 
@@ -17,7 +22,8 @@ object VolumeDistributionHelper {
         val reps: Int,
         val volume: Double,
         val intensity: Double,
-        val workload: Double
+        val workload: Double,
+        val rir: Double
     )
 
     data class ExerciseProgression(
@@ -26,6 +32,7 @@ object VolumeDistributionHelper {
         val usedOneRepMax: Double,
         val progressIncrease: Double,
         val originalWorkload: Double,
+        val averageRIR: Double
     )
 
     data class WeightExerciseParameters(
@@ -43,6 +50,7 @@ object VolumeDistributionHelper {
         val repsRange: IntRange,
         val workloadProgressionRange: FloatRange,
         val sets: Int,
+        val averageRIR: Double
     )
 
     private  suspend fun findValidProgression(
@@ -56,7 +64,7 @@ object VolumeDistributionHelper {
 
         var currentSets = params.sets
 
-        while(currentSets <=5){
+        while(currentSets <= 5){
             var result = findBestProgressions(
                 possibleSets,
                 currentSets,
@@ -78,7 +86,7 @@ object VolumeDistributionHelper {
 
         currentSets = params.sets
 
-        while(currentSets <=5){
+        while(currentSets <= 5){
             var result = findBestProgressions(
                 possibleSets,
                 currentSets,
@@ -116,12 +124,15 @@ object VolumeDistributionHelper {
 
         val currentTotalWorkload = validSetCombination.sumOf { it.workload }
 
+        val averageRIR = validSetCombination.map { it.rir }.average()
+
         return ExerciseProgression(
             sets = validSetCombination,
             workload = currentTotalWorkload,
             usedOneRepMax = params.oneRepMax,
             progressIncrease = ((currentTotalWorkload - params.totalWorkload) / params.totalWorkload) * 100,
             originalWorkload = params.totalWorkload,
+            averageRIR = averageRIR
         )
     }
 
@@ -158,7 +169,11 @@ object VolumeDistributionHelper {
             val currentWorkload = combo.sumOf { it.workload }
             val workloadDifferenceScore = 1 + (combo.maxOf { it.workload } - combo.minOf { it.workload })
 
-            return currentWorkload * workloadDifferenceScore
+            val averageRIR = combo.map { it.rir }.average()
+
+            val averageLoadPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
+
+            return currentWorkload * workloadDifferenceScore * (1 + averageRIR) * averageLoadPerRep
         }
 
         suspend fun exploreCombinations(
@@ -245,16 +260,9 @@ object VolumeDistributionHelper {
         coroutineScope {
             var nearAverageWeights = getNearAverageWeights(params)
 
-            val maxIntensity = params.setWeights.max() / params.oneRepMax
-            val maxWeight = (maxIntensity * 1.01) * params.oneRepMax
-
-            // Filter out weights that are too high
-            nearAverageWeights = nearAverageWeights.filter { it <= maxWeight }
-
             nearAverageWeights.map { weight ->
                 async(Dispatchers.Default) {
-                    val intensity = weight / params.oneRepMax
-                    val expectedReps = ((1.0278 - intensity) / 0.0278).roundToInt() + 1
+                    val expectedReps = maxRepsForWeight(weight,params.oneRepMax).roundToInt()
 
                     params.repsRange
                         .filter { reps -> reps <= expectedReps }
@@ -262,7 +270,7 @@ object VolumeDistributionHelper {
                             createSet(
                                 weight = weight,
                                 reps = reps,
-                                intensity = intensity
+                                oneRepMax = params.oneRepMax
                             )
                         }
                 }
@@ -272,8 +280,9 @@ object VolumeDistributionHelper {
     private fun createSet(
         weight: Double,
         reps: Int,
-        intensity: Double
+        oneRepMax: Double,
     ): ExerciseSet {
+        val intensity = weight / oneRepMax
         val volume = weight * reps
         val effortMultiplier = exp(2.0 * intensity)
 
@@ -282,7 +291,12 @@ object VolumeDistributionHelper {
             reps = reps,
             volume = volume,
             intensity = intensity,
-            workload = volume * effortMultiplier
+            workload = volume * effortMultiplier,
+            rir = calculateRIR(
+                weight = weight,
+                reps = reps,
+                oneRepMax = oneRepMax
+            )
         )
     }
 
@@ -296,7 +310,8 @@ object VolumeDistributionHelper {
         maxLoadPercent: Double,
         repsRange: IntRange,
         workloadProgressionRange: FloatRange,
-        sets: Int
+        sets: Int,
+        averageRIR: Double,
     ): ExerciseProgression? {
         val exerciseVolume = setVolumes.sum()
         val exerciseWorkload = setWorkloads.sum()
@@ -318,7 +333,8 @@ object VolumeDistributionHelper {
             averageLoadPerRep =  averageLoadPerRep,
             averageWorkloadPerRep = averateWorkloadPerRep,
             workloadProgressionRange = workloadProgressionRange,
-            averageWorkloadPerSet = averageWorkloadPerSet
+            averageWorkloadPerSet = averageWorkloadPerSet,
+            averageRIR = averageRIR
         )
 
         return getProgression(baseParams)

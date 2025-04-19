@@ -27,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -34,6 +35,7 @@ import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -66,6 +68,7 @@ import kotlin.collections.setOf
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
+import kotlin.math.pow
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -647,6 +650,24 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
+        val averageRIR = exerciseSets.map {
+            when (it) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    val weight = it.getWeight(equipment, relativeBodyWeight)
+                    calculateRIR(weight, it.reps, oneRepMax)
+                }
+
+                is WeightSet -> {
+                    val weight = it.getWeight(equipment)
+                    calculateRIR(weight, it.reps, oneRepMax)
+                }
+
+                else -> 0.0
+            }
+        }.average()
+
         exerciseWorkload = setWorkloads.sum()
 
         val totalReps = exerciseSets.sumOf {
@@ -737,6 +758,7 @@ open class WorkoutViewModel : ViewModel() {
                 setWeights = setWeights,
                 totalReps = totalReps,
                 oneRepMax = oneRepMax,
+                averageRIR = averageRIR,
                 availableWeights = availableWeights,
                 maxLoadPercent = maxLoadPercent,
                 repsRange = repsRange,
@@ -769,7 +791,7 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Workload: ${exerciseProgression.originalWorkload.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%)"
+                "Progression found - Workload: ${exerciseProgression.originalWorkload.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%) - RIR: ${exerciseProgression.averageRIR.round(2)}"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
@@ -1772,9 +1794,8 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     // Helper function for calculating one rep max
-    protected fun calculateOneRepMax(weight: Double, reps: Int): Double {
-        return weight / (1.0278 - (0.0278 * reps))
-    }
+    protected fun calculateOneRepMax(weight: Double, reps: Int): Double =
+        weight * reps.toDouble().pow(0.10)
 
     // Extension function for rounding doubles
     protected fun Double.round(decimals: Int): Double {

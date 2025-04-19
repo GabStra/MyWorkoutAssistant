@@ -55,6 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
+import kotlin.math.pow
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
     val gson = GsonBuilder()
@@ -391,9 +392,8 @@ fun Double.isEqualTo(other: Double, epsilon: Double = 1e-2): Boolean {
     return abs(this - other) < epsilon
 }
 
-fun calculateOneRepMax(weight: Double, reps: Int): Double {
-    return weight / (1.0278 - (0.0278 * reps))
-}
+fun calculateOneRepMax(weight: Double, reps: Int): Double =
+    weight * reps.toDouble().pow(0.10)
 
 @OptIn(DelicateCoroutinesApi::class)
 fun VibrateHard(context: Context) {
@@ -513,5 +513,28 @@ fun VibrateTwiceAndBeep(context: Context) {
                 delay(200 - elapsedTime)
             }
         }
+    }
+}
+
+fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double): Double {
+    val repsToFailure = (oneRepMax / weight).pow(1.0 / 0.10)
+    return (repsToFailure - reps).coerceAtLeast(0.0)
+}
+
+fun maxRepsForWeight(weight: Double, oneRepMax: Double): Double {
+    require(weight > 0 && oneRepMax > 0) { "Weights must be positive" }
+    return (oneRepMax / weight).pow(1.0 / 0.10)
+}
+
+fun List<Double>.median(): Double {
+    require(isNotEmpty()) { "Cannot compute median of empty list" }
+    val sorted = this.sorted()
+    val mid = size / 2
+    return if (size % 2 == 1) {
+        // odd → middle element
+        sorted[mid]
+    } else {
+        // even → average of two middles
+        (sorted[mid-1] + sorted[mid]) / 2.0
     }
 }
