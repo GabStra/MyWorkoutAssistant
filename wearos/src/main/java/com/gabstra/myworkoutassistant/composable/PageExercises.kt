@@ -116,7 +116,7 @@ fun PageExercises(
                         .padding(2.dp),
                     imageVector = Icons.Filled.ArrowBack,
                     contentDescription = "Previous",
-                    tint = if (currentIndex > 0) Color.White else MyColors.LightGray
+                    tint = if (currentIndex > 0) Color.White else Color.DarkGray
                 )
             }
 
@@ -189,7 +189,7 @@ fun PageExercises(
                     currentSet = currentStateSet.set,
                     customColor = when{
                         updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
-                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.LightGray
+                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> Color.DarkGray
                         else -> null
                     },
                     overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
@@ -214,7 +214,7 @@ fun PageExercises(
                         .padding(2.dp),
                     imageVector = Icons.Filled.ArrowForward,
                     contentDescription = "Next",
-                    tint = if (currentIndex < exerciseIds.size - 1) Color.White else MyColors.LightGray
+                    tint = if (currentIndex < exerciseIds.size - 1) Color.White else Color.DarkGray
                 )
             }
 

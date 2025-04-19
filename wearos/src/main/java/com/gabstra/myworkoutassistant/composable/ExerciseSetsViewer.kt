@@ -287,7 +287,7 @@ fun ExerciseSetsViewer(
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> Color.White
-                            else ->  MyColors.LightGray
+                            else ->  Color.DarkGray
                         }
                     )
                 }
@@ -339,7 +339,7 @@ fun ExerciseSetsViewer(
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> Color.White
-                            else -> MyColors.LightGray
+                            else -> Color.DarkGray
                         }
                     )
                 }

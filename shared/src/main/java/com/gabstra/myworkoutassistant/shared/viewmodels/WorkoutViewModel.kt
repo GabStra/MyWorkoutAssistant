@@ -27,7 +27,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -35,7 +34,7 @@ import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
-import com.gabstra.myworkoutassistant.shared.round
+import com.gabstra.myworkoutassistant.shared.repsForTargetRIR
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -47,6 +46,7 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.ExerciseProgression
+import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.createSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -66,7 +66,6 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.collections.setOf
 import kotlin.math.abs
-import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.pow
 
@@ -569,12 +568,7 @@ open class WorkoutViewModel : ViewModel() {
 
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        var exerciseWorkload = 0.0
-        var oneRepMax = 0.0
-        var averageLoadPerRep = 0.0
-        var averageRelativeLoadPerRep = 0.0
-
-        oneRepMax = exerciseSets.maxOf {
+        var oneRepMax = exerciseSets.maxOf {
             when (it) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight =
@@ -587,104 +581,27 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
-        val setVolumes = exerciseSets.map {
+
+        val setsForProgression = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight =
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     val weight = it.getWeight(equipment, relativeBodyWeight)
 
-                    val volume = weight * it.reps
-                    volume
+                    createSet(weight, it.reps,oneRepMax)
                 }
 
                 is WeightSet -> {
                     val weight = it.getWeight(equipment)
-                    val volume = weight * it.reps
-                    volume
+                    createSet(weight, it.reps,oneRepMax)
                 }
 
-                else -> 0.0
+                else -> throw IllegalArgumentException("Unknown set type")
             }
         }
 
-        val exerciseVolume = setVolumes.sum()
-
-        val setWeights = exerciseSets.map {
-            when (it) {
-                is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    it.getWeight(equipment, relativeBodyWeight)
-                }
-
-                is WeightSet -> {
-                    it.getWeight(equipment)
-                }
-
-                else -> 0.0
-            }
-        }
-
-        val setWorkloads = exerciseSets.map {
-            when (it) {
-                is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    val weight = it.getWeight(equipment, relativeBodyWeight)
-                    val intensity = weight / oneRepMax
-                    val volume = weight * it.reps
-                    val effortMultiplier = exp(2.0 * intensity)
-                    volume * effortMultiplier
-                }
-
-                is WeightSet -> {
-                    val weight = it.getWeight(equipment)
-                    val intensity = weight / oneRepMax
-                    val volume = weight * it.reps
-                    val effortMultiplier = exp(2.0 * intensity)
-                    volume * effortMultiplier
-                }
-
-                else -> 0.0
-            }
-        }
-
-        val averageRIR = exerciseSets.map {
-            when (it) {
-                is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    val weight = it.getWeight(equipment, relativeBodyWeight)
-                    calculateRIR(weight, it.reps, oneRepMax)
-                }
-
-                is WeightSet -> {
-                    val weight = it.getWeight(equipment)
-                    calculateRIR(weight, it.reps, oneRepMax)
-                }
-
-                else -> 0.0
-            }
-        }.average()
-
-        exerciseWorkload = setWorkloads.sum()
-
-        val totalReps = exerciseSets.sumOf {
-            when (it) {
-                is BodyWeightSet -> it.reps
-                is WeightSet -> it.reps
-                else -> 0
-            }
-        }
-
-        averageLoadPerRep = exerciseVolume / totalReps
-        averageRelativeLoadPerRep = exerciseWorkload / totalReps
-
-        if (exerciseWorkload == 0.0 || oneRepMax == 0.0) {
-            Log.d("WorkoutViewModel", "Failed to process ${exercise.name}")
-            return null
-        }
+        val exerciseVolume = setsForProgression.sumOf { it.volume }
 
         val shouldDeload = false // exerciseInfo != null && exerciseInfo.sessionFailedCounter >= 2u //( || exerciseInfo.successfulSessionCounter >= 7u)
 
@@ -712,7 +629,7 @@ open class WorkoutViewModel : ViewModel() {
 
         Log.d(
             "WorkoutViewModel",
-            "${exercise.name} (${exercise.exerciseType}) - Workload ${exerciseWorkload.round(2)} - 1RM ${
+            "${exercise.name} (${exercise.exerciseType}) - Volume ${exerciseVolume.round(2)} - 1RM ${
                 String.format(
                     "%.2f",
                     oneRepMax
@@ -753,12 +670,8 @@ open class WorkoutViewModel : ViewModel() {
             //TODO: Implement deloading
         } else {
             exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
-                setVolumes = setVolumes,
-                setWorkloads = setWorkloads,
-                setWeights = setWeights,
-                totalReps = totalReps,
+                previousSets = setsForProgression,
                 oneRepMax = oneRepMax,
-                averageRIR = averageRIR,
                 availableWeights = availableWeights,
                 maxLoadPercent = maxLoadPercent,
                 repsRange = repsRange,
@@ -791,7 +704,7 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Workload: ${exerciseProgression.originalWorkload.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%) - RIR: ${exerciseProgression.averageRIR.round(2)}"
+                "Progression found - Workload: ${exerciseProgression.originalVolume.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%) - RIR: ${exerciseProgression.averageRIR.round(2)}"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
@@ -1575,26 +1488,23 @@ open class WorkoutViewModel : ViewModel() {
 
             fun buildWarmupSets(
                 workWeight: Double,
-                workReps: Int,
                 oneRepMax: Double,
                 availableWeights: Collection<Double>,
                 numberOfWarmUpSets: Int
             ): List<Pair<Double, Int>> {
-                // 1) Define your ideal protocol
+                // 1) Define your ideal protocol with weight percentage, target RIR, and max reps
                 val protocols = listOf(
-                    0.5 to 0.25,
-                    0.6 to 0.25,
-                    0.75 to 0.25,
-                    0.9 to 0.25,
+                    Triple(0.5, 5.0, 10), // 50% with 5.0 RIR, max 10 reps
+                    Triple(0.6, 4.0, 8),  // 60% with 4.0 RIR, max 8 reps
+                    Triple(0.75, 3.0, 6), // 75% with 3.0 RIR, max 6 reps
+                    Triple(0.9, 2.0, 3)   // 90% with 2.0 RIR, max 3 reps
                 )
-
-                val workVolume = workWeight * workReps
 
                 val sortedWeights = availableWeights.sorted()
                 val chosen = mutableSetOf<Double>()
 
                 val sets = mutableListOf<Pair<Double, Int>>()
-                for ((weightPercentage, workloadPercentage) in protocols) {
+                for ((weightPercentage, targetRIR, maxReps) in protocols) {
                     if (sets.size >= numberOfWarmUpSets) break
 
                     val target = workWeight * weightPercentage
@@ -1604,10 +1514,11 @@ open class WorkoutViewModel : ViewModel() {
                         .minByOrNull { abs(it - target) }
 
                     if (weight != null) {
-                        val maxVolume = workVolume * workloadPercentage
-                        var reps = floor(maxVolume/weight).toInt().coerceAtLeast(2)
+                        var reps = repsForTargetRIR(weight, oneRepMax, targetRIR)
+
+                        reps = minOf(reps, maxReps.toDouble())
                         chosen += weight
-                        sets += weight to reps
+                        sets += weight to floor(reps).toInt().coerceAtLeast(2)
                     }
                 }
 
@@ -1616,7 +1527,6 @@ open class WorkoutViewModel : ViewModel() {
 
             val actualWarmupSets = buildWarmupSets(
                 workWeight,
-                workReps,
                 oneRepMax,
                 availableWeights,
                 numberOfWarmUpSets

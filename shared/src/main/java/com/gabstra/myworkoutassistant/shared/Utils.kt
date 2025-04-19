@@ -526,15 +526,11 @@ fun maxRepsForWeight(weight: Double, oneRepMax: Double): Double {
     return (oneRepMax / weight).pow(1.0 / 0.10)
 }
 
-fun List<Double>.median(): Double {
-    require(isNotEmpty()) { "Cannot compute median of empty list" }
-    val sorted = this.sorted()
-    val mid = size / 2
-    return if (size % 2 == 1) {
-        // odd → middle element
-        sorted[mid]
-    } else {
-        // even → average of two middles
-        (sorted[mid-1] + sorted[mid]) / 2.0
-    }
+fun repsForTargetRIR(
+    weight: Double,
+    oneRepMax: Double,
+    targetRIR: Double = 2.0
+): Double {
+    val repsToFailure = (oneRepMax / weight).pow(1.0 / 0.10)
+    return repsToFailure - targetRIR
 }
