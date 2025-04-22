@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,27 +47,27 @@ fun CurrentTime() {
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(1.dp)
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Text(
+        StringCanvas(
             modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.hour),
-            style = MaterialTheme.typography.caption1,
-            textAlign = TextAlign.End
+            charModifier = Modifier.fillMaxHeight().width(7.dp),
+            textStyle = MaterialTheme.typography.caption1,
         )
-
+        
         ClockSeparator(
             showDots = showDots,
             modifier = Modifier
-                .width(6.dp)
+                .width(7.dp)
                 .fillMaxHeight()
         )
 
-        Text(
+        StringCanvas(
             modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.minute),
-            style = MaterialTheme.typography.caption1,
-            textAlign = TextAlign.Start
+            charModifier = Modifier.fillMaxHeight().width(7.dp),
+            textStyle = MaterialTheme.typography.caption1,
         )
     }
 }
@@ -95,3 +96,6 @@ fun ClockSeparator(
         )
     }
 }
+
+
+

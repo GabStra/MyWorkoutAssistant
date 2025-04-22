@@ -571,8 +571,7 @@ open class WorkoutViewModel : ViewModel() {
         var oneRepMax = exerciseSets.maxOf {
             when (it) {
                 is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     calculateOneRepMax(it.getWeight(equipment, relativeBodyWeight), it.reps)
                 }
 
@@ -585,16 +584,14 @@ open class WorkoutViewModel : ViewModel() {
         val setsForProgression = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     val weight = it.getWeight(equipment, relativeBodyWeight)
-
-                    createSet(weight, it.reps,oneRepMax)
+                    createSet(weight, it.reps, oneRepMax)
                 }
 
                 is WeightSet -> {
                     val weight = it.getWeight(equipment)
-                    createSet(weight, it.reps,oneRepMax)
+                    createSet(weight, it.reps, oneRepMax)
                 }
 
                 else -> throw IllegalArgumentException("Unknown set type")
@@ -675,8 +672,7 @@ open class WorkoutViewModel : ViewModel() {
                 availableWeights = availableWeights,
                 maxLoadPercent = maxLoadPercent,
                 repsRange = repsRange,
-                sets = maxOf(3, exerciseSets.size),
-                workloadProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
+                volumeProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
             )
         }
 
@@ -702,9 +698,11 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")}")
 
+            val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
+
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Workload: ${exerciseProgression.originalVolume.round(2)} -> ${exerciseProgression.workload.round(2)} (+${exerciseProgression.progressIncrease.round(2)}%) - RIR: ${exerciseProgression.averageRIR.round(2)}"
+                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (+${progressIncrease.round(2)}%) - RIR: ${exerciseProgression.averageRIR.round(2)}"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
@@ -1609,7 +1607,6 @@ open class WorkoutViewModel : ViewModel() {
                     plateChangeResult,
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
                     isDeloading ?: false,
-                    exerciseProgression?.progressIncrease,
                     isWarmupSet
                 )
 

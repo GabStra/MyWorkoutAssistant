@@ -8,6 +8,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -60,7 +61,7 @@ fun WorkoutStateHeader(
         modifier = Modifier
             .fillMaxWidth()
             .height(20.dp)
-            .padding(60.dp,5.dp,60.dp,0.dp)
+            .padding(top = 5.dp)
             .clickable {
                 if(workoutState is WorkoutState.Preparing) return@clickable
                 viewModel.switchHeaderDisplayMode()
@@ -73,7 +74,7 @@ fun WorkoutStateHeader(
         if(displayMode == 0){
             Row{
                 CurrentBattery()
-                Spacer(modifier = Modifier.width(5.dp))
+                Spacer(modifier = Modifier.width(10.dp))
                 CurrentTime()
             }
         }else{
@@ -81,10 +82,11 @@ fun WorkoutStateHeader(
             val minutes = remember(duration) { duration.toMinutes() % 60 }
             val seconds = remember(duration) { duration.seconds % 60 }
 
-            Text(
-                textAlign = TextAlign.Center,
+            StringCanvas(
+                modifier = Modifier.fillMaxHeight(),
                 text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
-                style = MaterialTheme.typography.caption1
+                charModifier = Modifier.fillMaxHeight().width(7.dp),
+                textStyle = MaterialTheme.typography.caption1,
             )
         }
 
