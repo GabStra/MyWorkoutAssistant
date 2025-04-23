@@ -6,6 +6,7 @@ import com.gabstra.myworkoutassistant.shared.calculateOneRepMax
 import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.maxRepsForWeight
+import com.gabstra.myworkoutassistant.shared.median
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -27,7 +28,7 @@ object VolumeDistributionHelper {
         val newVolume: Double,
         val usedOneRepMax: Double,
         val previousVolume: Double,
-        val averageRIR: Double
+        val medianRIR: Double
     )
 
     data class WeightExerciseParameters(
@@ -108,16 +109,12 @@ object VolumeDistributionHelper {
         }
 
 
-        val newVolume = validSetCombination.sumOf { it.volume }
-
-        val averageRIR = validSetCombination.map { it.rir }.average()
-
         return ExerciseProgression(
             sets = validSetCombination,
-            newVolume = newVolume,
+            newVolume =  validSetCombination.sumOf { it.volume },
             usedOneRepMax = params.oneRepMax,
             previousVolume = params.previousTotalVolume,
-            averageRIR = averageRIR
+            medianRIR = validSetCombination.map { it.rir }.median()
         )
     }
 
@@ -157,7 +154,7 @@ object VolumeDistributionHelper {
             val currentVolume = combo.sumOf { it.volume }
             val volumeDifferenceScore = 1 + (combo.maxOf { it.volume } - combo.minOf { it.volume })
 
-            val averageRIR = combo.map { it.rir }.average()
+            val totalRIR = combo.sumOf { it.rir }
 
             val currentAverageLoadPerSet = currentVolume / combo.size
             val currentAverageLoadPerRep = currentVolume/ combo.sumOf { it.reps }
@@ -165,7 +162,7 @@ object VolumeDistributionHelper {
             val loadPerSetDifferenceScore = 1 + (abs(currentAverageLoadPerSet - previousAverageLoadPerSet))
             val loadPerRepDifferenceScore = 1 + (abs(currentAverageLoadPerRep - previousAverageLoadPerRep))
 
-            return currentVolume * volumeDifferenceScore * (1 + averageRIR) * loadPerSetDifferenceScore * loadPerRepDifferenceScore
+            return currentVolume * volumeDifferenceScore * (1 + totalRIR) * loadPerSetDifferenceScore * loadPerRepDifferenceScore
         }
 
         suspend fun exploreCombinations(
@@ -318,7 +315,7 @@ object VolumeDistributionHelper {
         }
 
         while(true) {
-            if (currentExerciseProgression!!.averageRIR <= 1.0) {
+            if (currentExerciseProgression!!.medianRIR <= 1.0) {
                 break
             }
 

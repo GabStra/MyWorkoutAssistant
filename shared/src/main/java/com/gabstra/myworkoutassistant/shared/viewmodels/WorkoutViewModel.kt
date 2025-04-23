@@ -702,7 +702,7 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (+${progressIncrease.round(2)}%) - RIR: ${exerciseProgression.averageRIR.round(2)}"
+                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (+${progressIncrease.round(2)}%) - RIR: ${exerciseProgression.medianRIR.round(2)}"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")

@@ -534,3 +534,14 @@ fun repsForTargetRIR(
     val repsToFailure = (oneRepMax / weight).pow(1.0 / 0.10)
     return repsToFailure - targetRIR
 }
+
+fun List<Double>.median(): Double {
+    require(this.isNotEmpty()) { "List is empty" }
+    val sorted = this.sorted()
+    val n = sorted.size
+    return if (n % 2 == 1) {
+        sorted[n / 2]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    }
+}

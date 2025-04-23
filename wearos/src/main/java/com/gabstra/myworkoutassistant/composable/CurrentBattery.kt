@@ -63,21 +63,9 @@ fun CurrentBattery(){
         }
     }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        StringCanvas(
-            text = batteryPercentage.toString(),
-            charModifier = Modifier.fillMaxHeight().width(7.dp),
-            textStyle = MaterialTheme.typography.caption1,
-        )
-
-        CharacterCanvas(
-            char = '%',
-            textStyle = MaterialTheme.typography.caption1,
-            modifier = Modifier.fillMaxHeight().width(7.dp),
-        )
-    }
-
+    Text(
+        textAlign = TextAlign.Center,
+        text = String.format("%d%%", batteryPercentage),
+        style = MaterialTheme.typography.caption1
+    )
 }
