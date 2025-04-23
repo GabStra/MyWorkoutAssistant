@@ -47,55 +47,30 @@ fun CurrentTime() {
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+        horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        StringCanvas(
+        Text(
             modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.hour),
-            charModifier = Modifier.fillMaxHeight().width(7.dp),
-            textStyle = MaterialTheme.typography.caption1,
-        )
-        
-        ClockSeparator(
-            showDots = showDots,
-            modifier = Modifier
-                .width(7.dp)
-                .fillMaxHeight()
+            style = MaterialTheme.typography.caption1,
+            textAlign = TextAlign.Center
         )
 
-        StringCanvas(
+        Text(
+            text = ":",
+            style = MaterialTheme.typography.caption1,
+            color = if (showDots) Color.White else MyColors.LightGray,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxHeight(),
+        )
+
+        Text(
             modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.minute),
-            charModifier = Modifier.fillMaxHeight().width(7.dp),
-            textStyle = MaterialTheme.typography.caption1,
+            style = MaterialTheme.typography.caption1,
+            textAlign = TextAlign.Center
         )
     }
 }
-
-@Composable
-fun ClockSeparator(
-    showDots: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier) {
-        val dotRadius = size.height / 12f
-        val centerX = size.width / 2f
-        val centerY = size.height / 2f
-        val gap = size.height / 5f
-        val color = if (showDots) Color.White else MyColors.LightGray
-
-        drawCircle(
-            color = color,
-            radius = dotRadius,
-            center = Offset(centerX, centerY - gap)
-        )
-        drawCircle(
-            color = color,
-            radius = dotRadius,
-            center = Offset(centerX, centerY + gap)
-        )
-    }
-}
-
 
 

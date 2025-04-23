@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable;
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -28,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -68,6 +70,14 @@ fun RestScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
+    var goBackJob by remember { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            timerJob?.cancel()
+            goBackJob?.cancel()
+        }
+    }
 
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
@@ -110,6 +120,16 @@ fun RestScreen(
             pageTypes.size
         }
     )
+
+    fun restartGoBack() {
+        goBackJob?.cancel()
+        goBackJob = scope.launch {
+            delay(5000)
+            if(pagerState.currentPage != exerciseDetailPageIndex) {
+                pagerState.scrollToPage(exerciseDetailPageIndex)
+            }
+        }
+    }
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
@@ -171,6 +191,7 @@ fun RestScreen(
             state.currentSetData = currentSetData.copy(
                 endTimer = 0
             )
+            goBackJob?.cancel()
             onTimerEnd()
         }
 
@@ -242,7 +263,6 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(5.dp)
                     .circleMask(),
                 contentAlignment = Alignment.Center
             ) {
@@ -268,25 +288,28 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(5.dp)
                     .circleMask(),
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(vertical = 20.dp, horizontal = 15.dp),
+                        .padding(vertical = 25.dp, horizontal = 20.dp)
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (event.changes.any { it.pressed && !it.previousPressed }) {
+                                        restartGoBack()
+                                    }
+                                }
+                            }
+                        },
                     pagerState = pagerState,
                 ) { pageIndex ->
                     val pageType = pageTypes[pageIndex]
                     when (pageType) {
-                        PageType.PLATES -> {
-                            PagePlates(
-                                state.nextStateSets.first(),
-                                equipment
-                            )
-                        }
-
+                        PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
                         PageType.EXERCISE_DETAIL -> {}
                         PageType.EXERCISES -> {
                             Column(
@@ -301,7 +324,6 @@ fun RestScreen(
                                 )
                             }
                         }
-
                         PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel)
                         PageType.NOTES -> TODO()
                     }

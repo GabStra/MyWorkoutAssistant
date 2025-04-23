@@ -163,7 +163,7 @@ class HeartRateChangeViewModel : ViewModel() {
             _heartRateChangeRate.value = null
             _confidenceLevel.value = 0.0f
             _heartRateTrend.value = TrendDirection.UNKNOWN
-            _formattedChangeRate.value = "--"
+            _formattedChangeRate.value = "-"
         }
     }
 
@@ -175,7 +175,7 @@ class HeartRateChangeViewModel : ViewModel() {
         val changeRate = _heartRateChangeRate.value // This is BPM/s
 
         if(changeRate == null) {
-            _formattedChangeRate.value = "--"
+            _formattedChangeRate.value = "-"
             return
         }
 

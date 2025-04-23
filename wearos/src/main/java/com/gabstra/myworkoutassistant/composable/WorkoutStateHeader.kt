@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
@@ -80,7 +81,7 @@ fun WorkoutStateHeader(
         if(displayMode == 0){
             Row{
                 CurrentBattery()
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 CurrentTime()
             }
         }else{
@@ -88,12 +89,46 @@ fun WorkoutStateHeader(
             val minutes = remember(duration) { duration.toMinutes() % 60 }
             val seconds = remember(duration) { duration.seconds % 60 }
 
-            StringCanvas(
-                modifier = Modifier.fillMaxHeight(),
-                text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
-                charModifier = Modifier.fillMaxHeight().width(7.dp),
-                textStyle = MaterialTheme.typography.caption1,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Text(
+                    modifier = Modifier.fillMaxHeight(),
+                    text = String.format("%02d", hours),
+                    style = MaterialTheme.typography.caption1,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = ":",
+                    style = MaterialTheme.typography.caption1,
+
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxHeight(),
+                )
+
+                Text(
+                    modifier = Modifier.fillMaxHeight(),
+                    text = String.format("%02d", minutes),
+                    style = MaterialTheme.typography.caption1,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = ":",
+                    style = MaterialTheme.typography.caption1,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxHeight(),
+                )
+
+                Text(
+                    modifier = Modifier.fillMaxHeight(),
+                    text = String.format("%02d", seconds),
+                    style = MaterialTheme.typography.caption1,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
 
     }

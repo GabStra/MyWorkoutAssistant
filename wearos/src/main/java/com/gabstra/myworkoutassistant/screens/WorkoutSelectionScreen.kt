@@ -80,8 +80,7 @@ fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
         onClick = { onItemClick() },
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
-            .padding(2.dp),
+            .height(50.dp),
     )
 }
 

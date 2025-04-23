@@ -168,7 +168,7 @@ fun WorkoutScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(10.dp),
+            .padding(5.dp),
     ) {
         if(isResuming){
             LoadingScreen(viewModel,"Resuming workout")

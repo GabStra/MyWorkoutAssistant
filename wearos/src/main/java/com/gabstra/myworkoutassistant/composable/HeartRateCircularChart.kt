@@ -548,13 +548,16 @@ private fun HeartRateView(
                     indicatorColor = MyColors.Green
                 )),
                 progress = progress,
-                modifier = Modifier.fillMaxSize().padding(10.dp),
+                modifier = Modifier.fillMaxSize().padding(8.dp),
                 strokeWidth = 2.dp,
                 paddingAngle = 0f,
                 startAngle = lowerBoundRotationAngle ,
                 endAngle = upperBoundRotationAngle,
                 trackColor = Color.DarkGray,
             )
+
+            RotatingIndicator(lowerBoundRotationAngle, MyColors.Green)
+            RotatingIndicator(upperBoundRotationAngle, MyColors.Red)
         }
     }
 }

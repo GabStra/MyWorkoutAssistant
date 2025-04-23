@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
+import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -18,14 +20,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,6 +52,9 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 enum class PageType {
     PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS
@@ -114,6 +122,19 @@ fun ExerciseScreen(
         viewModel.closeCustomDialog()
     }
 
+    val scope = rememberCoroutineScope()
+    var goBackJob by remember { mutableStateOf<Job?>(null) }
+
+    fun restartGoBack() {
+        goBackJob?.cancel()
+        goBackJob = scope.launch {
+            delay(5000)
+            if(pagerState.currentPage != exerciseDetailPageIndex) {
+                pagerState.scrollToPage(exerciseDetailPageIndex)
+            }
+        }
+    }
+
     var marqueeEnabled by remember { mutableStateOf(false) }
 
     val typography = MaterialTheme.typography
@@ -129,7 +150,6 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(5.dp)
             .circleMask(),
         contentAlignment = Alignment.Center
     ) {
@@ -212,7 +232,17 @@ fun ExerciseScreen(
                     CustomHorizontalPager(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(vertical = 20.dp, horizontal = 15.dp),
+                            .padding(vertical = 25.dp, horizontal = 20.dp)
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        if (event.changes.any { it.pressed && !it.previousPressed }) {
+                                            restartGoBack()
+                                        }
+                                    }
+                                }
+                            },
                         pagerState = pagerState,
                         userScrollEnabled = allowHorizontalScrolling,
                     ) { pageIndex ->
@@ -278,4 +308,10 @@ fun ExerciseScreen(
         },
         holdTimeInMillis = 1000
     )
+
+    DisposableEffect(Unit) {
+        onDispose {
+            goBackJob?.cancel()
+        }
+    }
 }

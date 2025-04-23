@@ -29,8 +29,8 @@ fun RotatingIndicator(rotationAngle: Float, fillColor: Color) {
 
         val angleInRadians = Math.toRadians(rotationAngle.toDouble())
 
-        val widthOffset = (constraints.maxWidth/2) - 22
-        val heightOffset = (constraints.maxHeight/2) - 22
+        val widthOffset = (constraints.maxWidth/2) - 24
+        val heightOffset = (constraints.maxHeight/2) - 24
 
         val xRadius = ((widthOffset * cos(angleInRadians)) / density).dp
         val yRadius = ((heightOffset * sin(angleInRadians)) / density).dp
