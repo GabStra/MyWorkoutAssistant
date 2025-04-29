@@ -170,9 +170,9 @@ object VolumeDistributionHelper {
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val currentVolume = combo.sumOf { it.volume }
-            val averageWeightPerRep = currentVolume / combo.sumOf { it.reps }
+            val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
 
-            return currentVolume  + averageWeightPerRep
+            return currentVolume * (1 + volumeDifference/10)
         }
 
         suspend fun exploreCombinations(
