@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.standardDeviation
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 
@@ -36,6 +37,15 @@ object VolumeDistributionHelper {
         val repsRange: IntRange,
         val volumeProgressionRange: FloatRange,
     )
+
+    private fun calculateTotalInol(sets: List<ExerciseSet>, oneRepMax: Double): Double {
+        // Calculate INOL for each set and sum them up
+        return sets.sumOf { set ->
+            val percentageOfOneRepMax = set.weight / oneRepMax
+            val inol = set.reps / (1.0 - percentageOfOneRepMax)
+            inol
+        }
+    }
 
     private fun calculateMedianWeight(sets: List<ExerciseSet>): Double {
         if (sets.isEmpty()) {
@@ -76,6 +86,7 @@ object VolumeDistributionHelper {
         val minTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.from / 100)
         val maxTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.to / 100)
 
+        val previousInol = calculateTotalInol(params.previousSets,params.oneRepMax)
 
         var result = findBestProgressions(
             possibleSets,
@@ -84,15 +95,19 @@ object VolumeDistributionHelper {
             params,
             { combo ->
                 val currentTotalVolume = combo.sumOf { it.volume }
+
                 val averageVolume = currentTotalVolume / combo.size
                 val volumeStdDev = combo.map { it.volume }.standardDeviation()
                 val deviationPercentage =  (volumeStdDev / averageVolume) * 100
+
+                val currentInol = calculateTotalInol(combo,params.oneRepMax)
 
                 ValidationResult(
                     shouldReturn = currentTotalVolume.isEqualTo(params.previousTotalVolume)
                             || currentTotalVolume < minTotalVolume
                             || currentTotalVolume > maxTotalVolume
                             || deviationPercentage > 10
+                            || currentInol < previousInol
                 )
             }
         )
@@ -105,14 +120,18 @@ object VolumeDistributionHelper {
                 params,
                 { combo ->
                     val currentTotalVolume = combo.sumOf { it.volume }
+
                     val averageVolume = currentTotalVolume / combo.size
                     val volumeStdDev = combo.map { it.volume }.standardDeviation()
                     val deviationPercentage =  (volumeStdDev / averageVolume) * 100
+
+                    val currentInol = calculateTotalInol(combo,params.oneRepMax)
 
                     ValidationResult(
                         shouldReturn = currentTotalVolume.isEqualTo(params.previousTotalVolume)
                                 || currentTotalVolume < minTotalVolume
                                 || deviationPercentage > 10
+                                || currentInol < previousInol
                     )
                 }
             )
@@ -172,7 +191,7 @@ object VolumeDistributionHelper {
             val currentVolume = combo.sumOf { it.volume }
             val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
 
-            return currentVolume * (1 + volumeDifference/10)
+            return currentVolume.pow(2) * (1 + volumeDifference)
         }
 
         suspend fun exploreCombinations(
