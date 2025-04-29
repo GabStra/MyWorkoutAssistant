@@ -84,11 +84,15 @@ object VolumeDistributionHelper {
             params,
             { combo ->
                 val currentTotalVolume = combo.sumOf { it.volume }
+                val averageVolume = currentTotalVolume / combo.size
+                val volumeStdDev = combo.map { it.volume }.standardDeviation()
+                val deviationPercentage =  (volumeStdDev / averageVolume) * 100
 
                 ValidationResult(
                     shouldReturn = currentTotalVolume.isEqualTo(params.previousTotalVolume)
                             || currentTotalVolume < minTotalVolume
                             || currentTotalVolume > maxTotalVolume
+                            || deviationPercentage > 10
                 )
             }
         )
@@ -101,9 +105,14 @@ object VolumeDistributionHelper {
                 params,
                 { combo ->
                     val currentTotalVolume = combo.sumOf { it.volume }
+                    val averageVolume = currentTotalVolume / combo.size
+                    val volumeStdDev = combo.map { it.volume }.standardDeviation()
+                    val deviationPercentage =  (volumeStdDev / averageVolume) * 100
+
                     ValidationResult(
                         shouldReturn = currentTotalVolume.isEqualTo(params.previousTotalVolume)
                                 || currentTotalVolume < minTotalVolume
+                                || deviationPercentage > 10
                     )
                 }
             )
@@ -161,10 +170,9 @@ object VolumeDistributionHelper {
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val currentVolume = combo.sumOf { it.volume }
-            val volumeStdDev = combo.map { it.volume }.standardDeviation()
             val averageWeightPerRep = currentVolume / combo.sumOf { it.reps }
 
-            return currentVolume + volumeStdDev + averageWeightPerRep
+            return currentVolume  + averageWeightPerRep
         }
 
         suspend fun exploreCombinations(
