@@ -124,7 +124,7 @@ fun RestScreen(
     fun restartGoBack() {
         goBackJob?.cancel()
         goBackJob = scope.launch {
-            delay(5000)
+            delay(10000)
             if(pagerState.currentPage != exerciseDetailPageIndex) {
                 pagerState.scrollToPage(exerciseDetailPageIndex)
             }
@@ -299,7 +299,7 @@ fun RestScreen(
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent()
-                                    if (event.changes.any { it.pressed && !it.previousPressed }) {
+                                    if (event.changes.any { it.pressed }) {
                                         restartGoBack()
                                     }
                                 }

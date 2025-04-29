@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.median
 import com.gabstra.myworkoutassistant.shared.repsForTargetRIR
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -702,7 +703,7 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (+${progressIncrease.round(2)}%) - RIR: ${exerciseProgression.medianRIR.round(2)}"
+                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (+${progressIncrease.round(2)}%)"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")

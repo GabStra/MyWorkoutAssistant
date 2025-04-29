@@ -56,6 +56,7 @@ import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
     val gson = GsonBuilder()
@@ -518,7 +519,7 @@ fun VibrateTwiceAndBeep(context: Context) {
 
 fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double): Double {
     val repsToFailure = (oneRepMax / weight).pow(1.0 / 0.10)
-    return (repsToFailure - reps).coerceAtLeast(0.0)
+    return (repsToFailure - reps)
 }
 
 fun maxRepsForWeight(weight: Double, oneRepMax: Double): Double {
@@ -544,4 +545,17 @@ fun List<Double>.median(): Double {
     } else {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     }
+}
+
+fun List<Double>.standardDeviation(): Double {
+    if (this.isEmpty()) {
+        throw IllegalArgumentException("Cannot calculate standard deviation of empty list")
+    }
+
+    val mean = this.average()
+    val variance = this.fold(0.0) { acc, num ->
+        acc + (num - mean).pow(2)
+    } / this.size
+
+    return sqrt(variance)
 }

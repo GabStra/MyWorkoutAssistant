@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +55,9 @@ fun SetTableRow(
     val density = LocalDensity.current.density
     val triangleSize = 6f
 
+    val typography = MaterialTheme.typography
+    val captionStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
     val indicatorComposable = @Composable {
         Box(modifier= Modifier.width(10.dp).fillMaxHeight()){
             Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
@@ -89,14 +93,27 @@ fun SetTableRow(
         }
     }
 
+    val warmupIndicatorComposable = @Composable{
+        Box(modifier= Modifier.width(10.dp).fillMaxHeight(), contentAlignment = Alignment.Center){
+            Text(
+                text = "W",
+                style = captionStyle,
+                textAlign = TextAlign.Center,
+                color = color
+            )
+        }
+    }
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
         when (setState.currentSetData) {
             is WeightSetData -> {
-                if(isCurrentSet){
+                if(isCurrentSet && !setState.isWarmupSet){
                     indicatorComposable()
+                }else if(setState.isWarmupSet){
+                    warmupIndicatorComposable()
                 }else{
                     Spacer(modifier = Modifier.width(10.dp))
                 }
@@ -118,8 +135,10 @@ fun SetTableRow(
             }
 
             is BodyWeightSetData -> {
-                if(isCurrentSet){
+                if(isCurrentSet && !setState.isWarmupSet){
                     indicatorComposable()
+                }else if(setState.isWarmupSet){
+                    warmupIndicatorComposable()
                 }else{
                     Spacer(modifier = Modifier.width(10.dp))
                 }
@@ -148,8 +167,10 @@ fun SetTableRow(
                 val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
 
                 Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center){
-                    if(isCurrentSet){
+                    if(isCurrentSet && !setState.isWarmupSet){
                         indicatorComposable()
+                    }else if(setState.isWarmupSet){
+                        warmupIndicatorComposable()
                     }else{
                         Spacer(modifier = Modifier.width(10.dp))
                     }
@@ -170,8 +191,10 @@ fun SetTableRow(
                 val enduranceSetData = (setState.currentSetData as EnduranceSetData)
 
                 Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center){
-                    if(isCurrentSet){
+                    if(isCurrentSet && !setState.isWarmupSet){
                         indicatorComposable()
+                    }else if(setState.isWarmupSet){
+                        warmupIndicatorComposable()
                     }else{
                         Spacer(modifier = Modifier.width(10.dp))
                     }
@@ -236,7 +259,7 @@ fun ExerciseSetsViewer(
     ) {
         if (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Spacer(modifier= Modifier.width(10.dp))
@@ -262,7 +285,6 @@ fun ExerciseSetsViewer(
                         enableTopFade = false,
                         enableBottomFade = false
                     )
-                    .padding(horizontal = 2.dp)
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
@@ -297,7 +319,7 @@ fun ExerciseSetsViewer(
 
         if (exercise.exerciseType == ExerciseType.COUNTUP || exercise.exerciseType == ExerciseType.COUNTDOWN) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -314,7 +336,6 @@ fun ExerciseSetsViewer(
                         scrollState = scrollState,
                         scrollBarColor = Color.White
                     )
-                    .padding(horizontal = 2.dp)
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {

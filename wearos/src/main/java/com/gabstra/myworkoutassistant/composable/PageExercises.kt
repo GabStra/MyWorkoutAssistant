@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
@@ -35,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.HierarchicalFocusCoordinator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -85,14 +88,6 @@ fun PageExercises(
         }
     }
 
-    LaunchedEffect(selectedExercise) {
-        if (selectedExercise != currentExercise) {
-            delay(5000)
-            selectedExercise = currentExercise
-            isNavigationLocked = true
-        }
-    }
-
     AnimatedContent(
         modifier = Modifier.fillMaxSize(),
         targetState = selectedExercise,
@@ -111,6 +106,7 @@ fun PageExercises(
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Row(
                 modifier = Modifier
