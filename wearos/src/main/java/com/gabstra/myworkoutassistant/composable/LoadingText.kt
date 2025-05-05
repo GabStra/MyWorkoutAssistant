@@ -17,6 +17,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import kotlinx.coroutines.delay
 @Composable
 fun LoadingText(baseText: String) {
@@ -57,7 +58,7 @@ fun LoadingText(baseText: String) {
         Text(
             text = baseText + ".".repeat(dotCount.intValue),
             style = MaterialTheme.typography.title3,
-            color = Color.White
+            color = MyColors.White
         )
     }
 }

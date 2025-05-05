@@ -18,6 +18,7 @@ import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.getContrastRatio
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 @Composable
 fun ButtonWithText(
@@ -25,7 +26,7 @@ fun ButtonWithText(
     backgroundColor: Color = MaterialTheme.colors.background,
     onClick: () -> Unit
 ) {
-    val textColor = Color.White
+    val textColor = MyColors.White
 
     Button(
         onClick,

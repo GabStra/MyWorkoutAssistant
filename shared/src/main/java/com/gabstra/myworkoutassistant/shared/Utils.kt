@@ -408,6 +408,26 @@ fun VibrateHard(context: Context) {
 }
 
 @OptIn(DelicateCoroutinesApi::class)
+fun VibrateHardAndBeep(context: Context) {
+    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
+    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+
+    GlobalScope.launch(Dispatchers.Default) {
+        launch{
+            val job1 = launch {
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+            }
+
+            val job2 = launch {
+                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+            }
+
+            joinAll(job1, job2)
+        }
+    }
+}
+
+@OptIn(DelicateCoroutinesApi::class)
 fun VibrateGentle(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 

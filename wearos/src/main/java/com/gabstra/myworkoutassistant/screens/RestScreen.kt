@@ -124,7 +124,7 @@ fun RestScreen(
     fun restartGoBack() {
         goBackJob?.cancel()
         goBackJob = scope.launch {
-            delay(10000)
+            delay(5000)
             if(pagerState.currentPage != exerciseDetailPageIndex) {
                 pagerState.scrollToPage(exerciseDetailPageIndex)
             }

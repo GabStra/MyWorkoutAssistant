@@ -143,7 +143,7 @@ data class MarkerData(
     val ratio: Double,
     val text: String,
     val color:Color = MyColors.Orange,
-    val textColor:Color = Color.White
+    val textColor:Color = MyColors.White
 )
 
 

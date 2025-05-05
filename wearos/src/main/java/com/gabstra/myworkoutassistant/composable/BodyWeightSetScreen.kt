@@ -245,7 +245,7 @@ fun BodyWeightSetScreen(
             val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
 
             val textColor  = when {
-                currentSetData.actualReps == previousSetData.actualReps -> Color.Unspecified
+                currentSetData.actualReps == previousSetData.actualReps -> MyColors.White
                 currentSetData.actualReps < previousSetData.actualReps  -> MyColors.Red
                 else -> MyColors.Green
             }
@@ -297,7 +297,7 @@ fun BodyWeightSetScreen(
             val weight = currentSetData.additionalWeight
 
             val textColor = when {
-                currentSetData.additionalWeight == previousSetData.additionalWeight -> Color.Unspecified
+                currentSetData.additionalWeight == previousSetData.additionalWeight -> MyColors.White
                 currentSetData.additionalWeight < previousSetData.additionalWeight  -> MyColors.Red
                 else -> MyColors.Green
             }

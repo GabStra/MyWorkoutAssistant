@@ -118,7 +118,6 @@ fun ExerciseScreen(
     LaunchedEffect(state.set.id) {
         // Navigate to the exercise detail page
         pagerState.scrollToPage(exerciseDetailPageIndex)
-        Log.d("ExerciseScreen", "SCROLL FROM SET")
         allowHorizontalScrolling = true
         viewModel.closeCustomDialog()
     }
@@ -128,12 +127,11 @@ fun ExerciseScreen(
 
     fun restartGoBack() {
         goBackJob?.cancel()
-        Log.d("ExerciseScreen", "Restarting goBackJob")
+
         goBackJob = scope.launch {
-            delay(10000)
+            delay(5000)
             if(pagerState.currentPage != exerciseDetailPageIndex) {
                 pagerState.scrollToPage(exerciseDetailPageIndex)
-                Log.d("ExerciseScreen", "SCROLL FROM GO BACK")
             }
         }
     }

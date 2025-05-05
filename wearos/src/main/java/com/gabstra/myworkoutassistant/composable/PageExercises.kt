@@ -103,6 +103,20 @@ fun PageExercises(
 
         val currentIndex = remember(updatedExercise) { exerciseIds.indexOf(updatedExercise.id) }
 
+        val backArrowModifier = remember(currentIndex) {
+            if (currentIndex > 0)
+                Modifier.padding(2.dp)
+            else
+                Modifier.padding(2.dp).alpha(0f)
+        }
+
+        val forwardArrowModifier = remember(currentIndex, exerciseIds.size) {
+            if (currentIndex < exerciseIds.size - 1)
+                Modifier.padding(2.dp)
+            else
+                Modifier.padding(2.dp).alpha(0f)
+        }
+
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
@@ -111,7 +125,11 @@ fun PageExercises(
             Row(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .clickable(enabled = !isNavigationLocked && currentIndex > 0) {
+                    .clickable(
+                        interactionSource = null,
+                        indication = null,
+                        enabled = !isNavigationLocked && currentIndex > 0
+                    ) {
                         VibrateGentle(context)
                         val newIndex = currentIndex - 1
                         selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
@@ -119,15 +137,12 @@ fun PageExercises(
                     }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Icon(
-                    modifier = Modifier
-                        .padding(2.dp),
+                    modifier = backArrowModifier,
                     imageVector = Icons.Filled.ArrowBack,
                     contentDescription = "Previous",
-                    tint = if (currentIndex > 0) Color.White else Color.DarkGray
+                    tint = MyColors.White
                 )
             }
-
-
 
             Column(
                 modifier = Modifier.fillMaxHeight().weight(1f),
@@ -190,13 +205,13 @@ fun PageExercises(
                 }
 
                 ExerciseSetsViewer(
-                    modifier =  Modifier.height(76.dp).fillMaxWidth(),
+                    modifier =  Modifier.fillMaxSize(),
                     viewModel = viewModel,
                     exercise = updatedExercise,
                     currentSet = currentStateSet.set,
                     customColor = when{
                         updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
-                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> Color.DarkGray
+                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.DarkGray
                         else -> null
                     },
                     overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
@@ -209,7 +224,11 @@ fun PageExercises(
             Row(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .clickable(enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1) {
+                    .clickable(
+                        interactionSource = null,
+                        indication = null,
+                        enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1
+                    ) {
                         VibrateGentle(context)
                         val newIndex = currentIndex + 1
                         selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
@@ -217,11 +236,10 @@ fun PageExercises(
                     }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 Icon(
-                    modifier = Modifier
-                        .padding(2.dp),
+                    modifier = forwardArrowModifier,
                     imageVector = Icons.Filled.ArrowForward,
                     contentDescription = "Next",
-                    tint = if (currentIndex < exerciseIds.size - 1) Color.White else Color.DarkGray
+                    tint = MyColors.White
                 )
             }
 

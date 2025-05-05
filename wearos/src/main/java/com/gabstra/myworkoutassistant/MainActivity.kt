@@ -70,6 +70,7 @@ import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import java.util.UUID
 import androidx.core.net.toUri
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 class MyReceiver(
     private val navController: NavController,
@@ -339,7 +340,7 @@ fun WearApp(
                         modifier = Modifier.fillMaxSize(),
                         strokeWidth = 4.dp,
                         indicatorColor = MaterialTheme.colors.primary,
-                        trackColor = Color.DarkGray
+                        trackColor = MyColors.DarkGray
                     )
 
                     LoadingScreen(appViewModel,"Syncing with phone")

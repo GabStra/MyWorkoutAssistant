@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
@@ -94,7 +95,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
                                 .fillMaxWidth()
                                 .verticalColumnScrollbar(
                                     scrollState = scrollState,
-                                    scrollBarColor = Color.White
+                                    scrollBarColor = MyColors.White
                                 )
                                 .padding(horizontal = 10.dp)
                                 .verticalScroll(scrollState),

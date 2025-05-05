@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.shared.VibrateHard
 import com.gabstra.myworkoutassistant.shared.VibrateTwice
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.shared.VibrateHardAndBeep
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
@@ -223,7 +224,7 @@ fun WorkoutScreen(
                             viewModel.pushAndStoreWorkoutData(false,context){
                                 viewModel.goToNextState()
                                 viewModel.lightScreenUp()
-                                VibrateHard(context)
+                                VibrateHardAndBeep(context)
                             }
                         }
                     )

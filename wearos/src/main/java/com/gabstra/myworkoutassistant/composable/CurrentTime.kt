@@ -59,7 +59,7 @@ fun CurrentTime() {
         Text(
             text = ":",
             style = MaterialTheme.typography.caption1,
-            color = if (showDots) Color.White else MyColors.LightGray,
+            color = if (showDots) MyColors.White else MyColors.LightGray,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxHeight(),
         )

@@ -34,13 +34,14 @@ import androidx.wear.compose.material.Text
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.TextUnit
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun ScalableText(
     modifier: Modifier = Modifier,
     text: String,
-    color: Color = Color.Unspecified,
+    color: Color = MyColors.White,
     style: TextStyle = LocalTextStyle.current,
     textAlign: TextAlign? = null,
     minTextSize: TextUnit = 6.sp,

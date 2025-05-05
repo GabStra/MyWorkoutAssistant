@@ -50,7 +50,7 @@ fun SetTableRow(
     setState: WorkoutState.Set,
     index: Int?,
     isCurrentSet: Boolean,
-    color: Color = Color.Unspecified,
+    color: Color = MyColors.White,
 ){
     val density = LocalDensity.current.density
     val triangleSize = 6f
@@ -86,7 +86,7 @@ fun SetTableRow(
                     // Draw filled white triangle
                     drawPath(
                         path = trianglePath,
-                        color = Color.White
+                        color = MyColors.White
                     )
                 }
             }
@@ -281,7 +281,7 @@ fun ExerciseSetsViewer(
                     .fillMaxWidth()
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
-                        scrollBarColor = Color.White,
+                        scrollBarColor = MyColors.White,
                         enableTopFade = false,
                         enableBottomFade = false
                     )
@@ -308,8 +308,8 @@ fun ExerciseSetsViewer(
                         isCurrentSet = index == setIndex,
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
-                            index == setIndex -> Color.White
-                            else ->  Color.DarkGray
+                            index == setIndex -> MyColors.White
+                            else ->  MyColors.DarkGray
                         }
                     )
                 }
@@ -334,7 +334,7 @@ fun ExerciseSetsViewer(
                     .fillMaxWidth()
                     .verticalColumnScrollbar(
                         scrollState = scrollState,
-                        scrollBarColor = Color.White
+                        scrollBarColor = MyColors.White
                     )
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -359,8 +359,8 @@ fun ExerciseSetsViewer(
                         isCurrentSet = index == setIndex,
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
-                            index == setIndex -> Color.White
-                            else -> Color.DarkGray
+                            index == setIndex -> MyColors.White
+                            else -> MyColors.DarkGray
                         }
                     )
                 }

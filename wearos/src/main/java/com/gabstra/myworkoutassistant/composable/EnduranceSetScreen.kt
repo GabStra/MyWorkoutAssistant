@@ -155,7 +155,7 @@ fun EnduranceSetScreen (
                         }
                     }
                 ),
-                color = if(isOverLimit) MyColors.Green else if(isDifferent) MyColors.Orange else Color.Unspecified,
+                color = if(isOverLimit) MyColors.Green else if(isDifferent) MyColors.Orange else MyColors.White,
                 text = FormatTime((if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000),
                 style = MaterialTheme.typography.display2,
             )

@@ -245,7 +245,7 @@ fun TimedDurationSetScreen(
                     ),
                 text = FormatTime(currentMillis / 1000),
                 style = MaterialTheme.typography.display2,
-                color =  if(isDifferent) MyColors.Orange else Color.Unspecified,
+                color =  if(isDifferent) MyColors.Orange else MyColors.White,
             )
         }
     }

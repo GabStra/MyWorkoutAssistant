@@ -270,7 +270,7 @@ private fun HeartRateDisplay(
     ) {
         HeartIcon(
             modifier = Modifier.size(15.dp),
-            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) Color.DarkGray else colorsByZone[currentZone]
+            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MyColors.DarkGray else colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
 
@@ -279,7 +279,7 @@ private fun HeartRateDisplay(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption1,
-                color = if (hr == 0) Color.DarkGray else Color.White
+                color = if (hr == 0) MyColors.DarkGray else MyColors.White
             )
         } else {
             Row(
@@ -289,11 +289,11 @@ private fun HeartRateDisplay(
                 val textColor by remember(confidenceLevel, hr) {
                     derivedStateOf {
                         when {
-                            hr == 0 -> Color.DarkGray
+                            hr == 0 -> MyColors.DarkGray
                             confidenceLevel > 0.7f -> MyColors.Green
                             confidenceLevel > 0.3f -> MyColors.Yellow
                             confidenceLevel >= 0f -> MyColors.Red // Include 0 confidence in Red
-                            else -> Color.White // Fallback
+                            else -> MyColors.White // Fallback
                         }
                     }
                 }
@@ -538,8 +538,8 @@ private fun HeartRateView(
 
             var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) MyColors.Green else Color.DarkGray)
-            RotatingIndicator(upperBoundRotationAngle, if(inBounds) MyColors.Red else Color.DarkGray)
+            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) MyColors.Green else MyColors.DarkGray)
+            RotatingIndicator(upperBoundRotationAngle, if(inBounds) MyColors.Red else MyColors.DarkGray)
         }
     }
 }

@@ -42,7 +42,7 @@ fun ExerciseIndicator(
             // Create a single segment for each indicator
             val trackSegment = ProgressIndicatorSegment(
                 weight = 1f,
-                indicatorColor = if (index != currentExerciseIndex) MyColors.Orange else Color.White
+                indicatorColor = if (index != currentExerciseIndex) MyColors.Orange else MyColors.White
             )
 
             // Calculate angle for each indicator to space them evenly
@@ -67,7 +67,7 @@ fun ExerciseIndicator(
     val startAngle = -60f + currentExerciseIndex * (segmentArcAngle + 2f)
     val middleAngle = startAngle + (segmentArcAngle / 2f)
 
-    RotatingIndicator(middleAngle, Color.White)
+    RotatingIndicator(middleAngle, MyColors.White)
 }
 
 @OptIn(ExperimentalHorologistApi::class)
@@ -121,7 +121,7 @@ fun SetIndicator(
                 paddingAngle = 2f,
                 startAngle = accumulatedAngle,
                 endAngle = accumulatedAngle + if(elementsToSkip == 1) angleForSet else indicatorSize,
-                trackColor = Color.White,
+                trackColor = MyColors.White,
             )
 
             if(elementsToSkip > 1){
@@ -140,14 +140,14 @@ fun SetIndicator(
             }
             // Draw group segment
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) Color.White  else (if(markAsCompleted) MyColors.Orange else Color.White))),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, if (isCurrentSet) MyColors.White  else (if(markAsCompleted) MyColors.Orange else MyColors.White))),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
                 paddingAngle = 2f,
                 startAngle = accumulatedAngle,
                 endAngle = accumulatedAngle + angleForSet,
-                trackColor = Color.White,
+                trackColor = MyColors.White,
             )
 
             accumulatedAngle += angleForSet // Move to next segment start
@@ -161,18 +161,18 @@ fun SetIndicator(
         // Indicator for more elements available
         if (numberOfElementsLeft > 0) {
             SegmentedProgressIndicator(
-                trackSegments = listOf(ProgressIndicatorSegment(1f, Color.White)),
+                trackSegments = listOf(ProgressIndicatorSegment(1f, MyColors.White)),
                 progress = 1f,
                 modifier = Modifier.fillMaxSize(),
                 strokeWidth = 4.dp,
                 paddingAngle = 2f,
                 startAngle = accumulatedAngle,
                 endAngle = accumulatedAngle + if(numberOfElementsLeft == 1) angleForSet else indicatorSize,
-                trackColor = Color.White,
+                trackColor = MyColors.White,
             )
 
             if(numberOfElementsLeft > 1){
-                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = Color.White, number = numberOfElementsLeft)
+                CircleWithNumber(baseAngleInDegrees = accumulatedAngle+indicatorSize/2, circleRadius = 20f, circleColor = MyColors.White, number = numberOfElementsLeft)
             }
         }
     }
