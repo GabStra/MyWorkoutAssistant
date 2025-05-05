@@ -191,7 +191,9 @@ object VolumeDistributionHelper {
             val currentVolume = combo.sumOf { it.volume }
             val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
 
-            return currentVolume.pow(2) * (1 + volumeDifference)
+            val currentInol = calculateTotalInol(combo,params.oneRepMax)
+
+            return currentVolume.pow(2) * (1 + volumeDifference) * (1 + currentInol)
         }
 
         suspend fun exploreCombinations(
