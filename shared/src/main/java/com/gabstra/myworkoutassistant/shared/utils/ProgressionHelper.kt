@@ -1,13 +1,13 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import android.util.Log
 import androidx.annotation.FloatRange
-import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.maxRepsForWeight
-import com.gabstra.myworkoutassistant.shared.median
 import com.gabstra.myworkoutassistant.shared.standardDeviation
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.pow
@@ -80,7 +80,6 @@ object VolumeDistributionHelper {
         possibleSets: List<ExerciseSet>,
     ): List<ExerciseSet> {
         if(possibleSets.isEmpty()){
-            Log.d("WorkoutViewModel", "No possible sets found")
             return emptyList()
         }
 
@@ -189,10 +188,9 @@ object VolumeDistributionHelper {
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
-            val currentVolume = combo.sumOf { it.volume }
             val currentFatigue = combo.sumOf { it.fatigue }
-
-            return currentVolume * currentFatigue
+            val maxFatigue = combo.maxOf { it.fatigue }
+            return currentFatigue * maxFatigue
         }
 
         suspend fun exploreCombinations(
