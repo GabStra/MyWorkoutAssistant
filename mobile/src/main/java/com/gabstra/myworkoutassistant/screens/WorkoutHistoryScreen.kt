@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -34,8 +35,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -75,12 +74,11 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
-import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
-import com.gabstra.myworkoutassistant.findWorkoutComponentByIdInWorkouts
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -102,28 +100,26 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
-
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.time.format.DateTimeFormatter
-import java.util.Locale
-import java.util.UUID
-
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Duration
+import java.time.format.DateTimeFormatter
 import java.util.Calendar
+import java.util.Locale
+import java.util.UUID
 
 @Composable
 fun Menu(
@@ -145,7 +141,8 @@ fun Menu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            border = BorderStroke(1.dp, MediumGray)
         ) {
             DropdownMenuItem(
                 text = { Text("Delete Selected History") },
@@ -956,16 +953,10 @@ fun WorkoutHistoryScreen(
                 }
             )
         },
-        bottomBar = {
-            if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
-                customBottomBar()
-            }
-        }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(DarkGray)
                 .padding(it),
             verticalArrangement = Arrangement.Top,
         ) {
@@ -1021,7 +1012,6 @@ fun WorkoutHistoryScreen(
                 )
             }
 
-
             if (workoutHistories.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -1057,6 +1047,7 @@ fun WorkoutHistoryScreen(
                     }
                 }else{
                     AnimatedContent(
+                        modifier = Modifier.weight(1f),
                         targetState = selectedMode,
                         transitionSpec = {
                             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
@@ -1066,12 +1057,11 @@ fun WorkoutHistoryScreen(
 
                         Column(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top=10.dp)
+                                .fillMaxSize()
+                                .padding(top = 5.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
                                 .padding(horizontal = 15.dp),
-
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             when (updatedSelectedMode) {
@@ -1081,6 +1071,9 @@ fun WorkoutHistoryScreen(
                         }
                     }
                 }
+            }
+            if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
+                customBottomBar()
             }
         }
     }

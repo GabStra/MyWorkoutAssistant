@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -31,7 +30,6 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -64,8 +62,8 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
-import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.StandardChart
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getOneRepMax
 import com.gabstra.myworkoutassistant.round
@@ -83,9 +81,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
@@ -98,8 +96,6 @@ import java.time.Duration
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
-import kotlin.collections.filter
-import kotlin.collections.isNotEmpty
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -418,11 +414,6 @@ fun ExerciseHistoryScreen(
                 }
             )
         },
-        bottomBar = {
-            if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
-                customBottomBar()
-            }
-        }
     ) {
         Column(
             modifier = Modifier
@@ -509,6 +500,7 @@ fun ExerciseHistoryScreen(
                     }
                 }else{
                     AnimatedContent(
+                        modifier = Modifier.weight(1f),
                         targetState = selectedMode,
                         transitionSpec = {
                             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
@@ -519,7 +511,7 @@ fun ExerciseHistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(top = 10.dp)
+                                .padding(top = 5.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
                                 .padding(horizontal = 15.dp),
@@ -717,6 +709,10 @@ fun ExerciseHistoryScreen(
                                 }
                             }
                         }
+                    }
+
+                    if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
+                        customBottomBar()
                     }
                 }
             }

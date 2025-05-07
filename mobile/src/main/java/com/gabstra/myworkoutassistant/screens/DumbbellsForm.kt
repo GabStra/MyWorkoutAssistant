@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -19,7 +22,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,13 +38,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.DumbbellUnit
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
@@ -61,7 +65,7 @@ fun DumbbellsForm(
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(dumbbells?.name ?: "") }
     val maxAdditionalItemsState = remember { mutableStateOf((dumbbells?.maxAdditionalItems ?: 0).toString()) }
-    val volumeMultiplierState = remember { mutableStateOf(dumbbells?.volumeMultiplier.toString()) }
+    val volumeMultiplierState = remember { mutableStateOf((dumbbells?.volumeMultiplier?: 0).toString()) }
 
     // State for dumbbells and plates
     val availableDumbbellsState = remember { mutableStateOf(dumbbells?.availableDumbbells ?: emptyList<DumbbellUnit>()) }
@@ -164,15 +168,14 @@ fun DumbbellsForm(
             )
 
             // Available Dumbbells Section
-            Card(
+            StyledCard(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
+                    .fillMaxWidth(),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
+                        .padding(10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -183,12 +186,12 @@ fun DumbbellsForm(
                             text = "Available Dumbbells",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(onClick = { showDumbbellDialog.value = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Dumbbell")
+                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showDumbbellDialog.value = true }) {
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Dumbbell")
                         }
                     }
 
-                    availableDumbbellsState.value.sortedBy { it.weight }.forEach { dumbbell ->
+                    availableDumbbellsState.value.sortedBy { it.weight }.forEachIndexed { index, dumbbell ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -196,8 +199,9 @@ fun DumbbellsForm(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("${dumbbell.weight}kg")
+                            Text("${index+1}) ${dumbbell.weight}kg", style = MaterialTheme.typography.bodyMedium)
                             IconButton(
+                                modifier = Modifier.size(35.dp),
                                 onClick = {
                                     availableDumbbellsState.value =
                                         availableDumbbellsState.value - dumbbell
@@ -211,15 +215,14 @@ fun DumbbellsForm(
             }
 
             // Additional Plates Section
-            Card(
+            StyledCard(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
+                    .fillMaxWidth(),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
+                        .padding(10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -230,12 +233,12 @@ fun DumbbellsForm(
                             text = "Additional Plates",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(onClick = { showAdditionalPlateDialog.value = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Plate")
+                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAdditionalPlateDialog.value = true }) {
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Plate")
                         }
                     }
 
-                    additionalPlatesState.value.sortedBy { it.weight }.forEach { plate ->
+                    additionalPlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -243,8 +246,11 @@ fun DumbbellsForm(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("${plate.weight}kg - ${plate.thickness}mm")
+                            Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                             IconButton(
+                                modifier = Modifier.size(35.dp),
                                 onClick = {
                                     additionalPlatesState.value =
                                         additionalPlatesState.value - plate
@@ -278,13 +284,14 @@ fun DumbbellsForm(
             }
 
             // Cancel button
-            Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                onClick = onCancel,
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
+                onClick = {
+                    onCancel()
+                },
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Cancel", color = LightGray)
-            }
+            )
         }
     }
     // Dialog for adding new dumbbell

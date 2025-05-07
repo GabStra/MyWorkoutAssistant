@@ -5,9 +5,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -16,28 +16,27 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
-
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,14 +68,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
@@ -88,17 +87,19 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import kotlinx.coroutines.Dispatchers
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.CircularProgressIndicator
-import com.gabstra.myworkoutassistant.composables.RoundedCard
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
 import com.kizitonwose.calendar.core.DayPosition
 import com.kizitonwose.calendar.core.yearMonth
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -107,12 +108,6 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
-import kotlinx.coroutines.delay
-import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
-import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -142,7 +137,8 @@ fun Menu(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MaterialTheme.colorScheme.background)
+                modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                border = BorderStroke(1.dp, MediumGray)
             ) {
                 DropdownMenuItem(
                     text = { Text("Sync with Watch") },
@@ -962,7 +958,7 @@ fun WorkoutsScreen(
                                         )
                                     } else {
                                         GenericSelectableList(
-                                            PaddingValues(5.dp, 10.dp),
+                                            PaddingValues(0.dp, 10.dp),
                                             items = activeWorkouts,
                                             selectedItems = selectedWorkouts,
                                             isWorkoutSelectionModeActive,
@@ -1051,7 +1047,7 @@ fun WorkoutsScreen(
                                         )
                                     } else {
                                         GenericSelectableList(
-                                            PaddingValues(5.dp, 10.dp),
+                                            PaddingValues(0.dp, 10.dp),
                                             items = equipments,
                                             selectedItems = selectedEquipments,
                                             isEquipmentSelectionModeActive,

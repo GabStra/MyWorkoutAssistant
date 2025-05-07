@@ -1,15 +1,39 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -25,11 +49,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
@@ -171,7 +196,8 @@ fun ExerciseForm(
                         DropdownMenu(
                             expanded = expandedType.value,
                             onDismissRequest = { expandedType.value = false },
-                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            border = BorderStroke(1.dp, MediumGray)
                         ) {
                             exerciseTypeDescriptions.forEach { ExerciseDescription ->
                                 DropdownMenuItem(
@@ -288,7 +314,8 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expandedEquipment.value,
                         onDismissRequest = { expandedEquipment.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        border = BorderStroke(1.dp, MediumGray)
                     ) {
                         DropdownMenuItem(
                             onClick = {
@@ -351,7 +378,8 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expandedHeartRateZone.value,
                         onDismissRequest = { expandedHeartRateZone.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        border = BorderStroke(1.dp, MediumGray)
                     ) {
                         heartRateZones.forEachIndexed { index, zone ->
                             DropdownMenuItem(
@@ -427,7 +455,7 @@ fun ExerciseForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                TextField(
+                OutlinedTextField(
                     value = notesState.value,
                     onValueChange = { notesState.value = it },
                     label = { Text("Notes") },
@@ -471,19 +499,16 @@ fun ExerciseForm(
                 if (exercise == null) Text("Insert Exercise", color = LightGray) else Text("Edit Exercise", color = LightGray)
             }
 
-            // Cancel button
-            Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
                 onClick = {
-                    // Call the callback to cancel the insertion/update
                     onCancel()
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
-            ) {
-                Text("Cancel", color = LightGray)
-            }
+            )
         }
     }
 }

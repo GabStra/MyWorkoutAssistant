@@ -23,8 +23,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.round
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -143,17 +145,16 @@ fun SettingsScreen(
             }
 
             // Cancel button
-            Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
                 onClick = {
                     onCancel()
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
-            ) {
-                Text("Cancel")
-            }
+            )
         }
     }
 

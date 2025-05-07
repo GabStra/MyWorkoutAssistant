@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -28,6 +29,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -95,7 +97,8 @@ fun BodyWeightSetForm(
                 DropdownMenu(
                     expanded = expandedWeights.value,
                     onDismissRequest = { expandedWeights.value = false },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    border = BorderStroke(1.dp, MediumGray)
                 ) {
                     possibleCombinations.forEach { combo ->
                         DropdownMenuItem(

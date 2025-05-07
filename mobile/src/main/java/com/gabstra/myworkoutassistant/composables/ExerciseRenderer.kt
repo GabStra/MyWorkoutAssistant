@@ -47,7 +47,7 @@ fun ExerciseRenderer(
                         .padding(horizontal = 10.dp)
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                 )
             }
@@ -65,7 +65,7 @@ fun ExerciseRenderer(
                         .padding(horizontal = 10.dp)
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
                 )
             },

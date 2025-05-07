@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
-import com.gabstra.myworkoutassistant.shared.Workout
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -27,6 +27,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -54,6 +55,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,8 +64,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.WorkoutTypes
+import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.time.Instant
 import java.time.LocalDate
@@ -99,36 +107,42 @@ fun WorkoutForm(
 
     Scaffold(
         topBar = {
-            StyledCard {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            textAlign = TextAlign.Center,
-                            text = if(workout == null) "Insert Workout" else "Edit Workout"
+            TopAppBar(
+                modifier = Modifier.drawBehind {
+                    drawLine(
+                        color = MediumLightGray,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
+                        text = if(workout == null) "Insert Workout" else "Edit Workout"
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
                         )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onCancel) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-                    actions = {
-                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
                     }
-                )
-            }
+                },
+                actions = {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = {onCancel()}) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                }
+            )
         }
     ){
             it ->
@@ -138,7 +152,7 @@ fun WorkoutForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(horizontal = 5.dp)
+                .padding(top = 10.dp)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
                 .padding(horizontal = 15.dp),
@@ -183,7 +197,8 @@ fun WorkoutForm(
                     DropdownMenu(
                         expanded = expanded.value,
                         onDismissRequest = { expanded.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        border = BorderStroke(1.dp, MediumGray)
                     ) {
                         WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
                             DropdownMenuItem(
@@ -236,11 +251,10 @@ fun WorkoutForm(
             }
 
             // Workout Schedule Section
-            Card(
+            StyledCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
             ) {
                 Column(
                     modifier = Modifier
@@ -294,7 +308,7 @@ fun WorkoutForm(
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Add Single")
+                            Text("Add Single", color = LightGray)
                         }
 
                         Button(
@@ -303,7 +317,7 @@ fun WorkoutForm(
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Add Multiple")
+                            Text("Add Multiple", color = LightGray)
                         }
                     }
                 }
@@ -337,21 +351,19 @@ fun WorkoutForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                if(workout==null) Text("Insert Workout") else Text("Edit Workout")
+                if(workout==null) Text("Insert Workout", color = LightGray) else Text("Edit Workout", color = LightGray)
             }
 
-            // Cancel button
-            Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
                 onClick = {
                     onCancel()
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
-            ) {
-                Text("Cancel")
-            }
+            )
         }
     }
     
@@ -441,7 +453,7 @@ fun ScheduleDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(8.dp)
             ) {
                 // Label field
                 OutlinedTextField(
@@ -540,9 +552,11 @@ fun ScheduleDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
+                onClick = onDismiss,
+            )
         }
     )
     
@@ -569,9 +583,11 @@ fun ScheduleDialog(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDatePicker.value = false }) {
-                    Text("Cancel")
-                }
+                CustomOutlinedButton(
+                    text = "Cancel",
+                    color = LightGray,
+                    onClick = { showDatePicker.value = false },
+                )
             }
         ) {
             DatePicker(state = datePickerState)
@@ -595,7 +611,7 @@ fun LabeledButton(
         Text(label)
         Spacer(modifier = Modifier.width(8.dp))
         Button(onClick = onClick) {
-            Text(buttonText)
+            Text(buttonText, color = LightGray)
         }
     }
 }
@@ -690,7 +706,11 @@ fun TimePickerDialog(
             TextButton(onClick = onConfirm) { Text("OK") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
+                onClick = onDismiss,
+            )
         }
     )
 }
@@ -1036,9 +1056,11 @@ fun BatchScheduleDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
+                onClick = onDismiss,
+            )
         }
     )
 
@@ -1070,12 +1092,17 @@ fun BatchScheduleDialog(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDatePicker.value = false }) {
-                    Text("Cancel")
-                }
+                CustomOutlinedButton(
+                    text = "Cancel",
+                    color = LightGray,
+                    onClick = { showDatePicker.value = false },
+                )
             }
         ) {
-            DatePicker(state = datePickerState)
+            DatePicker(
+                state = datePickerState,
+                colors =  DatePickerDefaults.colors().copy()
+            )
         }
     }
 }

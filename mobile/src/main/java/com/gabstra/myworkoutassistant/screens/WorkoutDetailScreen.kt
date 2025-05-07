@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -71,12 +72,12 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
-import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -91,10 +92,10 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -123,7 +124,8 @@ fun Menu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            border = BorderStroke(1.dp, MediumGray)
         ) {
             DropdownMenuItem(
                 text = { Text("Edit Workout") },
@@ -174,7 +176,7 @@ fun WorkoutComponentRenderer(
                     ) {
                         Text(
                             text = "Rest for: " + formatTime(workoutComponent.timeInSeconds),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyLarge,
                             color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
                             textAlign = TextAlign.Center
                         )
@@ -198,9 +200,7 @@ fun WorkoutComponentRenderer(
                 ) {
                     Text(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp)
-                            .basicMarquee(iterations = Int.MAX_VALUE),
+                            .fillMaxWidth(),
                         text = "Super Set",
                         style = MaterialTheme.typography.bodyLarge,
                         color =  if (superSet.enabled) LightGray else MediumDarkGray,

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -19,7 +22,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,12 +38,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
@@ -193,15 +198,14 @@ fun BarbellForm(
             )
 
             // Available Plates Section
-            Card(
+            StyledCard(
                 modifier = Modifier
-                    .fillMaxWidth()
-
+                    .fillMaxWidth(),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(8.dp),
+                        .padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Row(
@@ -213,20 +217,21 @@ fun BarbellForm(
                             text = "Available Plates",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(onClick = { showAvailablePlateDialog.value = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Plate")
+                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailablePlateDialog.value = true }) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate")
                         }
                     }
 
-                    availablePlatesState.value.sortedBy { it.weight }.forEach { plate ->
+                    availablePlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("${plate.weight}kg - ${plate.thickness}mm")
+                            Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm",style = MaterialTheme.typography.bodyMedium)
                             IconButton(
+                                modifier = Modifier.size(35.dp),
                                 onClick = {
                                     availablePlatesState.value = availablePlatesState.value - plate
                                 }
@@ -239,14 +244,14 @@ fun BarbellForm(
             }
 
             // Additional Plates Section
-            Card(
+            StyledCard(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxWidth(),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(8.dp),
+                        .padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
 
                 ) {
@@ -259,20 +264,21 @@ fun BarbellForm(
                             text = "Additional Plates",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(onClick = { showAdditionalPlateDialog.value = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Plate")
+                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAdditionalPlateDialog.value = true }) {
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Plate")
                         }
                     }
 
-                    additionalPlatesState.value.sortedBy { it.weight }.forEach { plate ->
+                    additionalPlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("${plate.weight}kg - ${plate.thickness}mm")
+                            Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm",style = MaterialTheme.typography.bodyMedium)
                             IconButton(
+                                modifier = Modifier.size(35.dp),
                                 onClick = {
                                     additionalPlatesState.value =
                                         additionalPlatesState.value - plate
@@ -311,13 +317,14 @@ fun BarbellForm(
             }
 
             // Cancel button
-            Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                onClick = onCancel,
+            CustomOutlinedButton(
+                text = "Cancel",
+                color = LightGray,
+                onClick = {
+                    onCancel()
+                },
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Cancel", color = LightGray)
-            }
+            )
         }
     }
     // Dialog for adding new available plate
