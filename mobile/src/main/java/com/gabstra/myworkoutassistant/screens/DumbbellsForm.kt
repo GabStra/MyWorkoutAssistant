@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
@@ -23,19 +25,29 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.DumbbellUnit
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
@@ -66,171 +78,215 @@ fun DumbbellsForm(
 
     val scrollState = rememberScrollState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 5.dp)
-            .verticalColumnScrollbar(scrollState)
-            .verticalScroll(scrollState)
-            .padding(horizontal = 15.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Dumbbells name field
-        OutlinedTextField(
-            value = nameState.value,
-            onValueChange = { nameState.value = it },
-            label = { Text("Dumbbells Set Name") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        // Volume Multiplier field
-        OutlinedTextField(
-            value = volumeMultiplierState.value,
-            onValueChange = {
-                if (it.isEmpty() || it.all { char -> char.isDigit() || char == '.' }) {
-                    volumeMultiplierState.value = it
-                }
-            },
-            label = { Text("Volume Multiplier") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        // Max Additional Items field
-        OutlinedTextField(
-            value = maxAdditionalItemsState.value,
-            onValueChange = {
-                if (it.isEmpty() || it.all { char -> char.isDigit() }) {
-                    maxAdditionalItemsState.value = it
-                }
-            },
-            label = { Text("Maximum Additional Plates") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        // Available Dumbbells Section
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Available Dumbbells",
-                        style = MaterialTheme.typography.titleMedium
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                modifier = Modifier.drawBehind {
+                    drawLine(
+                        color = MediumLightGray,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx()
                     )
-                    IconButton(onClick = { showDumbbellDialog.value = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Dumbbell")
-                    }
-                }
-
-                availableDumbbellsState.value.sortedBy { it.weight }.forEach { dumbbell ->
-                    Row(
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = {
+                    Text(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        color = LightGray,
+                        textAlign = TextAlign.Center,
+                        text = if(dumbbells == null) "Insert Dumbbells" else "Edit Dumbbells"
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                }
+            )
+        }
+    ) { it ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(it)
+                .padding(top = 10.dp)
+                .verticalColumnScrollbar(scrollState)
+                .verticalScroll(scrollState)
+                .padding(horizontal = 15.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Dumbbells name field
+            OutlinedTextField(
+                value = nameState.value,
+                onValueChange = { nameState.value = it },
+                label = { Text("Dumbbells Set Name") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Volume Multiplier field
+            OutlinedTextField(
+                value = volumeMultiplierState.value,
+                onValueChange = {
+                    if (it.isEmpty() || it.all { char -> char.isDigit() || char == '.' }) {
+                        volumeMultiplierState.value = it
+                    }
+                },
+                label = { Text("Volume Multiplier") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Max Additional Items field
+            OutlinedTextField(
+                value = maxAdditionalItemsState.value,
+                onValueChange = {
+                    if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                        maxAdditionalItemsState.value = it
+                    }
+                },
+                label = { Text("Maximum Additional Plates") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Available Dumbbells Section
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${dumbbell.weight}kg")
-                        IconButton(
-                            onClick = {
-                                availableDumbbellsState.value = availableDumbbellsState.value - dumbbell
-                            }
+                        Text(
+                            text = "Available Dumbbells",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        IconButton(onClick = { showDumbbellDialog.value = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Add Dumbbell")
+                        }
+                    }
+
+                    availableDumbbellsState.value.sortedBy { it.weight }.forEach { dumbbell ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Dumbbell")
+                            Text("${dumbbell.weight}kg")
+                            IconButton(
+                                onClick = {
+                                    availableDumbbellsState.value =
+                                        availableDumbbellsState.value - dumbbell
+                                }
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove Dumbbell")
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Additional Plates Section
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            Column(
+            // Additional Plates Section
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(vertical = 8.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
                 ) {
-                    Text(
-                        text = "Additional Plates",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    IconButton(onClick = { showAdditionalPlateDialog.value = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Plate")
-                    }
-                }
-
-                additionalPlatesState.value.sortedBy { it.weight }.forEach { plate ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${plate.weight}kg - ${plate.thickness}mm")
-                        IconButton(
-                            onClick = {
-                                additionalPlatesState.value = additionalPlatesState.value - plate
-                            }
+                        Text(
+                            text = "Additional Plates",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        IconButton(onClick = { showAdditionalPlateDialog.value = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Add Plate")
+                        }
+                    }
+
+                    additionalPlatesState.value.sortedBy { it.weight }.forEach { plate ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
+                            Text("${plate.weight}kg - ${plate.thickness}mm")
+                            IconButton(
+                                onClick = {
+                                    additionalPlatesState.value =
+                                        additionalPlatesState.value - plate
+                                }
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Submit button
-        Button(
-            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-            onClick = {
-                val newDumbbells = Dumbbells(
-                    id = dumbbells?.id ?: UUID.randomUUID(),
-                    name = nameState.value.trim(),
-                    availableDumbbells = availableDumbbellsState.value,
-                    additionalPlates = additionalPlatesState.value,
-                    maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0,
-                    volumeMultiplier = volumeMultiplierState.value.toDoubleOrNull() ?: 1.0
-                )
-                onDumbbellsUpsert(newDumbbells)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = nameState.value.isNotBlank() && availableDumbbellsState.value.isNotEmpty()
-        ) {
-            if (dumbbells == null) Text("Add Dumbbells Set") else Text("Edit Dumbbells Set")
-        }
+            // Submit button
+            Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                onClick = {
+                    val newDumbbells = Dumbbells(
+                        id = dumbbells?.id ?: UUID.randomUUID(),
+                        name = nameState.value.trim(),
+                        availableDumbbells = availableDumbbellsState.value,
+                        additionalPlates = additionalPlatesState.value,
+                        maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0,
+                        volumeMultiplier = volumeMultiplierState.value.toDoubleOrNull() ?: 1.0
+                    )
+                    onDumbbellsUpsert(newDumbbells)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = nameState.value.isNotBlank() && availableDumbbellsState.value.isNotEmpty()
+            ) {
+                if (dumbbells == null) Text("Add Dumbbells", color = LightGray) else Text("Edit Dumbbells", color = LightGray)
+            }
 
-        // Cancel button
-        Button(
-            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-            onClick = onCancel,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Cancel")
+            // Cancel button
+            Button(
+                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                onClick = onCancel,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Cancel", color = LightGray)
+            }
         }
     }
-
     // Dialog for adding new dumbbell
     if (showDumbbellDialog.value) {
         AlertDialog(

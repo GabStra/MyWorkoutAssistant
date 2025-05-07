@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,7 +46,7 @@ fun EnduranceSetForm(
                 .fillMaxWidth()
                 .padding(8.dp),
         ) {
-            Text("Duration")
+            Text("Duration", color = LightGray)
             Spacer(modifier = Modifier.height(15.dp))
             CustomTimePicker(
                 initialHour = hours,
@@ -67,7 +68,7 @@ fun EnduranceSetForm(
                 checked = autoStartState.value,
                 onCheckedChange = { autoStartState.value = it },
                 colors =  CheckboxDefaults.colors().copy(
-                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    checkedCheckmarkColor =  LightGray
                 )
             )
             Text(text = "Auto start")
@@ -83,7 +84,7 @@ fun EnduranceSetForm(
                 checked = autoStopState.value,
                 onCheckedChange = { autoStopState.value = it },
                 colors =  CheckboxDefaults.colors().copy(
-                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    checkedCheckmarkColor = LightGray
                 )
             )
             Text(text = "Auto stop")
@@ -108,7 +109,7 @@ fun EnduranceSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (enduranceSet == null) Text("Insert Count-Up Set") else Text("Edit Count-Up Set")
+            if (enduranceSet == null) Text("Insert Count-Up Set", color = LightGray) else Text("Edit Count-Up Set", color = LightGray)
         }
     }
 }

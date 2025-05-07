@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,16 +12,30 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
@@ -34,6 +50,11 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
 
@@ -50,6 +71,7 @@ fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetForm(
     viewModel: AppViewModel,
@@ -62,78 +84,130 @@ fun SetForm(
     val selectedSetType = remember { mutableStateOf(getSetTypeFromExerciseType(exerciseType)) }
     val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-    ){
-        if(set == null){
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                modifier = Modifier.drawBehind {
+                        drawLine(
+                            color = MediumLightGray,
+                            start = Offset(0f, size.height),
+                            end = Offset(size.width, size.height),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        color = LightGray,
+                        textAlign = TextAlign.Center,
+                        text = if(set == null) "Insert Set" else "Edit Set"
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                }
+            )
+        }
+    ) { it ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(it)
+                .padding(top = 10.dp)
+                .padding(horizontal = 15.dp),
+        ) {
+            if (set == null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                ) {
+                    Text(text = "Set Type:")
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = selectedSetType.value.name.replace('_', ' ').capitalize(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            when (selectedSetType.value) {
+                SetType.WEIGHT_SET -> {
+                    if (equipment == null) {
+                        val context = LocalContext.current
+                        Toast.makeText(
+                            context,
+                            "Equipment must be assigned to the exercise first",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        onCancel()
+                        return@Scaffold
+                    }
+
+                    WeightSetForm(
+                        onSetUpsert = onSetUpsert,
+                        weightSet = set as WeightSet?,
+                        equipment = equipment!!
+                    )
+                }
+
+                SetType.BODY_WEIGHT_SET -> {
+                    BodyWeightSetForm(
+                        onSetUpsert = onSetUpsert,
+                        bodyWeightSet = set as BodyWeightSet?,
+                        equipment = equipment
+                    )
+                }
+
+                SetType.COUNTUP_SET -> {
+                    EnduranceSetForm(
+                        onSetUpsert = onSetUpsert,
+                        enduranceSet = set as EnduranceSet?,
+                    )
+                }
+
+                SetType.COUNTDOWN_SET -> {
+                    TimedDurationSetForm(
+                        onSetUpsert = onSetUpsert,
+                        timedDurationSet = set as TimedDurationSet?,
+                    )
+                }
+            }
+
+            Button(
+                colors = ButtonDefaults.buttonColors(
+                    contentColor = MaterialTheme.colorScheme.background
+                ),
+                onClick = {
+                    onCancel()
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text(text = "Set Type:")
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = selectedSetType.value.name.replace('_', ' ').capitalize(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp)
-                    )
-                }
+                Text("Cancel",color = LightGray)
             }
-            Spacer(modifier = Modifier.height(10.dp))
-        }
-
-        when (selectedSetType.value) {
-            SetType.WEIGHT_SET -> {
-                if(equipment == null){
-                    val context = LocalContext.current
-                    Toast.makeText(context, "Equipment must be assigned to the exercise first", Toast.LENGTH_LONG).show()
-                    onCancel()
-                    return
-                }
-
-                WeightSetForm(
-                    onSetUpsert = onSetUpsert,
-                    weightSet = set as WeightSet?,
-                    equipment = equipment!!
-                )
-            }
-            SetType.BODY_WEIGHT_SET -> {
-                BodyWeightSetForm(
-                    onSetUpsert = onSetUpsert,
-                    bodyWeightSet = set as BodyWeightSet?,
-                    equipment = equipment
-                )
-            }
-            SetType.COUNTUP_SET -> {
-                EnduranceSetForm(
-                    onSetUpsert = onSetUpsert,
-                    enduranceSet = set as EnduranceSet?,
-                )
-            }
-            SetType.COUNTDOWN_SET -> {
-                TimedDurationSetForm(
-                    onSetUpsert = onSetUpsert,
-                    timedDurationSet = set as TimedDurationSet?,
-                )
-            }
-        }
-
-        Button(
-            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-            onClick = {
-                onCancel()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Text("Cancel")
         }
     }
 }

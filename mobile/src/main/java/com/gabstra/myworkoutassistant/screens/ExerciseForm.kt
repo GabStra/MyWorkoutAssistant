@@ -18,6 +18,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -27,6 +29,8 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -87,36 +91,44 @@ fun ExerciseForm(
     val scrollState = rememberScrollState()
     Scaffold(
         topBar = {
-            StyledCard {
-                TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    title = {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            textAlign = TextAlign.Center,
-                            text = if(exercise == null) "Insert Exercise" else "Edit Exercise"
+            TopAppBar(
+                modifier = Modifier.drawBehind {
+                    drawLine(
+                        color = MediumLightGray,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
+                        text = if(exercise == null) "Insert Exercise" else "Edit Exercise"
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
                         )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onCancel) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-                    actions = {
-                        IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
                     }
-                )
-            }
+                },
+                actions = {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = {
+                        onCancel()
+                    }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                }
+            )
         }
     ){
         it ->
@@ -124,7 +136,7 @@ fun ExerciseForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(horizontal = 5.dp)
+                .padding(top = 10.dp)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
                 .padding(horizontal = 15.dp),
@@ -456,7 +468,7 @@ fun ExerciseForm(
                     .padding(8.dp),
                 enabled = nameState.value.isNotBlank()
             ) {
-                if (exercise == null) Text("Insert Exercise") else Text("Edit Exercise")
+                if (exercise == null) Text("Insert Exercise", color = LightGray) else Text("Edit Exercise", color = LightGray)
             }
 
             // Cancel button
@@ -470,7 +482,7 @@ fun ExerciseForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text("Cancel")
+                Text("Cancel", color = LightGray)
             }
         }
     }

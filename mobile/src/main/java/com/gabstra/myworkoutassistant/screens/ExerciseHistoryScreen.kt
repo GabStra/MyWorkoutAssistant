@@ -519,11 +519,10 @@ fun ExerciseHistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = 5.dp)
+                                .padding(top = 10.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
-                                .padding(horizontal = 15.dp)
-                                .padding(top = 10.dp),
+                                .padding(horizontal = 15.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             when (updatedSelectedMode) {

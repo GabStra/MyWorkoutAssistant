@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
@@ -245,20 +247,19 @@ fun SupersetForm(
 
         AlertDialog(
             onDismissRequest = { displayDialog.value = false },
-            title = { Text("Add Superset") },
+            title = { Text("Add Superset", color = LightGray) },
             text = {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 5.dp)
+                        .padding(top = 10.dp)
                         .verticalColumnScrollbar(scrollState)
-                        .verticalScroll(scrollState)
-                        .padding(horizontal = 15.dp),
+                        .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
 
-                    Text("Rest Time Between Sets")
+                    Text("Rest Time Between Sets", color = LightGray)
                     CustomTimePicker(
                         initialHour = hours,
                         initialMinute = minutes,
@@ -272,7 +273,8 @@ fun SupersetForm(
                     val validItems =
                         remember { workout.workoutComponents.filter { it is Exercise && it.enabled } }
 
-                    Text("Select at least two exercises")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Select at least two exercises", color = LightGray)
                     validItems.forEach { item ->
                         val exercise = item as Exercise
 
@@ -325,7 +327,7 @@ fun SupersetForm(
                         appViewModel.updateWorkoutOld(workout, updatedWorkout)
                         displayDialog.value = false
                     },
-                    enabled = selectedWorkoutComponents.size >= 2 && hms.value != Triple(0, 0, 0)
+                    enabled = selectedWorkoutComponents.size >= 2
                 ) {
                     Text("Create Super set")
                 }
@@ -693,7 +695,7 @@ fun WorkoutDetailScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 5.dp)
+                        .padding(top = 10.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)
                         .padding(horizontal = 15.dp),

@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,7 +67,7 @@ fun TimedDurationSetForm(
                 checked = autoStartState.value,
                 onCheckedChange = { autoStartState.value = it },
                 colors =  CheckboxDefaults.colors().copy(
-                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    checkedCheckmarkColor = LightGray
                 )
             )
             Text(text = "Auto start")
@@ -82,7 +83,7 @@ fun TimedDurationSetForm(
                 checked = autoStopState.value,
                 onCheckedChange = { autoStopState.value = it },
                 colors =  CheckboxDefaults.colors().copy(
-                    checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    checkedCheckmarkColor =  LightGray
                 )
             )
             Text(text = "Auto stop")
@@ -106,7 +107,7 @@ fun TimedDurationSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (timedDurationSet == null) Text("Insert Count-Down Set") else Text("Edit Count-Down Set")
+            if (timedDurationSet == null) Text("Insert Count-Down Set", color = LightGray) else Text("Edit Count-Down Set", color = LightGray)
         }
     }
 }

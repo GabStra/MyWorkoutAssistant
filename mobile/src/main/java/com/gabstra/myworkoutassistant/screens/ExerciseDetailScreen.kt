@@ -502,7 +502,7 @@ fun ExerciseDetailScreen(
 
                 Column(
                     modifier = Modifier.fillMaxSize()
-                        .padding(5.dp)
+                        .padding(top = 10.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)
                         .padding(horizontal = 15.dp),

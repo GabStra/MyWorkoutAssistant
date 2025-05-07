@@ -340,7 +340,7 @@ fun WearApp(
                         modifier = Modifier.fillMaxSize(),
                         strokeWidth = 4.dp,
                         indicatorColor = MaterialTheme.colors.primary,
-                        trackColor = MyColors.DarkGray
+                        trackColor = Color.DarkGray
                     )
 
                     LoadingScreen(appViewModel,"Syncing with phone")

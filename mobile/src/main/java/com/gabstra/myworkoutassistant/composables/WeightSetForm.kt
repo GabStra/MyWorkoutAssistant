@@ -32,6 +32,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -149,7 +150,7 @@ fun WeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (weightSet == null) Text("Insert Weight Set") else Text("Edit Weight Set")
+            if (weightSet == null) Text("Insert Weight Set", color = LightGray) else Text("Edit Weight Set", color = LightGray)
         }
     }
 }

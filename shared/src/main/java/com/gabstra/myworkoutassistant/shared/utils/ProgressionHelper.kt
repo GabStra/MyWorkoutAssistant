@@ -19,6 +19,7 @@ object VolumeDistributionHelper {
         val weight: Double,
         val reps: Int,
         val volume: Double,
+        val fatigue: Double
     )
 
     data class ExerciseProgression(
@@ -86,7 +87,7 @@ object VolumeDistributionHelper {
         val minTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.from / 100)
         val maxTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.to / 100)
 
-        val previousInol = calculateTotalInol(params.previousSets,params.oneRepMax)
+        var previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
 
         var result = findBestProgressions(
             possibleSets,
@@ -100,14 +101,14 @@ object VolumeDistributionHelper {
                 val volumeStdDev = combo.map { it.volume }.standardDeviation()
                 val deviationPercentage =  (volumeStdDev / averageVolume) * 100
 
-                val currentInol = calculateTotalInol(combo,params.oneRepMax)
+                val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
 
                 ValidationResult(
                     shouldReturn = currentTotalVolume.isEqualTo(params.previousTotalVolume)
                             || currentTotalVolume < minTotalVolume
                             || currentTotalVolume > maxTotalVolume
                             || deviationPercentage > 10
-                            || currentInol < previousInol
+                            || currentAverageWeightPerRep < previousAverageWeightPerRep
                 )
             }
         )
@@ -125,13 +126,13 @@ object VolumeDistributionHelper {
                     val volumeStdDev = combo.map { it.volume }.standardDeviation()
                     val deviationPercentage =  (volumeStdDev / averageVolume) * 100
 
-                    val currentInol = calculateTotalInol(combo,params.oneRepMax)
+                    val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
 
                     ValidationResult(
                         shouldReturn = currentTotalVolume.isEqualTo(params.previousTotalVolume)
                                 || currentTotalVolume < minTotalVolume
                                 || deviationPercentage > 10
-                                || currentInol < previousInol
+                                || currentAverageWeightPerRep < previousAverageWeightPerRep
                     )
                 }
             )
@@ -189,11 +190,9 @@ object VolumeDistributionHelper {
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
             val currentVolume = combo.sumOf { it.volume }
-            val volumeDifference = combo.maxOf { it.volume } - combo.minOf { it.volume }
+            val currentFatigue = combo.sumOf { it.fatigue }
 
-            val currentInol = calculateTotalInol(combo,params.oneRepMax)
-
-            return currentVolume.pow(2) * (1 + volumeDifference) * (1 + currentInol)
+            return currentVolume * currentFatigue
         }
 
         suspend fun exploreCombinations(
@@ -300,11 +299,13 @@ object VolumeDistributionHelper {
         oneRepMax: Double,
     ): ExerciseSet {
         val volume = weight * reps
+        val intensity = weight / oneRepMax
 
         return ExerciseSet(
             weight = weight,
             reps = reps,
-            volume = volume
+            volume = volume,
+            fatigue = reps * intensity.pow(2.5)
         )
     }
 

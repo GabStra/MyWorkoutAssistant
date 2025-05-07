@@ -58,6 +58,7 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 
 fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
     try {
@@ -436,8 +437,8 @@ fun Modifier.verticalColumnScrollbar(
     endPadding: Float = 12f,
     trackHeight: Dp? = null,
     // Content fade effect parameters
-    enableTopFade: Boolean = true,
-    enableBottomFade: Boolean = true,
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color = DarkGray
 ): Modifier {
@@ -527,7 +528,7 @@ fun Modifier.verticalColumnScrollbar(
             return@drawWithContent
         }
 
-        val defaultTrackHeight = viewportHeight * (2f / 3f)
+        val defaultTrackHeight = viewportHeight
         val actualTrackHeight = rememberedTrackHeight?.toPx()?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
         val trackTopOffset = if (actualTrackHeight < viewportHeight) {
             (viewportHeight - actualTrackHeight) / 2f
