@@ -288,7 +288,8 @@ fun ExerciseForm(
                         checked = generateWarmupSets.value,
                         onCheckedChange = { generateWarmupSets.value = it },
                         colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                            checkedCheckmarkColor = LightGray,
+                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
                         )
                     )
                     Text(text = "Generate Warmup Sets")
@@ -301,7 +302,7 @@ fun ExerciseForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text(text = "Equipment:")
+                Text(text = "Equipment:", style = MaterialTheme.typography.bodyMedium)
                 Box(modifier = Modifier.fillMaxWidth()) {
                     val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
                     Text(
@@ -443,8 +444,9 @@ fun ExerciseForm(
                     checked = doNotStoreHistory.value,
                     onCheckedChange = { doNotStoreHistory.value = it },
                     enabled = allowSettingDoNotStoreHistory,
-                    colors =  CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    colors = CheckboxDefaults.colors().copy(
+                        checkedCheckmarkColor = LightGray,
+                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
                     )
                 )
                 Text(text = "Do not store history")

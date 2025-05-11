@@ -243,8 +243,9 @@ fun WorkoutForm(
                 Checkbox(
                     checked = usePolarDeviceState.value,
                     onCheckedChange = { usePolarDeviceState.value = it },
-                    colors =  CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor =  MaterialTheme.colorScheme.background
+                    colors = CheckboxDefaults.colors().copy(
+                        checkedCheckmarkColor = LightGray,
+                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
                     )
                 )
                 Text(text = "Use Polar Device")

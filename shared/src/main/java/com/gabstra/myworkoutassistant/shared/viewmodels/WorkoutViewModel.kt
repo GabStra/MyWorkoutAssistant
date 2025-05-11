@@ -34,7 +34,6 @@ import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
-import com.gabstra.myworkoutassistant.shared.median
 import com.gabstra.myworkoutassistant.shared.repsForTargetRIR
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -65,7 +64,6 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.collections.setOf
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.pow
@@ -599,6 +597,14 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
+        //log each set for progression
+/*        setsForProgression.forEach {
+            Log.d(
+                "WorkoutViewModel",
+                "Weight: ${it.weight} - Reps: ${it.reps} - 1RM: ${oneRepMax} - Volume: ${it.volume} - RIR: ${it.rir} - Score ${it.score}"
+            )
+        }*/
+
         val exerciseVolume = setsForProgression.sumOf { it.volume }
 
         val shouldDeload = false // exerciseInfo != null && exerciseInfo.sessionFailedCounter >= 2u //( || exerciseInfo.successfulSessionCounter >= 7u)
@@ -625,15 +631,31 @@ open class WorkoutViewModel : ViewModel() {
                 exercise.maxReps
             )
 
-        Log.d(
-            "WorkoutViewModel",
-            "${exercise.name} (${exercise.exerciseType}) - Volume ${exerciseVolume.round(2)} - 1RM ${
-                String.format(
-                    "%.2f",
-                    oneRepMax
-                ).replace(",", ".")
-            }"
-        )
+        if(exercise.exerciseType == ExerciseType.BODY_WEIGHT){
+            val relativeBodyWeight =
+                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+
+            Log.d(
+                "WorkoutViewModel",
+                "${exercise.name} (${exercise.exerciseType}) Relative BodyWeight: ${relativeBodyWeight} - Volume ${exerciseVolume.round(2)} - 1RM ${
+                    String.format(
+                        "%.2f",
+                        oneRepMax
+                    ).replace(",", ".")
+                }"
+            )
+
+        }else{
+            Log.d(
+                "WorkoutViewModel",
+                "${exercise.name} (${exercise.exerciseType}) - Volume ${exerciseVolume.round(2)} - 1RM ${
+                    String.format(
+                        "%.2f",
+                        oneRepMax
+                    ).replace(",", ".")
+                }"
+            )
+        }
 
         val oldSets = exerciseSets.map { set ->
             when (set) {
@@ -659,7 +681,9 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
-        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")}")
+        val oldAvgRIR = setsForProgression.map { it.rir }.average()
+        val oldScore = setsForProgression.sumOf { it.score }
+        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Avg RIR: ${oldAvgRIR.round(2)} - Score: ${oldScore.round(2)}")
 
         var exerciseProgression: ExerciseProgression? = null
 
@@ -697,7 +721,9 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")}")
+            val newAvgRIR = exerciseProgression.sets.map { it.rir }.average()
+            val newScore = exerciseProgression.sets.sumOf { it.score }
+            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Avg RIR: ${newAvgRIR.round(2)} - Score: ${newScore.round(2)}")
 
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
 

@@ -71,7 +71,7 @@ fun BodyWeightSetForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text(text = "Equipment: ${equipment.name}")
+                Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
             }
 
             Box(){

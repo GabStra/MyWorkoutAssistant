@@ -11,7 +11,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
@@ -21,6 +20,8 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 
 @Composable
 fun ExerciseRenderer(
@@ -35,25 +36,22 @@ fun ExerciseRenderer(
         sets = sets.filter { it !is RestSet }
 
     if(sets.isEmpty()){
-        StyledCard(modifier = modifier, ) {
-            Row(
-                modifier = Modifier.padding(15.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ){
-                Text(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp)
-                        .basicMarquee(iterations = Int.MAX_VALUE),
-                    text = exercise.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
-                )
-            }
+        Row(
+            modifier = Modifier.padding(15.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ){
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp)
+                    .basicMarquee(iterations = Int.MAX_VALUE),
+                text = exercise.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (exercise.enabled) LightGray else MediumGray,
+            )
         }
     }else{
-        StyledCard{
         ExpandableContainer(
             isOpen = false,
             modifier = modifier,
@@ -66,7 +64,7 @@ fun ExerciseRenderer(
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                    color = if (exercise.enabled) LightGray else MediumGray,
                 )
             },
             content = {
@@ -85,7 +83,7 @@ fun ExerciseRenderer(
                                 Text(
                                     text = "$index)",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                    color = if (exercise.enabled) LightGray else MediumGray,
                                 )
                                 when (set) {
                                     is WeightSet -> {
@@ -100,7 +98,7 @@ fun ExerciseRenderer(
                                         Text(
                                             text = "${weightText} kg x ${set.reps} ${repLabel}",
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                            color = if (exercise.enabled) LightGray else MediumGray,
                                         )
                                     }
 
@@ -110,7 +108,7 @@ fun ExerciseRenderer(
                                         Text(
                                             text = if(set.additionalWeight<=0) "${set.reps} ${repLabel}" else "${set.additionalWeight} kg x ${set.reps} ${repLabel}",
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                            color = if (exercise.enabled) LightGray else MediumGray,
                                         )
                                     }
 
@@ -118,7 +116,7 @@ fun ExerciseRenderer(
                                         Text(
                                             text= formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                            color = if (exercise.enabled) LightGray else MediumGray,
                                         )
                                     }
 
@@ -126,7 +124,7 @@ fun ExerciseRenderer(
                                         Text(
                                             formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                            color = if (exercise.enabled) LightGray else MediumGray,
                                         )
                                     }
                                     else -> throw IllegalArgumentException("Unknown set type")
@@ -139,9 +137,9 @@ fun ExerciseRenderer(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "Rest for: "+formatTime(set.timeInSeconds),
+                                    "Rest "+formatTime(set.timeInSeconds),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = if (exercise.enabled) .87f else .3f),
+                                    color = if (exercise.enabled) LightGray else MediumGray,
                                 )
                             }
                         }
@@ -149,6 +147,5 @@ fun ExerciseRenderer(
                 }
             }
         )
-        }
     }
 }

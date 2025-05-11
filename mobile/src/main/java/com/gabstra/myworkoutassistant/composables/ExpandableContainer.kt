@@ -1,10 +1,10 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
@@ -17,7 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import androidx.compose.ui.draw.clip
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 
 @Composable
@@ -45,6 +45,7 @@ fun ExpandableContainer(
             title(Modifier.weight(1f))
             if(isExpandable){
                 IconButton(
+                    modifier= Modifier.clip(CircleShape),
                     onClick = {
                         openStatus = !openStatus
                         if(openStatus){

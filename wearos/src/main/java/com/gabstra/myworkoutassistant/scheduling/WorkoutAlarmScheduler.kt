@@ -2,12 +2,9 @@ package com.gabstra.myworkoutassistant.scheduling
 
 import android.annotation.SuppressLint
 import android.app.AlarmManager
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.provider.Settings
 import com.gabstra.myworkoutassistant.receivers.WorkoutAlarmReceiver
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -15,8 +12,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Calendar
-import android.util.Log
-import androidx.annotation.RequiresApi
 
 class WorkoutAlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -96,6 +91,8 @@ class WorkoutAlarmScheduler(private val context: Context) {
     }
     
     fun rescheduleAllWorkouts() {
+        if(!alarmManager.canScheduleExactAlarms()) return
+
         scope.launch {
             val database = AppDatabase.getDatabase(context)
             val schedules = database.workoutScheduleDao().getActiveSchedules()

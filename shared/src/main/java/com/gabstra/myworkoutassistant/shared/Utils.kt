@@ -55,7 +55,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
@@ -537,9 +539,15 @@ fun VibrateTwiceAndBeep(context: Context) {
     }
 }
 
-fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double): Double {
-    val repsToFailure = (oneRepMax / weight).pow(1.0 / 0.10)
-    return (repsToFailure - reps)
+
+
+fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double, fatigue: Double = 0.03): Int {
+    require(weight > 0) { "Weights must be positive" }
+    require(reps > 0) { "Reps must be positive" }
+    require(oneRepMax > 0) { "One Rep Max must be positive" }
+
+    val repsToFailure = ((1 - (weight / oneRepMax)) / fatigue).roundToInt()
+    return repsToFailure - reps
 }
 
 fun maxRepsForWeight(weight: Double, oneRepMax: Double): Double {

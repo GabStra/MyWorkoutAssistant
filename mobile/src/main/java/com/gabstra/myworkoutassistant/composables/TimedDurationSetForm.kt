@@ -66,8 +66,9 @@ fun TimedDurationSetForm(
             Checkbox(
                 checked = autoStartState.value,
                 onCheckedChange = { autoStartState.value = it },
-                colors =  CheckboxDefaults.colors().copy(
-                    checkedCheckmarkColor = LightGray
+                colors = CheckboxDefaults.colors().copy(
+                    checkedCheckmarkColor = LightGray,
+                    uncheckedBorderColor = MaterialTheme.colorScheme.primary
                 )
             )
             Text(text = "Auto start")
@@ -82,8 +83,9 @@ fun TimedDurationSetForm(
             Checkbox(
                 checked = autoStopState.value,
                 onCheckedChange = { autoStopState.value = it },
-                colors =  CheckboxDefaults.colors().copy(
-                    checkedCheckmarkColor =  LightGray
+                colors = CheckboxDefaults.colors().copy(
+                    checkedCheckmarkColor = LightGray,
+                    uncheckedBorderColor = MaterialTheme.colorScheme.primary
                 )
             )
             Text(text = "Auto stop")

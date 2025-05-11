@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
@@ -155,11 +156,13 @@ fun WorkoutComponentRenderer(
 ) {
     when (workoutComponent) {
         is Exercise -> {
-            ExerciseRenderer(
-                exercise = workoutComponent,
-                showRest = showRest,
-                appViewModel = appViewModel
-            )
+            StyledCard{
+                ExerciseRenderer(
+                    exercise = workoutComponent,
+                    showRest = showRest,
+                    appViewModel = appViewModel
+                )
+            }
         }
 
         is Rest ->
@@ -175,9 +178,9 @@ fun WorkoutComponentRenderer(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Rest for: " + formatTime(workoutComponent.timeInSeconds),
+                            text = "Rest " + formatTime(workoutComponent.timeInSeconds),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = Color.White.copy(alpha = if (workoutComponent.enabled) .87f else .3f),
+                            color = if (workoutComponent.enabled) LightGray else MediumGray,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -193,37 +196,34 @@ fun WorkoutComponentRenderer(
                     .border(1.dp, MediumGray),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth(),
-                        text = "Super Set",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color =  if (superSet.enabled) LightGray else MediumDarkGray,
-                    )
-                }
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    text = "Super Set",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color =  if (superSet.enabled) LightGray else MediumDarkGray,
+                )
                 Column(
-                    modifier = Modifier.padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     superSet.exercises.forEach { exercise ->
-                        ExerciseRenderer(
-                            modifier = Modifier.clickable {
-                                appViewModel.setScreenData(
-                                    ScreenData.ExerciseDetail(
-                                        workout.id,
-                                        exercise.id
+                        DashedCard {
+                            ExerciseRenderer(
+                                modifier = Modifier.clickable {
+                                    appViewModel.setScreenData(
+                                        ScreenData.ExerciseDetail(
+                                            workout.id,
+                                            exercise.id
+                                        )
                                     )
-                                )
-                            },
-                            exercise = exercise,
-                            showRest = showRest,
-                            appViewModel = appViewModel
-                        )
+                                },
+                                exercise = exercise,
+                                showRest = showRest,
+                                appViewModel = appViewModel
+                            )
+                        }
                     }
                 }
             }
@@ -292,12 +292,7 @@ fun SupersetForm(
                                 },
                             text = exercise.name,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(
-                                alpha = if (selectedWorkoutComponents.contains(
-                                        exercise
-                                    )
-                                ) .87f else .3f
-                            ),
+                            color =  if (selectedWorkoutComponents.contains(exercise)) LightGray else MediumGray
                         )
                     }
 
@@ -404,7 +399,7 @@ fun WorkoutDetailScreen(
                         Icon(
                             imageVector = Icons.Filled.ArrowUpward,
                             contentDescription = "Go Higher",
-                            tint = Color.White.copy(alpha = .87f)
+                            tint = LightGray
                         )
                     }
                     IconButton(
@@ -430,7 +425,7 @@ fun WorkoutDetailScreen(
                         }) {
                         Icon(
                             imageVector = Icons.Filled.ArrowDownward,
-                            contentDescription = "Go Lower", tint = Color.White.copy(alpha = .87f)
+                            contentDescription = "Go Lower", tint = LightGray
                         )
                     }
                     if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
@@ -509,9 +504,7 @@ fun WorkoutDetailScreen(
                         }) {
                         val isEnabled = selectedWorkoutComponents.isNotEmpty()
                         val color =
-                            if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
-                                alpha = .3f
-                            )
+                            if (isEnabled) LightGray else MediumGray
 
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
@@ -526,7 +519,7 @@ fun WorkoutDetailScreen(
                         Icon(
                             imageVector = Icons.Default.MoveDown,
                             contentDescription = "Move to Another Workout",
-                            tint = Color.White.copy(alpha = .87f)
+                            tint = LightGray
                         )
                     }
                     IconButton(onClick = {
@@ -563,7 +556,7 @@ fun WorkoutDetailScreen(
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "Delete",
-                            tint = Color.White.copy(alpha = .87f)
+                            tint = LightGray
                         )
                     }
                 }
@@ -709,7 +702,7 @@ fun WorkoutDetailScreen(
                             Text(
                                 text = "Add a new workout component",
                                 textAlign = TextAlign.Center,
-                                color = Color.White.copy(alpha = .87f),
+                                color = LightGray,
                                 modifier = Modifier
                                     .padding(15.dp)
                             )
@@ -725,17 +718,18 @@ fun WorkoutDetailScreen(
                             Row(
                                 modifier = Modifier.padding(vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(15.dp)
                             ) {
                                 Checkbox(
                                     modifier = Modifier.size(10.dp),
                                     checked = showRest,
                                     onCheckedChange = { showRest = it },
                                     colors = CheckboxDefaults.colors().copy(
-                                        checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                                        checkedCheckmarkColor = LightGray,
+                                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
                                     )
                                 )
-                                Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
+                                Text(text = "Show Rests", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
 

@@ -55,10 +55,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -70,8 +70,9 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -214,7 +215,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Rest for: ${formatTime(set.timeInSeconds)}",
+                            text = "Rest ${formatTime(set.timeInSeconds)}",
                             textAlign = TextAlign.Center,
                              color = LightGray,
                             style = MaterialTheme.typography.bodyMedium,
@@ -332,7 +333,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Filled.ArrowUpward,
                                         contentDescription = "Go Higher",
-                                        tint = Color.White.copy(alpha = .87f)
+                                        tint = LightGray
                                     )
                                 }
 
@@ -365,7 +366,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Filled.ArrowDownward,
                                         contentDescription = "Go Lower"
-                                        ,tint = Color.White.copy(alpha = .87f)
+                                        ,tint = LightGray
                                     )
                                 }
 
@@ -391,7 +392,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Default.Delete,
                                         contentDescription = "Delete",
-                                        tint = Color.White.copy(alpha = .87f)
+                                        tint = LightGray
                                     )
                                 }
                                 IconButton(
@@ -424,9 +425,7 @@ fun ExerciseDetailScreen(
                                         selectedSets = emptyList()
                                     }) {
                                     val isEnabled = selectedSets.isNotEmpty()
-                                    val color = if (isEnabled) Color.White.copy(alpha = .87f) else Color.White.copy(
-                                        alpha = .3f
-                                    )
+                                    val color = if (isEnabled) LightGray else MediumGray
 
                                     Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
                                 }
@@ -538,28 +537,29 @@ fun ExerciseDetailScreen(
                                     ) else Modifier
                                 )
                             ) {
-                                Text(text = "Equipment:", style = MaterialTheme.typography.bodySmall)
+                                Text(text = "Equipment:", style = MaterialTheme.typography.bodyMedium)
                                 val selectedEquipment = equipments.find { it.id == selectedEquipmentId }
                                 Text(
                                     text = selectedEquipment?.name ?: "None",
-                                    style = MaterialTheme.typography.bodySmall
+                                    style = MaterialTheme.typography.bodyMedium
                                 )
                             }
 
                             Row(
                                 modifier = Modifier.padding(vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(15.dp)
                             ) {
                                 Checkbox(
                                     modifier = Modifier.size(10.dp),
                                     checked = showRest,
                                     onCheckedChange = { showRest = it },
                                     colors = CheckboxDefaults.colors().copy(
-                                        checkedCheckmarkColor = MaterialTheme.colorScheme.background
+                                        checkedCheckmarkColor = LightGray,
+                                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
                                     )
                                 )
-                                Text(text = "Show Rests", style = MaterialTheme.typography.bodySmall)
+                                Text(text = "Show Rests", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
 
