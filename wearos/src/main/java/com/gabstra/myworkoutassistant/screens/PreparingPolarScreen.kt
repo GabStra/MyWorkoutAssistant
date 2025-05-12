@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DoubleArrow
@@ -28,8 +27,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -46,7 +43,6 @@ import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.VibrateHard
 import com.gabstra.myworkoutassistant.shared.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -124,7 +120,10 @@ fun PreparingPolarScreen(
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(15.dp))
-            LoadingText(baseText = if (deviceConnectionInfo == null) "Connecting" else "Please Wait")
+            Row (modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
+                LoadingText(baseText = if (deviceConnectionInfo == null) "Connecting" else "Please Wait")
+            }
+
 
             AnimatedVisibility(
                 visible = canSkip && deviceConnectionInfo == null && state.dataLoaded,

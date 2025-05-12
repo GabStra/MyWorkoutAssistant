@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -412,19 +413,34 @@ fun VibrateHard(context: Context) {
 @OptIn(DelicateCoroutinesApi::class)
 fun VibrateHardAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+    var toneGen: ToneGenerator? = null
 
     GlobalScope.launch(Dispatchers.Default) {
-        launch{
+        try {
+            toneGen = ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
+
             val job1 = launch {
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+                if (vibrator?.hasVibrator() == true) {
+                    val amplitude = 255
+                    val vibrationEffect = VibrationEffect.createOneShot(100, amplitude)
+                    vibrator.vibrate(vibrationEffect)
+                    delay(100)
+                }
             }
 
             val job2 = launch {
-                toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                try {
+                    toneGen?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200)
+                    delay(100)
+                } catch (e: Exception) {
+                    // Exception during beep
+                }
             }
 
             joinAll(job1, job2)
+
+        } finally {
+            toneGen?.release()
         }
     }
 }
@@ -541,18 +557,39 @@ fun VibrateTwiceAndBeep(context: Context) {
 
 
 
-fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double, fatigue: Double = 0.03): Int {
-    require(weight > 0) { "Weights must be positive" }
-    require(reps > 0) { "Reps must be positive" }
-    require(oneRepMax > 0) { "One Rep Max must be positive" }
+fun calculateRIR(
+    weight: Double,
+    reps: Int,
+    oneRepMax: Double
+): Int {
+    require(reps > 0)        { "Reps must be positive" }
 
-    val repsToFailure = ((1 - (weight / oneRepMax)) / fatigue).roundToInt()
-    return repsToFailure - reps
+    val avgRepsToFailure = maxRepsForWeight(weight, oneRepMax)
+
+    // RIR = reps-to-failure minus actual reps, clamped at ≥0
+    return (avgRepsToFailure - reps).coerceAtLeast(0)
 }
 
-fun maxRepsForWeight(weight: Double, oneRepMax: Double): Double {
-    require(weight > 0 && oneRepMax > 0) { "Weights must be positive" }
-    return (oneRepMax / weight).pow(1.0 / 0.10)
+fun maxRepsForWeight(weight: Double, oneRepMax: Double): Int {
+    require(weight > 0)      { "Weight must be positive" }
+    require(oneRepMax > 0)   { "1RM must be positive" }
+
+    // 1) Epley: 1RM = w * (1 + r/30) → r_fail = (1RM/w - 1)*30
+    val rEpley = ((oneRepMax / weight - 1.0) * 30.0)
+
+    // 2) Brzycki: 1RM = w * 36/(37 - r) → r_fail = 37 - 36*w/1RM
+    val rBrzycki = (37.0 - 36.0 * weight / oneRepMax)
+
+    // 3) Landers: 1RM = w / (1.013 - 0.0267123*r)
+    //    → r_fail = (1.013 - w/1RM) / 0.0267123
+    val rLanders = ((1.013 - weight / oneRepMax) / 0.0267123)
+
+    // average them and round
+    val avgRepsToFailure = listOf(rEpley, rBrzycki, rLanders)
+        .average()
+        .roundToInt()
+
+    return avgRepsToFailure
 }
 
 fun repsForTargetRIR(

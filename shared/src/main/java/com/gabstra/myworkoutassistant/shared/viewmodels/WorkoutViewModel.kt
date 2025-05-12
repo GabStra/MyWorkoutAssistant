@@ -449,6 +449,11 @@ open class WorkoutViewModel : ViewModel() {
             .filter { it.exerciseId == exerciseId }
     }
 
+    public fun getAllExecutedSets(exerciseId: UUID): List<SetHistory> {
+        return executedSetsHistory.filter { it.exerciseId == exerciseId }
+    }
+
+
     private fun applyProgressions() {
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
@@ -681,9 +686,8 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
-        val oldAvgRIR = setsForProgression.map { it.rir }.average()
-        val oldScore = setsForProgression.sumOf { it.score }
-        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Avg RIR: ${oldAvgRIR.round(2)} - Score: ${oldScore.round(2)}")
+        val oldFatigue = setsForProgression.sumOf { it.fatigue }
+        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Fatigue: ${oldFatigue.round(2)}")
 
         var exerciseProgression: ExerciseProgression? = null
 
@@ -721,9 +725,9 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            val newAvgRIR = exerciseProgression.sets.map { it.rir }.average()
-            val newScore = exerciseProgression.sets.sumOf { it.score }
-            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Avg RIR: ${newAvgRIR.round(2)} - Score: ${newScore.round(2)}")
+
+            val newFatigue = exerciseProgression.sets.sumOf { it.fatigue }
+            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)}")
 
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
 

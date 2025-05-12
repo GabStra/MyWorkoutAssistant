@@ -6,24 +6,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -31,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -39,18 +26,18 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.VibrateTwice
-import com.gabstra.myworkoutassistant.data.round
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -133,6 +120,22 @@ fun WeightSetScreen(
         } else {
             onEditModeDisabled()
         }
+    }
+
+    val exerciseSetStates = remember(exercise.id) { viewModel.getAllExerciseWorkoutStates(exercise.id).filter { it.set !is RestSet } }
+
+    val executedSetIds = remember(exercise.id, state.set.id){
+        viewModel.getAllExecutedSets(exercise.id).map { it.setId } - state.set.id
+    }
+
+    val previousTotalVolume = remember(exerciseSetStates, equipment) {
+        exerciseSetStates.map{it.previousSetData as WeightSetData }.sumOf { it.calculateVolume(equipment)}
+    }
+
+    val executedVolume = remember(exerciseSetStates,executedSetIds, equipment, currentSetData) {
+        exerciseSetStates.filter { it -> executedSetIds.contains(it.set.id)  && !it.isWarmupSet }
+            .map { it.currentSetData as WeightSetData }
+            .sumOf { it.calculateVolume(equipment) } + currentSetData.calculateVolume(equipment)
     }
 
     LaunchedEffect(forceStopEditMode) {
@@ -328,44 +331,94 @@ fun WeightSetScreen(
     @SuppressLint("DefaultLocale")
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        Column(
+        val typography = MaterialTheme.typography
+        val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
+        Column (
             modifier = customModifier,
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            val typography = MaterialTheme.typography
-            val headerStyle =
-                remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+            verticalArrangement = Arrangement.SpaceBetween
+        ){
+            Column(
 
-            if (equipment != null) {
-                Text(
-                    text = equipment.name.toUpperCase(Locale.ROOT),
-                    style = headerStyle
-                )
-            }
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                if (equipment != null) {
+                    Text(
+                        text = equipment.name.toUpperCase(Locale.ROOT),
+                        style = headerStyle
+                    )
+                }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "KG",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "REPS",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = "KG",
+                        style = headerStyle,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = "REPS",
+                        style = headerStyle,
+                        textAlign = TextAlign.Center
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WeightRow(modifier = Modifier.weight(1f))
+                    RepsRow(modifier = Modifier.weight(1f))
+                }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                WeightRow(modifier = Modifier.weight(1f))
-                RepsRow(modifier = Modifier.weight(1f))
+            if(!state.isWarmupSet){
+                Column(
+                    modifier = Modifier.padding(bottom = 5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = "VOLUME: ${previousTotalVolume.round(1)} -> ${executedVolume.round(1)}",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    if(executedVolume != 0.0){
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            val volumePercentage = ((executedVolume - previousTotalVolume) / previousTotalVolume) * 100
+                            val volumeText = if (volumePercentage > 0) {
+                                "+${volumePercentage.round(1)}%"
+                            } else {
+                                "${volumePercentage.round(1)}%"
+                            }
+
+                            val textColor = when {
+                                volumePercentage > 0 -> MyColors.White
+                                volumePercentage < 0 -> MyColors.Red
+                                else -> MyColors.Green
+                            }
+
+                            val style = MaterialTheme.typography.body1.copy(fontSize = 16.sp)
+
+                            Text(
+                                text = volumeText,
+                                style = style,
+                                textAlign = TextAlign.Center,
+                                color = textColor
+                            )
+                        }
+                    }
+                }
             }
         }
     }

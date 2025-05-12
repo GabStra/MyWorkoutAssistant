@@ -5,13 +5,14 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
-import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.decompressToString
@@ -27,8 +28,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import androidx.core.content.edit
-import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 
 class DataLayerListenerService : WearableListenerService() {
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
@@ -92,7 +91,8 @@ class DataLayerListenerService : WearableListenerService() {
 
         val intent = Intent(INTENT_ID).apply {
             putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
-        }.apply { setPackage(packageName) }
+            setPackage(packageName)
+        }
         sendBroadcast(intent)
 
         backupChunks.clear()
@@ -121,8 +121,6 @@ class DataLayerListenerService : WearableListenerService() {
                     BACKUP_CHUNK_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
 
-                        Log.d("MainActivity", "Received backup chunk")
-
                         val isStart = dataMap.getBoolean("isStart", false)
                         val isLastChunk = dataMap.getBoolean("isLastChunk", false)
                         val backupChunk = dataMap.getByteArray("chunk")
@@ -136,7 +134,8 @@ class DataLayerListenerService : WearableListenerService() {
                             handler.removeCallbacks(timeoutRunnable)
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
-                            }.apply { setPackage(packageName) }
+                                setPackage(packageName)
+                            }
 
                             sendBroadcast(intent)
 
@@ -237,8 +236,9 @@ class DataLayerListenerService : WearableListenerService() {
 
                                     val intent = Intent(INTENT_ID).apply {
                                         putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
-                                    }.apply { setPackage(packageName) }
-                                    //intent.apply { setPackage(packageName) }
+                                        setPackage(packageName)
+                                    }
+
                                     sendBroadcast(intent)
 
                                     backupChunks.clear()
@@ -264,14 +264,13 @@ class DataLayerListenerService : WearableListenerService() {
             handler.removeCallbacks(timeoutRunnable)
             val intent = Intent(INTENT_ID).apply {
                 putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+                setPackage(packageName)
             }
             sendBroadcast(intent)
             backupChunks.clear()
             expectedChunks = 0
             hasStartedSync = false
             ignoreUntilStartOrEnd = true
-        } finally {
-            super.onDataChanged(dataEvents)
         }
     }
 
