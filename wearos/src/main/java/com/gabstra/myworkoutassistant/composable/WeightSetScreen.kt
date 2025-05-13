@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -259,7 +260,7 @@ fun WeightSetScreen(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
+            val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold)
             val textColor = when {
                 currentSetData.actualReps == previousSetData.actualReps -> MyColors.White
                 currentSetData.actualReps < previousSetData.actualReps -> MyColors.Red
@@ -309,7 +310,7 @@ fun WeightSetScreen(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp)
+            val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold)
             val weight = currentSetData.actualWeight
 
             val textColor = when {
@@ -408,7 +409,7 @@ fun WeightSetScreen(
                                 else -> MyColors.Green
                             }
 
-                            val style = MaterialTheme.typography.body1.copy(fontSize = 16.sp)
+                            val style = MaterialTheme.typography.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold)
 
                             Text(
                                 text = volumeText,
