@@ -401,8 +401,6 @@ open class WorkoutViewModel : ViewModel() {
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
 
-                Log.d("WorkoutViewModel", _workoutRecord!!.toString())
-
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
@@ -448,11 +446,13 @@ open class WorkoutViewModel : ViewModel() {
         return allWorkoutStates.filterIsInstance<WorkoutState.Set>()
             .filter { it.exerciseId == exerciseId }
     }
-
-    public fun getAllExecutedSets(exerciseId: UUID): List<SetHistory> {
+    public fun getAllExecutedSetsByExerciseId(exerciseId: UUID): List<SetHistory> {
         return executedSetsHistory.filter { it.exerciseId == exerciseId }
     }
 
+    public fun getAllSetHistoriesByExerciseId(exerciseId: UUID): List<SetHistory> {
+        return latestSetHistoriesByExerciseId[exerciseId] ?: emptyList()
+    }
 
     private fun applyProgressions() {
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }

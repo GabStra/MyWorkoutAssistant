@@ -8,7 +8,6 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -29,9 +28,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
@@ -53,18 +51,14 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.concurrent.CancellationException
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -97,13 +91,9 @@ fun Modifier.verticalColumnScrollbar(
     endPadding: Float = 12f,
     trackHeight: Dp? = null,
     // Content fade effect parameters
-    enableTopFade: Boolean = true,
-    enableBottomFade: Boolean = true,
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
-    /**
-     * The base color used for the content fade gradient.
-     * IMPORTANT: This should typically match the background color behind the scrollable content.
-     */
     contentFadeColor: Color = Color.Black
 ): Modifier {
     // Remember updated state for all parameters accessed within draw lambda
@@ -192,7 +182,7 @@ fun Modifier.verticalColumnScrollbar(
             return@drawWithContent
         }
 
-        val defaultTrackHeight = viewportHeight * (2f / 3f)
+        val defaultTrackHeight = viewportHeight
         val actualTrackHeight = rememberedTrackHeight?.toPx()?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
         val trackTopOffset = if (actualTrackHeight < viewportHeight) {
             (viewportHeight - actualTrackHeight) / 2f

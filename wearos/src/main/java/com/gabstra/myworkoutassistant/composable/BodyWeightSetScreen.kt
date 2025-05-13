@@ -32,8 +32,6 @@ import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.VibrateTwice
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -131,20 +129,18 @@ fun BodyWeightSetScreen(
         }
     }
 
-    val exerciseSetStates = remember(exercise.id) { viewModel.getAllExerciseWorkoutStates(exercise.id).filter { it.set !is RestSet } }
-
-    val executedSetIds = remember(exercise.id, state.set.id){
-        viewModel.getAllExecutedSets(exercise.id).map { it.setId } - state.set.id
+    val previousTotalVolume = remember(exercise.id, equipment) {
+        viewModel.getAllSetHistoriesByExerciseId(exercise.id)
+            .filter { it.setData is BodyWeightSetData }
+            .map{ it.setData as BodyWeightSetData }
+            .sumOf { it.calculateVolume(equipment )}
     }
 
-    val previousTotalVolume = remember(exerciseSetStates, equipment) {
-        exerciseSetStates.map{it.previousSetData as WeightSetData }.sumOf { it.calculateVolume(equipment)}
-    }
-
-    val executedVolume = remember(exerciseSetStates,executedSetIds, equipment, currentSetData) {
-        exerciseSetStates.filter { it -> executedSetIds.contains(it.set.id)  && !it.isWarmupSet }
-            .map { it.currentSetData as WeightSetData }
-            .sumOf { it.calculateVolume(equipment) } + currentSetData.calculateVolume(equipment)
+    val executedVolume = remember(exercise.id, equipment, currentSetData, state ) {
+        viewModel.getAllExecutedSetsByExerciseId(exercise.id)
+            .filter { it.setData is BodyWeightSetData  && it.setId != state.set.id }
+            .map{ it.setData as BodyWeightSetData }
+            .sumOf { it.calculateVolume(equipment)} + currentSetData.calculateVolume(equipment)
     }
 
     fun onMinusClick(){
@@ -398,7 +394,6 @@ fun BodyWeightSetScreen(
                             }
 
                             val textColor = when {
-                                volumePercentage > 0 -> MyColors.White
                                 volumePercentage < 0 -> MyColors.Red
                                 else -> MyColors.Green
                             }
