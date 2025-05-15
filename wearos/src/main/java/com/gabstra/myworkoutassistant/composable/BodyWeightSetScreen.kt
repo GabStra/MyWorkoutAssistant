@@ -30,7 +30,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.VibrateTwice
-import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
@@ -365,7 +364,7 @@ fun BodyWeightSetScreen(
                     RepsRow(modifier = Modifier.weight(1f))
                 }
             }
-            if(!state.isWarmupSet){
+            /*if(!state.isWarmupSet){
                 Column(
                     modifier = Modifier.padding(bottom = 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -409,7 +408,7 @@ fun BodyWeightSetScreen(
                         }
                     }
                 }
-            }
+            }*/
         }
     }
 

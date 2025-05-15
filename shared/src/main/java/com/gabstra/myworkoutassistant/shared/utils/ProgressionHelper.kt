@@ -16,6 +16,7 @@ object VolumeDistributionHelper {
         val weight: Double,
         val reps: Int,
         val volume: Double,
+        val effectiveVolume: Double,
         val fatigue: Double
     )
 
@@ -46,20 +47,21 @@ object VolumeDistributionHelper {
 
         var previousFatigue = params.previousSets.sumOf { it.fatigue }
 
-        val minTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.from / 100)
-        val maxTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.to / 100)
+        val previousEffectiveVolume = params.previousSets.sumOf { it.effectiveVolume }
+        val minEffectiveVolume = previousEffectiveVolume * (1 + params.volumeProgressionRange.from / 100)
+        val maxEffectiveVolume = previousEffectiveVolume * (1 + params.volumeProgressionRange.to / 100)
 
         val previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
 
-        val minVolumePerSet = (minTotalVolume/ params.previousSets.size) * 0.8
-        val maxVolumePerSet = (maxTotalVolume/ params.previousSets.size) * 1.2
+        val minEffectiveVolumePerSet = (minEffectiveVolume/ params.previousSets.size) * 0.8
+        val maxEffectiveVolumePerSet = (maxEffectiveVolume/ params.previousSets.size) * 1.2
 
         var nearAverageWeights = getNearAverageWeights(params,1)
 
         var usableSets = possibleSets.filter {
             set -> set.weight in nearAverageWeights
-                && set.volume in minVolumePerSet..maxVolumePerSet
+                && set.effectiveVolume in minEffectiveVolumePerSet..maxEffectiveVolumePerSet
         }
 
         //Log the usable sets count
@@ -71,16 +73,17 @@ object VolumeDistributionHelper {
             params.previousSets.size,
             params,
             { combo ->
-                val currentTotalVolume = combo.sumOf { it.volume }
+                val currentVolume = combo.sumOf { it.volume }
+                val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
                 val currentFatigue = combo.sumOf { it.fatigue }
-                val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
+                val currentAverageWeightPerRep = currentVolume / combo.sumOf { it.reps }
                 val currentMaxWeight = combo.maxOf { it.weight }
 
                 ValidationResult(
                     shouldReturn = currentFatigue < previousFatigue
                             || currentFatigue.isEqualTo(previousFatigue)
-                            || currentTotalVolume < minTotalVolume
-                            || currentTotalVolume > maxTotalVolume
+                            || currentEffectiveVolume < minEffectiveVolume
+                            || currentEffectiveVolume > maxEffectiveVolume
                             || currentAverageWeightPerRep > previousAverageWeightPerRep
                             || currentMaxWeight > previousMaxWeight
 
@@ -95,14 +98,14 @@ object VolumeDistributionHelper {
                 params.previousSets.size,
                 params,
                 { combo ->
-                    val currentTotalVolume = combo.sumOf { it.volume }
+                    val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
                     val currentFatigue = combo.sumOf { it.fatigue }
 
                     ValidationResult(
                         shouldReturn = currentFatigue < previousFatigue
                                 || currentFatigue.isEqualTo(previousFatigue)
-                                || currentTotalVolume < minTotalVolume
-                                || currentTotalVolume > maxTotalVolume
+                                || currentEffectiveVolume < minEffectiveVolume
+                                || currentEffectiveVolume > maxEffectiveVolume
                     )
                 }
             )
@@ -115,15 +118,16 @@ object VolumeDistributionHelper {
                 params.previousSets.size,
                 params,
                 { combo ->
-                    val currentTotalVolume = combo.sumOf { it.volume }
+                    val currentVolume = combo.sumOf { it.volume }
+                    val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
                     val currentFatigue = combo.sumOf { it.fatigue }
-                    val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
+                    val currentAverageWeightPerRep = currentVolume / combo.sumOf { it.reps }
                     val currentMaxWeight = combo.maxOf { it.weight }
 
                     ValidationResult(
                         shouldReturn = currentFatigue < previousFatigue
                                 || currentFatigue.isEqualTo(previousFatigue)
-                                || currentTotalVolume < minTotalVolume
+                                || currentEffectiveVolume < minEffectiveVolume
                                 || currentAverageWeightPerRep > previousAverageWeightPerRep
                                 || currentMaxWeight > previousMaxWeight
                     )
@@ -138,13 +142,13 @@ object VolumeDistributionHelper {
                 params.previousSets.size,
                 params,
                 { combo ->
-                    val currentTotalVolume = combo.sumOf { it.volume }
+                    val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
                     val currentFatigue = combo.sumOf { it.fatigue }
 
                     ValidationResult(
                         shouldReturn = currentFatigue < previousFatigue
                                 || currentFatigue.isEqualTo(previousFatigue)
-                                || currentTotalVolume < minTotalVolume
+                                || currentEffectiveVolume < minEffectiveVolume
 
                     )
                 }
@@ -166,9 +170,9 @@ object VolumeDistributionHelper {
 
         return ExerciseProgression(
             sets = validSetCombination,
-            newVolume =  validSetCombination.sumOf { it.volume },
+            newVolume =  validSetCombination.sumOf { it.effectiveVolume },
             usedOneRepMax = params.oneRepMax,
-            previousVolume = params.previousTotalVolume,
+            previousVolume = params.previousSets.sumOf { it.effectiveVolume },
         )
     }
 
@@ -204,6 +208,7 @@ object VolumeDistributionHelper {
 
             val currentFatigue = combo.sumOf { it.fatigue }
             val maxFatigue = combo.maxOf { it.fatigue }
+            
             return currentFatigue * maxFatigue
         }
 
@@ -315,7 +320,8 @@ object VolumeDistributionHelper {
             weight = weight,
             reps = reps,
             volume = volume,
-            fatigue = fatigue
+            fatigue = fatigue,
+            effectiveVolume = volume * intensity
         )
     }
 
@@ -344,6 +350,6 @@ object VolumeDistributionHelper {
             return null
         }
 
-        return currentExerciseProgression.copy(previousVolume = exerciseVolume)
+        return currentExerciseProgression
     }
 }
