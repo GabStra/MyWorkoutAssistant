@@ -31,6 +31,7 @@ import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Duration
@@ -83,7 +84,7 @@ fun HealthConnectHandler(
                         Log.e("MainActivity", "Error launching permission launcher", e)
                     }
                 }) {
-                Text("Grant Health Connect Permissions")
+                Text("Grant Health Connect Permissions", color = LightGray)
             }
         }
     }

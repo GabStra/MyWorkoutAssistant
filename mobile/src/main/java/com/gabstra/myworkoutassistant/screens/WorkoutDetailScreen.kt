@@ -384,11 +384,28 @@ fun WorkoutDetailScreen(
                             val selectedIndex =
                                 currentWorkoutComponents.indexOfFirst { it === selectedComponent }
 
-                            val newWorkoutComponents =
-                                currentWorkoutComponents.toMutableList().apply {
-                                    removeAt(selectedIndex)
-                                    add(selectedIndex - 1, selectedComponent)
-                                }
+                            val previousWorkoutComponent =
+                                currentWorkoutComponents.subList(0, selectedIndex)
+                                    .lastOrNull { when(selectedComponent){
+                                        is Exercise -> it is Exercise || it is Superset
+                                        is Superset -> it is Exercise || it is Superset
+                                        is Rest -> it is Rest
+                                    }  }
+
+                            if (previousWorkoutComponent == null) {
+                                return@IconButton
+                            }
+
+                            val previousIndex = currentWorkoutComponents.indexOfFirst { it === previousWorkoutComponent }
+
+                            val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
+                                val componentToMoveToPreviousSlot = this[selectedIndex]
+                                val componentToMoveToSelectedSlot = this[previousIndex]
+
+                                this[selectedIndex] = componentToMoveToSelectedSlot
+                                this[previousIndex] = componentToMoveToPreviousSlot
+                            }
+
 
                             val adjustedComponents =
                                 ensureRestSeparatedByExercises(newWorkoutComponents)
@@ -411,11 +428,30 @@ fun WorkoutDetailScreen(
                             val selectedIndex =
                                 currentWorkoutComponents.indexOfFirst { it === selectedComponent }
 
-                            val newWorkoutComponents =
-                                currentWorkoutComponents.toMutableList().apply {
-                                    removeAt(selectedIndex)
-                                    add(selectedIndex + 1, selectedComponent)
-                                }
+                            val nextWorkoutComponent = if (selectedIndex + 1 < currentWorkoutComponents.size) {
+                                currentWorkoutComponents.subList(selectedIndex + 1, currentWorkoutComponents.size)
+                                    .firstOrNull { when(selectedComponent){
+                                        is Exercise -> it is Exercise || it is Superset
+                                        is Superset -> it is Exercise || it is Superset
+                                        is Rest -> it is Rest
+                                    } }
+                            } else {
+                                null
+                            }
+
+                            if (nextWorkoutComponent == null) {
+                                return@IconButton
+                            }
+
+                            val nextIndex = currentWorkoutComponents.indexOfFirst { it === nextWorkoutComponent }
+
+                            val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
+                                val componentToMoveToPreviousSlot = this[selectedIndex]
+                                val componentToMoveToSelectedSlot = this[nextIndex]
+
+                                this[selectedIndex] = componentToMoveToSelectedSlot
+                                this[nextIndex] = componentToMoveToPreviousSlot
+                            }
 
                             val adjustedComponents =
                                 ensureRestSeparatedByExercises(newWorkoutComponents)

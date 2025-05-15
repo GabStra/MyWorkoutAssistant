@@ -141,7 +141,7 @@ fun SettingsScreen(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text("Save Settings")
+                Text("Save Settings", color = LightGray)
             }
 
             // Cancel button

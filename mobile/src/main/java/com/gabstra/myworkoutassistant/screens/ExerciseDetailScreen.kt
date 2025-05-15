@@ -292,7 +292,7 @@ fun ExerciseDetailScreen(
         },
         bottomBar = {
             if (selectedSets.isNotEmpty()) {
-                StyledCard(){
+                StyledCard{
                     BottomAppBar(
                         contentPadding = PaddingValues(0.dp),
                         containerColor = Color.Transparent,
@@ -304,7 +304,7 @@ fun ExerciseDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 IconButton(
-                                    enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0),
+                                    enabled = (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0),
                                     onClick = {
                                         val currentSets = exercise.sets
                                         val selectedComponent = selectedSets.first()
@@ -312,12 +312,23 @@ fun ExerciseDetailScreen(
                                         val selectedIndex =
                                             currentSets.indexOfFirst { it === selectedComponent }
 
-                                        val newSets =
-                                            currentSets.toMutableList().apply {
-                                                removeAt(selectedIndex)
-                                                add(selectedIndex - 1, selectedComponent)
-                                            }
+                                        val previousComponent =
+                                            currentSets.subList(0, selectedIndex)
+                                                .lastOrNull { it::class == selectedComponent::class }
 
+                                        if (previousComponent == null) {
+                                            return@IconButton
+                                        }
+
+                                        val previous = currentSets.indexOfFirst { it === previousComponent }
+
+                                        val newSets = currentSets.toMutableList().apply {
+                                            val componentToMoveToOtherSlot = this[selectedIndex]
+                                            val componentToMoveToSelectedSlot = this[previous]
+
+                                            this[selectedIndex] = componentToMoveToSelectedSlot
+                                            this[previous] = componentToMoveToOtherSlot
+                                        }
 
                                         val adjustedComponents = ensureRestSeparatedBySets(newSets)
                                         val updatedExercise = exercise.copy(sets = adjustedComponents)
@@ -338,7 +349,7 @@ fun ExerciseDetailScreen(
                                 }
 
                                 IconButton(
-                                    enabled = showRest && (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1),
+                                    enabled = (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1),
                                     onClick = {
                                         val currentSets = exercise.sets
                                         val selectedComponent = selectedSets.first()
@@ -346,11 +357,26 @@ fun ExerciseDetailScreen(
                                         val selectedIndex =
                                             currentSets.indexOfFirst { it === selectedComponent }
 
-                                        val newSets =
-                                            currentSets.toMutableList().apply {
-                                                removeAt(selectedIndex)
-                                                add(selectedIndex + 1, selectedComponent)
-                                            }
+                                        val nextComponent = if (selectedIndex + 1 < currentSets.size) {
+                                            currentSets.subList(selectedIndex + 1, currentSets.size)
+                                                .firstOrNull { it::class == selectedComponent::class }
+                                        } else {
+                                            null
+                                        }
+
+                                        if (nextComponent == null) {
+                                            return@IconButton
+                                        }
+
+                                        val nextIndex = currentSets.indexOfFirst { it === nextComponent }
+
+                                        val newSets = currentSets.toMutableList().apply {
+                                            val componentToMoveToOtherSlot = this[selectedIndex]
+                                            val componentToMoveToSelectedSlot = this[nextIndex]
+
+                                            this[selectedIndex] = componentToMoveToSelectedSlot
+                                            this[nextIndex] = componentToMoveToOtherSlot
+                                        }
 
                                         val adjustedComponents = ensureRestSeparatedBySets(newSets)
                                         val updatedExercise = exercise.copy(sets = adjustedComponents)
