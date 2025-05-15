@@ -80,6 +80,7 @@ import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
@@ -376,7 +377,9 @@ fun WorkoutDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
-                        enabled = (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0),
+                        enabled = selectedWorkoutComponents.size == 1 &&
+                                workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0 &&
+                                selectedWorkoutComponents.first() !is Rest,
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
@@ -384,13 +387,8 @@ fun WorkoutDetailScreen(
                             val selectedIndex =
                                 currentWorkoutComponents.indexOfFirst { it === selectedComponent }
 
-                            val previousWorkoutComponent =
-                                currentWorkoutComponents.subList(0, selectedIndex)
-                                    .lastOrNull { when(selectedComponent){
-                                        is Exercise -> it is Exercise || it is Superset
-                                        is Superset -> it is Exercise || it is Superset
-                                        is Rest -> it is Rest
-                                    }  }
+                            val previousWorkoutComponent = currentWorkoutComponents.subList(0, selectedIndex)
+                                .lastOrNull { it !is Rest }
 
                             if (previousWorkoutComponent == null) {
                                 return@IconButton
@@ -420,7 +418,10 @@ fun WorkoutDetailScreen(
                         )
                     }
                     IconButton(
-                        enabled = (selectedWorkoutComponents.size == 1 && workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1),
+                        enabled = selectedWorkoutComponents.size == 1 &&
+                                workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1 &&
+                                selectedWorkoutComponents.first() !is Rest
+                        ,
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
@@ -430,11 +431,7 @@ fun WorkoutDetailScreen(
 
                             val nextWorkoutComponent = if (selectedIndex + 1 < currentWorkoutComponents.size) {
                                 currentWorkoutComponents.subList(selectedIndex + 1, currentWorkoutComponents.size)
-                                    .firstOrNull { when(selectedComponent){
-                                        is Exercise -> it is Exercise || it is Superset
-                                        is Superset -> it is Exercise || it is Superset
-                                        is Rest -> it is Rest
-                                    } }
+                                    .firstOrNull { it !is Rest }
                             } else {
                                 null
                             }
@@ -887,30 +884,3 @@ fun WorkoutDetailScreen(
     }
 }
 
-fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<WorkoutComponent> {
-    val adjustedComponents = mutableListOf<WorkoutComponent>()
-    var lastWasExercise = false
-
-    for (component in components) {
-        if (component !is Rest) {
-            adjustedComponents.add(component)
-            lastWasExercise = true
-        } else {
-            if (lastWasExercise) {
-                //check if the next component if exist is exercise and enabled
-                val nextComponentIndex = components.indexOf(component) + 1
-                if (nextComponentIndex < components.size) {
-                    val nextComponent = components[nextComponentIndex]
-                    if (nextComponent.enabled) {
-                        adjustedComponents.add(component)
-                    } else {
-                        adjustedComponents.add(component.copy(enabled = false))
-                    }
-                }
-            }
-
-            lastWasExercise = false
-        }
-    }
-    return adjustedComponents
-}

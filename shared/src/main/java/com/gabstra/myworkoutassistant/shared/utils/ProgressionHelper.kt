@@ -208,7 +208,7 @@ object VolumeDistributionHelper {
 
             val currentFatigue = combo.sumOf { it.fatigue }
             val maxFatigue = combo.maxOf { it.fatigue }
-            
+
             return currentFatigue * maxFatigue
         }
 

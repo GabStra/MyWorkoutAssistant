@@ -47,7 +47,6 @@ import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
 import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
-import com.gabstra.myworkoutassistant.screens.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase

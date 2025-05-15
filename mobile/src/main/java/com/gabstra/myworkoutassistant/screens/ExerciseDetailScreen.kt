@@ -59,6 +59,7 @@ import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -238,7 +239,7 @@ fun ExerciseDetailScreen(
     exercise: Exercise,
     onGoBack: () -> Unit
 ) {
-    var sets by remember { mutableStateOf(exercise.sets) }
+    var sets by remember { mutableStateOf(ensureRestSeparatedBySets(exercise.sets)) }
     var selectedSets by remember { mutableStateOf(listOf<Set>()) }
 
     var isSelectionModeActive by remember { mutableStateOf(false) }
@@ -304,7 +305,9 @@ fun ExerciseDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 IconButton(
-                                    enabled = (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != 0),
+                                    enabled = selectedSets.size == 1 &&
+                                            exercise.sets.indexOfFirst { it === selectedSets.first() } != 0 &&
+                                            selectedSets.first() !is RestSet,
                                     onClick = {
                                         val currentSets = exercise.sets
                                         val selectedComponent = selectedSets.first()
@@ -312,9 +315,8 @@ fun ExerciseDetailScreen(
                                         val selectedIndex =
                                             currentSets.indexOfFirst { it === selectedComponent }
 
-                                        val previousComponent =
-                                            currentSets.subList(0, selectedIndex)
-                                                .lastOrNull { it::class == selectedComponent::class }
+                                        val previousComponent = currentSets.subList(0, selectedIndex)
+                                            .lastOrNull { it !is RestSet }
 
                                         if (previousComponent == null) {
                                             return@IconButton
@@ -349,7 +351,9 @@ fun ExerciseDetailScreen(
                                 }
 
                                 IconButton(
-                                    enabled = (selectedSets.size == 1 && exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1),
+                                    enabled = selectedSets.size == 1 &&
+                                            exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1 &&
+                                            selectedSets.first() !is RestSet,
                                     onClick = {
                                         val currentSets = exercise.sets
                                         val selectedComponent = selectedSets.first()
@@ -359,7 +363,7 @@ fun ExerciseDetailScreen(
 
                                         val nextComponent = if (selectedIndex + 1 < currentSets.size) {
                                             currentSets.subList(selectedIndex + 1, currentSets.size)
-                                                .firstOrNull { it::class == selectedComponent::class }
+                                                .firstOrNull { it !is RestSet }
                                         } else {
                                             null
                                         }
@@ -664,21 +668,3 @@ fun ExerciseDetailScreen(
     }
 }
 
-fun ensureRestSeparatedBySets(components: List<Set>): List<Set> {
-    val adjustedComponents = mutableListOf<Set>()
-    var lastWasSet = false
-
-    for (component in components) {
-        if(component !is RestSet) {
-            adjustedComponents.add(component)
-            lastWasSet = true
-        }else{
-            if(lastWasSet){
-                adjustedComponents.add(component)
-            }
-
-            lastWasSet = false
-        }
-    }
-    return adjustedComponents
-}

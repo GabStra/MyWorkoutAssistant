@@ -37,6 +37,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -567,4 +569,51 @@ fun Modifier.verticalColumnScrollbar(
             cornerRadius = cornerRadius
         )
     }
+}
+
+fun ensureRestSeparatedBySets(components: List<com.gabstra.myworkoutassistant.shared.sets.Set>): List<com.gabstra.myworkoutassistant.shared.sets.Set> {
+    val adjustedComponents = mutableListOf<Set>()
+    var lastWasSet = false
+
+    for (component in components) {
+        if(component !is RestSet) {
+            adjustedComponents.add(component)
+            lastWasSet = true
+        }else{
+            if(lastWasSet){
+                adjustedComponents.add(component)
+            }
+
+            lastWasSet = false
+        }
+    }
+    return adjustedComponents
+}
+
+fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<WorkoutComponent> {
+    val adjustedComponents = mutableListOf<WorkoutComponent>()
+    var lastWasExercise = false
+
+    for (component in components) {
+        if (component !is Rest) {
+            adjustedComponents.add(component)
+            lastWasExercise = true
+        } else {
+            if (lastWasExercise) {
+                //check if the next component if exist is exercise and enabled
+                val nextComponentIndex = components.indexOf(component) + 1
+                if (nextComponentIndex < components.size) {
+                    val nextComponent = components[nextComponentIndex]
+                    if (nextComponent.enabled) {
+                        adjustedComponents.add(component)
+                    } else {
+                        adjustedComponents.add(component.copy(enabled = false))
+                    }
+                }
+            }
+
+            lastWasExercise = false
+        }
+    }
+    return adjustedComponents
 }
