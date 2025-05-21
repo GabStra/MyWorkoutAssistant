@@ -429,12 +429,8 @@ fun VibrateHardAndBeep(context: Context) {
             }
 
             val job2 = launch {
-                try {
-                    toneGen?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200)
-                    delay(100)
-                } catch (e: Exception) {
-                    // Exception during beep
-                }
+                toneGen?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                delay(100)
             }
 
             joinAll(job1, job2)
@@ -452,6 +448,7 @@ fun VibrateGentle(context: Context) {
     GlobalScope.launch(Dispatchers.Default) {
         launch{
             vibrator?.vibrate(VibrationEffect.createOneShot(50, 255))
+            delay(50)
         }
     }
 }
@@ -464,6 +461,7 @@ fun VibrateTwice(context: Context) {
         repeat(2) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
                 vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+                delay(100)
             }
             val startTime = System.currentTimeMillis()
             vibratorJob.join()
@@ -484,32 +482,22 @@ fun VibrateShortImpulse(context: Context) {
         repeat(3) {
             val startTime = System.currentTimeMillis()
             coroutineScope {
-                // Create a countdown latch
-                val readyCount = AtomicInteger(2)
 
-                // Prepare both effects
                 val job1 = launch {
-                    readyCount.decrementAndGet()
-                    while (readyCount.get() > 0) {
-                        yield()
-                    }
                     vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+                    delay(100)
                 }
 
                 val job2 = launch {
-                    readyCount.decrementAndGet()
-                    while (readyCount.get() > 0) {
-                        yield()
-                    }
                     toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                    delay(100)
                 }
 
+                val elapsedTime = System.currentTimeMillis() - startTime
                 joinAll(job1, job2)
-            }
-
-            val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime < 200) {
-                delay(200 - elapsedTime)
+                if (elapsedTime < 200) {
+                    delay(200 - elapsedTime)
+                }
             }
         }
     }
@@ -524,32 +512,21 @@ fun VibrateTwiceAndBeep(context: Context) {
         repeat(2) {
             val startTime = System.currentTimeMillis()
             coroutineScope {
-                // Create a countdown latch
-                val readyCount = AtomicInteger(2)
-
-                // Prepare both effects
                 val job1 = launch {
-                    readyCount.decrementAndGet()
-                    while (readyCount.get() > 0) {
-                        yield()
-                    }
                     vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
+                    delay(100)
                 }
 
                 val job2 = launch {
-                    readyCount.decrementAndGet()
-                    while (readyCount.get() > 0) {
-                        yield()
-                    }
                     toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+                    delay(100)
                 }
 
+                val elapsedTime = System.currentTimeMillis() - startTime
                 joinAll(job1, job2)
-            }
-
-            val elapsedTime = System.currentTimeMillis() - startTime
-            if (elapsedTime < 200) {
-                delay(200 - elapsedTime)
+                if (elapsedTime < 200) {
+                    delay(200 - elapsedTime)
+                }
             }
         }
     }
