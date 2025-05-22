@@ -64,7 +64,6 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.pow
 
@@ -726,14 +725,21 @@ open class WorkoutViewModel : ViewModel() {
             }
 
 
+
             val newFatigue = exerciseProgression.sets.sumOf { it.fatigue }
             Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)}")
 
+
+            val oldAvgWeightPerRep = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
+            val newAvgWeightPerRep = exerciseProgression.sets.sumOf { it.volume } / exerciseProgression.sets.sumOf { it.reps }
+            val avgWeightIncrease = ((newAvgWeightPerRep - oldAvgWeightPerRep) / oldAvgWeightPerRep) * 100
+
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
+
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (+${progressIncrease.round(2)}%)"
+                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) - Weight Per Rep: ${oldAvgWeightPerRep.round(2)} -> ${newAvgWeightPerRep.round(2)} (${if(avgWeightIncrease>0) "+" else ""}${avgWeightIncrease.round(2)}%)"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
@@ -1515,43 +1521,71 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
+
+
             fun buildWarmupSets(
                 workWeight: Double,
                 oneRepMax: Double,
                 availableWeights: Collection<Double>,
-                numberOfWarmUpSets: Int
+                numberOfWarmUpSets: Int,
+                maxPositiveDeviationFactor: Double = 1.15
             ): List<Pair<Double, Int>> {
-                // 1) Define your ideal protocol with weight percentage, target RIR, and max reps
                 val protocols = listOf(
-                    Triple(0.5, 5.0, 10), // 50% with 5.0 RIR, max 10 reps
-                    Triple(0.6, 4.0, 8),  // 60% with 4.0 RIR, max 8 reps
-                    Triple(0.75, 3.0, 6), // 75% with 3.0 RIR, max 6 reps
-                    Triple(0.9, 2.0, 3)   // 90% with 2.0 RIR, max 3 reps
+                    Triple(0.5, 5.0, 10),
+                    Triple(0.6, 4.0, 8),
+                    Triple(0.75, 3.0, 6),
+                    Triple(0.9, 2.0, 3)
                 )
 
-                val sortedWeights = availableWeights.sorted()
-                val chosen = mutableSetOf<Double>()
+                fun findBestWarmupWeight(
+                    targetWeight: Double,
+                    availableWeightsToConsider: List<Double>,
+                    maxPositiveDeviationFactor: Double
+                ): Double? {
+                    if (availableWeightsToConsider.isEmpty()) {
+                        return null
+                    }
 
-                val sets = mutableListOf<Pair<Double, Int>>()
+                    val suitableBelowOrAtTarget = availableWeightsToConsider.filter { it <= targetWeight }.maxOrNull()
+                    if (suitableBelowOrAtTarget != null) {
+                        return suitableBelowOrAtTarget
+                    }
+
+                    val lightestOverallAvailable = availableWeightsToConsider.first()
+                    if (lightestOverallAvailable > targetWeight && lightestOverallAvailable <= targetWeight * maxPositiveDeviationFactor) {
+                        return lightestOverallAvailable
+                    }
+
+                    return null
+                }
+
+                val sortedUniqueAvailableWeights = availableWeights.toSortedSet().toList()
+                val chosenWeights = mutableSetOf<Double>()
+                val warmUpSets = mutableListOf<Pair<Double, Int>>()
+
                 for ((weightPercentage, targetRIR, maxReps) in protocols) {
-                    if (sets.size >= numberOfWarmUpSets) break
+                    if (warmUpSets.size >= numberOfWarmUpSets) break
 
                     val target = workWeight * weightPercentage
-                    var weight = sortedWeights
-                        .asSequence()
-                        .filter { it !in chosen}
-                        .minByOrNull { abs(it - target) }
 
-                    if (weight != null) {
-                        var reps = repsForTargetRIR(weight, oneRepMax, targetRIR)
+                    val potentialWeights = sortedUniqueAvailableWeights.filter { it !in chosenWeights }
 
+                    val selectedWeight = findBestWarmupWeight(
+                        targetWeight = target,
+                        availableWeightsToConsider = potentialWeights,
+                        maxPositiveDeviationFactor = maxPositiveDeviationFactor
+                    )
+
+                    if (selectedWeight != null) {
+                        var reps = repsForTargetRIR(selectedWeight, oneRepMax, targetRIR)
                         reps = minOf(reps, maxReps.toDouble())
-                        chosen += weight
-                        sets += weight to floor(reps).toInt().coerceAtLeast(2)
+
+                        warmUpSets.add(selectedWeight to floor(reps).toInt().coerceAtLeast(2))
+                        chosenWeights.add(selectedWeight)
                     }
                 }
 
-                return sets
+                return warmUpSets
             }
 
             val actualWarmupSets = buildWarmupSets(

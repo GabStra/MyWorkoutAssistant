@@ -16,7 +16,6 @@ object VolumeDistributionHelper {
         val weight: Double,
         val reps: Int,
         val volume: Double,
-        val effectiveVolume: Double,
         val fatigue: Double
     )
 
@@ -46,26 +45,21 @@ object VolumeDistributionHelper {
         }
 
         var previousFatigue = params.previousSets.sumOf { it.fatigue }
-
-        val previousEffectiveVolume = params.previousSets.sumOf { it.effectiveVolume }
-        val minEffectiveVolume = previousEffectiveVolume * (1 + params.volumeProgressionRange.from / 100)
-        val maxEffectiveVolume = previousEffectiveVolume * (1 + params.volumeProgressionRange.to / 100)
-
-        val previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
-        val previousMaxWeight = params.previousSets.maxOf { it.weight }
-
-        val minEffectiveVolumePerSet = (minEffectiveVolume/ params.previousSets.size) * 0.8
-        val maxEffectiveVolumePerSet = (maxEffectiveVolume/ params.previousSets.size) * 1.2
-
         var nearAverageWeights = getNearAverageWeights(params,1)
 
-        var usableSets = possibleSets.filter {
-            set -> set.weight in nearAverageWeights
-                && set.effectiveVolume in minEffectiveVolumePerSet..maxEffectiveVolumePerSet
-        }
+        val fatigues = params.previousSets.filter { set -> set.weight in nearAverageWeights }.map { it.fatigue }.sorted()
 
-        //Log the usable sets count
-        //Log.d("WorkoutViewModel", "Usable sets count: ${usableSets.size}")
+        val closestMaxFatigueIndex =  fatigues.binarySearch {
+            it.compareTo(params.previousSets.maxOf { it.fatigue } * 1.025)
+        }.let { if (it < 0) -(it + 1) else it }
+            .coerceIn(0, fatigues.lastIndex)
+
+        val minFatigue = params.previousSets.minOf { it.fatigue }
+        val maxFatigue = fatigues[closestMaxFatigueIndex]
+
+        var usableSets = possibleSets
+            .filter { set -> set.weight in nearAverageWeights }
+            .filter { set -> set.fatigue in minFatigue..maxFatigue }
 
         var result = findBestProgressions(
             usableSets,
@@ -73,87 +67,13 @@ object VolumeDistributionHelper {
             params.previousSets.size,
             params,
             { combo ->
-                val currentVolume = combo.sumOf { it.volume }
-                val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
                 val currentFatigue = combo.sumOf { it.fatigue }
-                val currentAverageWeightPerRep = currentVolume / combo.sumOf { it.reps }
-                val currentMaxWeight = combo.maxOf { it.weight }
-
                 ValidationResult(
                     shouldReturn = currentFatigue < previousFatigue
                             || currentFatigue.isEqualTo(previousFatigue)
-                            || currentEffectiveVolume < minEffectiveVolume
-                            || currentEffectiveVolume > maxEffectiveVolume
-                            || currentAverageWeightPerRep > previousAverageWeightPerRep
-                            || currentMaxWeight > previousMaxWeight
-
                 )
             }
         )
-
-        if(result.isEmpty()) {
-            result = findBestProgressions(
-                usableSets,
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                { combo ->
-                    val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
-                    val currentFatigue = combo.sumOf { it.fatigue }
-
-                    ValidationResult(
-                        shouldReturn = currentFatigue < previousFatigue
-                                || currentFatigue.isEqualTo(previousFatigue)
-                                || currentEffectiveVolume < minEffectiveVolume
-                                || currentEffectiveVolume > maxEffectiveVolume
-                    )
-                }
-            )
-        }
-
-        if(result.isEmpty()) {
-            result = findBestProgressions(
-                usableSets,
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                { combo ->
-                    val currentVolume = combo.sumOf { it.volume }
-                    val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
-                    val currentFatigue = combo.sumOf { it.fatigue }
-                    val currentAverageWeightPerRep = currentVolume / combo.sumOf { it.reps }
-                    val currentMaxWeight = combo.maxOf { it.weight }
-
-                    ValidationResult(
-                        shouldReturn = currentFatigue < previousFatigue
-                                || currentFatigue.isEqualTo(previousFatigue)
-                                || currentEffectiveVolume < minEffectiveVolume
-                                || currentAverageWeightPerRep > previousAverageWeightPerRep
-                                || currentMaxWeight > previousMaxWeight
-                    )
-                }
-            )
-        }
-
-        if(result.isEmpty()) {
-            result = findBestProgressions(
-                usableSets,
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                { combo ->
-                    val currentEffectiveVolume = combo.sumOf { it.effectiveVolume }
-                    val currentFatigue = combo.sumOf { it.fatigue }
-
-                    ValidationResult(
-                        shouldReturn = currentFatigue < previousFatigue
-                                || currentFatigue.isEqualTo(previousFatigue)
-                                || currentEffectiveVolume < minEffectiveVolume
-
-                    )
-                }
-            )
-        }
 
         return result
     }
@@ -170,9 +90,9 @@ object VolumeDistributionHelper {
 
         return ExerciseProgression(
             sets = validSetCombination,
-            newVolume =  validSetCombination.sumOf { it.effectiveVolume },
+            newVolume =  validSetCombination.sumOf { it.volume },
             usedOneRepMax = params.oneRepMax,
-            previousVolume = params.previousSets.sumOf { it.effectiveVolume },
+            previousVolume = params.previousSets.sumOf { it.volume },
         )
     }
 
@@ -321,7 +241,6 @@ object VolumeDistributionHelper {
             reps = reps,
             volume = volume,
             fatigue = fatigue,
-            effectiveVolume = volume * intensity
         )
     }
 
