@@ -27,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -686,7 +687,8 @@ open class WorkoutViewModel : ViewModel() {
         }
 
         val oldFatigue = setsForProgression.sumOf { it.fatigue }
-        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Fatigue: ${oldFatigue.round(2)}")
+        val oldAvgRir = setsForProgression.sumOf { calculateRIR(it.weight,it.reps,oneRepMax) } / setsForProgression.size
+        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Fatigue: ${oldFatigue.round(2)} - Avg RIR: ${oldAvgRir}")
 
         var exerciseProgression: ExerciseProgression? = null
 
@@ -727,7 +729,8 @@ open class WorkoutViewModel : ViewModel() {
 
 
             val newFatigue = exerciseProgression.sets.sumOf { it.fatigue }
-            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)}")
+            val newAvgRir = exerciseProgression.sets.sumOf { calculateRIR(it.weight,it.reps,oneRepMax) } / exerciseProgression.sets.size
+            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)} - Avg RIR: ${newAvgRir}")
 
 
             val oldAvgWeightPerRep = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
@@ -739,7 +742,7 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume.round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) - Weight Per Rep: ${oldAvgWeightPerRep.round(2)} -> ${newAvgWeightPerRep.round(2)} (${if(avgWeightIncrease>0) "+" else ""}${avgWeightIncrease.round(2)}%)"
+                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume.round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) - Weight/Reps: ${oldAvgWeightPerRep.round(2)} kg -> ${newAvgWeightPerRep.round(2)} kg (${if(avgWeightIncrease>0) "+" else ""}${avgWeightIncrease.round(2)}%)"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")

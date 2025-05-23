@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.math.abs
 import kotlin.math.pow
 
 
@@ -44,22 +45,53 @@ object VolumeDistributionHelper {
             return emptyList()
         }
 
-        var previousFatigue = params.previousSets.sumOf { it.fatigue }
+        var previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
         var nearAverageWeights = getNearAverageWeights(params,1)
 
-        val fatigues = params.previousSets.filter { set -> set.weight in nearAverageWeights }.map { it.fatigue }.sorted()
+        val previousMaxFatigue = params.previousSets.maxOf { it.fatigue }
+        val previousMinFatigue = params.previousSets.minOf { it.fatigue }
 
-        val closestMaxFatigueIndex =  fatigues.binarySearch {
-            it.compareTo(params.previousSets.maxOf { it.fatigue } * 1.025)
-        }.let { if (it < 0) -(it + 1) else it }
-            .coerceIn(0, fatigues.lastIndex)
+        val fatigues = possibleSets.filter { set -> set.weight in nearAverageWeights }.map { it.fatigue }.sorted()
 
-        val minFatigue = params.previousSets.minOf { it.fatigue }
-        val maxFatigue = fatigues[closestMaxFatigueIndex]
+        val minFatigue = fatigues
+            .filter { it < previousMinFatigue}
+            .minByOrNull { abs(it - (previousMinFatigue * 0.975)) }
+            ?: previousMinFatigue
+
+        val maxFatigue = fatigues
+            .filter { it > previousMaxFatigue}
+            .minByOrNull { abs(it - (previousMaxFatigue * 1.025)) }
+            ?: previousMaxFatigue
 
         var usableSets = possibleSets
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.fatigue in minFatigue..maxFatigue }
+
+
+        //Log.d("WorkoutViewModel", "Usable sets: $usableSets")
+
+        if(!previousMaxFatigue.isEqualTo(previousMinFatigue)){
+            var result = findBestProgressions(
+                usableSets,
+                params.previousSets.size,
+                params.previousSets.size,
+                params,
+                { combo ->
+                    val currentTotalFatigue = combo.sumOf { it.fatigue }
+                    val currentMaxFatigue = combo.maxOf { it.fatigue }
+                    ValidationResult(
+                        shouldReturn = currentTotalFatigue < previousTotalFatigue
+                                || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
+                                || currentMaxFatigue > previousMaxFatigue
+
+                    )
+                }
+            )
+
+            if(result.isNotEmpty()){
+                return result
+            }
+        }
 
         var result = findBestProgressions(
             usableSets,
@@ -67,10 +99,10 @@ object VolumeDistributionHelper {
             params.previousSets.size,
             params,
             { combo ->
-                val currentFatigue = combo.sumOf { it.fatigue }
+                val currentTotalFatigue = combo.sumOf { it.fatigue }
                 ValidationResult(
-                    shouldReturn = currentFatigue < previousFatigue
-                            || currentFatigue.isEqualTo(previousFatigue)
+                    shouldReturn = currentTotalFatigue < previousTotalFatigue
+                            || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
                 )
             }
         )
@@ -126,10 +158,10 @@ object VolumeDistributionHelper {
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
 
-            val currentFatigue = combo.sumOf { it.fatigue }
+            val currentTotalFatigue = combo.sumOf { it.fatigue }
             val maxFatigue = combo.maxOf { it.fatigue }
 
-            return currentFatigue * maxFatigue
+            return currentTotalFatigue * maxFatigue
         }
 
         suspend fun exploreCombinations(
@@ -234,7 +266,7 @@ object VolumeDistributionHelper {
         val volume = weight * reps
         val intensity = weight / oneRepMax
 
-        val fatigue = reps * intensity.pow(2.5)
+        val fatigue = reps * intensity.pow(2)
 
         return ExerciseSet(
             weight = weight,
