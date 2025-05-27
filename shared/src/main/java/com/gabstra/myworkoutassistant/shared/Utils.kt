@@ -2,9 +2,9 @@ package com.gabstra.myworkoutassistant.shared
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.ToneGenerator
-import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -18,8 +18,11 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
-import com.gabstra.myworkoutassistant.shared.equipments.Equipment
+import com.gabstra.myworkoutassistant.shared.equipments.Machine
+import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -45,18 +48,16 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
-import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -67,6 +68,9 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
         .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
@@ -84,7 +88,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
 fun fromJSONToWorkoutStore(json: String): WorkoutStore {
     val gson = GsonBuilder()
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
-        .registerTypeAdapter(Equipment::class.java,EquipmentAdapter())
+        .registerTypeAdapter(WeightLoadedEquipment::class.java,EquipmentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
@@ -107,6 +111,9 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
         .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
@@ -132,6 +139,9 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
         .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
@@ -155,7 +165,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
 fun fromJSONtoAppBackup(json: String) : AppBackup {
     val gson = GsonBuilder()
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
-        .registerTypeAdapter(Equipment::class.java,EquipmentAdapter())
+        .registerTypeAdapter(WeightLoadedEquipment::class.java,EquipmentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
@@ -403,7 +413,7 @@ fun calculateOneRepMax(weight: Double, reps: Int): Double =
 fun VibrateHard(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    GlobalScope.launch(Dispatchers.Default) {
+    GlobalScope.launch {
         launch{
             vibrator?.vibrate(VibrationEffect.createOneShot(100,  255))
         }
@@ -415,7 +425,7 @@ fun VibrateHardAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     var toneGen: ToneGenerator? = null
 
-    GlobalScope.launch(Dispatchers.Default) {
+    GlobalScope.launch {
         try {
             toneGen = ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
 
@@ -430,7 +440,7 @@ fun VibrateHardAndBeep(context: Context) {
 
             val job2 = launch {
                 toneGen?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                delay(100)
+                delay(300)
             }
 
             joinAll(job1, job2)
@@ -445,7 +455,7 @@ fun VibrateHardAndBeep(context: Context) {
 fun VibrateGentle(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    GlobalScope.launch(Dispatchers.Default) {
+    GlobalScope.launch {
         launch{
             vibrator?.vibrate(VibrationEffect.createOneShot(50, 255))
             delay(50)
@@ -457,7 +467,7 @@ fun VibrateGentle(context: Context) {
 fun VibrateTwice(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
 
-    GlobalScope.launch(Dispatchers.Default) {
+    GlobalScope.launch {
         repeat(2) {
             val vibratorJob = launch(start = CoroutineStart.LAZY){
                 vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
@@ -478,7 +488,7 @@ fun VibrateShortImpulse(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    GlobalScope.launch(Dispatchers.Default) {
+    GlobalScope.launch {
         repeat(3) {
             val startTime = System.currentTimeMillis()
             coroutineScope {
@@ -490,7 +500,7 @@ fun VibrateShortImpulse(context: Context) {
 
                 val job2 = launch {
                     toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                    delay(100)
+                    delay(300)
                 }
 
                 val elapsedTime = System.currentTimeMillis() - startTime
@@ -508,7 +518,7 @@ fun VibrateTwiceAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
     val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
-    GlobalScope.launch(Dispatchers.Default) {
+    GlobalScope.launch {
         repeat(2) {
             val startTime = System.currentTimeMillis()
             coroutineScope {
@@ -519,7 +529,7 @@ fun VibrateTwiceAndBeep(context: Context) {
 
                 val job2 = launch {
                     toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                    delay(100)
+                    delay(300)
                 }
 
                 val elapsedTime = System.currentTimeMillis() - startTime
@@ -600,4 +610,12 @@ fun List<Double>.standardDeviation(): Double {
     } / this.size
 
     return sqrt(variance)
+}
+
+fun formatWeight(weight:Double): String {
+    if (weight % 1.0 == 0.0) {
+        return weight.toInt().toString()
+    }
+
+    return "%.2f".format(weight).replace(",", ".")
 }

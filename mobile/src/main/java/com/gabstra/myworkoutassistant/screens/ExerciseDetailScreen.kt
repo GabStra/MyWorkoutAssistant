@@ -94,22 +94,11 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        val text = buildString {
-                            repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
-                                append(set.weight)
-                                append(" kg")
-                                if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
-                                    append(" + ")
-                                }
-                            }
-                        }
 
                         Text(
-                            text = text,
-                             color = LightGray,
-                            style = MaterialTheme.typography.bodyMedium,
-
-                            )
+                            text = "${set.weight} kg",
+                            color = LightGray,
+                            style = MaterialTheme.typography.bodyMedium,)
                         Text(
                             text = "Reps: ${set.reps}",
                              color = LightGray,
@@ -134,20 +123,8 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         if(set.additionalWeight != 0.0){
-                            val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
-
-                            val text = buildString {
-                                repeat(equipment?.volumeMultiplier?.toInt() ?: 1) {
-                                    append(set.additionalWeight)
-                                    append(" kg")
-                                    if (it < (equipment?.volumeMultiplier?.toInt() ?: 1) - 1) {
-                                        append(" + ")
-                                    }
-                                }
-                            }
-
                             Text(
-                                text = text,
+                                text = "${set.additionalWeight} kg",
                                 color = LightGray,
                                 style = MaterialTheme.typography.bodyMedium,
                             )

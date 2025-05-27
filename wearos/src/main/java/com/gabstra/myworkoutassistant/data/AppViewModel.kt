@@ -173,11 +173,17 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun startWorkout() {
+        _currentScreenDimmingState.value = true
+        _previousScreenDimmingState.value = true
+
         super.startWorkout()
         lightScreenUp()
     }
 
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
+        _currentScreenDimmingState.value = true
+        _previousScreenDimmingState.value = true
+
         super.resumeWorkoutFromRecord {
             lightScreenUp()
             onEnd()

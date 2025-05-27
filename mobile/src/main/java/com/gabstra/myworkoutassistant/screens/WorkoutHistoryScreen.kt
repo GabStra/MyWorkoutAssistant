@@ -267,12 +267,12 @@ fun WorkoutHistoryScreen(
 
                 if (setHistory.setData is WeightSetData) {
                     val setData = setHistory.setData as WeightSetData
-                    volume += setData.calculateVolume(equipment)
+                    volume += setData.calculateVolume()
                 }
 
                 if (setHistory.setData is BodyWeightSetData) {
                     val setData = setHistory.setData as BodyWeightSetData
-                    volume += setData.calculateVolume(equipment)
+                    volume += setData.calculateVolume()
                 }
 
                 if (setHistory.setData is TimedDurationSetData) {

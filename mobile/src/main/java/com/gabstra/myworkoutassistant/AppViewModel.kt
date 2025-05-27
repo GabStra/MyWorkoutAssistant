@@ -10,7 +10,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.equipments.Equipment
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -132,7 +132,7 @@ class AppViewModel() : ViewModel() {
     private val _workoutsFlow = MutableStateFlow(workoutStore.workouts)
     val workoutsFlow = _workoutsFlow.asStateFlow()
 
-    fun getEquipmentById(equipmentId: UUID): Equipment? {
+    fun getEquipmentById(equipmentId: UUID): WeightLoadedEquipment? {
         return equipments.find { it.id == equipmentId }
     }
 
@@ -152,7 +152,7 @@ class AppViewModel() : ViewModel() {
             triggerMobile()
         }
 
-    var equipments: List<Equipment>
+    var equipments: List<WeightLoadedEquipment>
         get() = workoutStore.equipments
         private set(value) {
             _equipmentsFlow.value = value
@@ -172,7 +172,7 @@ class AppViewModel() : ViewModel() {
         if(triggerSend) triggerMobile()
     }
 
-    fun updateEquipments(newEquipments: List<Equipment>) {
+    fun updateEquipments(newEquipments: List<WeightLoadedEquipment>) {
         equipments = newEquipments
     }
 

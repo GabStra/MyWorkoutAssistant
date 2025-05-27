@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
+import com.gabstra.myworkoutassistant.shared.VibrateHardAndBeep
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -192,6 +193,7 @@ fun RestScreen(
                 endTimer = 0
             )
             goBackJob?.cancel()
+            VibrateHardAndBeep(context)
             onTimerEnd()
         }
 
@@ -363,6 +365,7 @@ fun RestScreen(
             state.currentSetData = currentSetData.copy(
                 endTimer = currentSeconds
             )
+            VibrateGentle(context)
             onTimerEnd()
             viewModel.closeCustomDialog()
         },

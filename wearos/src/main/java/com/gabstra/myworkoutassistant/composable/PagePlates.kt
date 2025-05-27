@@ -15,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -23,13 +22,13 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
-import com.gabstra.myworkoutassistant.shared.equipments.Equipment
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 
 @SuppressLint("DefaultLocale")
 @Composable
-fun PagePlates(updatedState: WorkoutState.Set, equipment: Equipment?) {
+fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?) {
     val scrollState = rememberScrollState()
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 5.dp),

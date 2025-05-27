@@ -196,8 +196,8 @@ fun ExerciseHistoryScreen(
 
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
-                        volume += setData.calculateVolume(equipment)
-                        val currentOneRepMax = getOneRepMax(setData.getWeight(equipment), setData.actualReps)
+                        volume += setData.calculateVolume()
+                        val currentOneRepMax = getOneRepMax(setData.getWeight(), setData.actualReps)
                         if(currentOneRepMax> oneRepMax){
                             oneRepMax = currentOneRepMax
                         }
@@ -206,9 +206,9 @@ fun ExerciseHistoryScreen(
                     if (setHistory.setData is BodyWeightSetData) {
 
                         val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.calculateVolume(equipment)
+                        volume += setData.calculateVolume()
 
-                        val currentOneRepMax = getOneRepMax(setData.getWeight(equipment), setData.actualReps)
+                        val currentOneRepMax = getOneRepMax(setData.getWeight(), setData.actualReps)
                         if(currentOneRepMax> oneRepMax){
                             oneRepMax = currentOneRepMax
                         }

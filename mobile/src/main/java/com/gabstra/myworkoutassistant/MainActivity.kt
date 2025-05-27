@@ -34,8 +34,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.health.connect.client.HealthConnectClient
-import com.gabstra.myworkoutassistant.screens.BarbellForm
-import com.gabstra.myworkoutassistant.screens.DumbbellsForm
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
 import com.gabstra.myworkoutassistant.screens.ExerciseHistoryScreen
@@ -47,13 +45,23 @@ import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
 import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
-import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.screens.equipments.BarbellForm
+import com.gabstra.myworkoutassistant.screens.equipments.DumbbellForm
+import com.gabstra.myworkoutassistant.screens.equipments.DumbbellsForm
+import com.gabstra.myworkoutassistant.screens.equipments.MachineForm
+import com.gabstra.myworkoutassistant.screens.equipments.PlateLoadedCableForm
+import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.equipments.Machine
+import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
+import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -260,6 +268,9 @@ fun MyWorkoutAssistantNavHost(
                                 workout.isActive || (!workout.isActive && appBackup.WorkoutHistories.any { it.workoutId == workout.id })
                             }
 
+
+
+
                             val newWorkoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
 
                             val deleteAndInsertJob = launch {
@@ -278,6 +289,9 @@ fun MyWorkoutAssistantNavHost(
                                 val validSetHistories = appBackup.SetHistories.filter { setHistory ->
                                     validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
                                 }
+
+
+
 
                                 setHistoryDao.insertAll(*validSetHistories.toTypedArray())
 
@@ -311,6 +325,7 @@ fun MyWorkoutAssistantNavHost(
                         }
                     }
                 } catch (e: Exception) {
+                    Log.e("MainActivity", "Error importing data from backup", e)
                     Toast.makeText(context, "Failed to import data from backup", Toast.LENGTH_SHORT)
                         .show()
                 }
@@ -355,7 +370,9 @@ fun MyWorkoutAssistantNavHost(
     }
 
     AnimatedContent(
-        modifier = Modifier.fillMaxSize().background(DarkGray),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkGray),
         targetState = appViewModel.currentScreenData,
         transitionSpec = {
             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
@@ -935,24 +952,45 @@ fun MyWorkoutAssistantNavHost(
             }
 
             is ScreenData.NewEquipment -> {
-                val screenData = currentScreen as ScreenData.NewEquipment
+                val screenData = currentScreen
                 val equipments by appViewModel.equipmentsFlow.collectAsState()
 
                 when (screenData.equipmentType) {
                     EquipmentType.BARBELL -> {
-                        BarbellForm(onBarbellUpsert = { newBarbell ->
-                            val newEquipments = equipments + newBarbell
+                        BarbellForm(onUpsert = { new ->
+                            val newEquipments = equipments + new
                             appViewModel.updateEquipments(newEquipments)
                             appViewModel.goBack()
                         }, onCancel = { appViewModel.goBack() })
                     }
                     EquipmentType.DUMBBELLS -> {
-                        DumbbellsForm(onDumbbellsUpsert = { newDumbbells ->
-                            val newEquipments = equipments + newDumbbells
+                        DumbbellsForm(onUpsert = { new ->
+                            val newEquipments = equipments + new
                             appViewModel.updateEquipments(newEquipments)
                             appViewModel.goBack()
                         }, onCancel = { appViewModel.goBack() })
                     }
+                    EquipmentType.DUMBBELL -> DumbbellForm(onUpsert = { new ->
+                        val newEquipments = equipments + new
+                        appViewModel.updateEquipments(newEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() })
+                    EquipmentType.PLATELOADEDCABLE -> PlateLoadedCableForm(onUpsert = { new ->
+                        val newEquipments = equipments + new
+                        appViewModel.updateEquipments(newEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() })
+                    EquipmentType.WEIGHTVEST -> WeightVestForm(onUpsert = { new ->
+                        val newEquipments = equipments + new
+                        appViewModel.updateEquipments(newEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() })
+                    EquipmentType.MACHINE -> MachineForm(onUpsert = { new ->
+                        val newEquipments = equipments + new
+                        appViewModel.updateEquipments(newEquipments)
+                        appViewModel.goBack()
+                    }, onCancel = { appViewModel.goBack() })
+                    EquipmentType.IRONNECK -> appViewModel.goBack()
                 }
             }
 
@@ -963,7 +1001,7 @@ fun MyWorkoutAssistantNavHost(
                 when (screenData.equipmentType) {
                     EquipmentType.BARBELL -> {
                         val selectedBarbell = equipments.find { it.id == screenData.equipmentId } as Barbell
-                        BarbellForm(onBarbellUpsert = { updatedBarbell ->
+                        BarbellForm(onUpsert = { updatedBarbell ->
                             val updatedEquipments = equipments.map { equipment ->
                                 if (equipment.id == selectedBarbell.id) updatedBarbell else equipment
                             }
@@ -973,7 +1011,7 @@ fun MyWorkoutAssistantNavHost(
                     }
                     EquipmentType.DUMBBELLS -> {
                         val selectedDumbbells = equipments.find { it.id == screenData.equipmentId } as Dumbbells
-                        DumbbellsForm(onDumbbellsUpsert = { updatedDumbbells ->
+                        DumbbellsForm(onUpsert = { updatedDumbbells ->
                             val updatedEquipments = equipments.map { equipment ->
                                 if (equipment.id == selectedDumbbells.id) updatedDumbbells else equipment
                             }
@@ -981,6 +1019,52 @@ fun MyWorkoutAssistantNavHost(
                             appViewModel.goBack()
                         }, onCancel = { appViewModel.goBack() }, dumbbells = selectedDumbbells)
                     }
+
+                    EquipmentType.DUMBBELL -> {
+                        val selectedDumbbell = equipments.find { it.id == screenData.equipmentId } as Dumbbell
+                        DumbbellForm(
+                            onUpsert = { updatedDumbbell ->
+                                val updatedEquipments = equipments.map { equipment ->
+                                    if (equipment.id == selectedDumbbell.id) updatedDumbbell else equipment
+                                }
+                                appViewModel.updateEquipments(updatedEquipments)
+                                appViewModel.goBack()
+                            },
+                            onCancel = { appViewModel.goBack() },
+                            dumbbell = selectedDumbbell
+                        )
+                    }
+                    EquipmentType.PLATELOADEDCABLE -> {
+                        val selectedCable = equipments.find { it.id == screenData.equipmentId } as PlateLoadedCable
+                        PlateLoadedCableForm(onUpsert = { updatedCable ->
+                            val updatedEquipments = equipments.map { equipment ->
+                                if (equipment.id == selectedCable.id) updatedCable else equipment
+                            }
+                            appViewModel.updateEquipments(updatedEquipments)
+                            appViewModel.goBack()
+                        }, onCancel = { appViewModel.goBack() }, plateLoadedCable = selectedCable)
+                    }
+                    EquipmentType.WEIGHTVEST -> {
+                        val selectedVest = equipments.find { it.id == screenData.equipmentId } as WeightVest
+                        WeightVestForm(onUpsert = { updatedVest ->
+                            val updatedEquipments = equipments.map { equipment ->
+                                if (equipment.id == selectedVest.id) updatedVest else equipment
+                            }
+                            appViewModel.updateEquipments(updatedEquipments)
+                            appViewModel.goBack()
+                        }, onCancel = { appViewModel.goBack() }, weightVest = selectedVest)
+                    }
+                    EquipmentType.MACHINE -> {
+                        val selectedMachine = equipments.find { it.id == screenData.equipmentId } as Machine
+                        MachineForm(onUpsert = { updatedMachine ->
+                            val updatedEquipments = equipments.map { equipment ->
+                                if (equipment.id == selectedMachine.id) updatedMachine else equipment
+                            }
+                            appViewModel.updateEquipments(updatedEquipments)
+                            appViewModel.goBack()
+                        }, onCancel = { appViewModel.goBack() }, machine = selectedMachine)
+                    }
+                    EquipmentType.IRONNECK -> TODO()
                 }
             }
         }

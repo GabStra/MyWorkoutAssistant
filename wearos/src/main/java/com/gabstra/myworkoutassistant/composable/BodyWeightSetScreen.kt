@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -78,7 +77,7 @@ fun BodyWeightSetScreen(
     }
 
     val cumulativeWeight = remember(currentSetData,equipment){
-        currentSetData.getWeight(equipment) - currentSetData.relativeBodyWeightInKg
+        currentSetData.getWeight() - currentSetData.relativeBodyWeightInKg
     }
 
    LaunchedEffect(availableWeights,cumulativeWeight) {
@@ -132,14 +131,14 @@ fun BodyWeightSetScreen(
         viewModel.getAllSetHistoriesByExerciseId(exercise.id)
             .filter { it.setData is BodyWeightSetData }
             .map{ it.setData as BodyWeightSetData }
-            .sumOf { it.calculateVolume(equipment )}
+            .sumOf { it.calculateVolume()}
     }
 
     val executedVolume = remember(exercise.id, equipment, currentSetData, state ) {
         viewModel.getAllExecutedSetsByExerciseId(exercise.id)
             .filter { it.setData is BodyWeightSetData  && it.setId != state.set.id }
             .map{ it.setData as BodyWeightSetData }
-            .sumOf { it.calculateVolume(equipment)} + currentSetData.calculateVolume(equipment)
+            .sumOf { it.calculateVolume()} + currentSetData.calculateVolume()
     }
 
     fun onMinusClick(){
@@ -151,7 +150,7 @@ fun BodyWeightSetScreen(
 
             currentSetData = currentSetData.copy(
                 actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume(equipment)
+                volume = newSetData.calculateVolume()
             )
 
             VibrateGentle(context)
@@ -167,7 +166,7 @@ fun BodyWeightSetScreen(
 
                     currentSetData = currentSetData.copy(
                         additionalWeight = newSetData.additionalWeight,
-                        volume = newSetData.calculateVolume(equipment)
+                        volume = newSetData.calculateVolume()
                     )
                 }
             }
@@ -185,7 +184,7 @@ fun BodyWeightSetScreen(
 
             currentSetData = currentSetData.copy(
                 actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume(equipment)
+                volume = newSetData.calculateVolume()
             )
 
             VibrateGentle(context)
@@ -201,7 +200,7 @@ fun BodyWeightSetScreen(
 
                     currentSetData = currentSetData.copy(
                         additionalWeight = newSetData.additionalWeight,
-                        volume = newSetData.calculateVolume(equipment)
+                        volume = newSetData.calculateVolume()
                     )
                 }
             }
@@ -233,7 +232,7 @@ fun BodyWeightSetScreen(
 
                             currentSetData = currentSetData.copy(
                                 actualReps = newSetData.actualReps,
-                                volume = newSetData.calculateVolume(equipment)
+                                volume = newSetData.calculateVolume()
                             )
 
                             VibrateTwice(context)
@@ -284,7 +283,7 @@ fun BodyWeightSetScreen(
 
                             currentSetData = currentSetData.copy(
                                 additionalWeight = previousSetData.additionalWeight,
-                                volume = newSetData.calculateVolume(equipment)
+                                volume = newSetData.calculateVolume()
                             )
 
                             VibrateTwice(context)
@@ -294,7 +293,6 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            val weight = currentSetData.additionalWeight
 
             val textColor = when {
                 currentSetData.additionalWeight == previousSetData.additionalWeight -> MyColors.White
@@ -302,7 +300,7 @@ fun BodyWeightSetScreen(
                 else -> MyColors.Green
             }
 
-            val weightText = if(weight > 0) "%.2f".format(weight).replace(',','.') else "-"
+            val weightText = equipment!!.formatWeight(currentSetData.additionalWeight)
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
@@ -322,93 +320,47 @@ fun BodyWeightSetScreen(
 
         Column (
             modifier = customModifier,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.Center
         ){
             Column(
-
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if(equipment!=null){
                     Text(
                         text = equipment.name.toUpperCase(Locale.ROOT),
-                        style = headerStyle
+                        style = MaterialTheme.typography.title3
                     )
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if(availableWeights.isNotEmpty()) {
+                if(availableWeights.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
                         Text(
-                            modifier = Modifier.weight(1f),
-                            text = "KG",
+                            text = "WEIGHT",
                             style = headerStyle,
                             textAlign = TextAlign.Center
                         )
+                        WeightRow(modifier = Modifier.fillMaxWidth())
                     }
+                }
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
                     Text(
-                        modifier = Modifier.weight(1f),
                         text = "REPS",
                         style = headerStyle,
                         textAlign = TextAlign.Center
                     )
-                }
-                Row(
-                    modifier =  Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if(availableWeights.isNotEmpty()) {
-                        WeightRow(modifier = Modifier.weight(1f))
-                    }
-                    RepsRow(modifier = Modifier.weight(1f))
+                    RepsRow(modifier = Modifier.fillMaxWidth())
                 }
             }
-            /*if(!state.isWarmupSet){
-                Column(
-                    modifier = Modifier.padding(bottom = 5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            text = "VOLUME: ${previousTotalVolume.round(1)} -> ${executedVolume.round(1)}",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    if(executedVolume != 0.0){
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            val volumePercentage = ((executedVolume - previousTotalVolume) / previousTotalVolume) * 100
-                            val volumeText = if (volumePercentage > 0) {
-                                "+${volumePercentage.round(1)}%"
-                            } else {
-                                "${volumePercentage.round(1)}%"
-                            }
-
-                            val textColor = when {
-                                volumePercentage < 0 -> MyColors.Red
-                                else -> MyColors.Green
-                            }
-
-                            val style = MaterialTheme.typography.body1.copy(fontSize = 16.sp,fontWeight = FontWeight.Bold)
-
-                            Text(
-                                text = volumeText,
-                                style = style,
-                                textAlign = TextAlign.Center,
-                                color = textColor
-                            )
-                        }
-                    }
-                }
-            }*/
         }
     }
 
@@ -453,9 +405,10 @@ fun BodyWeightSetScreen(
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
                     }
-                    SetScreen(customModifier = Modifier
+                    SetScreen(
+                        customModifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 10.dp))
+                    )
                 }
             }
         }

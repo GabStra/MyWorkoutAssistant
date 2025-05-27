@@ -67,9 +67,6 @@ object VolumeDistributionHelper {
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.fatigue in minFatigue..maxFatigue }
 
-
-        //Log.d("WorkoutViewModel", "Usable sets: $usableSets")
-
         if(!previousMaxFatigue.isEqualTo(previousMinFatigue)){
             var result = findBestProgressions(
                 usableSets,
@@ -83,7 +80,6 @@ object VolumeDistributionHelper {
                         shouldReturn = currentTotalFatigue < previousTotalFatigue
                                 || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
                                 || currentMaxFatigue > previousMaxFatigue
-
                     )
                 }
             )

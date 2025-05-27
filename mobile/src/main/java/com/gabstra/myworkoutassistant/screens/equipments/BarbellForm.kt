@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant.screens
+package com.gabstra.myworkoutassistant.screens.equipments
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -57,7 +57,7 @@ import java.util.UUID
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BarbellForm(
-    onBarbellUpsert: (Barbell) -> Unit,
+    onUpsert: (Barbell) -> Unit,
     onCancel: () -> Unit,
     barbell: Barbell? = null,
 ) {
@@ -66,13 +66,8 @@ fun BarbellForm(
     val barLengthState = remember { mutableStateOf(barbell?.barLength?.toString() ?: "") }
     val barWeightState = remember { mutableStateOf(barbell?.barWeight?.toString() ?: "") }
 
-    val volumeMultiplierState = remember { mutableStateOf(barbell?.volumeMultiplier?.toString() ?: "") }
-
-    val maxAdditionalItemsState = remember { mutableStateOf((barbell?.maxAdditionalItems ?: 0).toString()) }
-
     // State for plates
     val availablePlatesState = remember { mutableStateOf(barbell?.availablePlates ?: emptyList<Plate>()) }
-    val additionalPlatesState = remember { mutableStateOf(barbell?.additionalPlates ?: emptyList<Plate>()) }
 
     // State for new plate inputs
     val newPlateWeightState = remember { mutableStateOf("") }
@@ -80,7 +75,6 @@ fun BarbellForm(
 
     // State for showing dialogs
     val showAvailablePlateDialog = remember { mutableStateOf(false) }
-    val showAdditionalPlateDialog = remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
@@ -171,32 +165,6 @@ fun BarbellForm(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Volume Multiplier field
-            OutlinedTextField(
-                value = volumeMultiplierState.value,
-                onValueChange = {
-                    if (it.isEmpty() || it.all { char -> char.isDigit() || char == '.' }) {
-                        volumeMultiplierState.value = it
-                    }
-                },
-                label = { Text("Volume Multiplier") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Max Additional Items field
-            OutlinedTextField(
-                value = maxAdditionalItemsState.value,
-                onValueChange = {
-                    if (it.isEmpty() || it.all { char -> char.isDigit() }) {
-                        maxAdditionalItemsState.value = it
-                    }
-                },
-                label = { Text("Maximum Additional Plates") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
-
             // Available Plates Section
             StyledCard(
                 modifier = Modifier
@@ -243,54 +211,6 @@ fun BarbellForm(
                 }
             }
 
-            // Additional Plates Section
-            StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth(),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Additional Plates",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAdditionalPlateDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Plate")
-                        }
-                    }
-
-                    additionalPlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm",style = MaterialTheme.typography.bodyMedium)
-                            IconButton(
-                                modifier = Modifier.size(35.dp),
-                                onClick = {
-                                    additionalPlatesState.value =
-                                        additionalPlatesState.value - plate
-                                }
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
-                            }
-                        }
-                    }
-                }
-            }
-
             // Submit button
             Button(
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
@@ -300,12 +220,9 @@ fun BarbellForm(
                         name = nameState.value.trim(),
                         availablePlates = availablePlatesState.value,
                         barLength = barLengthState.value.toIntOrNull() ?: 0,
-                        additionalPlates = additionalPlatesState.value,
-                        maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0,
                         barWeight = barWeightState.value.toDoubleOrNull() ?: 0.0,
-                        volumeMultiplier = volumeMultiplierState.value.toDoubleOrNull() ?: 1.0
                     )
-                    onBarbellUpsert(newBarbell)
+                    onUpsert(newBarbell)
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = nameState.value.isNotBlank() &&
@@ -331,7 +248,7 @@ fun BarbellForm(
     if (showAvailablePlateDialog.value) {
         AlertDialog(
             onDismissRequest = { showAvailablePlateDialog.value = false },
-            title = { Text("Add Available Plate") },
+            title = { Text("Add Plate") },
             text = {
                 Column {
                     OutlinedTextField(
@@ -379,64 +296,6 @@ fun BarbellForm(
             },
             dismissButton = {
                 TextButton(onClick = { showAvailablePlateDialog.value = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    // Dialog for adding new additional plate
-    if (showAdditionalPlateDialog.value) {
-        AlertDialog(
-            onDismissRequest = { showAdditionalPlateDialog.value = false },
-            title = { Text("Add Additional Plate") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = newPlateWeightState.value,
-                        onValueChange = {
-                            if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
-                                newPlateWeightState.value = it
-                            }
-                        },
-                        label = { Text("Weight (kg)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = newPlateThicknessState.value,
-                        onValueChange = {
-                            if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
-                                newPlateThicknessState.value = it
-                            }
-                        },
-                        label = { Text("Thickness (mm)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val weight = newPlateWeightState.value.toDoubleOrNull()
-                        val thickness = newPlateThicknessState.value.toDoubleOrNull()
-                        if (weight != null && weight > 0 && thickness != null) {
-                            additionalPlatesState.value = additionalPlatesState.value + Plate(weight, thickness)
-                            newPlateWeightState.value = ""
-                            newPlateThicknessState.value = ""
-                            showAdditionalPlateDialog.value = false
-                        }
-                    },
-                    enabled = newPlateWeightState.value.isNotEmpty() &&
-                            newPlateThicknessState.value.isNotEmpty()
-                ) {
-                    Text("Add")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAdditionalPlateDialog.value = false }) {
                     Text("Cancel")
                 }
             }

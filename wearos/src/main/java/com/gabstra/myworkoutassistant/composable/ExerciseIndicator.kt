@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import CircleWithNumber
+import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -9,7 +10,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -24,7 +24,8 @@ fun ExerciseIndicator(
     set: WorkoutState.Set,
 ){
 
-    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
+    val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
+    val exerciseOrSupersetIds = remember { exerciseIds.map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
     val exerciseCount = exerciseOrSupersetIds.count()
 
     val exerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(set.exerciseId)) viewModel.supersetIdByExerciseId[set.exerciseId] else set.exerciseId
@@ -34,33 +35,73 @@ fun ExerciseIndicator(
     val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
 
     Box(modifier = modifier.fillMaxSize()) {
-        // Create n SegmentedProgressIndicator
-        for (index in 0 until exerciseCount) {
-            // Calculate whether this indicator should be filled (1.0) or empty (0.0)
-            val indicatorProgress = if (index <= currentExerciseIndex) 1.0f else 0.0f
+        exerciseOrSupersetIds.forEachIndexed { index, exerciseOrSupersetId ->
+            val isSuperset = remember(exerciseOrSupersetId) { viewModel.supersetIdByExerciseId.containsValue(exerciseOrSupersetId)  }
 
-            // Create a single segment for each indicator
-            val trackSegment = ProgressIndicatorSegment(
-                weight = 1f,
-                indicatorColor = if (index != currentExerciseIndex) MyColors.Orange else MyColors.White
-            )
+            if(isSuperset){
+                val supersetExercises =
+                    exerciseIds
+                        .filter { viewModel.supersetIdByExerciseId.containsKey(it) && viewModel.supersetIdByExerciseId[it] == exerciseOrSupersetId }
 
-            // Calculate angle for each indicator to space them evenly
-            // Total arc: 65f - (-60f) = 125f
+                Log.d("ExerciseIndicator", "Superset exercises for $exerciseOrSupersetId: $supersetExercises")
+                Log.d("ExerciseIndicator", "Current set exerciseId: ${set.exerciseId}")
 
-            val startAngle = -60f + index * (segmentArcAngle + 2f)
-            val endAngle = startAngle + segmentArcAngle
+                val currentSupersetExerciseIndex = supersetExercises.indexOfFirst { it == set.exerciseId }
+                val supersetExercisesCount = supersetExercises.count()
 
-            SegmentedProgressIndicator(
-                trackSegments = listOf(trackSegment),
-                progress = indicatorProgress,
-                modifier = Modifier.fillMaxSize(),
-                strokeWidth = 4.dp,
-                paddingAngle = 0f,
-                startAngle = startAngle,
-                endAngle = endAngle,
-                trackColor = Color.DarkGray,
-            )
+                val subSegmentArcAngle = (segmentArcAngle - (supersetExercisesCount - 1) * 2f) / supersetExercisesCount
+
+                for (subIndex in 0 until supersetExercisesCount) {
+                    val indicatorProgress = if (subIndex == currentSupersetExerciseIndex) 1.0f else 0.0f
+
+                    // Create a single segment for each indicator
+                    val trackSegment = ProgressIndicatorSegment(
+                        weight = 1f,
+                        indicatorColor = MyColors.White
+                    )
+
+
+
+                    val startAngle = -60f + index * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 2f)
+                    val endAngle = startAngle + segmentArcAngle / supersetExercisesCount
+
+                    SegmentedProgressIndicator(
+                        trackSegments = listOf(trackSegment),
+                        progress = indicatorProgress,
+                        modifier = Modifier.fillMaxSize(),
+                        strokeWidth = 4.dp,
+                        paddingAngle = 0f,
+                        startAngle = startAngle,
+                        endAngle = endAngle,
+                        trackColor = Color.DarkGray,
+                    )
+                }
+            }else{
+                val indicatorProgress = if (index <= currentExerciseIndex) 1.0f else 0.0f
+
+                // Create a single segment for each indicator
+                val trackSegment = ProgressIndicatorSegment(
+                    weight = 1f,
+                    indicatorColor = if (index != currentExerciseIndex) MyColors.Orange else MyColors.White
+                )
+
+                // Calculate angle for each indicator to space them evenly
+                // Total arc: 65f - (-60f) = 125f
+
+                val startAngle = -60f + index * (segmentArcAngle + 2f)
+                val endAngle = startAngle + segmentArcAngle
+
+                SegmentedProgressIndicator(
+                    trackSegments = listOf(trackSegment),
+                    progress = indicatorProgress,
+                    modifier = Modifier.fillMaxSize(),
+                    strokeWidth = 4.dp,
+                    paddingAngle = 0f,
+                    startAngle = startAngle,
+                    endAngle = endAngle,
+                    trackColor = Color.DarkGray,
+                )
+            }
         }
     }
 

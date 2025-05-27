@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.equipments
 
-data class Plate(
-    val weight: Double, // Weight of the plate in kg
+class Plate(
+    weight : Double,
     val thickness: Double // Thickness of the plate in mm
-)
+) : BaseWeight(weight)

@@ -27,10 +27,11 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.calculateOneRepMax
 import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
-import com.gabstra.myworkoutassistant.shared.equipments.Equipment
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
@@ -66,7 +67,6 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.floor
-import kotlin.math.pow
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -99,7 +99,7 @@ open class WorkoutViewModel : ViewModel() {
         )
     )
 
-    fun getEquipmentById(id: UUID): Equipment? {
+    fun getEquipmentById(id: UUID): WeightLoadedEquipment? {
         return workoutStore.equipments.find { it.id == id }
     }
 
@@ -239,10 +239,10 @@ open class WorkoutViewModel : ViewModel() {
 
     public val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
 
-    protected val weightsByEquipment: MutableMap<Equipment, kotlin.collections.Set<Double>> =
+    protected val weightsByEquipment: MutableMap<WeightLoadedEquipment, kotlin.collections.Set<Double>> =
         mutableMapOf()
 
-    fun getWeightByEquipment(equipment: Equipment?): kotlin.collections.Set<Double> {
+    fun getWeightByEquipment(equipment: WeightLoadedEquipment?): kotlin.collections.Set<Double> {
         if (equipment == null) return emptySet()
         return weightsByEquipment[equipment] ?: emptySet()
     }
@@ -467,11 +467,6 @@ open class WorkoutViewModel : ViewModel() {
 
             val exerciseProgression = progressionData?.first
 
-            val equipment =
-                exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
-            val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
-
-
             if (exerciseProgression != null) {
                 val distributedSets = exerciseProgression.sets
                 val newSets = mutableListOf<Set>()
@@ -498,27 +493,14 @@ open class WorkoutViewModel : ViewModel() {
                         ExerciseType.BODY_WEIGHT -> {
                             val relativeBodyWeight =
                                 bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                            val weight = if (equipment is Barbell) {
-                                (setInfo.weight - equipment.barWeight - relativeBodyWeight) / equipmentVolumeMultiplier
-                            } else if (equipment != null) {
-                                (setInfo.weight - relativeBodyWeight) / equipmentVolumeMultiplier
-                            } else {
-                                setInfo.weight - relativeBodyWeight
-                            }
+
+                            val weight =  setInfo.weight - relativeBodyWeight
 
                             BodyWeightSet(setId, setInfo.reps, weight)
                         }
 
                         ExerciseType.WEIGHT -> {
-                            val weight = if (equipment is Barbell) {
-                                (setInfo.weight - equipment.barWeight) / equipmentVolumeMultiplier
-                            } else if (equipment != null) {
-                                (setInfo.weight) / equipmentVolumeMultiplier
-                            } else {
-                                setInfo.weight
-                            }
-
-                            WeightSet(setId, setInfo.reps, weight)
+                            WeightSet(setId, setInfo.reps, setInfo.weight)
                         }
 
                         else -> throw IllegalArgumentException("Unknown exercise type")
@@ -545,7 +527,7 @@ open class WorkoutViewModel : ViewModel() {
                 exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
 
             if (equipment != null && !weightsByEquipment.containsKey(equipment)) {
-                val possibleCombinations = equipment.calculatePossibleCombinations()
+                val possibleCombinations = equipment.getWeightsCombinations()
                 weightsByEquipment[equipment] = possibleCombinations
             }
         }
@@ -568,34 +550,32 @@ open class WorkoutViewModel : ViewModel() {
         }
 
         val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
-        val equipmentVolumeMultiplier = equipment?.volumeMultiplier ?: 1.0
 
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        var oneRepMax = exerciseSets.maxOf {
+        var oneRepMax = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    calculateOneRepMax(it.getWeight(equipment, relativeBodyWeight), it.reps)
+                    calculateOneRepMax(it.getWeight(relativeBodyWeight), it.reps)
                 }
 
-                is WeightSet -> calculateOneRepMax(it.getWeight(equipment), it.reps)
+                is WeightSet -> calculateOneRepMax(it.weight, it.reps)
                 else -> 0.0
             }
-        }
+        }.average()
 
 
         val setsForProgression = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    val weight = it.getWeight(equipment, relativeBodyWeight)
+                    val weight = it.getWeight(relativeBodyWeight)
                     createSet(weight, it.reps, oneRepMax)
                 }
 
                 is WeightSet -> {
-                    val weight = it.getWeight(equipment)
-                    createSet(weight, it.reps, oneRepMax)
+                    createSet(it.weight, it.reps, oneRepMax)
                 }
 
                 else -> throw IllegalArgumentException("Unknown set type")
@@ -665,22 +645,13 @@ open class WorkoutViewModel : ViewModel() {
         val oldSets = exerciseSets.map { set ->
             when (set) {
                 is BodyWeightSet -> {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    set.getWeight(equipment,relativeBodyWeight)
+                    val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    set.getWeight(relativeBodyWeight)
 
-                    if (equipment is Barbell) {
-                        "${(set.getWeight(equipment,relativeBodyWeight) - relativeBodyWeight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
-                    } else {
-                        "${ set.getWeight(equipment,relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps}"
-                    }
+                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps}"
                 }
                 is WeightSet -> {
-                    if (equipment is Barbell) {
-                        "${(set.getWeight(equipment) - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
-                    } else {
-                        "${set.getWeight(equipment) / equipmentVolumeMultiplier} kg x ${set.reps}"
-                    }
+                    "${set.weight} kg x ${set.reps}"
                 }
                 else -> throw IllegalArgumentException("Unknown set type")
             }
@@ -711,18 +682,9 @@ open class WorkoutViewModel : ViewModel() {
                 if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight =
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    if (equipment is Barbell) {
-                        "${(set.weight - relativeBodyWeight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
-                    } else {
-                        "${set.weight - relativeBodyWeight} kg x ${set.reps}"
-                    }
+                    "${set.weight - relativeBodyWeight} kg x ${set.reps}"
                 } else {
-                    if (equipment is Barbell) {
-                        "${(set.weight - equipment.barWeight) / equipmentVolumeMultiplier} kg x ${set.reps}"
-                    } else {
-                        "${set.weight / equipmentVolumeMultiplier} kg x ${set.reps}"
-                    }
-
+                    "${set.weight} kg x ${set.reps}"
                 }
             }
 
@@ -1054,11 +1016,6 @@ open class WorkoutViewModel : ViewModel() {
 
                     val exerciseHistories = it.value
 
-                    val currentExercise = exercisesById[it.key]!!
-
-                    val equipment = currentExercise.equipmentId?.let { equipmentId ->
-                        getEquipmentById(equipmentId)
-                    }
                     val setDataList =
                         exerciseHistories.filter { setHistory -> setHistory.setData !is RestSetData }
                             .map { setHistory -> setHistory.setData }
@@ -1072,20 +1029,19 @@ open class WorkoutViewModel : ViewModel() {
                         }
                     }.round(2)
 
-                    val maxOneRepMax = setDataList.maxOf { setData ->
+                    val avgOneRepMax = setDataList.map { setData ->
                         when (setData) {
                             is BodyWeightSetData -> {
-                                calculateOneRepMax(setData.getWeight(equipment), setData.actualReps)
+                                calculateOneRepMax(setData.getWeight(), setData.actualReps)
                             }
 
                             is WeightSetData -> {
-                                calculateOneRepMax(setData.getWeight(equipment), setData.actualReps)
+                                calculateOneRepMax(setData.getWeight(), setData.actualReps)
                             }
 
                             else -> throw IllegalArgumentException("Unknown set type")
                         }
-                    }
-
+                    }.average()
 
                     val totalReps = setDataList.sumOf {
                         when (it) {
@@ -1103,11 +1059,11 @@ open class WorkoutViewModel : ViewModel() {
                         val newExerciseInfo = ExerciseInfo(
                             id = it.key!!,
                             bestVolume = volume,
-                            bestOneRepMax = maxOneRepMax,
+                            bestOneRepMax = avgOneRepMax,
                             bestAverageLoad = averageLoad,
                             successfulSessionCounter = 1u,
                             lastSessionVolume = volume,
-                            lastSessionOneRepMax = maxOneRepMax,
+                            lastSessionOneRepMax = avgOneRepMax,
                             lastSessionAverageLoad = averageLoad,
                             sessionFailedCounter = 0u,
                             lastSessionWasDeload = false
@@ -1119,8 +1075,8 @@ open class WorkoutViewModel : ViewModel() {
                             exerciseInfoDao.updateBestVolume(it.key!!, volume)
                         }
 
-                        if (exerciseInfo.bestOneRepMax < maxOneRepMax) {
-                            exerciseInfoDao.updateBestOneRepMax(it.key!!, maxOneRepMax)
+                        if (exerciseInfo.bestOneRepMax < avgOneRepMax) {
+                            exerciseInfoDao.updateBestOneRepMax(it.key!!, avgOneRepMax)
                         }
 
                         if(exerciseInfo.bestAverageLoad < averageLoad){
@@ -1152,7 +1108,7 @@ open class WorkoutViewModel : ViewModel() {
                                 }
 
                                 exerciseInfoDao.updateLastSessionVolume(it.key!!, volume)
-                                exerciseInfoDao.updateLastSessionOneRepMax(it.key!!, maxOneRepMax)
+                                exerciseInfoDao.updateLastSessionOneRepMax(it.key!!, avgOneRepMax)
                                 exerciseInfoDao.updateLastSessionAverageLoad(it.key!!, averageLoad)
                             }
                         }
@@ -1386,16 +1342,15 @@ open class WorkoutViewModel : ViewModel() {
     protected fun getPlateChangeResults(
         exercise: Exercise,
         exerciseSets: List<Set>,
-        equipment: Equipment?,
+        equipment: WeightLoadedEquipment?,
         initialSetup: List<Double> = emptyList()
     ): List<PlateCalculator.Companion.PlateChangeResult> {
         val plateChangeResults = mutableListOf<PlateCalculator.Companion.PlateChangeResult>()
 
         if (equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT) {
             val sets = exerciseSets.filterIsInstance<WeightSet>()
-            val setWeights = sets.map { it.getWeight(equipment) }.toList()
-            val plateWeights = equipment.availablePlates.map { it.weight }
-                .toList() + equipment.additionalPlates.map { it.weight }.toList()
+            val setWeights = sets.map { it.weight }.toList()
+            val plateWeights = equipment.availablePlates.map { it.weight } .toList()
 
             try {
                 plateChangeResults.addAll(
@@ -1404,7 +1359,6 @@ open class WorkoutViewModel : ViewModel() {
                         setWeights,
                         equipment.barWeight,
                         initialSetup,
-                        multiplier = equipment.volumeMultiplier
                     )
                 )
             } catch (e: Exception) {
@@ -1434,29 +1388,28 @@ open class WorkoutViewModel : ViewModel() {
         if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
             val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-            val oneRepMax = exerciseSets.maxOf {
+            val oneRepMax = exerciseSets.map {
                 when (it) {
                     is BodyWeightSet -> {
                         val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                        calculateOneRepMax(it.getWeight(equipment, relativeBodyWeight), it.reps)
+                        calculateOneRepMax(it.getWeight(relativeBodyWeight), it.reps)
                     }
 
-                    is WeightSet -> calculateOneRepMax(it.getWeight(equipment), it.reps)
+                    is WeightSet -> calculateOneRepMax(it.weight, it.reps)
                     else -> 0.0
                 }
-            }
+            }.average()
 
-            val equipmentVolumeMultiplier = equipment.volumeMultiplier
             val (workWeight,workReps) = exerciseSets.first().let  {
                 when (it) {
                     is BodyWeightSet -> {
                         val relativeBodyWeight =
                             bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                        Pair(it.getWeight(equipment, relativeBodyWeight), it.reps)
+                        Pair(it.getWeight(relativeBodyWeight), it.reps)
                     }
 
                     is WeightSet -> {
-                        Pair(it.getWeight(equipment), it.reps)
+                        Pair(it.weight, it.reps)
                     }
 
                     else -> throw IllegalArgumentException("Unknown set type")
@@ -1487,23 +1440,11 @@ open class WorkoutViewModel : ViewModel() {
                     ExerciseType.BODY_WEIGHT -> {
                         val relativeBodyWeight =
                             bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                        if (equipment is Barbell) {
-                            (desiredWeight - equipment.barWeight - relativeBodyWeight) / equipmentVolumeMultiplier
-                        } else if (equipment != null) {
-                            (desiredWeight - relativeBodyWeight) / equipmentVolumeMultiplier
-                        } else {
-                            desiredWeight - relativeBodyWeight
-                        }
+                        desiredWeight - relativeBodyWeight
                     }
 
                     ExerciseType.WEIGHT -> {
-                        if (equipment is Barbell) {
-                            (desiredWeight - equipment.barWeight) / equipmentVolumeMultiplier
-                        } else if (equipment != null) {
-                            (desiredWeight) / equipmentVolumeMultiplier
-                        } else {
-                            desiredWeight
-                        }
+                        desiredWeight
                     }
 
                     else -> throw IllegalArgumentException("Unknown exercise type")
@@ -1633,10 +1574,10 @@ open class WorkoutViewModel : ViewModel() {
                     currentSetData =
                         currentSetData.copy(relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100))
                     currentSetData =
-                        currentSetData.copy(volume = currentSetData.calculateVolume(equipment))
+                        currentSetData.copy(volume = currentSetData.calculateVolume())
                 } else if (currentSetData is WeightSetData) {
                     currentSetData =
-                        currentSetData.copy(volume = currentSetData.calculateVolume(equipment))
+                        currentSetData.copy(volume = currentSetData.calculateVolume())
                 }
 
                 var previousSetData = copySetData(currentSetData)
@@ -1767,10 +1708,6 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
     }
-
-    // Helper function for calculating one rep max
-    protected fun calculateOneRepMax(weight: Double, reps: Int): Double =
-        weight * reps.toDouble().pow(0.10)
 
     // Extension function for rounding doubles
     protected fun Double.round(decimals: Int): Double {

@@ -1,14 +1,12 @@
-package com.gabstra.myworkoutassistant.screens
+package com.gabstra.myworkoutassistant.screens.equipments
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -47,9 +45,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.shared.equipments.DumbbellUnit
-import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
-import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
+import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -57,28 +54,28 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DumbbellsForm(
-    onDumbbellsUpsert: (Dumbbells) -> Unit,
+fun MachineForm(
+    onUpsert: (Machine) -> Unit,
     onCancel: () -> Unit,
-    dumbbells: Dumbbells? = null,
+    machine: Machine? = null,
 ) {
     // Mutable state for form fields
-    val nameState = remember { mutableStateOf(dumbbells?.name ?: "") }
-    val maxAdditionalItemsState = remember { mutableStateOf((dumbbells?.maxAdditionalItems ?: 0).toString()) }
-    val volumeMultiplierState = remember { mutableStateOf((dumbbells?.volumeMultiplier?: 0).toString()) }
+    val nameState = remember { mutableStateOf(machine?.name ?: "") }
 
-    // State for dumbbells and plates
-    val availableDumbbellsState = remember { mutableStateOf(dumbbells?.availableDumbbells ?: emptyList<DumbbellUnit>()) }
-    val additionalPlatesState = remember { mutableStateOf(dumbbells?.additionalPlates ?: emptyList<Plate>()) }
+    val maxExtraWeightsPerLoadingPointState = remember { mutableStateOf((machine?.maxExtraWeightsPerLoadingPoint ?: 0).toString()) }
+    // State for plates
+    val availableWeightsState = remember { mutableStateOf(machine?.availableWeights ?: emptyList<BaseWeight>()) }
+    val extraWeightsState = remember { mutableStateOf(machine?.extraWeights ?: emptyList<BaseWeight>()) }
 
-    // State for new inputs
-    val newDumbbellWeightState = remember { mutableStateOf("") }
-    val newPlateWeightState = remember { mutableStateOf("") }
-    val newPlateThicknessState = remember { mutableStateOf("") }
+
+    // State for new plate inputs
+    val newWeightState = remember { mutableStateOf("") }
+    val newExtraWeightState = remember { mutableStateOf("") }
 
     // State for showing dialogs
-    val showDumbbellDialog = remember { mutableStateOf(false) }
-    val showAdditionalPlateDialog = remember { mutableStateOf(false) }
+    val showAvailableWeightsDialog = remember { mutableStateOf(false) }
+
+    val showExtraWeightDialog = remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
@@ -99,9 +96,8 @@ fun DumbbellsForm(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
-                        color = LightGray,
                         textAlign = TextAlign.Center,
-                        text = if(dumbbells == null) "Insert Dumbbells" else "Edit Dumbbells"
+                        text = if(machine == null) "Insert Machine" else "Edit Machine"
                     )
                 },
                 navigationIcon = {
@@ -113,7 +109,9 @@ fun DumbbellsForm(
                     }
                 },
                 actions = {
-                    IconButton(modifier = Modifier.alpha(0f), onClick = { onCancel() }) {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = {
+                        onCancel()
+                    }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -123,6 +121,7 @@ fun DumbbellsForm(
             )
         }
     ) { it ->
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -133,41 +132,27 @@ fun DumbbellsForm(
                 .padding(horizontal = 15.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Dumbbells name field
+            // Barbell name field
             OutlinedTextField(
                 value = nameState.value,
                 onValueChange = { nameState.value = it },
-                label = { Text("Dumbbells Set Name") },
+                label = { Text("Machine Name") },
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Volume Multiplier field
             OutlinedTextField(
-                value = volumeMultiplierState.value,
-                onValueChange = {
-                    if (it.isEmpty() || it.all { char -> char.isDigit() || char == '.' }) {
-                        volumeMultiplierState.value = it
-                    }
-                },
-                label = { Text("Volume Multiplier") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Max Additional Items field
-            OutlinedTextField(
-                value = maxAdditionalItemsState.value,
+                value = maxExtraWeightsPerLoadingPointState.value,
                 onValueChange = {
                     if (it.isEmpty() || it.all { char -> char.isDigit() }) {
-                        maxAdditionalItemsState.value = it
+                        maxExtraWeightsPerLoadingPointState.value = it
                     }
                 },
-                label = { Text("Maximum Additional Plates") },
+                label = { Text("Maximum Additional Weights") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Available Dumbbells Section
+            // Available Plates Section
             StyledCard(
                 modifier = Modifier
                     .fillMaxWidth(),
@@ -175,7 +160,8 @@ fun DumbbellsForm(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(10.dp)
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -183,38 +169,35 @@ fun DumbbellsForm(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Available Dumbbells",
+                            text = "Available Weights",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showDumbbellDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Dumbbell")
+                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailableWeightsDialog.value = true }) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate")
                         }
                     }
 
-                    availableDumbbellsState.value.sortedBy { it.weight }.forEachIndexed { index, dumbbell ->
+                    availableWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, weight ->
                         Row(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                                .fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("${index+1}) ${dumbbell.weight}kg", style = MaterialTheme.typography.bodyMedium)
+                            Text("${index+1}) ${weight.weight}kg",style = MaterialTheme.typography.bodyMedium)
                             IconButton(
                                 modifier = Modifier.size(35.dp),
                                 onClick = {
-                                    availableDumbbellsState.value =
-                                        availableDumbbellsState.value - dumbbell
+                                    availableWeightsState.value = availableWeightsState.value - weight
                                 }
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Dumbbell")
+                                Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
                             }
                         }
                     }
                 }
             }
 
-            // Additional Plates Section
             StyledCard(
                 modifier = Modifier
                     .fillMaxWidth(),
@@ -230,15 +213,15 @@ fun DumbbellsForm(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Additional Plates",
+                            text = "Extra Weights",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAdditionalPlateDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Plate")
+                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showExtraWeightDialog.value = true }) {
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight")
                         }
                     }
 
-                    additionalPlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
+                    extraWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -246,17 +229,17 @@ fun DumbbellsForm(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm",
+                            Text("${index+1}) ${plate.weight}kg",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             IconButton(
                                 modifier = Modifier.size(35.dp),
                                 onClick = {
-                                    additionalPlatesState.value =
-                                        additionalPlatesState.value - plate
+                                    extraWeightsState.value =
+                                        extraWeightsState.value - plate
                                 }
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
+                                Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
                             }
                         }
                     }
@@ -267,20 +250,20 @@ fun DumbbellsForm(
             Button(
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
-                    val newDumbbells = Dumbbells(
-                        id = dumbbells?.id ?: UUID.randomUUID(),
+                    val newMachine = Machine(
+                        id = machine?.id ?: UUID.randomUUID(),
                         name = nameState.value.trim(),
-                        availableDumbbells = availableDumbbellsState.value,
-                        additionalPlates = additionalPlatesState.value,
-                        maxAdditionalItems = maxAdditionalItemsState.value.toIntOrNull() ?: 0,
-                        volumeMultiplier = volumeMultiplierState.value.toDoubleOrNull() ?: 1.0
+                        availableWeights = availableWeightsState.value,
+                        extraWeights = extraWeightsState.value,
+                        maxExtraWeightsPerLoadingPoint = maxExtraWeightsPerLoadingPointState.value.toIntOrNull() ?: 0,
                     )
-                    onDumbbellsUpsert(newDumbbells)
+                    onUpsert(newMachine)
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = nameState.value.isNotBlank() && availableDumbbellsState.value.isNotEmpty()
+                enabled = nameState.value.isNotBlank() &&
+                        availableWeightsState.value.isNotEmpty()
             ) {
-                if (dumbbells == null) Text("Add Dumbbells", color = LightGray) else Text("Edit Dumbbells", color = LightGray)
+                if (machine == null) Text("Add Machine", color = LightGray) else Text("Edit Machine", color = LightGray)
             }
 
             // Cancel button
@@ -294,18 +277,18 @@ fun DumbbellsForm(
             )
         }
     }
-    // Dialog for adding new dumbbell
-    if (showDumbbellDialog.value) {
+    // Dialog for adding new available plate
+    if (showAvailableWeightsDialog.value) {
         AlertDialog(
-            onDismissRequest = { showDumbbellDialog.value = false },
-            title = { Text("Add Dumbbell") },
+            onDismissRequest = { showAvailableWeightsDialog.value = false },
+            title = { Text("Add Weight") },
             text = {
                 Column {
                     OutlinedTextField(
-                        value = newDumbbellWeightState.value,
+                        value = newWeightState.value,
                         onValueChange = {
                             if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
-                                newDumbbellWeightState.value = it
+                                newWeightState.value = it
                             }
                         },
                         label = { Text("Weight (kg)") },
@@ -317,53 +300,40 @@ fun DumbbellsForm(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val weight = newDumbbellWeightState.value.toDoubleOrNull()
+                        val weight = newWeightState.value.toDoubleOrNull()
                         if (weight != null && weight > 0) {
-                            availableDumbbellsState.value += DumbbellUnit(weight)
-                            newDumbbellWeightState.value = ""
-                            showDumbbellDialog.value = false
+                            availableWeightsState.value = availableWeightsState.value + BaseWeight(weight)
+                            newWeightState.value = ""
+                            showAvailableWeightsDialog.value = false
                         }
                     },
-                    enabled = newDumbbellWeightState.value.isNotEmpty()
+                    enabled = newWeightState.value.isNotEmpty()
                 ) {
                     Text("Add")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDumbbellDialog.value = false }) {
+                TextButton(onClick = { showAvailableWeightsDialog.value = false }) {
                     Text("Cancel")
                 }
             }
         )
     }
 
-    // Dialog for adding new additional plate
-    if (showAdditionalPlateDialog.value) {
+    if (showExtraWeightDialog.value) {
         AlertDialog(
-            onDismissRequest = { showAdditionalPlateDialog.value = false },
-            title = { Text("Add Additional Plate") },
+            onDismissRequest = { showExtraWeightDialog.value = false },
+            title = { Text("Add Extra Weight") },
             text = {
                 Column {
                     OutlinedTextField(
-                        value = newPlateWeightState.value,
+                        value = newExtraWeightState.value,
                         onValueChange = {
                             if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
-                                newPlateWeightState.value = it
+                                newExtraWeightState.value = it
                             }
                         },
                         label = { Text("Weight (kg)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = newPlateThicknessState.value,
-                        onValueChange = {
-                            if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
-                                newPlateThicknessState.value = it
-                            }
-                        },
-                        label = { Text("Thickness (mm)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -372,23 +342,20 @@ fun DumbbellsForm(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val weight = newPlateWeightState.value.toDoubleOrNull()
-                        val thickness = newPlateThicknessState.value.toDoubleOrNull()
-                        if (weight != null && weight > 0 && thickness != null) {
-                            additionalPlatesState.value = additionalPlatesState.value + Plate(weight, thickness)
-                            newPlateWeightState.value = ""
-                            newPlateThicknessState.value = ""
-                            showAdditionalPlateDialog.value = false
+                        val weight = newExtraWeightState.value.toDoubleOrNull()
+                        if (weight != null && weight > 0) {
+                            extraWeightsState.value = extraWeightsState.value + BaseWeight(weight)
+                            newExtraWeightState.value = ""
+                            showExtraWeightDialog.value = false
                         }
                     },
-                    enabled = newPlateWeightState.value.isNotEmpty() &&
-                            newPlateThicknessState.value.isNotEmpty()
+                    enabled = newExtraWeightState.value.isNotEmpty()
                 ) {
                     Text("Add")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showAdditionalPlateDialog.value = false }) {
+                TextButton(onClick = { showExtraWeightDialog.value = false }) {
                     Text("Cancel")
                 }
             }

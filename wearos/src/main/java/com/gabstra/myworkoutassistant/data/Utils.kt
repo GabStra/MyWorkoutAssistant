@@ -34,6 +34,13 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
+import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
+import com.gabstra.myworkoutassistant.shared.equipments.Machine
+import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -432,4 +439,40 @@ fun Double.round(decimals: Int): Double {
 
 fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Float {
     return startAngle + (endAngle - startAngle) * percentage
+}
+
+
+
+fun FormatWeightForSetScreen(equipment: WeightLoadedEquipment, weight: Double): String {
+    if(weight <= 0) return "-"
+
+    fun formatWeight(weight:Double): String {
+        if (weight % 1.0 == 0.0) {
+            return weight.toInt().toString()
+        }
+
+        return "%.2f".format(weight).replace(",", ".")
+    }
+
+    return when (equipment) {
+        is Barbell -> {
+            val sideWeight = (weight - equipment.barWeight) / 2
+            if(sideWeight == 0.0) return "Empty"
+
+
+            "${formatWeight(weight)} kg ($sideWeight kg/side)"
+
+            "${formatWeight(sideWeight)} kg/side (Tot: ${formatWeight(weight)} kg)".replace(",", ".")
+        }
+        is Dumbbells -> {
+            val dumbbellWeight = weight / 2
+            "${formatWeight(dumbbellWeight)} kg/dumbbell (Tot: ${formatWeight(weight)} kg)".replace(",", ".")
+        }
+        is Dumbbell ->
+            "${formatWeight(weight)} kg"
+        is PlateLoadedCable -> "${formatWeight(weight)} kg".replace(",", ".")
+        is Machine -> "${formatWeight(weight)} kg".replace(",", ".")
+        is WeightVest -> "${formatWeight(weight)} kg".replace(",", ".")
+        else -> "$weight kg".replace(",", ".")
+    }
 }

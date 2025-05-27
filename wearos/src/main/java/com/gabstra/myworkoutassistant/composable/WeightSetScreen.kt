@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,7 +29,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.VibrateTwice
-import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
@@ -70,16 +68,13 @@ fun WeightSetScreen(
         availableWeights = viewModel.getWeightByEquipment(equipment)
     }
 
-    val equipmentVolumeMultiplier = remember(equipment) {
-        equipment?.volumeMultiplier ?: 1.0
-    }
 
     var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
     var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
     var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
 
     val cumulativeWeight = remember(currentSetData, equipment) {
-        currentSetData.getWeight(equipment)
+        currentSetData.getWeight()
     }
 
     LaunchedEffect(availableWeights, cumulativeWeight) {
@@ -125,14 +120,14 @@ fun WeightSetScreen(
         viewModel.getAllSetHistoriesByExerciseId(exercise.id)
             .filter { it.setData is WeightSetData }
             .map{ it.setData as WeightSetData }
-            .sumOf { it.calculateVolume(equipment )}
+            .sumOf { it.calculateVolume()}
     }
 
     val executedVolume = remember(exercise.id, equipment, currentSetData, state ) {
         viewModel.getAllExecutedSetsByExerciseId(exercise.id)
             .filter { it.setData is WeightSetData && it.setId != state.set.id }
             .map{ it.setData as WeightSetData }
-            .sumOf { it.calculateVolume(equipment)} + currentSetData.calculateVolume(equipment)
+            .sumOf { it.calculateVolume()} + currentSetData.calculateVolume()
     }
 
     LaunchedEffect(forceStopEditMode) {
@@ -151,7 +146,7 @@ fun WeightSetScreen(
 
             currentSetData = currentSetData.copy(
                 actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume(equipment)
+                volume = newSetData.calculateVolume()
             )
 
             VibrateGentle(context)
@@ -161,19 +156,13 @@ fun WeightSetScreen(
                 if (it > 0) {
                     selectedWeightIndex = it - 1
 
-                    val newActualWeight = if (equipment is Barbell) {
-                        (availableWeights!!.elementAt(selectedWeightIndex!!) - equipment.barWeight) / equipmentVolumeMultiplier
-                    } else {
-                        availableWeights!!.elementAt(selectedWeightIndex!!) / equipmentVolumeMultiplier
-                    }
-
                     val newSetData = currentSetData.copy(
-                        actualWeight = newActualWeight
+                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!)
                     )
 
                     currentSetData = currentSetData.copy(
                         actualWeight = newSetData.actualWeight,
-                        volume = newSetData.calculateVolume(equipment)
+                        volume = newSetData.calculateVolume()
                     )
                 }
             }
@@ -192,7 +181,7 @@ fun WeightSetScreen(
 
             currentSetData = currentSetData.copy(
                 actualReps = newSetData.actualReps,
-                volume = newSetData.calculateVolume(equipment)
+                volume = newSetData.calculateVolume()
             )
 
             VibrateGentle(context)
@@ -202,19 +191,13 @@ fun WeightSetScreen(
                 if (it < availableWeights!!.size - 1) {
                     selectedWeightIndex = it + 1
 
-                    val newActualWeight = if (equipment is Barbell) {
-                        (availableWeights.elementAt(selectedWeightIndex!!) - equipment.barWeight) / equipmentVolumeMultiplier
-                    } else {
-                        availableWeights.elementAt(selectedWeightIndex!!) / equipmentVolumeMultiplier
-                    }
-
                     val newSetData = currentSetData.copy(
-                        actualWeight = newActualWeight
+                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!)
                     )
 
                     currentSetData = currentSetData.copy(
                         actualWeight = newSetData.actualWeight,
-                        volume = newSetData.calculateVolume(equipment)
+                        volume = newSetData.calculateVolume()
                     )
                 }
             }
@@ -247,7 +230,7 @@ fun WeightSetScreen(
 
                             currentSetData = currentSetData.copy(
                                 actualReps = newSetData.actualReps,
-                                volume = newSetData.calculateVolume(equipment)
+                                volume = newSetData.calculateVolume()
                             )
 
                             VibrateTwice(context)
@@ -297,7 +280,7 @@ fun WeightSetScreen(
 
                             currentSetData = currentSetData.copy(
                                 actualWeight = previousSetData.actualWeight,
-                                volume = newSetData.calculateVolume(equipment)
+                                volume = newSetData.calculateVolume()
                             )
 
                             VibrateTwice(context)
@@ -307,7 +290,6 @@ fun WeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val style = MaterialTheme.typography.body1.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            val weight = currentSetData.actualWeight
 
             val textColor = when {
                 currentSetData.actualWeight == previousSetData.actualWeight -> MyColors.White
@@ -315,9 +297,11 @@ fun WeightSetScreen(
                 else -> MyColors.Green
             }
 
+            val weightText = equipment!!.formatWeight(currentSetData.getWeight())
+
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
-                text = "%.2f".format(weight).replace(',', '.'),
+                text = weightText,
                 style = style,
                 color = textColor,
                 textAlign = TextAlign.Center
@@ -333,42 +317,43 @@ fun WeightSetScreen(
 
         Column (
             modifier = customModifier,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.Center
         ){
             Column(
-
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (equipment != null) {
                     Text(
                         text = equipment.name.toUpperCase(Locale.ROOT),
-                        style = headerStyle
+                        style = MaterialTheme.typography.title3
                     )
                 }
 
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Text(
-                        modifier = Modifier.weight(1f),
-                        text = "KG",
+                        text = "WEIGHT",
                         style = headerStyle,
                         textAlign = TextAlign.Center
                     )
+                    WeightRow(modifier = Modifier.fillMaxWidth())
+                }
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
                     Text(
-                        modifier = Modifier.weight(1f),
                         text = "REPS",
                         style = headerStyle,
                         textAlign = TextAlign.Center
                     )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    WeightRow(modifier = Modifier.weight(1f))
-                    RepsRow(modifier = Modifier.weight(1f))
+                    RepsRow(modifier = Modifier.fillMaxWidth())
                 }
             }
             /*if(!state.isWarmupSet){
@@ -464,9 +449,7 @@ fun WeightSetScreen(
                     SetScreen(
                         customModifier = Modifier
                             .weight(1f)
-                            .padding(horizontal = 10.dp)
                     )
-
                 }
             }
         }

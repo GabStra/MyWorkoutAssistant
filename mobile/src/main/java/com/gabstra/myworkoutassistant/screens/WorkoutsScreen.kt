@@ -88,8 +88,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
-import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
@@ -271,7 +271,7 @@ fun WorkoutsScreen(
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isWorkoutSelectionModeActive by remember { mutableStateOf(false) }
 
-    var selectedEquipments by remember { mutableStateOf(listOf<Equipment>()) }
+    var selectedEquipments by remember { mutableStateOf(listOf<WeightLoadedEquipment>()) }
     var isEquipmentSelectionModeActive by remember { mutableStateOf(false) }
 
     var objectiveProgress by remember { mutableStateOf(0.0) }
@@ -562,10 +562,14 @@ fun WorkoutsScreen(
                         ) {
                             IconButton(onClick = {
                                 val newEquipments = selectedEquipments.map { it ->
-                                    when (it) {
-                                        is Barbell -> Barbell(UUID.randomUUID(), it.name + " (Copy)", it.availablePlates, it.barLength,it.barWeight, it.additionalPlates, it.maxAdditionalItems, it.volumeMultiplier)
-                                        is Dumbbells -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", it.availableDumbbells, it.additionalPlates, it.maxAdditionalItems, it.volumeMultiplier)
-                                        else -> throw IllegalArgumentException("Unknown equipment type")
+                                    when (it.type){
+                                        EquipmentType.BARBELL -> Barbell(UUID.randomUUID(), it.name + " (Copy)", (it as Barbell).availablePlates, it.barLength,it.barWeight)
+                                        EquipmentType.DUMBBELLS -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", (it as Dumbbells).availableDumbbells, it.extraWeights, it.maxExtraWeightsPerLoadingPoint)
+                                        EquipmentType.DUMBBELL -> TODO()
+                                        EquipmentType.PLATELOADEDCABLE -> TODO()
+                                        EquipmentType.WEIGHTVEST -> TODO()
+                                        EquipmentType.MACHINE -> TODO()
+                                        EquipmentType.IRONNECK -> TODO()
                                     }
                                 }
 
@@ -1047,12 +1051,6 @@ fun WorkoutsScreen(
                                             selectedItems = selectedEquipments,
                                             isEquipmentSelectionModeActive,
                                             onItemClick = { equipment ->
-                                                val equipmentType = when (equipment) {
-                                                    is Barbell -> EquipmentType.BARBELL
-                                                    is Dumbbells -> EquipmentType.DUMBBELLS
-                                                    else -> throw IllegalArgumentException("Unknown equipment type")
-                                                }
-
                                                 appViewModel.setScreenData(
                                                     ScreenData.EditEquipment(
                                                         equipment.id,
@@ -1091,24 +1089,16 @@ fun WorkoutsScreen(
                                         horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
                                         verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                                     ) {
-                                        GenericButtonWithMenu(
-                                            menuItems = listOf(
-                                                MenuItem("Add Barbell") {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.NewEquipment(
-                                                            EquipmentType.BARBELL
-                                                        )
-                                                    );
-                                                },
-                                                MenuItem("Add Dumbbells") {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.NewEquipment(
-                                                            EquipmentType.DUMBBELLS
-                                                        )
-                                                    );
-                                                }
 
-                                            ),
+
+                                        GenericButtonWithMenu(
+                                            menuItems = EquipmentType.entries.map { equipmentType ->
+                                                MenuItem("Add ${equipmentType.name}") {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.NewEquipment(equipmentType)
+                                                    )
+                                                }
+                                            }.toList(),
                                             content = {
                                                 Icon(
                                                     imageVector = Icons.Filled.Add,
