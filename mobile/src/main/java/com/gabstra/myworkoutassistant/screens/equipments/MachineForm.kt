@@ -173,7 +173,7 @@ fun MachineForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailableWeightsDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate")
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Weight")
                         }
                     }
 
@@ -303,6 +303,7 @@ fun MachineForm(
                         val weight = newWeightState.value.toDoubleOrNull()
                         if (weight != null && weight > 0) {
                             availableWeightsState.value = availableWeightsState.value + BaseWeight(weight)
+                            availableWeightsState.value = availableWeightsState.value.distinctBy { it.weight }
                             newWeightState.value = ""
                             showAvailableWeightsDialog.value = false
                         }

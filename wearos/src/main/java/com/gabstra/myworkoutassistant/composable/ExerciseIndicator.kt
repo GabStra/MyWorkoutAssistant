@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composable
 
 import CircleWithNumber
-import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -42,10 +41,7 @@ fun ExerciseIndicator(
                 val supersetExercises =
                     exerciseIds
                         .filter { viewModel.supersetIdByExerciseId.containsKey(it) && viewModel.supersetIdByExerciseId[it] == exerciseOrSupersetId }
-
-                Log.d("ExerciseIndicator", "Superset exercises for $exerciseOrSupersetId: $supersetExercises")
-                Log.d("ExerciseIndicator", "Current set exerciseId: ${set.exerciseId}")
-
+                
                 val currentSupersetExerciseIndex = supersetExercises.indexOfFirst { it == set.exerciseId }
                 val supersetExercisesCount = supersetExercises.count()
 

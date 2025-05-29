@@ -235,6 +235,7 @@ fun WeightVestForm(
                         val weight = newWeightState.value.toDoubleOrNull()
                         if (weight != null && weight > 0) {
                             availableWeightsState.value = availableWeightsState.value + BaseWeight(weight)
+                            availableWeightsState.value = availableWeightsState.value.distinctBy { it.weight }
                             newWeightState.value = ""
                             showAvailableWeightsDialog.value = false
                         }

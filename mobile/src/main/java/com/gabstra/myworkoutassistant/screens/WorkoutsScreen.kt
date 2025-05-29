@@ -90,6 +90,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
@@ -1093,7 +1094,7 @@ fun WorkoutsScreen(
 
                                         GenericButtonWithMenu(
                                             menuItems = EquipmentType.entries.map { equipmentType ->
-                                                MenuItem("Add ${equipmentType.name}") {
+                                                MenuItem("Add ${equipmentType.toDisplayText()}") {
                                                     appViewModel.setScreenData(
                                                         ScreenData.NewEquipment(equipmentType)
                                                     )

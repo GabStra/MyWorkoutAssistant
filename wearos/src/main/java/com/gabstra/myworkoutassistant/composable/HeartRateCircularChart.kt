@@ -47,11 +47,11 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
+import com.gabstra.myworkoutassistant.data.getValueInRange
+import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.shared.VibrateTwiceAndBeep
-import com.gabstra.myworkoutassistant.data.getValueInRange
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
@@ -458,7 +458,7 @@ private fun HeartRateView(
         derivedStateOf { mapPercentageToZone(mhrPercentage) }
     }
 
-    val zoneCount = colorsByZone.size
+    val zoneCount = colorsByZone.size - 1
     val totalStartAngle = 120f
     val totalEndAngle = 240f
     val paddingAngle = 2f
@@ -511,16 +511,17 @@ private fun HeartRateView(
             paddingAngle = paddingAngle
         )
 
-        if (segmentArcAngle > 0f && zoneCount > 0 && zoneRanges.size == zoneCount) {
+        if (segmentArcAngle > 0f && zoneCount > 0) {
             for (index in 0 until zoneCount) {
+
                 val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
                 val endAngle = startAngle + segmentArcAngle
 
-                val (lowerBound, upperBound) = zoneRanges[index]
+                val (lowerBound, upperBound) = zoneRanges[index + 1]
 
                 ZoneSegment(
                     modifier = Modifier.fillMaxSize(),
-                    index = index,
+                    index = index + 1,
                     currentZone = currentZone,
                     hr = hr,
                     mhrPercentage = mhrPercentage,

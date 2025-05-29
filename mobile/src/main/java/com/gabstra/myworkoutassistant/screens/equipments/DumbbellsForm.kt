@@ -298,6 +298,7 @@ fun DumbbellsForm(
                         val weight = newDumbbellWeightState.value.toDoubleOrNull()
                         if (weight != null && weight > 0) {
                             availableDumbbellsState.value += BaseWeight(weight)
+                            availableDumbbellsState.value = availableDumbbellsState.value.distinctBy { it.weight }
                             newDumbbellWeightState.value = ""
                             showDumbbellDialog.value = false
                         }

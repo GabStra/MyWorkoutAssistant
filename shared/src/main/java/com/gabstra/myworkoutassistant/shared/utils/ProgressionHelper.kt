@@ -67,6 +67,8 @@ object VolumeDistributionHelper {
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.fatigue in minFatigue..maxFatigue }
 
+        val minTotalFatigue = previousTotalFatigue * (1 + params.volumeProgressionRange.from / 100)
+
         if(!previousMaxFatigue.isEqualTo(previousMinFatigue)){
             var result = findBestProgressions(
                 usableSets,
@@ -80,6 +82,7 @@ object VolumeDistributionHelper {
                         shouldReturn = currentTotalFatigue < previousTotalFatigue
                                 || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
                                 || currentMaxFatigue > previousMaxFatigue
+                                || currentTotalFatigue < minTotalFatigue
                     )
                 }
             )
@@ -99,9 +102,26 @@ object VolumeDistributionHelper {
                 ValidationResult(
                     shouldReturn = currentTotalFatigue < previousTotalFatigue
                             || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
+                            || currentTotalFatigue < minTotalFatigue
                 )
             }
         )
+
+        if(result.isEmpty()){
+             result = findBestProgressions(
+                usableSets,
+                params.previousSets.size,
+                params.previousSets.size,
+                params,
+                { combo ->
+                    val currentTotalFatigue = combo.sumOf { it.fatigue }
+                    ValidationResult(
+                        shouldReturn = currentTotalFatigue < previousTotalFatigue
+                                || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
+                    )
+                }
+            )
+        }
 
         return result
     }

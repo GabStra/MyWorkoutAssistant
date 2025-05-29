@@ -187,6 +187,7 @@ fun WorkoutScreen(
             contentAlignment = Alignment.TopCenter
         ) { updatedWorkoutState ->
             WorkoutStateHeader(updatedWorkoutState,viewModel)
+
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
                     val state = updatedWorkoutState
