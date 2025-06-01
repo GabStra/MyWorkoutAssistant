@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -54,10 +55,11 @@ fun SetTableRow(
     val triangleSize = 6f
 
     val typography = MaterialTheme.typography
-    val captionStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val captionStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.5f, fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.body1.copy(fontWeight = FontWeight.Bold) }
 
     val indicatorComposable = @Composable {
-        Box(modifier= Modifier.width(10.dp).fillMaxHeight()){
+        Box(modifier= Modifier.width(18.dp).fillMaxHeight(), contentAlignment = Alignment.Center){
             Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
                 val trianglePath = Path().apply {
                     val height = (triangleSize * 2 / density).dp.toPx()
@@ -92,7 +94,7 @@ fun SetTableRow(
     }
 
     val warmupIndicatorComposable = @Composable{
-        Box(modifier= Modifier.width(10.dp).fillMaxHeight(), contentAlignment = Alignment.Center){
+        Box(modifier= Modifier.width(18.dp).fillMaxHeight(), contentAlignment = Alignment.Center){
             Text(
                 text = "W",
                 style = captionStyle,
@@ -113,20 +115,20 @@ fun SetTableRow(
                 }else if(setState.isWarmupSet){
                     warmupIndicatorComposable()
                 }else{
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(18.dp))
                 }
                 val weightSetData = (setState.currentSetData as WeightSetData)
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "%.2f".format(weightSetData.actualWeight).replace(',','.'),
-                    style = MaterialTheme.typography.body1,
+                    style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
                 )
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "${weightSetData.actualReps}",
-                    style = MaterialTheme.typography.body1,
+                    style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
                 )
@@ -148,14 +150,14 @@ fun SetTableRow(
                     } else {
                         "-"
                     },
-                    style = MaterialTheme.typography.body1,
+                    style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
                 )
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "${bodyWeightSetData.actualReps}",
-                    style = MaterialTheme.typography.body1,
+                    style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
                 )
@@ -177,7 +179,7 @@ fun SetTableRow(
                 ScalableText(
                     modifier = Modifier.weight(2f),
                     text = FormatTime(timedDurationSetData.startTimer / 1000),
-                    style = MaterialTheme.typography.body1,
+                    style = itemStyle,
                     textAlign = TextAlign.Start,
                     contentAlignment = Alignment.CenterStart,
                     color = color
@@ -201,7 +203,7 @@ fun SetTableRow(
                 ScalableText(
                     modifier = Modifier.weight(2f),
                     text = FormatTime(enduranceSetData.startTimer / 1000),
-                    style = MaterialTheme.typography.body1,
+                    style = itemStyle,
                     textAlign = TextAlign.Start,
                     contentAlignment = Alignment.CenterStart,
                     color = color
@@ -260,7 +262,7 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier= Modifier.width(10.dp))
+                Spacer(modifier= Modifier.width(18.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "KG",
@@ -335,7 +337,7 @@ fun ExerciseSetsViewer(
                         scrollBarColor = MyColors.White
                     )
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
                     SetTableRow(

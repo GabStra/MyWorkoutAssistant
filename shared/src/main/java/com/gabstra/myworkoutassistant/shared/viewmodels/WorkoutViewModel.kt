@@ -549,8 +549,6 @@ open class WorkoutViewModel : ViewModel() {
             return null
         }
 
-        val equipment = exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
-
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
         var oneRepMax = exerciseSets.map {

@@ -5,7 +5,7 @@ import java.util.UUID
 class WeightVest (
     id : UUID,
     override val name: String,
-    val availableWeights: List<BaseWeight>, // List of available dumbbells
+    val availableWeights: List<BaseWeight>,
 ) : WeightLoadedEquipment(id,EquipmentType.WEIGHTVEST,emptyList(), 0, 1) {
 
     override fun getBaseCombinations(): Set<List<BaseWeight>>  {

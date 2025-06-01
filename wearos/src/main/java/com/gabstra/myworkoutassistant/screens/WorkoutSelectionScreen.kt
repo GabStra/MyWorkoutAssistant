@@ -22,6 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -193,7 +194,7 @@ fun WorkoutSelectionScreen(
                         ),
                     text = "My Workout Assistant",
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.caption1,
+                    style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
                 )
             }
 

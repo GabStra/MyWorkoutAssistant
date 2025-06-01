@@ -255,12 +255,12 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
 }
 
 val colorsByZone = arrayOf(
-    Color(0x80F0F0F0),
-    Color.hsl(0f,   0.00f, 0.70f), // Zone 1 – Recovery (grey)
-    Color.hsl(200f, 0.80f, 0.55f), // Zone 2 – Endurance (blue)
-    Color.hsl(140f, 0.80f, 0.55f), // Zone 3 – Aerobic (green)
-    Color.hsl(30f,  0.80f, 0.60f), // Zone 4 – Threshold (orange)
-    Color.hsl(0f,   0.80f, 0.60f)  // Zone 5 – Anaerobic (red)
+    Color(0x80F0F0F0), // Not used, but kept for consistency
+    Color(0xFFB3B3B3), // Zone 1
+    Color(0xFF2C9EDE), // Zone 2
+    Color(0xFF119943), // Zone 3
+    Color(0xFFF29E3D), // Zone 4
+    Color(0xFFED2020)  // Zone 5
 )
 
 //define an array that for each zone, contains the upper and lower limit in percentage

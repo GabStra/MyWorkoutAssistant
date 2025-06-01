@@ -4,7 +4,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,11 +28,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
@@ -89,6 +90,9 @@ fun EnduranceSetScreen (
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
     }
+
+    val typography = MaterialTheme.typography
+    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
@@ -260,39 +264,53 @@ fun EnduranceSetScreen (
 
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        Column(
+        Column (
             modifier = customModifier,
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            textComposable()
-            if (showStartButton) {
-                Button(
-                    modifier = Modifier.size(35.dp),
-                    onClick = {
-                        VibrateGentle(context)
-                        startTimerJob()
-                        showStartButton = false
-
-                        if(state.startTime == null){
-                            state.startTime = LocalDateTime.now()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MyColors.Green)
+        ){
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                    Text(
+                        text = "TIME",
+                        style = headerStyle,
+                        textAlign = TextAlign.Center
+                    )
+                    textComposable()
                 }
-            }else{
-                Button(
-                    modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
-                    onClick = {
-                        VibrateGentle(context)
-                        timerJob?.cancel()
-                        showStopDialog = true
-                    },
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
-                ) {
-                    Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+                if (showStartButton) {
+                    Button(
+                        modifier = Modifier.size(35.dp),
+                        onClick = {
+                            VibrateGentle(context)
+                            startTimerJob()
+                            showStartButton = false
+
+                            if(state.startTime == null){
+                                state.startTime = LocalDateTime.now()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(backgroundColor = MyColors.Green)
+                    ) {
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                    }
+                }else{
+                    Button(
+                        modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
+                        onClick = {
+                            VibrateGentle(context)
+                            timerJob?.cancel()
+                            showStopDialog = true
+                        },
+                        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.error)
+                    ) {
+                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+                    }
                 }
             }
         }
@@ -333,17 +351,7 @@ fun EnduranceSetScreen (
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
                     }
-                    Box(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            SetScreen(customModifier = Modifier.weight(1f))
-                        }
-                    }
+                    SetScreen(customModifier = Modifier.weight(1f))
                 }
             }
         }

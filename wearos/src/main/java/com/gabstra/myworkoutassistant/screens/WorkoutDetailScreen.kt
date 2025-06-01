@@ -1,8 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.data.Screen
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import android.Manifest
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,8 +30,10 @@ import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
-
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
 
 @Composable
 fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel, hrViewModel : SensorDataViewModel) {
@@ -105,7 +105,7 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
                             .padding(0.dp, 0.dp, 0.dp, 10.dp),
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.caption1,
+                        style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

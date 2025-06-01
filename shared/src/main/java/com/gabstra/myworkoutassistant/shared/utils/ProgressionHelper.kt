@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
 import androidx.annotation.FloatRange
+import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -9,6 +10,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.pow
 
 
@@ -17,7 +20,8 @@ object VolumeDistributionHelper {
         val weight: Double,
         val reps: Int,
         val volume: Double,
-        val fatigue: Double
+        val fatigue: Double,
+        val rir: Int = 0
     )
 
     data class ExerciseProgression(
@@ -51,7 +55,14 @@ object VolumeDistributionHelper {
         val previousMaxFatigue = params.previousSets.maxOf { it.fatigue }
         val previousMinFatigue = params.previousSets.minOf { it.fatigue }
 
-        val fatigues = possibleSets.filter { set -> set.weight in nearAverageWeights }.map { it.fatigue }.sorted()
+        val avgPreviousRir = params.previousSets.map { it.rir }.average()
+        val minRir = (floor(avgPreviousRir) -1).toInt().coerceIn(0, 10)
+        val maxRir = (ceil(avgPreviousRir) + 1).toInt().coerceIn(0, 10)
+
+        val fatigues = possibleSets
+            .filter { set -> set.weight in nearAverageWeights }
+            .filter { set -> set.rir in minRir..maxRir }
+            .map { it.fatigue }.sorted()
 
         val minFatigue = fatigues
             .filter { it < previousMinFatigue}
@@ -65,6 +76,7 @@ object VolumeDistributionHelper {
 
         var usableSets = possibleSets
             .filter { set -> set.weight in nearAverageWeights }
+            .filter { set -> set.rir in minRir..maxRir }
             .filter { set -> set.fatigue in minFatigue..maxFatigue }
 
         val minTotalFatigue = previousTotalFatigue * (1 + params.volumeProgressionRange.from / 100)
@@ -78,6 +90,7 @@ object VolumeDistributionHelper {
                 { combo ->
                     val currentTotalFatigue = combo.sumOf { it.fatigue }
                     val currentMaxFatigue = combo.maxOf { it.fatigue }
+
                     ValidationResult(
                         shouldReturn = currentTotalFatigue < previousTotalFatigue
                                 || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
@@ -284,11 +297,14 @@ object VolumeDistributionHelper {
 
         val fatigue = reps * intensity.pow(2)
 
+        val rir = calculateRIR(weight,reps,oneRepMax)
+
         return ExerciseSet(
             weight = weight,
             reps = reps,
             volume = volume,
             fatigue = fatigue,
+            rir = rir
         )
     }
 

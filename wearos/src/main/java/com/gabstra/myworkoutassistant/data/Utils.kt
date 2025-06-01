@@ -95,7 +95,7 @@ fun Modifier.verticalColumnScrollbar(
     scrollBarTrackColor: Color = Color.DarkGray,
     scrollBarColor: Color = Color.Black,
     scrollBarCornerRadius: Float = 4f,
-    endPadding: Float = 12f,
+    endPadding: Float = 0f,
     trackHeight: Dp? = null,
     // Content fade effect parameters
     enableTopFade: Boolean = false,
