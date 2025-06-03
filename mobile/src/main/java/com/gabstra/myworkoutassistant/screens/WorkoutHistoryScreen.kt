@@ -71,6 +71,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
@@ -79,6 +80,7 @@ import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -160,6 +162,7 @@ fun Menu(
 @Composable
 fun WorkoutHistoryScreen(
     appViewModel: AppViewModel,
+    healthConnectClient: HealthConnectClient,
     workoutHistoryDao: WorkoutHistoryDao,
     workoutRecordDao: WorkoutRecordDao,
     workoutHistoryId: UUID? = null,
@@ -928,6 +931,13 @@ fun WorkoutHistoryScreen(
                         onDeleteHistory = {
                             scope.launch {
                                 val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                                try {
+                                    deleteWorkoutHistoriesFromHealthConnect(listOf(selectedWorkoutHistory) as List<WorkoutHistory>,healthConnectClient)
+                                }catch (e: Exception) {
+                                    Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
+                                    Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
+                                }
+
                                 workoutHistoryDao.deleteById(selectedWorkoutHistory!!.id)
                                 workoutRecordDao.deleteByWorkoutHistoryId(selectedWorkoutHistory!!.id)
 

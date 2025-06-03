@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
+import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.kizitonwose.calendar.compose.CalendarState
@@ -123,7 +124,7 @@ private fun Day(
 
             val shape = if(shouldHighlight) CircleShape else null
 
-            val backgroundColor = if(isOutOfBounds || isAfterToday) Color.Transparent else highlightColor
+            val backgroundColor = if(isOutOfBounds || isAfterToday) MediumDarkGray else highlightColor
 
             Box(
                 modifier = Modifier

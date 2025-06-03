@@ -268,12 +268,18 @@ fun MyWorkoutAssistantNavHost(
                                 workout.isActive || (!workout.isActive && appBackup.WorkoutHistories.any { it.workoutId == workout.id })
                             }
 
-
-
-
                             val newWorkoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
 
                             val deleteAndInsertJob = launch {
+                                var allWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+
+                                try {
+                                    deleteWorkoutHistoriesFromHealthConnect(allWorkoutHistories,healthConnectClient)
+                                }catch (e: Exception) {
+                                    Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
+                                    Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
+                                }
+
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
                                 exerciseInfoDao.deleteAll()
@@ -289,9 +295,6 @@ fun MyWorkoutAssistantNavHost(
                                 val validSetHistories = appBackup.SetHistories.filter { setHistory ->
                                     validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
                                 }
-
-
-
 
                                 setHistoryDao.insertAll(*validSetHistories.toTypedArray())
 
@@ -332,13 +335,6 @@ fun MyWorkoutAssistantNavHost(
             }
         }
 
-    try{
-
-    }catch (e: Exception){
-        Log.e("MainActivity", "Error showing workout detail", e)
-        Toast.makeText(context, "Error showing workout detail", Toast.LENGTH_SHORT).show()
-    }
-
     val syncWithWatch = {
         scope.launch {
             withContext(Dispatchers.IO){
@@ -351,7 +347,7 @@ fun MyWorkoutAssistantNavHost(
                 val workoutRecords = workoutRecordDao.getAll()
 
                 val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
-                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone ||   workoutRecords.any { it.workoutHistoryId == workoutHistory.id })
+                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id })
                 }
 
                 val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
@@ -360,7 +356,6 @@ fun MyWorkoutAssistantNavHost(
 
                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
                 val workoutSchedules = workoutScheduleDao.getAllSchedules()
-
 
                 val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords)
                 sendAppBackup(dataClient, appBackup)
@@ -447,14 +442,34 @@ fun MyWorkoutAssistantNavHost(
                     },
                     onClearUnfinishedWorkouts = {
                         scope.launch {
+                            val unfinishedWorkoutHistories = workoutHistoryDao.getAllUnfinishedWorkoutHistories()
+
+                            try {
+
+                                deleteWorkoutHistoriesFromHealthConnect(unfinishedWorkoutHistories,healthConnectClient)
+                            }catch (e: Exception) {
+                                Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
+                                Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
+                            }
+
+                            for (history in unfinishedWorkoutHistories) {
+                                workoutRecordDao.deleteByWorkoutHistoryId(history.id)
+                            }
                             workoutHistoryDao.deleteAllUnfinished()
-                            workoutRecordDao.deleteAll()
                             appViewModel.triggerUpdate()
                         }
                     },
                     onClearAllHistories = {
                         scope.launch {
                             withContext(Dispatchers.IO) {
+                                try {
+                                    val allWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+                                    deleteWorkoutHistoriesFromHealthConnect(allWorkoutHistories,healthConnectClient)
+                                }catch (e: Exception) {
+                                    Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
+                                    Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
+                                }
+
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
                             }
@@ -601,6 +616,7 @@ fun MyWorkoutAssistantNavHost(
 
                 WorkoutHistoryScreen(
                     appViewModel,
+                    healthConnectClient,
                     workoutHistoryDao,
                     workoutRecordDao,
                     screenData.workoutHistoryId,

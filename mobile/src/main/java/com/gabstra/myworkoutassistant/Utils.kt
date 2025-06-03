@@ -19,19 +19,20 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.compressString
@@ -45,7 +46,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.delay
@@ -58,8 +58,6 @@ import java.time.ZoneOffset
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import java.util.concurrent.CancellationException
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
 
 fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
@@ -291,8 +289,6 @@ suspend fun sendWorkoutsToHealthConnect(
 
     if (workoutHistories.isEmpty()) return
 
-
-
     healthConnectClient.deleteRecords(
         ExerciseSessionRecord::class,
         clientRecordIdsList = workoutHistories.map { it.id.toString() },
@@ -304,6 +300,18 @@ suspend fun sendWorkoutsToHealthConnect(
         clientRecordIdsList = workoutHistories.map { it.id.toString() },
         recordIdsList = emptyList()
     )
+
+    healthConnectClient.deleteRecords(
+        TotalCaloriesBurnedRecord::class,
+        clientRecordIdsList = workoutHistories.map { it.id.toString() },
+        recordIdsList = emptyList()
+    )
+
+    /*healthConnectClient.deleteRecords(
+        WeightRecord::class,
+        clientRecordIdsList = listOf("MyWorkoutAssistantWeightRecord"),
+        recordIdsList = emptyList()
+    )*/
 
     val exerciseSessionRecords = workoutHistories.map {
         ExerciseSessionRecord(
@@ -388,7 +396,7 @@ suspend fun sendWorkoutsToHealthConnect(
                 energy = Energy.kilocalories(kiloCaloriesBurned),
                 metadata =  Metadata.activelyRecorded(
                     Device(type = Device.TYPE_WATCH),
-                    clientRecordId =   workoutHistory.id.toString()
+                    clientRecordId = workoutHistory.id.toString()
                 )
             )
         }
@@ -398,17 +406,60 @@ suspend fun sendWorkoutsToHealthConnect(
         time = Instant.now(),
         zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
         weight = Mass.kilograms(weightKg.toDouble()),
-        metadata = Metadata.unknownRecordingMethod()
+        metadata = Metadata.activelyRecorded(
+            Device(type = Device.TYPE_WATCH),
+            clientRecordId = "MyWorkoutAssistantWeightRecord"
+        )
     )
 
     healthConnectClient.insertRecords(exerciseSessionRecords)
     healthConnectClient.insertRecords(heartRateRecords)
     healthConnectClient.insertRecords(totalCaloriesBurnedRecords)
-    healthConnectClient.insertRecords(listOf(weightRecord))
+    //healthConnectClient.insertRecords(listOf(weightRecord))
 
     for (workoutHistory in workoutHistories) {
         workoutHistoryDao.updateHasBeenSentToHealth(workoutHistory.id, true)
     }
+}
+
+@SuppressLint("RestrictedApi")
+suspend fun deleteWorkoutHistoriesFromHealthConnect(
+    workoutHistories: List<WorkoutHistory>,
+    healthConnectClient: HealthConnectClient
+) {
+    if (workoutHistories.isEmpty()) return
+
+    val requiredPermissions = setOf(
+        HealthPermission.getReadPermission(ExerciseSessionRecord::class),
+        HealthPermission.getWritePermission(ExerciseSessionRecord::class),
+        HealthPermission.getReadPermission(HeartRateRecord::class),
+        HealthPermission.getWritePermission(HeartRateRecord::class)
+    )
+
+    val grantedPermissions = healthConnectClient.permissionController.getGrantedPermissions()
+    val missingPermissions = requiredPermissions - grantedPermissions
+
+    if (missingPermissions.isNotEmpty()) {
+        throw IllegalStateException("Missing required permissions: $missingPermissions")
+    }
+
+    healthConnectClient.deleteRecords(
+        ExerciseSessionRecord::class,
+        clientRecordIdsList = workoutHistories.map { it.id.toString() },
+        recordIdsList = emptyList()
+    )
+
+    healthConnectClient.deleteRecords(
+        HeartRateRecord::class,
+        clientRecordIdsList = workoutHistories.map { it.id.toString() },
+        recordIdsList = emptyList()
+    )
+
+    healthConnectClient.deleteRecords(
+        TotalCaloriesBurnedRecord::class,
+        clientRecordIdsList = workoutHistories.map { it.id.toString() },
+        recordIdsList = emptyList()
+    )
 }
 
 fun calculateVolume(weight: Double, reps: Int): Double {

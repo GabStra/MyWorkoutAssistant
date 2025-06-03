@@ -386,7 +386,7 @@ fun extractRotationAngles(
     paddingAngle: Float
 ): Pair<Float?, Float?> {
     // Sanity check to make sure we have valid zone data
-    if (segmentArcAngle <= 0f || zoneCount <= 0 || zoneRanges.size != zoneCount) {
+    if (segmentArcAngle <= 0f || zoneCount <= 0) {
         return Pair(null, null)
     }
 
@@ -397,7 +397,7 @@ fun extractRotationAngles(
     for (index in 0 until zoneCount) {
         val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
         val endAngle = startAngle + segmentArcAngle
-        val (lowerBound, upperBound) = zoneRanges[index]
+        val (lowerBound, upperBound) = zoneRanges[index + 1]
 
         // Check for lower bound indicator
         if (lowerBoundMaxHRPercent != null &&
