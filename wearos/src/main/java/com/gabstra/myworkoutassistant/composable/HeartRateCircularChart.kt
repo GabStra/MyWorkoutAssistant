@@ -66,15 +66,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-private fun getProgressIndicatorSegments() = listOf(
-    ProgressIndicatorSegment(.166f, colorsByZone[0]),
-    ProgressIndicatorSegment(.166f, colorsByZone[1]),
-    ProgressIndicatorSegment(.166f, colorsByZone[2]),
-    ProgressIndicatorSegment(.166f, colorsByZone[3]),
-    ProgressIndicatorSegment(.166f, colorsByZone[4]),
-    ProgressIndicatorSegment(.166f, colorsByZone[5]),
-)
-
 enum class HeartRateStatus {
     HIGHER_THAN_TARGET,
     LOWER_THAN_TARGET,
@@ -84,6 +75,7 @@ enum class HeartRateStatus {
 @Composable
 fun HrStatusDialog(
     show: Boolean,
+    hr: Int,
     heartRateStatus: HeartRateStatus,
 ){
     AnimatedVisibility(
@@ -97,20 +89,20 @@ fun HrStatusDialog(
         ) {
             Box(
                 modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.75f))
+                    .background(Color.Black.copy(alpha = 0.50f))
                     .fillMaxSize()
                     .padding(20.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Top,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
 
                     var message = when (heartRateStatus) {
-                        HeartRateStatus.HIGHER_THAN_TARGET -> "Heart rate higher than target zone"
-                        HeartRateStatus.LOWER_THAN_TARGET -> "Heart rate lower than target zone"
-                        HeartRateStatus.OUT_OF_MAX -> "Heart rate exceeding maximum"
+                        HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
+                        HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
+                        HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
                     }
 
                     var icon = when (heartRateStatus) {
@@ -121,15 +113,19 @@ fun HrStatusDialog(
 
                     Icon(
                         imageVector = icon,
-                        contentDescription = "Heart rate status",
+                        contentDescription = "HR Status",
                         modifier = Modifier.size(50.dp),
                         tint = MyColors.Red
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.body1,
+                    )
+                    Text(
+                        text = "$hr bpm",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.body2,
                     )
                 }
             }
@@ -187,6 +183,7 @@ fun HeartRateCircularChart(
             if(mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
                 if(alarmJob?.isActive == true) {
                     alarmJob?.cancel()
+                    appViewModel.restoreScreenDimmingState()
                     showHrStatusDialog = false
                 }
 
@@ -207,7 +204,7 @@ fun HeartRateCircularChart(
 
                 alarmJob = scope.launch {
                     delay(5000)
-                    appViewModel.lightScreenUp()
+                    appViewModel.lightScreenPermanently()
 
                     if(mhrPercentage < lowerBoundMaxHRPercent) {
                         hrStatus = HeartRateStatus.LOWER_THAN_TARGET
@@ -219,15 +216,19 @@ fun HeartRateCircularChart(
 
                     while (isActive) {
                         VibrateTwiceAndBeep(context)
-                        delay(2500)
+                        delay(1000)
+                        VibrateTwiceAndBeep(context)
+                        delay(1000)
+                        VibrateTwiceAndBeep(context)
+                        delay(3000)
                     }
                 }
             }
         }
 
-        HrStatusDialog(showHrStatusDialog, hrStatus)
+        HrStatusDialog(showHrStatusDialog,hr, hrStatus)
     }
-
+    
     LaunchedEffect(mhrPercentage) {
         if (mhrPercentage > 100 && alertJob?.isActive == false) {
             startAlertJob()

@@ -4,7 +4,14 @@ import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -18,7 +25,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun KeepOn(
     appViewModel: AppViewModel,
-    enableDimming: Boolean = true,
+    enableDimming: Boolean = false,
     dimDelay: Long = 30000L, // Delay before dimming the screen
     content: @Composable () -> Unit
 ) {
@@ -30,7 +37,6 @@ fun KeepOn(
     var dimmingJob by remember { mutableStateOf<Job?>(null) }
 
     val scope = rememberCoroutineScope()
-    val appDimmingEnabled by appViewModel.currentScreenDimmingState
 
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
@@ -40,7 +46,7 @@ fun KeepOn(
 
     fun resetDimming() {
         dimmingJob?.cancel()
-        if (!enableDimming || !appDimmingEnabled) return
+        if (!enableDimming) return
         dimmingJob = scope.launch {
             delay(dimDelay)
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF)
@@ -99,7 +105,7 @@ fun KeepOn(
         }
     }
 
-    LaunchedEffect(enableDimming, appDimmingEnabled) {
+    LaunchedEffect(enableDimming) {
         if (isDimmed && !enableDimming) {
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false

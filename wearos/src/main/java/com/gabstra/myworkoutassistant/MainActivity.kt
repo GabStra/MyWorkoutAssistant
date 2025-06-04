@@ -6,7 +6,6 @@
 
 package com.gabstra.myworkoutassistant
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.NotificationManager
@@ -14,9 +13,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.Uri
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -39,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -69,8 +67,6 @@ import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import java.util.UUID
-import androidx.core.net.toUri
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 
 class MyReceiver(
     private val navController: NavController,
@@ -326,8 +322,9 @@ fun WearApp(
                 }
                 composable(Screen.Workout.route) {
                     val isPaused by appViewModel.isPaused
+                    val appDimmingEnabled by appViewModel.currentScreenDimmingState
 
-                    KeepOn(appViewModel,enableDimming = !isPaused){
+                    KeepOn(appViewModel,enableDimming = !isPaused && appDimmingEnabled){
                         WorkoutScreen(navController,appViewModel,heartRateChangeViewModel,hrViewModel,polarViewModel)
                     }
                 }

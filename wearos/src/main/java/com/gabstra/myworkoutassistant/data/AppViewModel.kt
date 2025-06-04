@@ -74,7 +74,7 @@ open class AppViewModel : WorkoutViewModel() {
 
     fun lightScreenPermanently() {
         _previousScreenDimmingState.value = _currentScreenDimmingState.value
-        _currentScreenDimmingState.value = true
+        _currentScreenDimmingState.value = false
     }
 
     fun restoreScreenDimmingState() {

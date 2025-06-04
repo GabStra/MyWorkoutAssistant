@@ -440,7 +440,7 @@ fun VibrateHardAndBeep(context: Context) {
 
             val job2 = launch {
                 toneGen?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                delay(300)
+                delay(100)
             }
 
             joinAll(job1, job2)
@@ -500,7 +500,7 @@ fun VibrateShortImpulse(context: Context) {
 
                 val job2 = launch {
                     toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                    delay(300)
+                    delay(100)
                 }
 
                 val elapsedTime = System.currentTimeMillis() - startTime
@@ -529,7 +529,7 @@ fun VibrateTwiceAndBeep(context: Context) {
 
                 val job2 = launch {
                     toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-                    delay(300)
+                    delay(100)
                 }
 
                 val elapsedTime = System.currentTimeMillis() - startTime
