@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
-import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -14,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -38,7 +35,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composable.ExerciseDetail
@@ -48,11 +44,11 @@ import com.gabstra.myworkoutassistant.composable.PageExercises
 import com.gabstra.myworkoutassistant.composable.PageNotes
 import com.gabstra.myworkoutassistant.composable.PagePlates
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -130,7 +126,7 @@ fun ExerciseScreen(
         goBackJob?.cancel()
 
         goBackJob = scope.launch {
-            delay(5000)
+            delay(10000)
             if(pagerState.currentPage != exerciseDetailPageIndex) {
                 pagerState.scrollToPage(exerciseDetailPageIndex)
             }

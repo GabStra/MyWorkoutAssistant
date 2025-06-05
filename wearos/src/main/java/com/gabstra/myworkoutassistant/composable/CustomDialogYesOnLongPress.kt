@@ -135,7 +135,7 @@ fun CustomDialogYesOnLongPress(
             Box(
                 modifier = Modifier
                     .background(Color.Black)
-                    .fillMaxSize().padding(20.dp), contentAlignment = Alignment.Center
+                    .fillMaxSize().padding(25.dp), contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -150,7 +150,7 @@ fun CustomDialogYesOnLongPress(
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.caption1,
+                        style = MaterialTheme.typography.body1,
                         modifier = Modifier.padding(8.dp)
                     )
 

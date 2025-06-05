@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.viewmodels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import java.time.LocalDateTime
@@ -30,7 +31,8 @@ sealed class WorkoutState {
         val plateChangeResult: PlateCalculator.Companion.PlateChangeResult? = null,
         val streak: Int,
         val isDeloading: Boolean,
-        val isWarmupSet: Boolean
+        val isWarmupSet: Boolean,
+        val equipment: WeightLoadedEquipment?
     ) : WorkoutState()
 
     data class Rest(

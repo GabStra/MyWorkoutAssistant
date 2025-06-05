@@ -120,12 +120,12 @@ fun HrStatusDialog(
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.body1,
+                        style = MaterialTheme.typography.title3,
                     )
                     Text(
                         text = "$hr bpm",
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.body2,
+                        style = MaterialTheme.typography.body1,
                     )
                 }
             }

@@ -159,7 +159,7 @@ fun EnduranceSetScreen (
                 ),
                 color = if(isOverLimit) MyColors.Green else if(isDifferent) MyColors.Orange else MyColors.White,
                 text = FormatTime((if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000),
-                style = MaterialTheme.typography.display2.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold),
             )
         }
     }

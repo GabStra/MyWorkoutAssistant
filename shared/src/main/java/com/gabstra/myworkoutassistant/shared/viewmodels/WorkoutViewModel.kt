@@ -28,7 +28,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.calculateOneRepMax
-import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -656,8 +655,7 @@ open class WorkoutViewModel : ViewModel() {
         }
 
         val oldFatigue = setsForProgression.sumOf { it.fatigue }
-        val oldAvgRir = setsForProgression.sumOf { calculateRIR(it.weight,it.reps,oneRepMax) } / setsForProgression.size
-        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Fatigue: ${oldFatigue.round(2)} - Avg RIR: ${oldAvgRir}")
+        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Fatigue: ${oldFatigue.round(2)}")
 
         var exerciseProgression: ExerciseProgression? = null
 
@@ -689,8 +687,7 @@ open class WorkoutViewModel : ViewModel() {
 
 
             val newFatigue = exerciseProgression.sets.sumOf { it.fatigue }
-            val newAvgRir = exerciseProgression.sets.sumOf { calculateRIR(it.weight,it.reps,oneRepMax) } / exerciseProgression.sets.size
-            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)} - Avg RIR: ${newAvgRir}")
+            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)}")
 
 
             val oldAvgWeightPerRep = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
@@ -728,6 +725,9 @@ open class WorkoutViewModel : ViewModel() {
                     break
                 }
             }
+
+
+
             delay(2000)
             _isResuming.value = false
         }
@@ -1614,7 +1614,8 @@ open class WorkoutViewModel : ViewModel() {
                     plateChangeResult,
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
                     isDeloading ?: false,
-                    isWarmupSet
+                    isWarmupSet,
+                    exercise.equipmentId?.let { getEquipmentById(it) }
                 )
 
                 states.add(setState)

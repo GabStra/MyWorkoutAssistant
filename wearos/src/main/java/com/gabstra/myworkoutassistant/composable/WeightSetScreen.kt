@@ -23,7 +23,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -59,11 +58,8 @@ fun WeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val equipment = remember(exercise) {
-        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
-    }
-
-    var availableWeights by remember(exercise) { mutableStateOf<Set<Double>>(emptySet()) }
+    val equipment = state.equipment
+    var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 
     LaunchedEffect(equipment) {
         availableWeights = viewModel.getWeightByEquipment(equipment)
@@ -99,7 +95,7 @@ fun WeightSetScreen(
 
     val typography = MaterialTheme.typography
     val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body1.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -322,7 +318,7 @@ fun WeightSetScreen(
             ) {
                 if (equipment != null) {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(2.5.dp)
                     ) {
@@ -342,7 +338,7 @@ fun WeightSetScreen(
                 }
 
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
@@ -355,7 +351,7 @@ fun WeightSetScreen(
                 }
 
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
@@ -440,8 +436,8 @@ fun WeightSetScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            if (isRepsInEditMode) RepsRow(style = itemStyle.copy(fontSize = 20.sp))
-                            if (isWeightInEditMode) WeightRow(style = itemStyle.copy(fontSize = 20.sp))
+                            if (isRepsInEditMode) RepsRow(style = itemStyle)
+                            if (isWeightInEditMode) WeightRow(style = itemStyle)
                         }
                     }
                 )

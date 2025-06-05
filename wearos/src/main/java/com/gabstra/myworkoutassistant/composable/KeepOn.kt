@@ -89,7 +89,6 @@ fun KeepOn(
         applyKeepScreenOnFlag()
 
         onDispose {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         }
@@ -107,6 +106,7 @@ fun KeepOn(
 
     LaunchedEffect(enableDimming) {
         if (isDimmed && !enableDimming) {
+            applyKeepScreenOnFlag()
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
             return@LaunchedEffect

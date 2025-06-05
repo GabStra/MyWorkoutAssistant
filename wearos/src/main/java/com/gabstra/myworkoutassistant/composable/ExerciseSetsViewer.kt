@@ -1,32 +1,49 @@
 package com.gabstra.myworkoutassistant.composable
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -34,6 +51,9 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.VibrateGentle
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -41,8 +61,91 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 
+@Composable
+fun WeightInfoDialog(
+    show: Boolean,
+    message : String,
+    equipment: WeightLoadedEquipment?,
+    onClick: () -> Unit = {}
+){
+    val typography = MaterialTheme.typography
+    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
+
+    AnimatedVisibility(
+        visible = show,
+        enter = fadeIn(animationSpec = tween(500)),
+        exit = fadeOut(animationSpec = tween(500))
+    ) {
+        Dialog(
+            onDismissRequest = {  },
+            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.50f))
+                    .fillMaxSize()
+                    .padding(20.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    if (equipment != null) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = "EQUIPMENT",
+                                style = headerStyle,
+                                textAlign = TextAlign.Center
+                            )
+                            ScalableText(
+                                modifier = Modifier.fillMaxWidth(),
+                                text = equipment.type.toDisplayText(),
+                                style = itemStyle,
+                                color =  MyColors.White,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text(
+                            text = "WEIGHT",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center
+                        )
+                        ScalableText(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = message,
+                            style = itemStyle,
+                            color =  MyColors.White,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SetTableRow(
     modifier: Modifier = Modifier,
@@ -57,6 +160,22 @@ fun SetTableRow(
     val typography = MaterialTheme.typography
     val captionStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.5f, fontWeight = FontWeight.Bold) }
     val itemStyle = remember(typography) { typography.body1.copy(fontWeight = FontWeight.Bold) }
+    val context = LocalContext.current
+
+    var openDialogJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    var showWeightInfoDialog by remember { mutableStateOf(false) }
+
+    fun startOpenDialogJob() {
+        if( openDialogJob?.isActive == true) return
+        openDialogJob?.cancel()
+        openDialogJob = coroutineScope.launch {
+            showWeightInfoDialog = true
+            kotlinx.coroutines.delay(3000L)
+            showWeightInfoDialog = false
+        }
+    }
 
     val indicatorComposable = @Composable {
         Box(modifier= Modifier.width(18.dp).fillMaxHeight(), contentAlignment = Alignment.Center){
@@ -119,7 +238,16 @@ fun SetTableRow(
                 }
                 val weightSetData = (setState.currentSetData as WeightSetData)
                 Text(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                startOpenDialogJob()
+                                VibrateGentle(context)
+                            },
+                            onDoubleClick = {}
+                    ),
                     text = "%.2f".format(weightSetData.actualWeight).replace(',','.'),
                     style = itemStyle,
                     textAlign = TextAlign.Center,
@@ -131,6 +259,16 @@ fun SetTableRow(
                     style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
+                )
+
+                WeightInfoDialog(
+                    show = showWeightInfoDialog,
+                    setState.equipment!!.formatWeight(weightSetData.getWeight()),
+                    equipment = setState.equipment,
+                    onClick = {
+                        openDialogJob?.cancel()
+                        showWeightInfoDialog = false
+                    }
                 )
             }
 
@@ -144,7 +282,17 @@ fun SetTableRow(
                 }
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
                 Text(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f)
+                        .then(
+                            if(setState.equipment != null)
+                                Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        startOpenDialogJob()
+                                        VibrateGentle(context)
+                                    },
+                                    onDoubleClick = {}
+                                ) else Modifier),
                     text = if (bodyWeightSetData.additionalWeight > 0) {
                         "%.2f".format(bodyWeightSetData.additionalWeight).replace(',','.')
                     } else {
@@ -161,6 +309,18 @@ fun SetTableRow(
                     textAlign = TextAlign.Center,
                     color = color
                 )
+
+                if(setState.equipment != null) {
+                    WeightInfoDialog(
+                        show = showWeightInfoDialog,
+                        message = setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight),
+                        equipment = setState.equipment,
+                        onClick = {
+                            openDialogJob?.cancel()
+                            showWeightInfoDialog = false
+                        }
+                    )
+                }
             }
 
             is TimedDurationSetData -> {
