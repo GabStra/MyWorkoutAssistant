@@ -140,7 +140,7 @@ fun SetTableRow(
                 }else if(setState.isWarmupSet){
                     warmupIndicatorComposable()
                 }else{
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(18.dp))
                 }
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
                 Text(
@@ -172,7 +172,7 @@ fun SetTableRow(
                     }else if(setState.isWarmupSet){
                         warmupIndicatorComposable()
                     }else{
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(18.dp))
                     }
                 }
 
@@ -196,7 +196,7 @@ fun SetTableRow(
                     }else if(setState.isWarmupSet){
                         warmupIndicatorComposable()
                     }else{
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(18.dp))
                     }
                 }
 

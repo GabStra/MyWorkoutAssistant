@@ -318,7 +318,6 @@ fun BodyWeightSetScreen(
     fun SetScreen(customModifier: Modifier) {
         Column (
             modifier = customModifier,
-            verticalArrangement = Arrangement.Center
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -345,7 +344,7 @@ fun BodyWeightSetScreen(
                     }
                 }
 
-                if(availableWeights.isNotEmpty()) {
+                if(availableWeights.isNotEmpty() && currentSetData.additionalWeight != 0.0) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally,

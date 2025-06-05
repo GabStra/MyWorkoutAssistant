@@ -296,7 +296,7 @@ fun RestScreen(
                 CustomHorizontalPager(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(vertical = 25.dp, horizontal = 20.dp)
+                        .padding(vertical = 25.dp, horizontal = 25.dp)
                         .pointerInput(Unit) {
                             awaitPointerEventScope {
                                 while (true) {
