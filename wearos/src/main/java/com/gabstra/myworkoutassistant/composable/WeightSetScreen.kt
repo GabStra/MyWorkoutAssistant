@@ -26,9 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.VibrateTwice
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -40,6 +39,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun WeightSetScreen(
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     modifier: Modifier,
     state: WorkoutState.Set,
     forceStopEditMode: Boolean,
@@ -149,7 +149,7 @@ fun WeightSetScreen(
                 volume = newSetData.calculateVolume()
             )
 
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         }
         if (isWeightInEditMode) {
             selectedWeightIndex?.let {
@@ -167,7 +167,7 @@ fun WeightSetScreen(
                 }
             }
 
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         }
 
     }
@@ -184,7 +184,7 @@ fun WeightSetScreen(
                 volume = newSetData.calculateVolume()
             )
 
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         }
         if (isWeightInEditMode) {
             selectedWeightIndex?.let {
@@ -202,7 +202,7 @@ fun WeightSetScreen(
                 }
             }
 
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         }
     }
 
@@ -220,7 +220,7 @@ fun WeightSetScreen(
                         updateInteractionTime()
                         isWeightInEditMode = false
 
-                        VibrateGentle(context)
+                        hapticsViewModel.doGentleVibration()
                     },
                     onDoubleClick = {
                         if (isRepsInEditMode) {
@@ -233,7 +233,7 @@ fun WeightSetScreen(
                                 volume = newSetData.calculateVolume()
                             )
 
-                            VibrateTwice(context)
+                            hapticsViewModel.doHardVibrationTwice()
                         }
                     }
                 ),
@@ -269,7 +269,7 @@ fun WeightSetScreen(
                         updateInteractionTime()
                         isRepsInEditMode = false
 
-                        VibrateGentle(context)
+                        hapticsViewModel.doGentleVibration()
                     },
                     onDoubleClick = {
                         if (isWeightInEditMode) {
@@ -282,7 +282,7 @@ fun WeightSetScreen(
                                 volume = newSetData.calculateVolume()
                             )
 
-                            VibrateTwice(context)
+                            hapticsViewModel.doHardVibrationTwice()
                         }
                     }
                 ),

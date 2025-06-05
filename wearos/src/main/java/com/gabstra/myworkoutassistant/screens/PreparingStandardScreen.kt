@@ -27,8 +27,8 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.shared.VibrateHard
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun PreparingStandardScreen(
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     hrViewModel: SensorDataViewModel,
     state: WorkoutState.Preparing,
     onReady: () -> Unit = {}
@@ -71,9 +72,8 @@ fun PreparingStandardScreen(
             }else{
                 viewModel.goToNextState()
                 viewModel.setWorkoutStart()
-                VibrateHard(context)
+                hapticsViewModel.doHardVibration()
             }
-
 
             viewModel.lightScreenUp()
             onReady()

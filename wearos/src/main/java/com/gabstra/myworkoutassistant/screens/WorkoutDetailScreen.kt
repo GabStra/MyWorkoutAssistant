@@ -31,12 +31,17 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
 
 @Composable
-fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel, hrViewModel : SensorDataViewModel) {
+fun WorkoutDetailScreen(
+    navController: NavController,
+    appViewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
+    hrViewModel : SensorDataViewModel
+) {
     val workout by appViewModel.selectedWorkout
     val context = LocalContext.current
 
@@ -115,7 +120,7 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
                     ButtonWithText(
                         text = "Start",
                         onClick = {
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                             permissionLauncherStart.launch(basePermissions.toTypedArray())
                         },
                         backgroundColor = MaterialTheme.colors.background,
@@ -128,7 +133,7 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
                         ButtonWithText(
                             text = "Resume",
                             onClick = {
-                                VibrateGentle(context)
+                                hapticsViewModel.doGentleVibration()
                                 permissionLauncherResume.launch(basePermissions.toTypedArray())
                             },
                             backgroundColor = MaterialTheme.colors.background,
@@ -149,7 +154,7 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
                     ButtonWithText(
                         text = "Send history",
                         onClick = {
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                             appViewModel.sendWorkoutHistoryToPhone() { success ->
                                 if (success)
                                     Toast.makeText(
@@ -183,13 +188,13 @@ fun WorkoutDetailScreen(navController: NavController, appViewModel: AppViewModel
         title = "Resume Workout",
         message = "Do you want to proceed?",
         handleYesClick = {
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             appViewModel.deleteWorkoutRecord()
             showDeleteDialog = false
         },
         handleNoClick = {
             showDeleteDialog = false
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {

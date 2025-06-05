@@ -36,8 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.delay
@@ -46,6 +46,7 @@ import kotlinx.coroutines.delay
 fun PageExercises(
     currentStateSet: WorkoutState.Set,
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
 ) {
     val context = LocalContext.current
@@ -123,7 +124,7 @@ fun PageExercises(
                         indication = null,
                         enabled = !isNavigationLocked && currentIndex > 0
                     ) {
-                        VibrateGentle(context)
+                        hapticsViewModel.doGentleVibration()
                         val newIndex = currentIndex - 1
                         selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
                         isNavigationLocked = true
@@ -147,7 +148,7 @@ fun PageExercises(
                         .fillMaxWidth()
                         .clickable {
                             marqueeEnabled = !marqueeEnabled
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                         }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     contentAlignment = Alignment.Center
@@ -200,6 +201,7 @@ fun PageExercises(
                 ExerciseSetsViewer(
                     modifier =  Modifier.fillMaxSize(),
                     viewModel = viewModel,
+                    hapticsViewModel = hapticsViewModel,
                     exercise = updatedExercise,
                     currentSet = currentStateSet.set,
                     customColor = when{
@@ -222,7 +224,7 @@ fun PageExercises(
                         indication = null,
                         enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1
                     ) {
-                        VibrateGentle(context)
+                        hapticsViewModel.doGentleVibration()
                         val newIndex = currentIndex + 1
                         selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
                         isNavigationLocked = true

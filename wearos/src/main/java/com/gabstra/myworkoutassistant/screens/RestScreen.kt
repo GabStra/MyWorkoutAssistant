@@ -44,10 +44,10 @@ import com.gabstra.myworkoutassistant.composable.PagePlates
 import com.gabstra.myworkoutassistant.composable.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.VibrateHardAndBeep
+
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -57,11 +57,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RestScreen(
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     state: WorkoutState.Rest,
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
@@ -154,7 +154,7 @@ fun RestScreen(
             val newTimerValue = currentSeconds - 5
             currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
             currentSeconds = newTimerValue
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         }
         updateInteractionTime()
     }
@@ -163,7 +163,7 @@ fun RestScreen(
         val newTimerValue = currentSeconds + 5
         currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
         currentSeconds = newTimerValue
-        VibrateGentle(context)
+        hapticsViewModel.doGentleVibration()
         updateInteractionTime()
     }
 
@@ -193,7 +193,7 @@ fun RestScreen(
                 endTimer = 0
             )
             goBackJob?.cancel()
-            VibrateHardAndBeep(context)
+            hapticsViewModel.doHardVibrationWithBeep()
             onTimerEnd()
         }
 
@@ -244,7 +244,7 @@ fun RestScreen(
                         onLongClick = {
                             isTimerInEditMode = !isTimerInEditMode
                             updateInteractionTime()
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                         },
                         onDoubleClick = {}
                     ),
@@ -322,11 +322,12 @@ fun RestScreen(
                                 PageExercises(
                                     state.nextStateSets.first(),
                                     viewModel,
+                                    hapticsViewModel,
                                     exercise
                                 )
                             }
                         }
-                        PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel)
+                        PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel,hapticsViewModel)
                         PageType.NOTES -> TODO()
                     }
                 }
@@ -365,12 +366,12 @@ fun RestScreen(
             state.currentSetData = currentSetData.copy(
                 endTimer = currentSeconds
             )
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             onTimerEnd()
             viewModel.closeCustomDialog()
         },
         handleNoClick = {
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             viewModel.closeCustomDialog()
             startTimerJob()
         },

@@ -37,9 +37,8 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.VibrateTwice
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -52,6 +51,7 @@ import java.time.LocalDateTime
 @Composable
 fun EnduranceSetScreen (
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     modifier: Modifier,
     state: WorkoutState.Set,
     onTimerEnd: () -> Unit,
@@ -113,14 +113,14 @@ fun EnduranceSetScreen (
     fun onMinusClick(){
         if (currentSet.startTimer > 5000){
             currentSet = currentSet.copy(startTimer = currentSet.startTimer - 5000)
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         }
         updateInteractionTime()
     }
 
     fun onPlusClick(){
         currentSet = currentSet.copy(startTimer = currentSet.startTimer + 5000)
-        VibrateGentle(context)
+        hapticsViewModel.doGentleVibration()
         updateInteractionTime()
     }
 
@@ -144,7 +144,7 @@ fun EnduranceSetScreen (
                         if (showStartButton) {
                             isTimerInEditMode = !isTimerInEditMode
                             updateInteractionTime()
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                         }
                     },
                     onDoubleClick = {
@@ -153,7 +153,7 @@ fun EnduranceSetScreen (
                                 startTimer = previousSet.startTimer
                             )
 
-                            VibrateTwice(context)
+                            hapticsViewModel.doHardVibrationTwice()
                         }
                     }
                 ),
@@ -190,7 +190,7 @@ fun EnduranceSetScreen (
                 }
 
                 if (currentMillis >= currentSet.startTimer) {
-                    VibrateTwice(context)
+                    hapticsViewModel.doHardVibrationTwice()
                     if (set.autoStop) break
                     else isOverLimit = true
                 }
@@ -253,7 +253,7 @@ fun EnduranceSetScreen (
 
         if (set.autoStart) {
             delay(500)
-            VibrateTwice(context)
+            hapticsViewModel.doHardVibrationTwice()
             startTimerJob()
 
             if(state.startTime == null){
@@ -287,7 +287,7 @@ fun EnduranceSetScreen (
                     Button(
                         modifier = Modifier.size(35.dp),
                         onClick = {
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                             startTimerJob()
                             showStartButton = false
 
@@ -303,7 +303,7 @@ fun EnduranceSetScreen (
                     Button(
                         modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
                         onClick = {
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                             timerJob?.cancel()
                             showStopDialog = true
                         },
@@ -369,7 +369,7 @@ fun EnduranceSetScreen (
             title = "Stop Exercise",
             message = "Do you want to stop this exercise?",
             handleYesClick = {
-                VibrateGentle(context)
+                hapticsViewModel.doGentleVibration()
                 state.currentSetData = currentSet.copy(
                     endTimer = currentMillis
                 )
@@ -379,7 +379,7 @@ fun EnduranceSetScreen (
                 showStopDialog = false
             },
             handleNoClick = {
-                VibrateGentle(context)
+                hapticsViewModel.doGentleVibration()
                 showStopDialog = false
                 startTimerJob()
             },

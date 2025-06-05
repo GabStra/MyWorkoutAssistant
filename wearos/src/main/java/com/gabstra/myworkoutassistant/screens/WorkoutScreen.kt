@@ -27,13 +27,12 @@ import com.gabstra.myworkoutassistant.composable.HeartRateStandard
 import com.gabstra.myworkoutassistant.composable.LifecycleObserver
 import com.gabstra.myworkoutassistant.composable.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.VibrateTwice
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,6 +42,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 fun WorkoutScreen(
     navController: NavController,
     viewModel : AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel : HeartRateChangeViewModel,
     hrViewModel: SensorDataViewModel,
     polarViewModel: PolarViewModel,
@@ -72,6 +72,7 @@ fun WorkoutScreen(
             HeartRatePolar(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
+                hapticsViewModel,
                 heartRateChangeViewModel,
                 polarViewModel,
                 userAge,
@@ -82,6 +83,7 @@ fun WorkoutScreen(
             HeartRateStandard(
                 modifier = Modifier.fillMaxSize(),
                 viewModel,
+                hapticsViewModel,
                 heartRateChangeViewModel,
                 hrViewModel,
                 userAge,
@@ -103,7 +105,7 @@ fun WorkoutScreen(
         show = showWorkoutInProgressDialog,
         title = "Workout in progress",
         handleYesClick = {
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             //viewModel.pushAndStoreWorkoutData(false,context)
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()
@@ -119,7 +121,7 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog = false
         },
         handleNoClick = {
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
         },
@@ -136,13 +138,13 @@ fun WorkoutScreen(
     CustomBackHandler(
         onSinglePress = {
             if(workoutState is WorkoutState.Completed || showWorkoutInProgressDialog) return@CustomBackHandler
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             viewModel.openCustomDialog()
             viewModel.lightScreenUp()
         }, onDoublePress = {
             if(workoutState is WorkoutState.Completed || isCustomDialogOpen) return@CustomBackHandler
             showWorkoutInProgressDialog = true
-            VibrateTwice(context)
+            hapticsViewModel.doHardVibrationTwice()
             viewModel.pauseWorkout()
             viewModel.lightScreenUp()
         }
@@ -186,15 +188,15 @@ fun WorkoutScreen(
             }, label = "",
             contentAlignment = Alignment.TopCenter
         ) { updatedWorkoutState ->
-            WorkoutStateHeader(updatedWorkoutState,viewModel)
+            WorkoutStateHeader(updatedWorkoutState,viewModel,hapticsViewModel)
 
             when(updatedWorkoutState){
                 is WorkoutState.Preparing -> {
                     val state = updatedWorkoutState
                     if(!selectedWorkout.usePolarDevice)
-                        PreparingStandardScreen(viewModel,hrViewModel,state)
+                        PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
                     else
-                        PreparingPolarScreen(viewModel,navController,polarViewModel,state)
+                        PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
                 }
                 is WorkoutState.Set -> {
                     val state = updatedWorkoutState
@@ -204,6 +206,7 @@ fun WorkoutScreen(
 
                     ExerciseScreen(
                         viewModel,
+                        hapticsViewModel,
                         state,
                         hearthRateChart = { heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent) }
                     )
@@ -216,6 +219,7 @@ fun WorkoutScreen(
 
                     RestScreen(
                         viewModel,
+                        hapticsViewModel,
                         state,
                         { heartRateChartComposable() },
                         onTimerEnd = {

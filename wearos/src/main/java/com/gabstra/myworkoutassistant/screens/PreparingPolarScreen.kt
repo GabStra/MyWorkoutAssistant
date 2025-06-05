@@ -38,10 +38,8 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.VibrateHard
-import com.gabstra.myworkoutassistant.shared.VibrateShortImpulse
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -49,6 +47,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun PreparingPolarScreen(
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     navController: NavController,
     polarViewModel: PolarViewModel,
     state: WorkoutState.Preparing,
@@ -67,7 +66,7 @@ fun PreparingPolarScreen(
         if (viewModel.polarDeviceId.isEmpty()) {
             Toast.makeText(context, "No polar device id set", Toast.LENGTH_SHORT).show()
             navController.popBackStack()
-            VibrateShortImpulse(context);
+            hapticsViewModel.doShortImpulse()
             return@LaunchedEffect
         }
 
@@ -100,7 +99,7 @@ fun PreparingPolarScreen(
             } else {
                 viewModel.goToNextState()
                 viewModel.setWorkoutStart()
-                VibrateHard(context)
+                hapticsViewModel.doHardVibration()
             }
 
             viewModel.lightScreenUp()
@@ -138,7 +137,7 @@ fun PreparingPolarScreen(
                     ) {
                         Button(
                             onClick = {
-                                VibrateGentle(context)
+                                hapticsViewModel.doGentleVibration()
                                 viewModel.goToNextState()
                                 viewModel.lightScreenUp()
                                 viewModel.setWorkoutStart()

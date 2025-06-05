@@ -2,9 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -22,15 +20,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
 import java.time.Duration
@@ -42,7 +38,8 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun WorkoutStateHeader(
     workoutState: WorkoutState,
-    viewModel: AppViewModel
+    viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel
 ){
     val displayMode by viewModel.headerDisplayMode
     var duration by remember { mutableStateOf(Duration.ZERO) }
@@ -72,7 +69,7 @@ fun WorkoutStateHeader(
             ) {
                 if(workoutState is WorkoutState.Preparing) return@clickable
                 viewModel.switchHeaderDisplayMode()
-                VibrateGentle(context)
+                hapticsViewModel.doGentleVibration()
             }
         ,
         verticalAlignment = Alignment.CenterVertically,

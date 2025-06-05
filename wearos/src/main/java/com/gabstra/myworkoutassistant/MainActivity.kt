@@ -47,6 +47,8 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.composable.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
@@ -152,6 +154,10 @@ class MainActivity : ComponentActivity() {
 
     private val appViewModel: AppViewModel by viewModels()
 
+    private val hapticsViewModel: HapticsViewModel by viewModels {
+        HapticsViewModelFactory(applicationContext)
+    }
+
     private val heartRateChangeViewModel: HeartRateChangeViewModel by viewModels()
 
     private lateinit var myReceiver: BroadcastReceiver
@@ -184,7 +190,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            WearApp(dataClient, appViewModel, heartRateChangeViewModel, appHelper, workoutStoreRepository){
+            WearApp(dataClient, appViewModel,hapticsViewModel, heartRateChangeViewModel, appHelper, workoutStoreRepository){
                 navController ->
                     if(::myReceiver.isInitialized) return@WearApp
                     myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
@@ -237,6 +243,7 @@ class MainActivity : ComponentActivity() {
 fun WearApp(
     dataClient: DataClient,
     appViewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel: HeartRateChangeViewModel,
     appHelper: WearDataLayerAppHelper,
     workoutStoreRepository: WorkoutStoreRepository,
@@ -315,17 +322,17 @@ fun WearApp(
                 },
             ) {
                 composable(Screen.WorkoutSelection.route) {
-                    WorkoutSelectionScreen(dataClient,navController, appViewModel, appHelper)
+                    WorkoutSelectionScreen(dataClient,navController, appViewModel,hapticsViewModel, appHelper)
                 }
                 composable(Screen.WorkoutDetail.route) {
-                    WorkoutDetailScreen(navController, appViewModel, hrViewModel)
+                    WorkoutDetailScreen(navController, appViewModel, hapticsViewModel,hrViewModel)
                 }
                 composable(Screen.Workout.route) {
                     val isPaused by appViewModel.isPaused
                     val appDimmingEnabled by appViewModel.currentScreenDimmingState
 
                     KeepOn(appViewModel,enableDimming = !isPaused && appDimmingEnabled){
-                        WorkoutScreen(navController,appViewModel,heartRateChangeViewModel,hrViewModel,polarViewModel)
+                        WorkoutScreen(navController,appViewModel,hapticsViewModel,heartRateChangeViewModel,hrViewModel,polarViewModel)
                     }
                 }
                 composable(Screen.Loading.route) {

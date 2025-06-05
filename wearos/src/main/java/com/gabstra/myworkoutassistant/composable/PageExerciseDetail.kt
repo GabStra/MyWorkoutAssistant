@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.runtime.Composable
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -10,6 +11,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 fun PageExerciseDetail(
     updatedState: WorkoutState.Set,
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     onScrollEnabledChange: (Boolean) -> Unit,
     exerciseTitleComposable: @Composable () -> Unit,
     extraInfoComposable: @Composable (WorkoutState.Set) -> Unit,
@@ -37,6 +39,7 @@ fun PageExerciseDetail(
     ExerciseDetail(
         updatedState = updatedState,
         viewModel = viewModel,
+        hapticsViewModel = hapticsViewModel,
         onEditModeDisabled = { onScrollEnabledChange(true) },
         onEditModeEnabled = { onScrollEnabledChange(false) },
         onTimerDisabled = { },

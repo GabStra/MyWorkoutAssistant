@@ -44,11 +44,9 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.composable.ButtonWithText
 import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.VibrateHard
-import com.gabstra.myworkoutassistant.shared.VibrateTwice
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.getVersionName
 import com.google.android.gms.wearable.DataClient
@@ -145,6 +143,7 @@ fun WorkoutSelectionScreen(
     dataClient: DataClient,
     navController: NavController,
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     appHelper: WearDataLayerAppHelper
 ) {
     val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
@@ -178,7 +177,7 @@ fun WorkoutSelectionScreen(
                         .combinedClickable(
                             onClick = {},
                             onLongClick = {
-                                VibrateHard(context)
+                                hapticsViewModel.doHardVibration()
                                 Toast
                                     .makeText(
                                         context,
@@ -189,7 +188,7 @@ fun WorkoutSelectionScreen(
                             },
                             onDoubleClick = {
                                 showClearData = true
-                                VibrateTwice(context)
+                                hapticsViewModel.doHardVibrationTwice()
                             }
                         ),
                     text = "My Workout Assistant",
@@ -202,7 +201,7 @@ fun WorkoutSelectionScreen(
                 NotificationPermissionHandler { hasPermission, requestPermission ->
                     if (!hasPermission) {
                         ButtonWithText(text = "Request notification permission", onClick = {
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                             requestPermission()
                         })
                     }
@@ -223,7 +222,7 @@ fun WorkoutSelectionScreen(
                         ButtonWithText(
                             text = "Open mobile app",
                             onClick = {
-                                VibrateGentle(context)
+                                hapticsViewModel.doGentleVibration()
                                 scope.launch {
                                     openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
                                 }
@@ -257,7 +256,7 @@ fun WorkoutSelectionScreen(
                         key = { workout -> workout.id }
                     ) { workout ->
                         WorkoutListItem(workout) {
-                            VibrateGentle(context)
+                            hapticsViewModel.doGentleVibration()
                             navController.navigate(Screen.WorkoutDetail.route)
                             viewModel.setWorkout(workout)
                         }
@@ -282,7 +281,7 @@ fun WorkoutSelectionScreen(
         title = "Clear Data",
         message = "Do you want to proceed?",
         handleYesClick = {
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             viewModel.resetAll()
             Toast
                 .makeText(
@@ -295,7 +294,7 @@ fun WorkoutSelectionScreen(
         },
         handleNoClick = {
             showClearData = false
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {

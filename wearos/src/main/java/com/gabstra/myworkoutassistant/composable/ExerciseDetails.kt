@@ -6,6 +6,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -18,6 +19,7 @@ import java.time.LocalDateTime
 fun ExerciseDetail(
     updatedState: WorkoutState.Set, // Assuming SetState is the type holding set
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     onEditModeDisabled: () -> Unit,
     onEditModeEnabled: () -> Unit,
     onTimerDisabled: () -> Unit,
@@ -38,6 +40,7 @@ fun ExerciseDetail(
 
             WeightSetScreen(
                 viewModel = viewModel,
+                hapticsViewModel = hapticsViewModel,
                 modifier = Modifier.fillMaxSize(),
                 state = updatedState,
                 forceStopEditMode = updatedState.isWarmupSet,
@@ -58,6 +61,7 @@ fun ExerciseDetail(
 
             BodyWeightSetScreen(
                 viewModel = viewModel,
+                hapticsViewModel = hapticsViewModel,
                 modifier = Modifier.fillMaxSize(),
                 state = updatedState,
                 forceStopEditMode = updatedState.isWarmupSet,
@@ -72,6 +76,7 @@ fun ExerciseDetail(
         is TimedDurationSet -> {
             TimedDurationSetScreen(
                 viewModel = viewModel,
+                hapticsViewModel = hapticsViewModel,
                 modifier = Modifier.fillMaxSize(),
                 state = updatedState,
                 onTimerEnd = {
@@ -91,6 +96,7 @@ fun ExerciseDetail(
 
         is EnduranceSet -> EnduranceSetScreen(
             viewModel = viewModel,
+            hapticsViewModel = hapticsViewModel,
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {

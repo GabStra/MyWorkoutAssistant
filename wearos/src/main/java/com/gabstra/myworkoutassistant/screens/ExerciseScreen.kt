@@ -44,9 +44,9 @@ import com.gabstra.myworkoutassistant.composable.PageExercises
 import com.gabstra.myworkoutassistant.composable.PageNotes
 import com.gabstra.myworkoutassistant.composable.PagePlates
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
@@ -61,6 +61,7 @@ enum class PageType {
 @Composable
 fun ExerciseScreen(
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     state: WorkoutState.Set,
     hearthRateChart: @Composable () -> Unit,
 ) {
@@ -170,7 +171,7 @@ fun ExerciseScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                VibrateGentle(context)
+                                hapticsViewModel.doGentleVibration()
                                 marqueeEnabled = !marqueeEnabled
                             }
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
@@ -226,6 +227,7 @@ fun ExerciseScreen(
                     }
                 },
                 exerciseTitleComposable = exerciseTitleComposable,
+                hapticsViewModel = hapticsViewModel,
                 customComponentWrapper = { content ->
                     CustomHorizontalPager(
                         modifier = Modifier
@@ -250,9 +252,9 @@ fun ExerciseScreen(
                         when (pageType) {
                             PageType.PLATES -> PagePlates(updatedState, equipment)
                             PageType.EXERCISE_DETAIL -> content()
-                            PageType.EXERCISES -> PageExercises(updatedState, viewModel, exercise)
+                            PageType.EXERCISES -> PageExercises(updatedState, viewModel, hapticsViewModel, exercise)
                             PageType.NOTES -> PageNotes(exercise.notes)
-                            PageType.BUTTONS -> PageButtons(updatedState, viewModel)
+                            PageType.BUTTONS -> PageButtons(updatedState, viewModel,hapticsViewModel)
                         }
                     }
                 }
@@ -287,7 +289,7 @@ fun ExerciseScreen(
         title = "Complete Set",
         message = "Do you want to proceed?",
         handleYesClick = {
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             viewModel.storeSetData()
             viewModel.pushAndStoreWorkoutData(false, context) {
                 viewModel.goToNextState()
@@ -298,7 +300,7 @@ fun ExerciseScreen(
         },
         handleNoClick = {
             viewModel.closeCustomDialog()
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {

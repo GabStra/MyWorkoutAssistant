@@ -48,10 +48,11 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
+
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -148,6 +149,7 @@ fun WeightInfoDialog(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SetTableRow(
+    hapticsViewModel: HapticsViewModel,
     modifier: Modifier = Modifier,
     setState: WorkoutState.Set,
     index: Int?,
@@ -244,7 +246,7 @@ fun SetTableRow(
                             onClick = {},
                             onLongClick = {
                                 startOpenDialogJob()
-                                VibrateGentle(context)
+                                hapticsViewModel.doGentleVibration()
                             },
                             onDoubleClick = {}
                     ),
@@ -289,7 +291,7 @@ fun SetTableRow(
                                     onClick = {},
                                     onLongClick = {
                                         startOpenDialogJob()
-                                        VibrateGentle(context)
+                                        hapticsViewModel.doGentleVibration()
                                     },
                                     onDoubleClick = {}
                                 ) else Modifier),
@@ -379,6 +381,7 @@ fun SetTableRow(
 fun ExerciseSetsViewer(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
     customColor: Color? = null,
@@ -463,6 +466,7 @@ fun ExerciseSetsViewer(
                                     }
                                 }
                             },
+                        hapticsViewModel = hapticsViewModel,
                         setState = nextSetState,
                         index = index,
                         isCurrentSet = index == setIndex,
@@ -514,6 +518,7 @@ fun ExerciseSetsViewer(
                                     }
                                 }
                             },
+                        hapticsViewModel = hapticsViewModel,
                         setState = nextSetState,
                         index = index,
                         isCurrentSet = index == setIndex,

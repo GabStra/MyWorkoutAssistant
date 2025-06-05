@@ -18,9 +18,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -29,7 +29,8 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 @Composable
 fun PageButtons(
     updatedState: WorkoutState.Set,
-    viewModel: AppViewModel
+    viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
 
@@ -68,7 +69,7 @@ fun PageButtons(
         ButtonWithText(
             text = "Back",
             onClick = {
-                VibrateGentle(context)
+                hapticsViewModel.doGentleVibration()
                 showGoBackDialog = true
             },
             enabled = !isHistoryEmpty,
@@ -79,7 +80,7 @@ fun PageButtons(
         ButtonWithText(
             text = if (dimmingEnabled) "Disable Dimming" else "Enable Dimming",
             onClick = {
-                VibrateGentle(context)
+                hapticsViewModel.doGentleVibration()
                 viewModel.toggleScreenDimming()
             },
             backgroundColor = if (dimmingEnabled)
@@ -91,7 +92,7 @@ fun PageButtons(
             ButtonWithText(
                 text = "Add Set",
                 onClick = {
-                    VibrateGentle(context)
+                    hapticsViewModel.doGentleVibration()
                     viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.addNewSetStandard()
@@ -104,7 +105,7 @@ fun PageButtons(
             ButtonWithText(
                 text = "Add Rest",
                 onClick = {
-                    VibrateGentle(context)
+                    hapticsViewModel.doGentleVibration()
                     viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.addNewRest()
@@ -118,7 +119,7 @@ fun PageButtons(
             ButtonWithText(
                 text = "Add Rest-Pause Set",
                 onClick = {
-                    VibrateGentle(context)
+                    hapticsViewModel.doGentleVibration()
                     viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.addNewRestPauseSet()
@@ -142,14 +143,14 @@ fun PageButtons(
         title = "Go to previous Set",
         message = "Do you want to proceed?",
         handleYesClick = {
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
             viewModel.goToPreviousSet()
             viewModel.lightScreenUp()
             showGoBackDialog = false
         },
         handleNoClick = {
             showGoBackDialog = false
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {

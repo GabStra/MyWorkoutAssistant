@@ -45,13 +45,11 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
-import com.gabstra.myworkoutassistant.shared.VibrateGentle
-import com.gabstra.myworkoutassistant.shared.VibrateShortImpulse
-import com.gabstra.myworkoutassistant.shared.VibrateTwiceAndBeep
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
@@ -137,6 +135,7 @@ fun HrStatusDialog(
 fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel: HeartRateChangeViewModel,
     hr: Int,
     age: Int,
@@ -168,7 +167,7 @@ fun HeartRateCircularChart(
         alertJob = scope.launch {
             delay(2000)
             while (isActive) {
-                VibrateShortImpulse(context)
+                hapticsViewModel.doShortImpulse()
                 delay(alertCooldown)
             }
         }
@@ -215,12 +214,12 @@ fun HeartRateCircularChart(
                     showHrStatusDialog = true
 
                     while (isActive) {
-                        VibrateTwiceAndBeep(context)
+                        hapticsViewModel.doHardVibrationTwiceWithBeep()
                         delay(1000)
-                        VibrateTwiceAndBeep(context)
+                        hapticsViewModel.doHardVibrationTwiceWithBeep()
                         delay(1000)
-                        VibrateTwiceAndBeep(context)
-                        delay(3000)
+                        hapticsViewModel.doHardVibrationTwiceWithBeep()
+                        delay(5000)
                     }
                 }
             }
@@ -250,7 +249,7 @@ fun HeartRateCircularChart(
         }
     }
 
-    HeartRateView(modifier,appViewModel,heartRateChangeViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
+    HeartRateView(modifier,appViewModel,hapticsViewModel,heartRateChangeViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
 }
 
 @Composable
@@ -433,6 +432,7 @@ fun extractRotationAngles(
 private fun HeartRateView(
     modifier: Modifier,
     appViewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel: HeartRateChangeViewModel,
     hr: Int,
     mhrPercentage: Float,
@@ -479,7 +479,7 @@ private fun HeartRateView(
     val onSwitchClick = remember(appViewModel, context) {
         {
             appViewModel.switchHrDisplayMode()
-            VibrateGentle(context)
+            hapticsViewModel.doGentleVibration()
         }
     }
 
@@ -550,6 +550,7 @@ private fun HeartRateView(
 fun HeartRateStandard(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel : HeartRateChangeViewModel,
     hrViewModel: SensorDataViewModel,
     userAge : Int,
@@ -570,6 +571,7 @@ fun HeartRateStandard(
     HeartRateCircularChart(
         modifier = modifier,
         appViewModel = appViewModel,
+        hapticsViewModel = hapticsViewModel,
         heartRateChangeViewModel = heartRateChangeViewModel,
         hr = hr,
         age = userAge,
@@ -582,6 +584,7 @@ fun HeartRateStandard(
 fun HeartRatePolar(
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel : HeartRateChangeViewModel,
     polarViewModel: PolarViewModel,
     userAge : Int,
@@ -602,6 +605,7 @@ fun HeartRatePolar(
     HeartRateCircularChart(
         modifier = modifier,
         appViewModel = appViewModel,
+        hapticsViewModel = hapticsViewModel,
         heartRateChangeViewModel = heartRateChangeViewModel,
         hr = hr,
         age = userAge,
