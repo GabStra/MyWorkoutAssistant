@@ -87,7 +87,7 @@ fun HrStatusDialog(
         ) {
             Box(
                 modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.50f))
+                    .background(Color.Black.copy(alpha = 0.75f))
                     .fillMaxSize()
                     .padding(20.dp),
                 contentAlignment = Alignment.Center

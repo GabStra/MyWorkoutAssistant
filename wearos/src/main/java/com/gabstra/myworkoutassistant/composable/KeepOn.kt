@@ -40,26 +40,21 @@ fun KeepOn(
 
     var isDimmed by remember { mutableStateOf(false) }
     var dimmingJob by remember { mutableStateOf<Job?>(null) }
-
-    // Helper to set screen brightness
+    
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
             screenBrightness = brightness
         }
     }
 
-    // Centralized function to wake the screen and reset the dimming timer
     fun wakeUpAndResetTimer() {
-        // Cancel any pending dimming job
         dimmingJob?.cancel()
 
-        // If the screen was dimmed, brighten it
         if (isDimmed) {
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         }
 
-        // If dimming is enabled, start a new timer
         if (enableDimming) {
             dimmingJob = scope.launch {
                 delay(dimDelay)
@@ -69,8 +64,6 @@ fun KeepOn(
         }
     }
 
-    // This effect manages adding/clearing the KEEP_SCREEN_ON flag and timers
-    // It's tied to the lifecycle of the composable and the app state (resume/pause)
     DisposableEffect(lifecycleOwner, enableDimming) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -92,7 +85,6 @@ fun KeepOn(
 
         lifecycleOwner.lifecycle.addObserver(observer)
 
-        // onDispose is called when the composable leaves the composition OR a key changes
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             dimmingJob?.cancel()
@@ -109,29 +101,37 @@ fun KeepOn(
         }
     }
 
-    // When enableDimming is switched to false while the screen is dimmed, wake it up.
-    // The main timer logic is already handled by re-triggering the DisposableEffect.
     LaunchedEffect(enableDimming) {
-        wakeUpAndResetTimer()
+        if(!enableDimming){
+            dimmingJob?.cancel()
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            isDimmed = false
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent)
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        // Wait for any pointer down event
-                        awaitPointerEvent().changes.firstOrNull { it.pressed }?.let {
-                            // On user interaction, wake the screen up
-                            scope.launch {
-                                wakeUpAndResetTimer()
+            .then(
+                if(enableDimming){
+                    Modifier.pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                // Wait for any pointer down event
+                                awaitPointerEvent().changes.firstOrNull { it.pressed }?.let {
+                                    // On user interaction, wake the screen up
+                                    scope.launch {
+                                        wakeUpAndResetTimer()
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
+                }else{
+                    Modifier
+                })
     ) {
         content()
     }
