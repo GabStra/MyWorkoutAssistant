@@ -50,10 +50,13 @@ object VolumeDistributionHelper {
         }
 
         var previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
-        var nearAverageWeights = getNearAverageWeights(params,1)
+        var nearAverageWeights = getNearAverageWeights(params,2)
 
         val previousMaxFatigue = params.previousSets.maxOf { it.fatigue }
         val previousMinFatigue = params.previousSets.minOf { it.fatigue }
+
+        val previousMaxWeight = params.previousSets.maxOf { it.weight }
+        val previousMinWeight = params.previousSets.minOf { it.weight }
 
         val avgPreviousRir = params.previousSets.map { it.rir }.average()
         val minRir = (floor(avgPreviousRir) -1).toInt().coerceIn(0, 10)
@@ -80,6 +83,31 @@ object VolumeDistributionHelper {
             .filter { set -> set.fatigue in minFatigue..maxFatigue }
 
         val minTotalFatigue = previousTotalFatigue * (1 + params.volumeProgressionRange.from / 100)
+        val maxTotalFatigue = previousTotalFatigue * 1.05
+
+        if(!previousMaxWeight.isEqualTo(previousMinWeight)){
+            var result = findBestProgressions(
+                usableSets,
+                params.previousSets.size,
+                params.previousSets.size,
+                params,
+                { combo ->
+                    val currentTotalFatigue = combo.sumOf { it.fatigue }
+                    val currentMaxWeight = combo.maxOf { it.weight }
+
+                    ValidationResult(
+                        shouldReturn = currentTotalFatigue < previousTotalFatigue
+                                || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
+                                || currentTotalFatigue < minTotalFatigue
+                                || currentMaxWeight > previousMaxWeight
+                    )
+                }
+            )
+
+            if(result.isNotEmpty()){
+                return result
+            }
+        }
 
         if(!previousMaxFatigue.isEqualTo(previousMinFatigue)){
             var result = findBestProgressions(
@@ -94,8 +122,8 @@ object VolumeDistributionHelper {
                     ValidationResult(
                         shouldReturn = currentTotalFatigue < previousTotalFatigue
                                 || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
-                                || currentMaxFatigue > previousMaxFatigue
                                 || currentTotalFatigue < minTotalFatigue
+                                || currentMaxFatigue > previousMaxFatigue
                     )
                 }
             )
@@ -295,7 +323,7 @@ object VolumeDistributionHelper {
         val volume = weight * reps
         val intensity = weight / oneRepMax
 
-        val fatigue = reps * intensity.pow(2)
+        val fatigue = (reps * intensity).pow(1.5)
 
         val rir = calculateRIR(weight,reps,oneRepMax)
 

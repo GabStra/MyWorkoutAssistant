@@ -16,6 +16,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
@@ -32,108 +35,104 @@ fun KeepOn(
     val context = LocalContext.current
     val activity = context.findActivity()
     val window = activity?.window
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     var isDimmed by remember { mutableStateOf(false) }
     var dimmingJob by remember { mutableStateOf<Job?>(null) }
 
-    val scope = rememberCoroutineScope()
-
+    // Helper to set screen brightness
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
             screenBrightness = brightness
         }
     }
 
-    fun resetDimming() {
+    // Centralized function to wake the screen and reset the dimming timer
+    fun wakeUpAndResetTimer() {
+        // Cancel any pending dimming job
         dimmingJob?.cancel()
-        if (!enableDimming) return
-        dimmingJob = scope.launch {
-            delay(dimDelay)
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF)
-            isDimmed = true
-        }
-    }
 
-    fun applyKeepScreenOnFlag() {
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-    }
-
-    LifecycleObserver(
-        onStarted = {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            applyKeepScreenOnFlag()
-            if(!isDimmed) resetDimming()
-        },
-        onResumed = {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            applyKeepScreenOnFlag()
-            if(!isDimmed) resetDimming()
-        },
-        onPaused = {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
-        },
-        onStopped = {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // If the screen was dimmed, brighten it
+        if (isDimmed) {
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         }
-    )
 
-    val keepScreenOnKey = remember { Any() }
+        // If dimming is enabled, start a new timer
+        if (enableDimming) {
+            dimmingJob = scope.launch {
+                delay(dimDelay)
+                setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF) // Use OFF for minimal brightness
+                isDimmed = true
+            }
+        }
+    }
 
-    DisposableEffect(keepScreenOnKey) {
-        applyKeepScreenOnFlag()
+    // This effect manages adding/clearing the KEEP_SCREEN_ON flag and timers
+    // It's tied to the lifecycle of the composable and the app state (resume/pause)
+    DisposableEffect(lifecycleOwner, enableDimming) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    // When the app resumes, reset the timer
+                    wakeUpAndResetTimer()
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    // When the app is paused, release the lock to allow the screen to turn off
+                    dimmingJob?.cancel()
+                    window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+                    isDimmed = false
+                }
+                else -> {} // Handle other events if needed
+            }
+        }
 
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        // onDispose is called when the composable leaves the composition OR a key changes
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            dimmingJob?.cancel()
+            // Ensure flags and brightness are reset when leaving the screen
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
         }
     }
 
+    // Effect to handle external wake-up calls from the ViewModel
     LaunchedEffect(Unit) {
         appViewModel.lightScreenUp.collect {
-            if (isDimmed) {
-                setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-                isDimmed = false
-            }
-            resetDimming()
+            wakeUpAndResetTimer()
         }
     }
 
+    // When enableDimming is switched to false while the screen is dimmed, wake it up.
+    // The main timer logic is already handled by re-triggering the DisposableEffect.
     LaunchedEffect(enableDimming) {
-        if (isDimmed && !enableDimming) {
-            applyKeepScreenOnFlag()
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
-            return@LaunchedEffect
-        }
-
-        if(!isDimmed) resetDimming()
+        wakeUpAndResetTimer()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Transparent) // Ensure Box handles touch events
+            .background(Color.Transparent)
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
-                        val event = awaitPointerEvent()
-                        if (event.changes.any { it.pressed && !it.previousPressed }) {
-                            if (isDimmed) {
-                                setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-                                isDimmed = false
+                        // Wait for any pointer down event
+                        awaitPointerEvent().changes.firstOrNull { it.pressed }?.let {
+                            // On user interaction, wake the screen up
+                            scope.launch {
+                                wakeUpAndResetTimer()
                             }
-                            resetDimming()
                         }
                     }
                 }
             }
-    ){
+    ) {
         content()
     }
 }

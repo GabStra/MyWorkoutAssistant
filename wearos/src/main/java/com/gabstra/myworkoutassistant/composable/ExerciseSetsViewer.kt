@@ -1,9 +1,5 @@
 package com.gabstra.myworkoutassistant.composable
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -52,7 +48,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -74,23 +69,19 @@ fun WeightInfoDialog(
     onClick: () -> Unit = {}
 ){
     val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
+    val headerStyle = remember(typography) { typography.body2.copy(fontSize = typography.body2.fontSize * 0.625f) }
+    val itemStyle = remember(typography)  { typography.body2.copy(fontSize = typography.body2.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
 
-    AnimatedVisibility(
-        visible = show,
-        enter = fadeIn(animationSpec = tween(500)),
-        exit = fadeOut(animationSpec = tween(500))
-    ) {
+    if(show) {
         Dialog(
             onDismissRequest = {  },
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
         ) {
             Box(
                 modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.50f))
+                    .background(Color.Black.copy(alpha = 0.75f))
                     .fillMaxSize()
-                    .padding(20.dp)
+                    .padding(25.dp)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -99,7 +90,7 @@ fun WeightInfoDialog(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (equipment != null) {
                         Column(
@@ -174,7 +165,7 @@ fun SetTableRow(
         openDialogJob?.cancel()
         openDialogJob = coroutineScope.launch {
             showWeightInfoDialog = true
-            kotlinx.coroutines.delay(3000L)
+            kotlinx.coroutines.delay(5000L)
             showWeightInfoDialog = false
         }
     }
@@ -229,15 +220,15 @@ fun SetTableRow(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if(isCurrentSet && !setState.isWarmupSet){
+            indicatorComposable()
+        }else if(setState.isWarmupSet){
+            warmupIndicatorComposable()
+        }else{
+            Spacer(modifier = Modifier.width(18.dp))
+        }
         when (setState.currentSetData) {
             is WeightSetData -> {
-                if(isCurrentSet && !setState.isWarmupSet){
-                    indicatorComposable()
-                }else if(setState.isWarmupSet){
-                    warmupIndicatorComposable()
-                }else{
-                    Spacer(modifier = Modifier.width(18.dp))
-                }
                 val weightSetData = (setState.currentSetData as WeightSetData)
                 Text(
                     modifier = Modifier
@@ -269,19 +260,13 @@ fun SetTableRow(
                     equipment = setState.equipment,
                     onClick = {
                         openDialogJob?.cancel()
+                        hapticsViewModel.doGentleVibration()
                         showWeightInfoDialog = false
                     }
                 )
             }
 
             is BodyWeightSetData -> {
-                if(isCurrentSet && !setState.isWarmupSet){
-                    indicatorComposable()
-                }else if(setState.isWarmupSet){
-                    warmupIndicatorComposable()
-                }else{
-                    Spacer(modifier = Modifier.width(18.dp))
-                }
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
                 Text(
                     modifier = Modifier.weight(1f)
@@ -319,6 +304,7 @@ fun SetTableRow(
                         equipment = setState.equipment,
                         onClick = {
                             openDialogJob?.cancel()
+                            hapticsViewModel.doGentleVibration()
                             showWeightInfoDialog = false
                         }
                     )
@@ -328,48 +314,27 @@ fun SetTableRow(
             is TimedDurationSetData -> {
                 val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
 
-                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center){
-                    if(isCurrentSet && !setState.isWarmupSet){
-                        indicatorComposable()
-                    }else if(setState.isWarmupSet){
-                        warmupIndicatorComposable()
-                    }else{
-                        Spacer(modifier = Modifier.width(18.dp))
-                    }
-                }
-
                 ScalableText(
-                    modifier = Modifier.weight(2f),
+                    modifier = Modifier.weight(1f),
                     text = FormatTime(timedDurationSetData.startTimer / 1000),
                     style = itemStyle,
-                    textAlign = TextAlign.Start,
-                    contentAlignment = Alignment.CenterStart,
+                    textAlign = TextAlign.Center,
                     color = color
                 )
-
+                Spacer(modifier = Modifier.width(18.dp))
             }
 
             is EnduranceSetData -> {
                 val enduranceSetData = (setState.currentSetData as EnduranceSetData)
 
-                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center){
-                    if(isCurrentSet && !setState.isWarmupSet){
-                        indicatorComposable()
-                    }else if(setState.isWarmupSet){
-                        warmupIndicatorComposable()
-                    }else{
-                        Spacer(modifier = Modifier.width(18.dp))
-                    }
-                }
-
                 ScalableText(
-                    modifier = Modifier.weight(2f),
+                    modifier = Modifier.weight(1f),
                     text = FormatTime(enduranceSetData.startTimer / 1000),
                     style = itemStyle,
-                    textAlign = TextAlign.Start,
-                    contentAlignment = Alignment.CenterStart,
+                    textAlign = TextAlign.Center,
                     color = color
                 )
+                Spacer(modifier = Modifier.width(18.dp))
             }
 
             else -> throw RuntimeException("Unsupported set type")
@@ -486,12 +451,14 @@ fun ExerciseSetsViewer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Spacer(modifier= Modifier.width(18.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "TIME",
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
+                Spacer(modifier = Modifier.width(18.dp))
             }
             Column(
                 modifier = Modifier
