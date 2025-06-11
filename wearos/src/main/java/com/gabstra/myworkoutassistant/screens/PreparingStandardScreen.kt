@@ -67,6 +67,7 @@ fun PreparingStandardScreen(
         if (isReady) {
             hasTriggeredNextState = true
 
+            viewModel.restoreScreenDimmingState()
             if(hasWorkoutRecord){
                 viewModel.resumeLastState()
             }else{
@@ -75,7 +76,6 @@ fun PreparingStandardScreen(
                 hapticsViewModel.doHardVibration()
             }
 
-            viewModel.lightScreenUp()
             onReady()
         }
     }

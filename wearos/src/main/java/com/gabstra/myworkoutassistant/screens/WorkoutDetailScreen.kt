@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +35,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
+import kotlinx.coroutines.flow.drop
 
 @Composable
 fun WorkoutDetailScreen(
@@ -175,12 +177,16 @@ fun WorkoutDetailScreen(
         }
     }
 
-    LaunchedEffect(showDeleteDialog) {
-        if(showDeleteDialog){
-            appViewModel.lightScreenPermanently()
-        }else{
-            appViewModel.restoreScreenDimmingState()
-        }
+    LaunchedEffect(Unit) {
+        snapshotFlow { showDeleteDialog }
+            .drop(1)
+            .collect { isDialogShown ->
+                if (isDialogShown) {
+                    appViewModel.lightScreenPermanently()
+                } else {
+                    appViewModel.restoreScreenDimmingState()
+                }
+            }
     }
 
     CustomDialogYesOnLongPress(

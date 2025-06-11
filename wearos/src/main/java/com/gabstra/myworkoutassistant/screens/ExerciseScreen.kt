@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -51,6 +52,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 enum class PageType {
@@ -276,12 +278,16 @@ fun ExerciseScreen(
         hearthRateChart()
     }
 
-    LaunchedEffect(showNextDialog) {
-        if(showNextDialog){
-            viewModel.lightScreenPermanently()
-        }else{
-            viewModel.restoreScreenDimmingState()
-        }
+    LaunchedEffect(Unit) {
+        snapshotFlow { showNextDialog }
+            .drop(1)
+            .collect { isDialogShown ->
+                if (isDialogShown) {
+                    viewModel.lightScreenPermanently()
+                } else {
+                    viewModel.restoreScreenDimmingState()
+                }
+            }
     }
 
     CustomDialogYesOnLongPress(

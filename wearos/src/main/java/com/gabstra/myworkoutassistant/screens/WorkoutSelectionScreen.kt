@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +53,7 @@ import com.gabstra.myworkoutassistant.shared.getVersionName
 import com.google.android.gms.wearable.DataClient
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -268,12 +270,16 @@ fun WorkoutSelectionScreen(
         }
     }
 
-    LaunchedEffect(showClearData) {
-        if(showClearData){
-            viewModel.lightScreenPermanently()
-        }else{
-            viewModel.restoreScreenDimmingState()
-        }
+    LaunchedEffect(Unit) {
+        snapshotFlow { showClearData }
+            .drop(1)
+            .collect { isDialogShown ->
+                if (isDialogShown) {
+                    viewModel.lightScreenPermanently()
+                } else {
+                    viewModel.restoreScreenDimmingState()
+                }
+            }
     }
 
     CustomDialogYesOnLongPress(

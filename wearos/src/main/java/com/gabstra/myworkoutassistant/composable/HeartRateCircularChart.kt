@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -61,6 +62,7 @@ import com.google.android.horologist.composables.ProgressIndicatorSegment
 import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -154,14 +156,17 @@ fun HeartRateCircularChart(
     var showHrStatusDialog by remember { mutableStateOf(false) }
     var hrStatus by remember { mutableStateOf(HeartRateStatus.LOWER_THAN_TARGET) }
 
-    LaunchedEffect(showHrStatusDialog) {
-        if(showHrStatusDialog){
-            appViewModel.lightScreenPermanently()
-        }else{
-            appViewModel.restoreScreenDimmingState()
-        }
+    LaunchedEffect(Unit) {
+        snapshotFlow { showHrStatusDialog }
+            .drop(1)
+            .collect { isDialogShown ->
+                if (isDialogShown) {
+                    appViewModel.lightScreenPermanently()
+                } else {
+                    appViewModel.restoreScreenDimmingState()
+                }
+            }
     }
-
 
     fun startAlertJob() {
         alertJob = scope.launch {

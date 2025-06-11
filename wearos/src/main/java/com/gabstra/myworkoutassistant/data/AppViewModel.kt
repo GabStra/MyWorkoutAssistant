@@ -4,10 +4,10 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
@@ -56,6 +56,10 @@ open class AppViewModel : WorkoutViewModel() {
     val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
     val lightScreenUp = _lightScreenUp.receiveAsFlow()
+
+    val enableDimming: State<Boolean> = derivedStateOf {
+        !isPaused.value && currentScreenDimmingState.value
+    }
 
     private val _previousScreenDimmingState = mutableStateOf(true)
 
@@ -177,7 +181,7 @@ open class AppViewModel : WorkoutViewModel() {
         _previousScreenDimmingState.value = true
 
         super.startWorkout()
-        lightScreenUp()
+        lightScreenPermanently()
     }
 
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {

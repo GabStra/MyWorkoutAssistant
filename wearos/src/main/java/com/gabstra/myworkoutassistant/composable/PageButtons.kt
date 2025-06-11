@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -24,6 +25,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import kotlinx.coroutines.flow.drop
 
 
 @Composable
@@ -130,12 +132,16 @@ fun PageButtons(
         }
     }
 
-    LaunchedEffect(showGoBackDialog) {
-        if(showGoBackDialog){
-            viewModel.lightScreenPermanently()
-        }else{
-            viewModel.restoreScreenDimmingState()
-        }
+    LaunchedEffect(Unit) {
+        snapshotFlow { showGoBackDialog }
+            .drop(1)
+            .collect { isDialogShown ->
+                if (isDialogShown) {
+                    viewModel.lightScreenPermanently()
+                } else {
+                    viewModel.restoreScreenDimmingState()
+                }
+            }
     }
 
     CustomDialogYesOnLongPress(

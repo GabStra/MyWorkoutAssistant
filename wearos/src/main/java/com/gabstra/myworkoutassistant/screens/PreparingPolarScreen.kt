@@ -94,6 +94,7 @@ fun PreparingPolarScreen(
         if (isReady) {
             hasTriggeredNextState = true
 
+            viewModel.restoreScreenDimmingState()
             if (hasWorkoutRecord) {
                 viewModel.resumeLastState()
             } else {
@@ -102,7 +103,6 @@ fun PreparingPolarScreen(
                 hapticsViewModel.doHardVibration()
             }
 
-            viewModel.lightScreenUp()
             onReady()
         }
     }
@@ -141,6 +141,7 @@ fun PreparingPolarScreen(
                                 viewModel.goToNextState()
                                 viewModel.lightScreenUp()
                                 viewModel.setWorkoutStart()
+                                viewModel.restoreScreenDimmingState()
                                 onReady()
                             },
                             modifier = Modifier.size(35.dp),

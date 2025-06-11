@@ -17,8 +17,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
@@ -29,7 +27,7 @@ import kotlinx.coroutines.launch
 fun KeepOn(
     appViewModel: AppViewModel,
     enableDimming: Boolean = false,
-    dimDelay: Long = 30000L, // Delay before dimming the screen
+    dimDelay: Long = 5000L, // Delay before dimming the screen
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
@@ -46,6 +44,8 @@ fun KeepOn(
             screenBrightness = brightness
         }
     }
+
+    var isCoolingDown by remember { mutableStateOf(false) }
 
     fun wakeUpAndResetTimer() {
         dimmingJob?.cancel()
@@ -64,29 +64,21 @@ fun KeepOn(
         }
     }
 
-    DisposableEffect(lifecycleOwner, enableDimming) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_RESUME -> {
-                    window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    // When the app resumes, reset the timer
-                    wakeUpAndResetTimer()
-                }
-                Lifecycle.Event.ON_PAUSE -> {
-                    // When the app is paused, release the lock to allow the screen to turn off
-                    dimmingJob?.cancel()
-                    window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-                    isDimmed = false
-                }
-                else -> {} // Handle other events if needed
-            }
+    LifecycleObserver(
+        onPaused = {
+            dimmingJob?.cancel()
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            isDimmed = false
+        },
+        onResumed = {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            wakeUpAndResetTimer()
         }
+    )
 
-        lifecycleOwner.lifecycle.addObserver(observer)
-
+    DisposableEffect(Unit) {
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
             dimmingJob?.cancel()
             // Ensure flags and brightness are reset when leaving the screen
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -107,6 +99,8 @@ fun KeepOn(
             window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
+        }else{
+            wakeUpAndResetTimer()
         }
     }
 
@@ -119,11 +113,15 @@ fun KeepOn(
                     Modifier.pointerInput(Unit) {
                         awaitPointerEventScope {
                             while (true) {
-                                // Wait for any pointer down event
                                 awaitPointerEvent().changes.firstOrNull { it.pressed }?.let {
-                                    // On user interaction, wake the screen up
-                                    scope.launch {
-                                        wakeUpAndResetTimer()
+                                    if (!isCoolingDown) {
+                                        isCoolingDown = true
+
+                                        scope.launch {
+                                            wakeUpAndResetTimer()
+                                            delay(1000L)
+                                            isCoolingDown = false
+                                        }
                                     }
                                 }
                             }

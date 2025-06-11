@@ -328,10 +328,9 @@ fun WearApp(
                     WorkoutDetailScreen(navController, appViewModel, hapticsViewModel,hrViewModel)
                 }
                 composable(Screen.Workout.route) {
-                    val isPaused by appViewModel.isPaused
-                    val appDimmingEnabled by appViewModel.currentScreenDimmingState
+                    val enableDimming by appViewModel.enableDimming
 
-                    KeepOn(appViewModel,enableDimming = !isPaused && appDimmingEnabled){
+                    KeepOn(appViewModel,enableDimming = enableDimming){
                         WorkoutScreen(navController,appViewModel,hapticsViewModel,heartRateChangeViewModel,hrViewModel,polarViewModel)
                     }
                 }
