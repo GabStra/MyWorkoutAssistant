@@ -28,7 +28,7 @@ fun ExerciseIndicator(
     val exerciseCount = exerciseOrSupersetIds.count()
 
     val exerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(set.exerciseId)) viewModel.supersetIdByExerciseId[set.exerciseId] else set.exerciseId
-    val currentExerciseIndex = exerciseOrSupersetIds.indexOf(exerciseOrSupersetId)
+    val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(exerciseOrSupersetId)
 
     val totalArcAngle = 120f
     val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
@@ -38,22 +38,31 @@ fun ExerciseIndicator(
             val isSuperset = remember(exerciseOrSupersetId) { viewModel.supersetIdByExerciseId.containsValue(exerciseOrSupersetId)  }
 
             if(isSuperset){
-                val supersetExercises =
+                val supersetExerciseIds =
                     exerciseIds
                         .filter { viewModel.supersetIdByExerciseId.containsKey(it) && viewModel.supersetIdByExerciseId[it] == exerciseOrSupersetId }
                 
-                val currentSupersetExerciseIndex = supersetExercises.indexOfFirst { it == set.exerciseId }
-                val supersetExercisesCount = supersetExercises.count()
+                val supersetExercisesCount = supersetExerciseIds.count()
 
                 val subSegmentArcAngle = (segmentArcAngle - (supersetExercisesCount - 1) * 1f) / supersetExercisesCount
 
                 for (subIndex in 0 until supersetExercisesCount) {
-                    val indicatorProgress = if (subIndex == currentSupersetExerciseIndex) 1.0f else 0.0f
+                    val indicatorProgress = when{
+                        index < currentExerciseOrSupersetIndex -> 1.0f
+                        index == currentExerciseOrSupersetIndex -> {
+                            val supersetExerciseId = supersetExerciseIds[subIndex]
+                            val sets = viewModel.setsByExerciseId[supersetExerciseId]
+                            val executedSetsCount = viewModel.getAllExecutedSetsByExerciseId(supersetExerciseId).size
+                            val totalSets = sets!!.size
+                            (executedSetsCount + 1).toFloat() / totalSets.toFloat()
+                        }
+                        else -> 0.0f
+                    }
 
                     // Create a single segment for each indicator
                     val trackSegment = ProgressIndicatorSegment(
                         weight = 1f,
-                        indicatorColor = MyColors.White
+                        indicatorColor = if (index != currentExerciseOrSupersetIndex) MyColors.Orange else MyColors.White
                     )
 
                     val startAngle = -60f + index * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)
@@ -71,12 +80,21 @@ fun ExerciseIndicator(
                     )
                 }
             }else{
-                val indicatorProgress = if (index <= currentExerciseIndex) 1.0f else 0.0f
+                val indicatorProgress = when {
+                    index < currentExerciseOrSupersetIndex -> 1.0f // Previous exercises are fully completed
+                    index == currentExerciseOrSupersetIndex -> {
+                        val sets = viewModel.setsByExerciseId[set.exerciseId]
+                        val currentSetIndex = sets!!.indexOfFirst { it === set }
+                        val totalSets = sets.size
+                        (currentSetIndex + 1).toFloat() / totalSets.toFloat()
+                    }
+                    else -> 0.0f // Future exercises are not started
+                }
 
                 // Create a single segment for each indicator
                 val trackSegment = ProgressIndicatorSegment(
                     weight = 1f,
-                    indicatorColor = if (index != currentExerciseIndex) MyColors.Orange else MyColors.White
+                    indicatorColor = if (index != currentExerciseOrSupersetIndex) MyColors.Orange else MyColors.White
                 )
 
                 // Calculate angle for each indicator to space them evenly
@@ -99,7 +117,7 @@ fun ExerciseIndicator(
         }
     }
 
-    val startAngle = -60f + currentExerciseIndex * (segmentArcAngle + 2f)
+    val startAngle = -60f + currentExerciseOrSupersetIndex * (segmentArcAngle + 2f)
     val middleAngle = startAngle + (segmentArcAngle / 2f)
 
     RotatingIndicator(middleAngle, MyColors.White)

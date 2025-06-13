@@ -24,6 +24,7 @@ class MyColors {
         val Yellow = Color.hsl(50f, 0.85f, 0.65f)
         val Red = Color(0xFFed2020)
         val LightGray = Color(0xFFAAAAAA)
+        val MiddleGray = Color(0xC0F0F0F0)
         val DarkGray = Color(0x80F0F0F0)
     }
 }
