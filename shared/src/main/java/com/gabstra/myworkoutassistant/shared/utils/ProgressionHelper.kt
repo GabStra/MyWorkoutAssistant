@@ -57,10 +57,12 @@ object VolumeDistributionHelper {
         val previousMaxFatigue = params.previousSets.maxOf { it.fatigue }
         val previousMinFatigue = params.previousSets.minOf { it.fatigue }
 
-        val previousSetsAtMaxFatigueCount = params.previousSets.filter { it.fatigue == previousMaxFatigue }.size
+
 
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
         val previousMinWeight = params.previousSets.minOf { it.weight }
+
+        val previousSetsAtMaxWeightCount = params.previousSets.filter { it.weight == previousMaxWeight }.size
 
         val avgPreviousRir = params.previousSets.map { it.rir }.average()
         val minRir = (floor(avgPreviousRir) -1).toInt().coerceIn(0, 10)
@@ -96,40 +98,14 @@ object VolumeDistributionHelper {
                 params,
                 { combo ->
                     val currentTotalFatigue = combo.sumOf { it.fatigue }
-                    val currentSetsAtPreviousMaxFatigueCount = combo.filter { it.fatigue >= previousMaxFatigue }.size
+                    val currentSetsAtPreviousMaxWeightCount = combo.filter { it.weight >= previousMaxWeight }.size
                     val currentAverageWeightPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
 
                     ValidationResult(
                         shouldReturn = currentTotalFatigue < previousTotalFatigue
                                 || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
                                 || currentTotalFatigue < minTotalFatigue
-                                || currentSetsAtPreviousMaxFatigueCount > previousSetsAtMaxFatigueCount
-                                || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.02
-                    )
-                }
-            )
-
-            if(result.isNotEmpty()){
-                return result
-            }
-        }
-
-        if(!previousMaxFatigue.isEqualTo(previousMinFatigue)){
-            var result = findBestProgressions(
-                usableSets.filter { it.fatigue <= previousMaxFatigue },
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                { combo ->
-                    val currentTotalFatigue = combo.sumOf { it.fatigue }
-                    val currentSetsAtPreviousMaxFatigueCount = combo.filter { it.fatigue >= previousMaxFatigue }.size
-                    val currentAverageWeightPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
-
-                    ValidationResult(
-                        shouldReturn = currentTotalFatigue < previousTotalFatigue
-                                || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
-                                || currentTotalFatigue < minTotalFatigue
-                                || currentSetsAtPreviousMaxFatigueCount > previousSetsAtMaxFatigueCount
+                                || currentSetsAtPreviousMaxWeightCount > previousSetsAtMaxWeightCount
                                 || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.02
                     )
                 }
@@ -156,23 +132,6 @@ object VolumeDistributionHelper {
                 )
             }
         )
-
-/*        if(result.isEmpty()){
-            result = findBestProgressions(
-                usableSets,
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                { combo ->
-                    val currentTotalFatigue = combo.sumOf { it.fatigue }
-                    ValidationResult(
-                        shouldReturn = currentTotalFatigue < previousTotalFatigue
-                                || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
-                                || currentTotalFatigue < minTotalFatigue
-                    )
-                }
-            )
-        }*/
 
         return result
     }
@@ -227,8 +186,13 @@ object VolumeDistributionHelper {
 
             val currentTotalFatigue = combo.sumOf { it.fatigue }
             val maxFatigue = combo.maxOf { it.fatigue }
+            val maxWeight = combo.maxOf { it.weight }
 
-            return currentTotalFatigue * maxFatigue
+            val totalVolume = combo.sumOf { it.volume }
+            val totalReps = combo.sumOf { it.reps }
+            var averageWeightPerRep = totalVolume / totalReps
+
+            return currentTotalFatigue * maxFatigue * maxWeight * averageWeightPerRep
         }
 
         suspend fun exploreCombinations(
