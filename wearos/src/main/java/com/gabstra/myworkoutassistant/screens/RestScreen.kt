@@ -85,8 +85,6 @@ fun RestScreen(
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
 
-    var initialSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
-
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -99,8 +97,6 @@ fun RestScreen(
     val equipment = remember(exercise) {
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
-    
-    var restTimeUpdated by remember { mutableStateOf(false) }
 
     val showPlatesPage = remember(exercise, equipment) {
         equipment != null
@@ -152,7 +148,6 @@ fun RestScreen(
     }
 
     LaunchedEffect(currentSetData) {
-        restTimeUpdated = currentSetData.startTimer != initialSeconds
         state.currentSetData = currentSetData
     }
 
@@ -201,15 +196,7 @@ fun RestScreen(
             )
             goBackJob?.cancel()
             hapticsViewModel.doHardVibrationWithBeep()
-            if(restTimeUpdated) {
-                viewModel.storeSetData()
-                viewModel.pushAndStoreWorkoutData(false,context){
-                    viewModel.goToNextState()
-                    viewModel.lightScreenUp()
-                }
-            }else{
-                onTimerEnd()
-            }
+            onTimerEnd()
         }
 
         if (!hasBeenStartedOnce) {
@@ -386,11 +373,7 @@ fun RestScreen(
                 endTimer = currentSeconds
             )
             hapticsViewModel.doGentleVibration()
-            viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false,context){
-                viewModel.goToNextState()
-                viewModel.lightScreenUp()
-            }
+            onTimerEnd()
             viewModel.closeCustomDialog()
         },
         handleNoClick = {

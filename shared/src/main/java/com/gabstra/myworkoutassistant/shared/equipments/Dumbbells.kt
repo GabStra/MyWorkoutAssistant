@@ -16,6 +16,6 @@ class Dumbbells (
 
     override fun formatWeight(weight: Double): String {
         val dumbbell = weight / 2
-        return "${com.gabstra.myworkoutassistant.shared.formatWeight(weight)} kg (${com.gabstra.myworkoutassistant.shared.formatWeight(dumbbell)} kg/db)"
+        return "${com.gabstra.myworkoutassistant.shared.formatWeight(dumbbell)} kg/db (tot: ${com.gabstra.myworkoutassistant.shared.formatWeight(weight)} kg)"
     }
 }

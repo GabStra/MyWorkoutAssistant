@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,7 +33,9 @@ import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -125,6 +128,21 @@ fun BodyWeightSetScreen(
             }
         } else {
             onEditModeDisabled()
+        }
+    }
+
+    var openDialogJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    var showWeightInfoDialog by remember { mutableStateOf(false) }
+
+    fun startOpenDialogJob() {
+        if( openDialogJob?.isActive == true) return
+        openDialogJob?.cancel()
+        openDialogJob = coroutineScope.launch {
+            showWeightInfoDialog = true
+            delay(5000L)
+            showWeightInfoDialog = false
         }
     }
 
@@ -297,7 +315,7 @@ fun BodyWeightSetScreen(
                 else -> MyColors.Green
             }
 
-            val weightText = equipment!!.formatWeight(currentSetData.additionalWeight)
+            val weightText = "${currentSetData.additionalWeight} kg"//equipment!!.formatWeight(currentSetData.additionalWeight)
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
@@ -331,13 +349,30 @@ fun BodyWeightSetScreen(
                             textAlign = TextAlign.Center
                         )
                         ScalableText(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().combinedClickable(
+                                onClick = {},
+                                onLongClick = {
+                                    startOpenDialogJob()
+                                    hapticsViewModel.doGentleVibration()
+                                },
+                                onDoubleClick = {}
+                            ),
                             text = equipment.type.toDisplayText(),
                             style = itemStyle,
                             color =  MyColors.White,
                             textAlign = TextAlign.Center
                         )
                     }
+
+                    WeightInfoDialog(
+                        show = showWeightInfoDialog,
+                        equipment.formatWeight(currentSetData.getWeight()),
+                        equipment = equipment,
+                        onClick = {
+                            openDialogJob?.cancel()
+                            showWeightInfoDialog = false
+                        }
+                    )
                 }
 
                 if(availableWeights.isNotEmpty() && currentSetData.additionalWeight != 0.0) {

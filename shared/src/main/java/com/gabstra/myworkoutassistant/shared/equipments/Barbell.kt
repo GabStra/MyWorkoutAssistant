@@ -26,6 +26,6 @@ class Barbell(
 
     override fun formatWeight(weight: Double): String {
         val sideWeight = (weight - barWeight) / 2
-        return "${com.gabstra.myworkoutassistant.shared.formatWeight(weight)} kg (${com.gabstra.myworkoutassistant.shared.formatWeight(sideWeight)} kg/side)"
+        return "${com.gabstra.myworkoutassistant.shared.formatWeight(sideWeight)} kg/side (tot: ${com.gabstra.myworkoutassistant.shared.formatWeight(weight)} kg)"
     }
 }
