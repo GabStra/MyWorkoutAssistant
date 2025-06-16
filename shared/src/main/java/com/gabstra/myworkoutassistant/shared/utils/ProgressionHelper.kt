@@ -180,6 +180,8 @@ object VolumeDistributionHelper {
         var bestCombination = emptyList<ExerciseSet>()
         var bestScore = Double.MAX_VALUE
 
+        val previosAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
+
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
             val validationResult = validationRules(combo)
             if (validationResult.shouldReturn)  return validationResult.returnValue
@@ -192,7 +194,10 @@ object VolumeDistributionHelper {
             val totalReps = combo.sumOf { it.reps }
             var averageWeightPerRep = totalVolume / totalReps
 
-            return currentTotalFatigue * maxFatigue * maxWeight * averageWeightPerRep
+            //average weight per rep difference between current and previous sets
+            val averageWeightDifference = 1 + abs(averageWeightPerRep - previosAverageWeightPerRep) 
+
+            return currentTotalFatigue * maxFatigue * maxWeight * averageWeightDifference
         }
 
         suspend fun exploreCombinations(
