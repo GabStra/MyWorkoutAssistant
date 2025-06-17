@@ -315,7 +315,7 @@ fun BodyWeightSetScreen(
                 else -> MyColors.Green
             }
 
-            val weightText = "${currentSetData.additionalWeight} kg"//equipment!!.formatWeight(currentSetData.additionalWeight)
+            val weightText = equipment!!.formatWeight(currentSetData.additionalWeight)
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
@@ -349,13 +349,15 @@ fun BodyWeightSetScreen(
                             textAlign = TextAlign.Center
                         )
                         ScalableText(
-                            modifier = Modifier.fillMaxWidth().combinedClickable(
-                                onClick = {},
-                                onLongClick = {
-                                    startOpenDialogJob()
-                                    hapticsViewModel.doGentleVibration()
-                                },
-                                onDoubleClick = {}
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        startOpenDialogJob()
+                                        hapticsViewModel.doGentleVibration()
+                                    },
+                                    onDoubleClick = {}
                             ),
                             text = equipment.type.toDisplayText(),
                             style = itemStyle,

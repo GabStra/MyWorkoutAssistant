@@ -312,7 +312,7 @@ fun WeightSetScreen(
                 else -> MyColors.Green
             }
 
-            val weightText = "${currentSetData.actualWeight} kg" // equipment!!.formatWeight(currentSetData.getWeight())
+            val weightText = equipment!!.formatWeight(currentSetData.getWeight())
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),

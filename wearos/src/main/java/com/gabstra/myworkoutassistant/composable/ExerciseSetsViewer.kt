@@ -56,6 +56,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun SetTableRow(
     hapticsViewModel: HapticsViewModel,
+    viewModel: AppViewModel,
     modifier: Modifier = Modifier,
     setState: WorkoutState.Set,
     index: Int?,
@@ -66,7 +67,7 @@ fun SetTableRow(
     val triangleSize = 6f
 
     val typography = MaterialTheme.typography
-    val captionStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.5f, fontWeight = FontWeight.Bold) }
+    val captionStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f, fontWeight = FontWeight.Bold) }
     val itemStyle = remember(typography) { typography.body1.copy(fontWeight = FontWeight.Bold) }
     val context = LocalContext.current
 
@@ -74,6 +75,8 @@ fun SetTableRow(
     val coroutineScope = rememberCoroutineScope()
 
     var showWeightInfoDialog by remember { mutableStateOf(false) }
+
+    val equipment = setState.equipment
 
     fun startOpenDialogJob() {
         if( openDialogJob?.isActive == true) return
@@ -145,9 +148,10 @@ fun SetTableRow(
         when (setState.currentSetData) {
             is WeightSetData -> {
                 val weightSetData = (setState.currentSetData as WeightSetData)
-                Text(
+                ScalableText(
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxHeight()
+                        .weight(3f)
                         .combinedClickable(
                             onClick = {},
                             onLongClick = {
@@ -156,7 +160,7 @@ fun SetTableRow(
                             },
                             onDoubleClick = {}
                     ),
-                    text = "%.2f".format(weightSetData.actualWeight).replace(',','.'),
+                    text = equipment!!.formatWeight(weightSetData.actualWeight),
                     style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
@@ -182,8 +186,14 @@ fun SetTableRow(
 
             is BodyWeightSetData -> {
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                Text(
-                    modifier = Modifier.weight(1f)
+                val weightText = if(setState.equipment != null) {
+                    setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
+                }else {
+                    "-"
+                }
+
+                ScalableText(
+                    modifier = Modifier.weight(3f)
                         .then(
                             if(setState.equipment != null)
                                 Modifier.combinedClickable(
@@ -194,11 +204,7 @@ fun SetTableRow(
                                     },
                                     onDoubleClick = {}
                                 ) else Modifier),
-                    text = if (bodyWeightSetData.additionalWeight > 0) {
-                        "%.2f".format(bodyWeightSetData.additionalWeight).replace(',','.')
-                    } else {
-                        "-"
-                    },
+                    text = weightText,
                     style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
@@ -305,7 +311,7 @@ fun ExerciseSetsViewer(
             ) {
                 Spacer(modifier= Modifier.width(18.dp))
                 Text(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(3f),
                     text = "WEIGHT (KG)",
                     style = headerStyle,
                     textAlign = TextAlign.Center
@@ -327,7 +333,7 @@ fun ExerciseSetsViewer(
                         enableBottomFade = false
                     )
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
                     SetTableRow(
@@ -345,6 +351,7 @@ fun ExerciseSetsViewer(
                                 }
                             },
                         hapticsViewModel = hapticsViewModel,
+                        viewModel = viewModel,
                         setState = nextSetState,
                         index = index,
                         isCurrentSet = index == setIndex,
@@ -367,7 +374,7 @@ fun ExerciseSetsViewer(
                 Spacer(modifier= Modifier.width(18.dp))
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = "TIME",
+                    text = "TIME (HH:MM:SS)",
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
@@ -399,6 +406,7 @@ fun ExerciseSetsViewer(
                                 }
                             },
                         hapticsViewModel = hapticsViewModel,
+                        viewModel = viewModel,
                         setState = nextSetState,
                         index = index,
                         isCurrentSet = index == setIndex,

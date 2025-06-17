@@ -106,6 +106,9 @@ fun ExerciseForm(
 
     val generateWarmupSets = remember { mutableStateOf(exercise?.generateWarmUpSets ?: false) } // Added state for generateWarmupSets
 
+    val enableProgression = remember { mutableStateOf(exercise?.enableProgression ?: false) } // Added state for enableProgression
+    val keepScreenOn = remember { mutableStateOf(exercise?.keepScreenOn ?: false) } // Added state for keepScreenOn
+
     val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
     val equipments by viewModel.equipmentsFlow.collectAsState()
@@ -177,6 +180,23 @@ fun ExerciseForm(
                     .padding(8.dp),
             )
 
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            ) {
+                Checkbox(
+                    checked = keepScreenOn.value,
+                    onCheckedChange = { keepScreenOn.value = it },
+                    colors = CheckboxDefaults.colors().copy(
+                        checkedCheckmarkColor = LightGray,
+                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+                Text(text = "Keep Screen On")
+            }
+
             if(exercise == null){
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -196,7 +216,7 @@ fun ExerciseForm(
                         DropdownMenu(
                             expanded = expandedType.value,
                             onDismissRequest = { expandedType.value = false },
-                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            modifier = Modifier.background(MaterialTheme.colorScheme.background),
                             border = BorderStroke(1.dp, MediumGray)
                         ) {
                             exerciseTypeDescriptions.forEach { ExerciseDescription ->
@@ -220,11 +240,12 @@ fun ExerciseForm(
             if(selectedExerciseType.value == ExerciseType.WEIGHT){
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth().padding(horizontal = 8.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
                 ) {
                     Text(
                         text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
@@ -236,14 +257,14 @@ fun ExerciseForm(
                         },
                         valueRange = 0f..100f,
                         steps = 98,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
                         text = "Reps Range (${minReps.value.toInt()} - ${maxReps.value.toInt()})",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
@@ -255,7 +276,7 @@ fun ExerciseForm(
                         },
                         valueRange = 1f..50f,
                         steps = 49,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(16.dp)) // Added spacer
@@ -282,7 +303,7 @@ fun ExerciseForm(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp) // Adjusted padding
+                        .padding(horizontal = 8.dp)
                 ) {
                     Checkbox(
                         checked = generateWarmupSets.value,
@@ -292,7 +313,24 @@ fun ExerciseForm(
                             uncheckedBorderColor = MaterialTheme.colorScheme.primary
                         )
                     )
-                    Text(text = "Generate Warmup Sets")
+                    Text(text = "Auto-Generate Warm-up Sets")
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                ) {
+                    Checkbox(
+                        checked = enableProgression.value,
+                        onCheckedChange = { enableProgression.value = it },
+                        colors = CheckboxDefaults.colors().copy(
+                            checkedCheckmarkColor = LightGray,
+                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                    Text(text = "Enable Progression")
                 }
             }
 
@@ -302,11 +340,12 @@ fun ExerciseForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text(text = "Equipment:", style = MaterialTheme.typography.bodyMedium)
+                Text(text = "Equipment:", style = MaterialTheme.typography.titleMedium)
                 Box(modifier = Modifier.fillMaxWidth()) {
                     val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
                     Text(
                         text = selectedEquipment?.name ?: "None",
+                        style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { expandedEquipment.value = true }
@@ -315,7 +354,7 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expandedEquipment.value,
                         onDismissRequest = { expandedEquipment.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         border = BorderStroke(1.dp, MediumGray)
                     ) {
                         DropdownMenuItem(
@@ -342,7 +381,7 @@ fun ExerciseForm(
                 }
             }
 
-            val heartRateZones = listOf("None") + listOf("Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
+            val heartRateZones = listOf("None") + listOf("Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
             val selectedLowerBoundMaxHRPercent = remember { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
             val selectedUpperBoundMaxHRPercent = remember { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
 
@@ -350,7 +389,16 @@ fun ExerciseForm(
             val selectedTargetZone = remember(selectedLowerBoundMaxHRPercent.value,selectedUpperBoundMaxHRPercent.value) {
                 mutableStateOf(
                     if(selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) null
-                    else zoneRanges.indexOfFirst { it.first == selectedLowerBoundMaxHRPercent.value && it.second== selectedUpperBoundMaxHRPercent.value }
+                    else {
+                        val index = zoneRanges.indexOfFirst { it.first == selectedLowerBoundMaxHRPercent.value && it.second== selectedUpperBoundMaxHRPercent.value }
+                        if(index == -1) {
+                            index
+                        }else if(index <= 1){
+                            null
+                        }else{
+                            index - 1
+                        }
+                    }
                 )
             }
 
@@ -368,7 +416,7 @@ fun ExerciseForm(
                     Text(
                         text = when(selectedTargetZone.value) {
                             null -> heartRateZones[0] // None
-                            -1 -> heartRateZones[6] // Custom
+                            -1 -> heartRateZones[5] // Custom
                             else -> heartRateZones[selectedTargetZone.value!! + 1] // Zone 1-5 (index + 1)
                         },
                         modifier = Modifier
@@ -379,7 +427,7 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expandedHeartRateZone.value,
                         onDismissRequest = { expandedHeartRateZone.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         border = BorderStroke(1.dp, MediumGray)
                     ) {
                         heartRateZones.forEachIndexed { index, zone ->
@@ -391,13 +439,13 @@ fun ExerciseForm(
                                             selectedUpperBoundMaxHRPercent.value = null
                                             selectedTargetZone.value = null
                                         }
-                                        in 1..5 -> { // Zone 1-5
-                                            val (lowerBound, upperBound) = zoneRanges[index - 1] // Adjust index for zoneRanges
+                                        in 1..4 -> { // Zone 2-5
+                                            val (lowerBound, upperBound) = zoneRanges[index + 1] // Adjust index for zoneRanges
                                             selectedLowerBoundMaxHRPercent.value = lowerBound
                                             selectedUpperBoundMaxHRPercent.value = upperBound
-                                            selectedTargetZone.value = index - 1 // Store zone index
+                                            selectedTargetZone.value = index // Store zone index
                                         }
-                                        6 -> { // Custom
+                                        5 -> { // Custom
                                             selectedLowerBoundMaxHRPercent.value = 50f // Default custom range
                                             selectedUpperBoundMaxHRPercent.value = 60f
                                             selectedTargetZone.value = -1 // Indicate custom
@@ -415,10 +463,12 @@ fun ExerciseForm(
             }
 
             if(showCustomTargetZone){
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) { // Wrap in column for better spacing
+                Column(modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)) { // Wrap in column for better spacing
                     Text(
                         text = "Custom HR Zone (${selectedLowerBoundMaxHRPercent.value?.toInt()}% - ${selectedUpperBoundMaxHRPercent.value?.toInt()}%)",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                     RangeSlider(
@@ -429,7 +479,9 @@ fun ExerciseForm(
                         },
                         valueRange = 1f..100f,
                         steps = 99,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp)
                     )
                 }
             }
@@ -488,7 +540,9 @@ fun ExerciseForm(
                         upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value,
                         equipmentId = selectedEquipmentId.value,
                         bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
-                        generateWarmUpSets = generateWarmupSets.value
+                        generateWarmUpSets = generateWarmupSets.value,
+                        enableProgression = enableProgression.value,
+                        keepScreenOn = keepScreenOn.value
                     )
 
                     onExerciseUpsert(newExercise)

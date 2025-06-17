@@ -11,14 +11,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -77,7 +74,7 @@ fun PageExercises(
 
     LaunchedEffect(isNavigationLocked) {
         if (isNavigationLocked) {
-            delay(500)
+            delay(200)
             isNavigationLocked = false
         }
     }
@@ -86,7 +83,7 @@ fun PageExercises(
         modifier = Modifier.fillMaxSize(),
         targetState = selectedExercise,
         transitionSpec = {
-            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+            fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
         },
         label = "",
     ) { updatedExercise ->
@@ -116,28 +113,6 @@ fun PageExercises(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .clickable(
-                        interactionSource = null,
-                        indication = null,
-                        enabled = !isNavigationLocked && currentIndex > 0
-                    ) {
-                        hapticsViewModel.doGentleVibration()
-                        val newIndex = currentIndex - 1
-                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
-                        isNavigationLocked = true
-                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                Icon(
-                    modifier = backArrowModifier,
-                    imageVector = Icons.Filled.ArrowBack,
-                    contentDescription = "Previous",
-                    tint = MyColors.White
-                )
-            }
-
             Column(
                 modifier = Modifier.fillMaxHeight().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -146,6 +121,7 @@ fun PageExercises(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(horizontal = 40.dp)
                         .clickable {
                             marqueeEnabled = !marqueeEnabled
                             hapticsViewModel.doGentleVibration()
@@ -198,46 +174,74 @@ fun PageExercises(
                     }
                 }
 
-                ExerciseSetsViewer(
-                    modifier =  Modifier.fillMaxSize(),
-                    viewModel = viewModel,
-                    hapticsViewModel = hapticsViewModel,
-                    exercise = updatedExercise,
-                    currentSet = currentStateSet.set,
-                    customColor = when{
-                        updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
-                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.DarkGray
-                        else -> null
-                    },
-                    overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
-                        overrideSetIndex
+                Box(modifier =  Modifier.fillMaxSize()){
+                    ExerciseSetsViewer(
+                        modifier =  Modifier.fillMaxSize(),
+                        viewModel = viewModel,
+                        hapticsViewModel = hapticsViewModel,
+                        exercise = updatedExercise,
+                        currentSet = currentStateSet.set,
+                        customColor = when{
+                            updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
+                            updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.DarkGray
+                            else -> null
+                        },
+                        overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                            overrideSetIndex
+                        }
+                        else null
+                    )
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .weight(1f)
+                                    .clickable(
+                                        enabled = !isNavigationLocked && currentIndex > 0
+                                    ) {
+                                        hapticsViewModel.doGentleVibration()
+                                        val newIndex = currentIndex - 1
+                                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
+                                        isNavigationLocked = true
+                                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+/*                    Icon(
+                        modifier = backArrowModifier,
+                        imageVector = Icons.Filled.ArrowBack,
+                        contentDescription = "Previous",
+                        tint = MyColors.White
+                    )*/
+                            }
+                            Spacer(modifier = Modifier.fillMaxHeight().weight(1f))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .weight(1f)
+                                    .clickable(
+                                        enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1
+                                    ) {
+                                        hapticsViewModel.doGentleVibration()
+                                        val newIndex = currentIndex + 1
+                                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
+                                        isNavigationLocked = true
+                                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+/*                    Icon(
+                        modifier = forwardArrowModifier,
+                        imageVector = Icons.Filled.ArrowForward,
+                        contentDescription = "Next",
+                        tint = MyColors.White
+                    )*/
+                            }
+                        }
                     }
-                    else null
-                )
+                }
             }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .clickable(
-                        interactionSource = null,
-                        indication = null,
-                        enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1
-                    ) {
-                        hapticsViewModel.doGentleVibration()
-                        val newIndex = currentIndex + 1
-                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
-                        isNavigationLocked = true
-                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                Icon(
-                    modifier = forwardArrowModifier,
-                    imageVector = Icons.Filled.ArrowForward,
-                    contentDescription = "Next",
-                    tint = MyColors.White
-                )
-            }
-
         }
     }
 }

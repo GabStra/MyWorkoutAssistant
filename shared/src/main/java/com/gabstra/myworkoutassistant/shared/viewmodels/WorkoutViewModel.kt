@@ -457,14 +457,10 @@ open class WorkoutViewModel : ViewModel() {
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
         exercises.forEach { exercise ->
-            if (exercise.doNotStoreHistory) return@forEach
+            if (exercise.doNotStoreHistory || !exerciseProgressionByExerciseId.containsKey(exercise.id)) return@forEach
 
             var currentExercise = exercise
-
-            val progressionData =
-                if (exerciseProgressionByExerciseId.containsKey(currentExercise.id)) exerciseProgressionByExerciseId[currentExercise.id] else null
-
-            val exerciseProgression = progressionData?.first
+            val exerciseProgression = exerciseProgressionByExerciseId[currentExercise.id]!!.first
 
             if (exerciseProgression != null) {
                 val distributedSets = exerciseProgression.sets
@@ -518,10 +514,10 @@ open class WorkoutViewModel : ViewModel() {
         exerciseProgressionByExerciseId.clear()
 
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-        val exerciseWithWeightSets = exercises.filter { it -> it.enabled }
+        val validExercises = exercises.filter { it -> it.enabled && it.enableProgression }
             .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT  }
 
-        exerciseWithWeightSets.map { exercise ->
+        validExercises.map { exercise ->
             val equipment =
                 exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
 
@@ -532,7 +528,7 @@ open class WorkoutViewModel : ViewModel() {
         }
 
         // Process exercises sequentially
-        exerciseWithWeightSets.forEach { exercise ->
+        validExercises.forEach { exercise ->
             val result = processExercise(exercise)
             result?.let { (exerciseId, progression) ->
                 exerciseProgressionByExerciseId[exerciseId] = progression
@@ -1631,7 +1627,7 @@ open class WorkoutViewModel : ViewModel() {
         workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
     }
 
-    fun goToNextState() {
+    open fun goToNextState() {
         if (workoutStateQueue.isEmpty()) return
 
         if (_workoutState.value !is WorkoutState.Preparing) {

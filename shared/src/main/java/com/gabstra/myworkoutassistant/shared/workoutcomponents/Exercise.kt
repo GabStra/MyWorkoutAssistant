@@ -22,4 +22,6 @@ data class Exercise (
     val equipmentId: UUID?,
     val bodyWeightPercentage: Double?,
     val generateWarmUpSets: Boolean = false,
+    val enableProgression : Boolean = false,
+    val keepScreenOn : Boolean = false,
     ): WorkoutComponent(id,enabled)

@@ -346,9 +346,10 @@ fun MyWorkoutAssistantNavHost(
 
                 val workoutRecords = workoutRecordDao.getAll()
 
-                val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
-                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id })
-                }
+                val validWorkoutHistories = workoutHistories
+                    .filter { workoutHistory -> allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id }) }
+                    .groupBy { it.workoutId } //IF FOR WHATEVER REASON WATCH NEEDS TO HAVE ALL HISTORIES, REMOVE THE FOLLOWING LINES
+                    .mapNotNull { (_, histories) -> histories.maxByOrNull { it.startTime } }
 
                 val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
                     validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }

@@ -184,6 +184,19 @@ open class AppViewModel : WorkoutViewModel() {
         lightScreenPermanently()
     }
 
+    override fun goToNextState() {
+        super.goToNextState()
+
+        if (workoutState.value is WorkoutState.Set) {
+            val exercise = exercisesById[(workoutState.value as WorkoutState.Set).exerciseId]!!
+            if(exercise.keepScreenOn){
+                lightScreenPermanently()
+            }else{
+                restoreScreenDimmingState()
+            }
+        }
+    }
+
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
         _currentScreenDimmingState.value = true
         _previousScreenDimmingState.value = true

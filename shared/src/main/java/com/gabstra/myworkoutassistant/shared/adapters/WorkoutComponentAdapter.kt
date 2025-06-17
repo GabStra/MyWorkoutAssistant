@@ -65,6 +65,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 }
 
                 jsonObject.addProperty("generateWarmUpSets", src.generateWarmUpSets)
+                jsonObject.addProperty("enableProgression", src.enableProgression)
+                jsonObject.addProperty("keepScreenOn", src.keepScreenOn)
             }
 
             is Rest -> {
@@ -176,6 +178,18 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     false
                 }
 
+                val enableProgression = if (jsonObject.has("enableProgression")) {
+                    jsonObject.get("enableProgression").asBoolean
+                } else {
+                    false
+                }
+
+                val keepScreenOn = if (jsonObject.has("keepScreenOn")) {
+                    jsonObject.get("keepScreenOn").asBoolean
+                } else {
+                    false
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -192,7 +206,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     upperBoundMaxHRPercent,
                     equipmentId,
                     bodyWeightPercentage,
-                    generateWarmUpSets
+                    generateWarmUpSets,
+                    enableProgression,
+                    keepScreenOn
                 )
             }
 

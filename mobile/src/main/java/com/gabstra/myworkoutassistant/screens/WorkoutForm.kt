@@ -197,7 +197,7 @@ fun WorkoutForm(
                     DropdownMenu(
                         expanded = expanded.value,
                         onDismissRequest = { expanded.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         border = BorderStroke(1.dp, MediumGray)
                     ) {
                         WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
