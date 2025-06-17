@@ -15,6 +15,6 @@ class Dumbbell (
     }
 
     override fun formatWeight(weight: Double): String {
-        return "${com.gabstra.myworkoutassistant.shared.formatWeight(weight)} kg"
+        return "${com.gabstra.myworkoutassistant.shared.formatWeight(weight)}"
     }
 }

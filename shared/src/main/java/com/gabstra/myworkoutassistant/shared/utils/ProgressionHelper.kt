@@ -32,7 +32,7 @@ object VolumeDistributionHelper {
     )
 
     data class WeightExerciseParameters(
-        val previousSets:  List<VolumeDistributionHelper.ExerciseSet>,
+        var previousSets:  List<VolumeDistributionHelper.ExerciseSet>,
         val previousTotalVolume : Double,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
@@ -40,6 +40,23 @@ object VolumeDistributionHelper {
         val repsRange: IntRange,
         val volumeProgressionRange: FloatRange,
     )
+
+    fun recalculateExerciseFatigue(
+        existingSets: List<ExerciseSet>,
+        fatigueFactor: Double = 0.005      // you’ll likely need a smaller factor here
+    ): List<ExerciseSet> {
+        val adjustedSets = mutableListOf<ExerciseSet>()
+        var cumulativeFatigue = 0.0
+
+        existingSets.forEach { original ->
+            val baseFatigue = original.fatigue
+            val adjustedFatigue = baseFatigue * (1.0 + fatigueFactor * cumulativeFatigue)
+            adjustedSets.add(original.copy(fatigue = adjustedFatigue))
+            cumulativeFatigue += adjustedFatigue
+        }
+
+        return adjustedSets
+    }
 
     private  suspend fun findValidProgression(
         params: WeightExerciseParameters,
@@ -49,15 +66,13 @@ object VolumeDistributionHelper {
             return emptyList()
         }
 
-        var previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
+        val previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
         var nearAverageWeights = getNearAverageWeights(params,2)
 
         var previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
 
         val previousMaxFatigue = params.previousSets.maxOf { it.fatigue }
         val previousMinFatigue = params.previousSets.minOf { it.fatigue }
-
-
 
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
         val previousMinWeight = params.previousSets.minOf { it.weight }
@@ -83,6 +98,8 @@ object VolumeDistributionHelper {
             .minByOrNull { abs(it - (previousMaxFatigue * 1.025)) }
             ?: previousMaxFatigue
 
+        val previousSetsAtMaxFatigueCount = params.previousSets.filter { it.fatigue == previousMaxFatigue }.size
+
         var usableSets = possibleSets
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.rir in minRir..maxRir }
@@ -97,16 +114,19 @@ object VolumeDistributionHelper {
                 params.previousSets.size,
                 params,
                 { combo ->
+                    val currentTotalVolume = combo.sumOf { it.volume }
                     val currentTotalFatigue = combo.sumOf { it.fatigue }
                     val currentSetsAtPreviousMaxWeightCount = combo.filter { it.weight >= previousMaxWeight }.size
+                    val currentSetsAtPreviousMaxFatigueCount = combo.filter { it.fatigue >= previousMaxFatigue }.size
+
                     val currentAverageWeightPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
 
                     ValidationResult(
-                        shouldReturn = currentTotalFatigue < previousTotalFatigue
-                                || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
+                        shouldReturn = currentTotalVolume < params.previousTotalVolume
+                                || currentTotalVolume.isEqualTo(params.previousTotalVolume)
                                 || currentTotalFatigue < minTotalFatigue
                                 || currentSetsAtPreviousMaxWeightCount > previousSetsAtMaxWeightCount
-                                || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.02
+                                || currentSetsAtPreviousMaxFatigueCount > previousSetsAtMaxFatigueCount
                     )
                 }
             )
@@ -122,13 +142,14 @@ object VolumeDistributionHelper {
             params.previousSets.size,
             params,
             { combo ->
+                val currentTotalVolume = combo.sumOf { it.volume }
                 val currentTotalFatigue = combo.sumOf { it.fatigue }
                 val currentAverageWeightPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
+
                 ValidationResult(
-                    shouldReturn = currentTotalFatigue < previousTotalFatigue
-                            || currentTotalFatigue.isEqualTo(previousTotalFatigue, epsilon = 1e-1)
+                    shouldReturn = currentTotalVolume < params.previousTotalVolume
+                            || currentTotalVolume.isEqualTo(params.previousTotalVolume)
                             || currentTotalFatigue < minTotalFatigue
-                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.02
                 )
             }
         )
@@ -197,7 +218,11 @@ object VolumeDistributionHelper {
             //average weight per rep difference between current and previous sets
             val averageWeightDifference = 1 + abs(averageWeightPerRep - previosAverageWeightPerRep) 
 
-            return currentTotalFatigue * maxFatigue * maxWeight * averageWeightDifference
+            val volumeDifference = 1 + abs(totalVolume - params.previousTotalVolume)
+
+            val fatigueDifference = 1 + abs(currentTotalFatigue - params.previousSets.sumOf { it.fatigue })
+
+            return fatigueDifference * maxFatigue * maxWeight  * averageWeightDifference
         }
 
         suspend fun exploreCombinations(
@@ -207,14 +232,15 @@ object VolumeDistributionHelper {
 
             if (currentCombo.size >= minSets) {
                 mutex.withLock {
-                    val currentScore = evaluateGeneralScore(currentCombo)
+                    val adjustedCombo = recalculateExerciseFatigue(currentCombo)
+                    val currentScore = evaluateGeneralScore(adjustedCombo)
                     if (currentScore != Double.MAX_VALUE && bestScore != Double.MAX_VALUE) {
                         if (currentScore > bestScore) return
                     }
 
                     if (currentScore < bestScore) {
                         bestScore = currentScore
-                        bestCombination = currentCombo
+                        bestCombination = adjustedCombo
                     }
                 }
             }

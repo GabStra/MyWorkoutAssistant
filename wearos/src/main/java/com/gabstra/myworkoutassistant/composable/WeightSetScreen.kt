@@ -363,7 +363,7 @@ fun WeightSetScreen(
 
                     WeightInfoDialog(
                         show = showWeightInfoDialog,
-                        equipment.formatWeight(currentSetData.getWeight()),
+                        weight = currentSetData.getWeight(),
                         equipment = equipment,
                         onClick = {
                             openDialogJob?.cancel()
@@ -378,7 +378,7 @@ fun WeightSetScreen(
                     verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
                     Text(
-                        text = "WEIGHT",
+                        text = "WEIGHT (KG)",
                         style = headerStyle,
                         textAlign = TextAlign.Center
                     )

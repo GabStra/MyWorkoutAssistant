@@ -151,7 +151,7 @@ fun SetTableRow(
                 ScalableText(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .weight(3f)
+                        .weight(2f)
                         .combinedClickable(
                             onClick = {},
                             onLongClick = {
@@ -175,7 +175,7 @@ fun SetTableRow(
 
                 WeightInfoDialog(
                     show = showWeightInfoDialog,
-                    setState.equipment!!.formatWeight(weightSetData.getWeight()),
+                    weight = weightSetData.getWeight(),
                     equipment = setState.equipment,
                     onClick = {
                         openDialogJob?.cancel()
@@ -193,17 +193,16 @@ fun SetTableRow(
                 }
 
                 ScalableText(
-                    modifier = Modifier.weight(3f)
-                        .then(
-                            if(setState.equipment != null)
-                                Modifier.combinedClickable(
-                                    onClick = {},
-                                    onLongClick = {
-                                        startOpenDialogJob()
-                                        hapticsViewModel.doGentleVibration()
-                                    },
-                                    onDoubleClick = {}
-                                ) else Modifier),
+                    modifier = Modifier
+                        .weight(2f)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                startOpenDialogJob()
+                                hapticsViewModel.doGentleVibration()
+                            },
+                            onDoubleClick = {}
+                        ),
                     text = weightText,
                     style = itemStyle,
                     textAlign = TextAlign.Center,
@@ -217,17 +216,15 @@ fun SetTableRow(
                     color = color
                 )
 
-                if(setState.equipment != null) {
-                    WeightInfoDialog(
-                        show = showWeightInfoDialog,
-                        message = setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight),
-                        equipment = setState.equipment,
-                        onClick = {
-                            openDialogJob?.cancel()
-                            showWeightInfoDialog = false
-                        }
-                    )
-                }
+                WeightInfoDialog(
+                    show = showWeightInfoDialog,
+                    weight = bodyWeightSetData.additionalWeight,
+                    equipment = setState.equipment,
+                    onClick = {
+                        openDialogJob?.cancel()
+                        showWeightInfoDialog = false
+                    }
+                )
             }
 
             is TimedDurationSetData -> {
@@ -311,7 +308,7 @@ fun ExerciseSetsViewer(
             ) {
                 Spacer(modifier= Modifier.width(18.dp))
                 Text(
-                    modifier = Modifier.weight(3f),
+                    modifier = Modifier.weight(2f),
                     text = "WEIGHT (KG)",
                     style = headerStyle,
                     textAlign = TextAlign.Center
