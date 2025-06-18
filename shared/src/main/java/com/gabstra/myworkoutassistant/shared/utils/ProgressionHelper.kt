@@ -127,7 +127,6 @@ object VolumeDistributionHelper {
                             || currentTotalFatigue < minTotalFatigue
                             || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
                             || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
-                            || currentTotalFatigue > previousTotalFatigue * 1.05
                 )
             }
         )
@@ -152,7 +151,6 @@ object VolumeDistributionHelper {
                             || currentTotalFatigue < minTotalFatigue
                             || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
                             || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
-                            || currentTotalFatigue > previousTotalFatigue * 1.05
                 )
             }
         )
@@ -177,7 +175,6 @@ object VolumeDistributionHelper {
                             || currentTotalFatigue < minTotalFatigue
                             || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
                             || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
-                            || currentTotalFatigue > previousTotalFatigue * 1.05
                 )
             }
         )
@@ -264,18 +261,16 @@ object VolumeDistributionHelper {
             currentCombo: List<ExerciseSet>,
             depth: Int = 1
         ) {
-
             if (currentCombo.size >= minSets) {
                 mutex.withLock {
-                    val adjustedCombo = recalculateExerciseFatigue(currentCombo)
-                    val currentScore = evaluateGeneralScore(adjustedCombo)
+                    val currentScore = evaluateGeneralScore(currentCombo)
                     if (currentScore != Double.MAX_VALUE && bestScore != Double.MAX_VALUE) {
                         if (currentScore > bestScore) return
                     }
 
                     if (currentScore < bestScore) {
                         bestScore = currentScore
-                        bestCombination = adjustedCombo
+                        bestCombination = currentCombo
                     }
                 }
             }
@@ -283,12 +278,12 @@ object VolumeDistributionHelper {
             if (depth >= maxSets) return
 
             val lastSet = currentCombo.last()
-
             val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.volume >= candidate.volume }
 
             for (nextSet in validSets) {
                 val newCombo = currentCombo + nextSet
-                exploreCombinations(newCombo,depth + 1)
+                val adjustedCombo = recalculateExerciseFatigue(newCombo)
+                exploreCombinations(adjustedCombo,depth + 1)
             }
         }
 
