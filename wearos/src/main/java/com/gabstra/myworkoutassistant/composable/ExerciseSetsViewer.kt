@@ -290,9 +290,9 @@ fun ExerciseSetsViewer(
             return@LaunchedEffect
         }
         // Calculate position including spacing
-        val spacingHeight = with(density) { 2.dp.toPx().toInt() }
+        //val spacingHeight = with(density) { 2.dp.toPx().toInt() }
         val position = (0 until setIndex).sumOf { index ->
-            (itemHeights[index] ?: 0) + spacingHeight
+            (itemHeights[index] ?: 0) // + spacingHeight
         }
         scrollState.scrollTo(position)
     }
@@ -330,7 +330,7 @@ fun ExerciseSetsViewer(
                         enableBottomFade = false
                     )
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
+                //verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
                     SetTableRow(

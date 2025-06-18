@@ -3,13 +3,13 @@ package com.gabstra.myworkoutassistant.shared.utils
 import androidx.annotation.FloatRange
 import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
+import com.gabstra.myworkoutassistant.shared.standardDeviation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.pow
@@ -18,6 +18,7 @@ import kotlin.math.pow
 object VolumeDistributionHelper {
     data class ExerciseSet(
         val weight: Double,
+        val intensity: Double,
         val reps: Int,
         val volume: Double,
         val fatigue: Double,
@@ -67,17 +68,17 @@ object VolumeDistributionHelper {
         }
 
         val previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
-        var nearAverageWeights = getNearAverageWeights(params,3)
+        var nearAverageWeights = getNearAverageWeights(params,2)
 
         val previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
 
         val previousMaxFatigue = params.previousSets.maxOf { it.fatigue }
-        val previousMinFatigue = params.previousSets.minOf { it.fatigue }
 
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
+        val previousMaxVolume = params.previousSets.maxOf { it.volume }
 
         val avgPreviousRir = params.previousSets.map { it.rir }.average()
-        val minRir = (floor(avgPreviousRir) -1).toInt().coerceIn(0, 10)
+        val minRir = (floor(avgPreviousRir) - 1).toInt().coerceIn(0, 10)
         val maxRir = (ceil(avgPreviousRir) + 1).toInt().coerceIn(0, 10)
 
         var validSets = possibleSets
@@ -87,29 +88,31 @@ object VolumeDistributionHelper {
         val maxWeight = validSets.filter { it.weight > previousMaxWeight }
             .minBy { it.weight }.weight
 
-        validSets = validSets
+        var usableSets = validSets
             .filter { it.weight <= maxWeight }
 
-        val fatigues = validSets
+       /*
+       val fatigues = validSets
             .map { it.fatigue }.sorted()
 
         val minFatigue = fatigues
             .filter { it < previousMinFatigue}
-            .minByOrNull { abs(it - (previousMinFatigue * 0.975)) }
+            .minByOrNull { abs(it - (previousMinFatigue * 0.95)) }
             ?: previousMinFatigue
 
         val maxFatigue = fatigues
             .filter { it > previousMaxFatigue}
-            .minByOrNull { abs(it - (previousMaxFatigue * 1.025)) }
+            .minByOrNull { abs(it - (previousMaxFatigue * 1.05)) }
             ?: previousMaxFatigue
 
         var usableSets = validSets
             .filter { set -> set.fatigue in minFatigue..maxFatigue }
+        */
 
         val minTotalFatigue = previousTotalFatigue * (1 + params.volumeProgressionRange.from / 100)
 
         var result = findBestProgressions(
-            usableSets.filter { it.weight <= previousMaxWeight && it.fatigue <= previousMaxFatigue },
+            usableSets.filter { it.weight <= previousMaxWeight && it.fatigue <= previousMaxFatigue && it.volume <= previousMaxVolume },
             params.previousSets.size,
             params.previousSets.size,
             params,
@@ -123,6 +126,8 @@ object VolumeDistributionHelper {
                             || currentTotalVolume.isEqualTo(params.previousTotalVolume)
                             || currentTotalFatigue < minTotalFatigue
                             || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
+                            || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
+                            || currentTotalFatigue > previousTotalFatigue * 1.05
                 )
             }
         )
@@ -131,7 +136,30 @@ object VolumeDistributionHelper {
             return result
         }
 
+        result = findBestProgressions(
+            usableSets.filter { it.weight <= previousMaxWeight && it.volume <= previousMaxVolume },
+            params.previousSets.size,
+            params.previousSets.size,
+            params,
+            { combo ->
+                val currentTotalVolume = combo.sumOf { it.volume }
+                val currentTotalFatigue = combo.sumOf { it.fatigue }
+                val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
 
+                ValidationResult(
+                    shouldReturn = currentTotalVolume < params.previousTotalVolume
+                            || currentTotalVolume.isEqualTo(params.previousTotalVolume)
+                            || currentTotalFatigue < minTotalFatigue
+                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
+                            || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
+                            || currentTotalFatigue > previousTotalFatigue * 1.05
+                )
+            }
+        )
+
+        if(result.isNotEmpty()){
+            return result
+        }
 
         result = findBestProgressions(
             usableSets,
@@ -148,6 +176,8 @@ object VolumeDistributionHelper {
                             || currentTotalVolume.isEqualTo(params.previousTotalVolume)
                             || currentTotalFatigue < minTotalFatigue
                             || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
+                            || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
+                            || currentTotalFatigue > previousTotalFatigue * 1.05
                 )
             }
         )
@@ -200,7 +230,7 @@ object VolumeDistributionHelper {
         var bestScore = Double.MAX_VALUE
 
         val previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
-
+        val previousTotalVolume = params.previousTotalVolume
         val previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
@@ -209,18 +239,25 @@ object VolumeDistributionHelper {
 
             val currentTotalFatigue = combo.sumOf { it.fatigue }
             val currentTotalVolume = combo.sumOf { it.volume }
-
-            val totalFatigueDifference = currentTotalFatigue - previousTotalFatigue
-            val totalVolumeDifference = abs(currentTotalVolume - params.previousTotalVolume)
-
             val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
 
-            val avgWeightDifference = previousAverageWeightPerRep /currentAverageWeightPerRep
+            val totalFatigueDifference = 1 + (currentTotalFatigue / previousTotalFatigue)
+            val totalVolumeDifference = 1 + (currentTotalVolume / previousTotalVolume)
+            val avgWeightDifference = 1 + (currentAverageWeightPerRep / previousAverageWeightPerRep)
 
+            val intensityDev = 1 + combo.map { it.intensity }.standardDeviation()
+            val fatigueDev = 1 + combo.map { it.fatigue }.standardDeviation()
 
-            return totalFatigueDifference *
-                    totalVolumeDifference *
-                    avgWeightDifference
+            //collect all the differences in a list
+            val differences = listOf(
+                totalFatigueDifference,
+                totalVolumeDifference,
+                avgWeightDifference
+            )
+
+            val stdDev = 1 + differences.standardDeviation()
+
+            return totalFatigueDifference * totalVolumeDifference * avgWeightDifference * stdDev * intensityDev * fatigueDev
         }
 
         suspend fun exploreCombinations(
@@ -247,7 +284,7 @@ object VolumeDistributionHelper {
 
             val lastSet = currentCombo.last()
 
-            val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.fatigue >= candidate.fatigue }
+            val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.volume >= candidate.volume }
 
             for (nextSet in validSets) {
                 val newCombo = currentCombo + nextSet
@@ -299,6 +336,9 @@ object VolumeDistributionHelper {
         return sortedWeights.filterIndexed { index, _ ->
             index in (closestWeightIndex - offset)..(closestWeightIndex + offset)
         }
+
+        //return sortedWeights.filter { it in averageWeightPerRep * 0.95 .. averageWeightPerRep * 1.05 }
+
     }
 
     private suspend fun generatePossibleSets(params: WeightExerciseParameters): List<ExerciseSet> =
@@ -335,7 +375,8 @@ object VolumeDistributionHelper {
             reps = reps,
             volume = volume,
             fatigue = fatigue,
-            rir = rir
+            rir = rir,
+            intensity = intensity
         )
     }
 
