@@ -49,27 +49,35 @@ fun PageExercises(
     val context = LocalContext.current
 
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
-    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
+    val exerciseOrSupersetIds = remember {
+        viewModel.setsByExerciseId.keys.toList()
+            .map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
+            .distinct()
+    }
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-    val currentExerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
+    val currentExerciseOrSupersetId =
+        if (viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
     val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(currentExerciseOrSupersetId)
 
     var selectedExercise by remember { mutableStateOf(currentExercise) }
 
     val typography = MaterialTheme.typography
-    val captionStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val captionStyle =
+        remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
     var isNavigationLocked by remember { mutableStateOf(false) }
 
-    val isSuperset = remember(currentExerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId) }
+    val isSuperset = remember(currentExerciseOrSupersetId) {
+        viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
+    }
 
-    val overrideSetIndex = remember(isSuperset,currentExercise){
-        if(isSuperset){
-            viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }.indexOf(currentStateSet.set.id)
-        }
-        else null
+    val overrideSetIndex = remember(isSuperset, currentExercise) {
+        if (isSuperset) {
+            viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }
+                .indexOf(currentStateSet.set.id)
+        } else null
     }
 
     LaunchedEffect(isNavigationLocked) {
@@ -87,10 +95,16 @@ fun PageExercises(
         },
         label = "",
     ) { updatedExercise ->
-        val updatedExerciseOrSupersetId = remember(updatedExercise) { if(viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) viewModel.supersetIdByExerciseId[updatedExercise.id] else updatedExercise.id }
-        val updatedExerciseOrSupersetIndex =  remember(updatedExerciseOrSupersetId) {exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId) }
+        val updatedExerciseOrSupersetId = remember(updatedExercise) {
+            if (viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) viewModel.supersetIdByExerciseId[updatedExercise.id] else updatedExercise.id
+        }
+        val updatedExerciseOrSupersetIndex = remember(updatedExerciseOrSupersetId) {
+            exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId)
+        }
 
-        val isSuperset = remember(updatedExerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId) }
+        val isSuperset = remember(updatedExerciseOrSupersetId) {
+            viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId)
+        }
 
         val currentIndex = remember(updatedExercise) { exerciseIds.indexOf(updatedExercise.id) }
 
@@ -98,14 +112,18 @@ fun PageExercises(
             if (currentIndex > 0)
                 Modifier.padding(2.dp)
             else
-                Modifier.padding(2.dp).alpha(0f)
+                Modifier
+                    .padding(2.dp)
+                    .alpha(0f)
         }
 
         val forwardArrowModifier = remember(currentIndex, exerciseIds.size) {
             if (currentIndex < exerciseIds.size - 1)
                 Modifier.padding(2.dp)
             else
-                Modifier.padding(2.dp).alpha(0f)
+                Modifier
+                    .padding(2.dp)
+                    .alpha(0f)
         }
 
         Row(
@@ -114,7 +132,9 @@ fun PageExercises(
             horizontalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
             Column(
-                modifier = Modifier.fillMaxHeight().weight(1f),
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .weight(1f),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -151,7 +171,8 @@ fun PageExercises(
                         if (isSuperset) {
                             val supersetExercises =
                                 remember { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!! }
-                            val supersetIndex = remember { supersetExercises.indexOf(updatedExercise) }
+                            val supersetIndex =
+                                remember { supersetExercises.indexOf(updatedExercise) }
 
                             Text(
                                 textAlign = TextAlign.Center,
@@ -163,7 +184,8 @@ fun PageExercises(
                         if (updatedExercise.id == currentExercise.id) {
                             val exerciseSetIds =
                                 remember { viewModel.setsByExerciseId[updatedExercise.id]!!.map { it.set.id } }
-                            val setIndex = remember { exerciseSetIds.indexOf(currentStateSet.set.id) }
+                            val setIndex =
+                                remember { exerciseSetIds.indexOf(currentStateSet.set.id) }
 
                             Text(
                                 textAlign = TextAlign.Center,
@@ -174,22 +196,23 @@ fun PageExercises(
                     }
                 }
 
-                Box(modifier =  Modifier.fillMaxSize().padding(horizontal = 10.dp)){
+                Box(modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp)) {
                     ExerciseSetsViewer(
-                        modifier =  Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize(),
                         viewModel = viewModel,
                         hapticsViewModel = hapticsViewModel,
                         exercise = updatedExercise,
                         currentSet = currentStateSet.set,
-                        customColor = when{
+                        customColor = when {
                             updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
                             updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.LightGray
                             else -> null
                         },
-                        overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                        overrideSetIndex = if (updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
                             overrideSetIndex
-                        }
-                        else null
+                        } else null
                     )
 
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -206,10 +229,14 @@ fun PageExercises(
                                     ) {
                                         hapticsViewModel.doGentleVibration()
                                         val newIndex = currentIndex - 1
-                                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
+                                        selectedExercise =
+                                            viewModel.exercisesById[exerciseIds[newIndex]]!!
                                         isNavigationLocked = true
-                                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                                    }
+                                    .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
 /*                    Icon(
                         modifier = backArrowModifier,
                         imageVector = Icons.Filled.ArrowBack,
@@ -217,7 +244,9 @@ fun PageExercises(
                         tint = MyColors.White
                     )*/
                             }
-                            Spacer(modifier = Modifier.fillMaxHeight().weight(1f))
+                            Spacer(modifier = Modifier
+                                .fillMaxHeight()
+                                .weight(2f))
                             Row(
                                 modifier = Modifier
                                     .fillMaxHeight()
@@ -227,10 +256,14 @@ fun PageExercises(
                                     ) {
                                         hapticsViewModel.doGentleVibration()
                                         val newIndex = currentIndex + 1
-                                        selectedExercise = viewModel.exercisesById[exerciseIds[newIndex]]!!
+                                        selectedExercise =
+                                            viewModel.exercisesById[exerciseIds[newIndex]]!!
                                         isNavigationLocked = true
-                                    }.then( if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                                    }
+                                    .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
 /*                    Icon(
                         modifier = forwardArrowModifier,
                         imageVector = Icons.Filled.ArrowForward,
