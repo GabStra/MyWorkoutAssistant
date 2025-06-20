@@ -410,10 +410,10 @@ fun getContrastRatio(color1: Color, color2: Color): Double {
     return (max(luminance1, luminance2) + 0.05) / (min(luminance1, luminance2) + 0.05)
 }
 
-fun Modifier.circleMask() = this.drawWithContent {
+fun Modifier.circleMask(radiusOffset: Dp = 0.dp) = this.drawWithContent {
     // Create a circular path for the mask
     val path = androidx.compose.ui.graphics.Path().apply {
-        val radius = size.width  * 0.45f
+        val radius = (size.width * 0.5f) - radiusOffset.toPx()
         val center = Offset(size.width / 2, size.height / 2)
         addOval(androidx.compose.ui.geometry.Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius))
     }

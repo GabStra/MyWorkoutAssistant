@@ -3,13 +3,13 @@ package com.gabstra.myworkoutassistant.shared.utils
 import androidx.annotation.FloatRange
 import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
-import com.gabstra.myworkoutassistant.shared.standardDeviation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.pow
@@ -75,6 +75,8 @@ object VolumeDistributionHelper {
         val previousMaxFatigue = params.previousSets.maxOf { it.fatigue }
 
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
+
+        val previousMinVolume = params.previousSets.minOf { it.volume }
         val previousMaxVolume = params.previousSets.maxOf { it.volume }
 
         val avgPreviousRir = params.previousSets.map { it.rir }.average()
@@ -88,8 +90,15 @@ object VolumeDistributionHelper {
         val maxWeight = validSets.filter { it.weight > previousMaxWeight }
             .minBy { it.weight }.weight
 
+        val maxVolume = validSets
+            .filter { it.volume > previousMaxVolume }
+            .groupBy { it.weight }
+            .mapValues { it.value.minOf { set -> set.volume } }
+            .values
+            .max()
+
         var usableSets = validSets
-            .filter { it.weight <= maxWeight }
+            .filter { it.weight <= maxWeight && it.volume <= maxVolume }
 
        /*
        val fatigues = validSets
@@ -109,7 +118,6 @@ object VolumeDistributionHelper {
             .filter { set -> set.fatigue in minFatigue..maxFatigue }
         */
 
-        val minTotalFatigue = previousTotalFatigue * (1 + params.volumeProgressionRange.from / 100)
 
         var result = findBestProgressions(
             usableSets.filter { it.weight <= previousMaxWeight && it.fatigue <= previousMaxFatigue && it.volume <= previousMaxVolume },
@@ -120,13 +128,12 @@ object VolumeDistributionHelper {
                 val currentTotalVolume = combo.sumOf { it.volume }
                 val currentTotalFatigue = combo.sumOf { it.fatigue }
                 val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
-
                 ValidationResult(
-                    shouldReturn = currentTotalVolume < params.previousTotalVolume
+                    shouldReturn = currentTotalFatigue < previousTotalFatigue
+                            || currentTotalFatigue.isEqualTo(previousTotalFatigue)
+                            || currentTotalVolume < params.previousTotalVolume
                             || currentTotalVolume.isEqualTo(params.previousTotalVolume)
-                            || currentTotalFatigue < minTotalFatigue
-                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
-                            || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
+                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.02
                 )
             }
         )
@@ -144,13 +151,12 @@ object VolumeDistributionHelper {
                 val currentTotalVolume = combo.sumOf { it.volume }
                 val currentTotalFatigue = combo.sumOf { it.fatigue }
                 val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
-
                 ValidationResult(
-                    shouldReturn = currentTotalVolume < params.previousTotalVolume
+                    shouldReturn = currentTotalFatigue < previousTotalFatigue
+                            || currentTotalFatigue.isEqualTo(previousTotalFatigue)
+                            || currentTotalVolume < params.previousTotalVolume
                             || currentTotalVolume.isEqualTo(params.previousTotalVolume)
-                            || currentTotalFatigue < minTotalFatigue
-                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
-                            || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
+                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.02
                 )
             }
         )
@@ -168,13 +174,12 @@ object VolumeDistributionHelper {
                 val currentTotalVolume = combo.sumOf { it.volume }
                 val currentTotalFatigue = combo.sumOf { it.fatigue }
                 val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
-
                 ValidationResult(
-                    shouldReturn = currentTotalVolume < params.previousTotalVolume
+                    shouldReturn = currentTotalFatigue < previousTotalFatigue
+                            || currentTotalFatigue.isEqualTo(previousTotalFatigue)
+                            || currentTotalVolume < params.previousTotalVolume
                             || currentTotalVolume.isEqualTo(params.previousTotalVolume)
-                            || currentTotalFatigue < minTotalFatigue
-                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.025
-                            || currentAverageWeightPerRep < previousAverageWeightPerRep * 0.975
+                            || currentAverageWeightPerRep > previousAverageWeightPerRep * 1.02
                 )
             }
         )
@@ -222,39 +227,39 @@ object VolumeDistributionHelper {
                 .thenByDescending { it.reps }
         )
 
-        val mutex = Mutex()
-        var bestCombination = emptyList<ExerciseSet>()
-        var bestScore = Double.MAX_VALUE
-
         val previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
-        val previousTotalVolume = params.previousTotalVolume
         val previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
+        val desiredVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.from / 100)
 
-        fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
-            val validationResult = validationRules(combo)
-            if (validationResult.shouldReturn)  return validationResult.returnValue
-
+        fun calculateScore (combo: List<ExerciseSet>): Double {
             val currentTotalFatigue = combo.sumOf { it.fatigue }
             val currentTotalVolume = combo.sumOf { it.volume }
             val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
 
-            val totalFatigueDifference = 1 + (currentTotalFatigue / previousTotalFatigue)
-            val totalVolumeDifference = 1 + (currentTotalVolume / previousTotalVolume)
-            val avgWeightDifference = 1 + (currentAverageWeightPerRep / previousAverageWeightPerRep)
+            val totalFatigueDifference = 1 + (abs(currentTotalFatigue - previousTotalFatigue) / previousTotalFatigue)
+            val avgWeightDifference = 1 + (abs(currentAverageWeightPerRep - previousAverageWeightPerRep) / previousAverageWeightPerRep)
+            val desiredVolumeDifference = 1 + (abs(currentTotalVolume - desiredVolume) / desiredVolume)
 
-            val intensityDev = 1 + combo.map { it.intensity }.standardDeviation()
-            val fatigueDev = 1 + combo.map { it.fatigue }.standardDeviation()
-
-            //collect all the differences in a list
             val differences = listOf(
                 totalFatigueDifference,
-                totalVolumeDifference,
-                avgWeightDifference
+                avgWeightDifference,
+                desiredVolumeDifference
             )
 
-            val stdDev = 1 + differences.standardDeviation()
+            val geometricMean = differences.reduce { acc, d -> acc * d }.pow(1.0 / differences.size)
 
-            return totalFatigueDifference * totalVolumeDifference * avgWeightDifference * stdDev * intensityDev * fatigueDev
+            return geometricMean
+        }
+
+        val mutex = Mutex()
+        var bestCombination = emptyList<ExerciseSet>()
+        var bestScore = Double.MAX_VALUE
+
+        fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
+            val validationResult = validationRules(combo)
+            if (validationResult.shouldReturn )  return validationResult.returnValue
+
+            return calculateScore(combo)
         }
 
         suspend fun exploreCombinations(
@@ -263,14 +268,16 @@ object VolumeDistributionHelper {
         ) {
             if (currentCombo.size >= minSets) {
                 mutex.withLock {
-                    val currentScore = evaluateGeneralScore(currentCombo)
+                    val adjustedCombo = recalculateExerciseFatigue(currentCombo)
+                    val currentScore = evaluateGeneralScore(adjustedCombo)
+
                     if (currentScore != Double.MAX_VALUE && bestScore != Double.MAX_VALUE) {
                         if (currentScore > bestScore) return
                     }
 
                     if (currentScore < bestScore) {
                         bestScore = currentScore
-                        bestCombination = currentCombo
+                        bestCombination = adjustedCombo
                     }
                 }
             }
@@ -282,8 +289,7 @@ object VolumeDistributionHelper {
 
             for (nextSet in validSets) {
                 val newCombo = currentCombo + nextSet
-                val adjustedCombo = recalculateExerciseFatigue(newCombo)
-                exploreCombinations(adjustedCombo,depth + 1)
+                exploreCombinations(newCombo,depth + 1)
             }
         }
 

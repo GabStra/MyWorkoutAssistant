@@ -48,7 +48,6 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -256,7 +255,6 @@ fun RestScreen(
         }
     }
 
-
     AnimatedContent(
         targetState = isTimerInEditMode,
         transitionSpec = {
@@ -267,7 +265,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .circleMask(),
+                    .circleMask(15.dp),
                 contentAlignment = Alignment.Center
             ) {
                 ControlButtonsVertical(
@@ -292,7 +290,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .circleMask(),
+                    .circleMask(15.dp),
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composable
 
 import android.annotation.SuppressLint
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -55,7 +57,8 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     text = "Keep current plates",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    color = MyColors.White
                 )
             } else {
                 val typography = MaterialTheme.typography
@@ -77,13 +80,15 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             modifier = Modifier.weight(1f),
                             text = "#",
                             style = headerStyle,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            color = MyColors.White
                         )
                         Text(
                             modifier = Modifier.weight(2f),
                             text = "PLATES",
                             style = headerStyle,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            color = MyColors.White
                         )
                     }
 
@@ -103,8 +108,14 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
+                                val backgroundColor = if (index % 2 == 0) {
+                                    Color.Transparent
+                                } else {
+                                    MyColors.MiddleGray
+                                }
+
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.fillMaxWidth().background(backgroundColor),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
@@ -134,11 +145,13 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                                 text = actionText,
                                                 style = style,
                                                 textAlign = TextAlign.End,
+                                                color = MyColors.White
                                             )
                                             Text(
                                                 text = weightText,
                                                 style = style,
                                                 textAlign = TextAlign.Start,
+                                                color = MyColors.White
                                             )
                                         }
                                     }

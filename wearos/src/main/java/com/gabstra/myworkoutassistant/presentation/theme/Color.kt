@@ -8,23 +8,23 @@ internal val wearColorPalette: Colors = Colors(
     primaryVariant =  Color(0xFFebebeb),
     secondary = MyColors.Green,
     secondaryVariant = Color(0xFF3a6ea5),
-    error = Color.hsl(9f, 0.88f, 0.45f),
+    error = MyColors.Red,
     onPrimary = MyColors.White,
     onSecondary = MyColors.White,
     onError = MyColors.White,
-    background = Color.DarkGray,
-
+    background = MyColors.MiddleGray,
 )
 
 class MyColors {
-    companion object {
+    companion object MyColors {
         val White = Color(0xFFF0F0F0)
         val Orange = Color(0xFFff6700)
         val Green = Color(0xFF119943)
         val Yellow = Color.hsl(50f, 0.85f, 0.65f)
         val Red = Color(0xFFed2020)
-        val LightGray = Color(0xFFAAAAAA)
-        val MiddleGray = Color(0xC0F0F0F0)
-        val DarkGray = Color(0x80F0F0F0)
+
+        val DarkGray = Color.DarkGray //Color(0xFF121212)
+        val MiddleGray = Color(0xFF2E2E2E) // Lighter than DarkGray
+        val LightGray = Color(0xFFB0B0B0) // Lighter than MiddleGray
     }
 }

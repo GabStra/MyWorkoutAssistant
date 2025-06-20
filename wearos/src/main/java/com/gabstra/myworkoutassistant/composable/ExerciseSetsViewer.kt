@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composable
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -333,9 +334,16 @@ fun ExerciseSetsViewer(
                 //verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
+                    val backgroundColor = if (index % 2 == 0) {
+                        Color.Transparent
+                    } else {
+                        MyColors.MiddleGray
+                    }
+
                     SetTableRow(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(backgroundColor)
                             .onGloballyPositioned { coordinates ->
                                 val height = coordinates.size.height
                                 if (itemHeights[index] != height) {
@@ -355,7 +363,7 @@ fun ExerciseSetsViewer(
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> MyColors.White
-                            else ->  MyColors.DarkGray
+                            else ->  MyColors.LightGray
                         }
                     )
                 }
@@ -388,9 +396,16 @@ fun ExerciseSetsViewer(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
+                    val backgroundColor = if (index % 2 == 0) {
+                        Color.Transparent
+                    } else {
+                        MyColors.MiddleGray
+                    }
+
                     SetTableRow(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(backgroundColor)
                             .onGloballyPositioned { coordinates ->
                                 val height = coordinates.size.height
                                 if (itemHeights[index] != height) {
@@ -410,7 +425,7 @@ fun ExerciseSetsViewer(
                         color = if(customColor!= null) customColor else when {
                             index < setIndex -> MyColors.Orange
                             index == setIndex -> MyColors.White
-                            else -> MyColors.DarkGray
+                            else -> MyColors.LightGray
                         }
                     )
                 }

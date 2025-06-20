@@ -151,7 +151,7 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .circleMask(),
+            .circleMask(15.dp),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(

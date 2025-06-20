@@ -83,7 +83,7 @@ fun PageExercises(
         modifier = Modifier.fillMaxSize(),
         targetState = selectedExercise,
         transitionSpec = {
-            fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
+            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
         },
         label = "",
     ) { updatedExercise ->
@@ -174,7 +174,7 @@ fun PageExercises(
                     }
                 }
 
-                Box(modifier =  Modifier.fillMaxSize()){
+                Box(modifier =  Modifier.fillMaxSize().padding(horizontal = 10.dp)){
                     ExerciseSetsViewer(
                         modifier =  Modifier.fillMaxSize(),
                         viewModel = viewModel,
@@ -183,7 +183,7 @@ fun PageExercises(
                         currentSet = currentStateSet.set,
                         customColor = when{
                             updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MyColors.Orange
-                            updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.DarkGray
+                            updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MyColors.LightGray
                             else -> null
                         },
                         overrideSetIndex = if(updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {

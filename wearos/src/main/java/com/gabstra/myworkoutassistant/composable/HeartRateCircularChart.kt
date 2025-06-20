@@ -377,7 +377,7 @@ private fun ZoneSegment(
         paddingAngle = 0f,
         startAngle = startAngle,
         endAngle = endAngle,
-        trackColor = Color.DarkGray,
+        trackColor = MyColors.DarkGray,
     )
 }
 
