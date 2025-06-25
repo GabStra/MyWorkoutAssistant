@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.shared.utils
 
 import androidx.annotation.FloatRange
 import com.gabstra.myworkoutassistant.shared.calculateRIR
-import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.standardDeviation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -72,8 +71,6 @@ object VolumeDistributionHelper {
         var nearAverageWeights = getNearAverageWeights(params,2)
 
         val previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
-
-        val previousMinWeight = params.previousSets.minOf { it.weight }
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
 
         val previousMaxVolume = params.previousSets.maxOf { it.volume }
@@ -111,6 +108,7 @@ object VolumeDistributionHelper {
             val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
 
             val currentMaxVolume = combo.maxOf { it.volume }
+            val currentMaxWeight = combo.maxOf { it.weight }
 
             val totalFatigueDifference = 1 + (abs(currentTotalFatigue - previousTotalFatigue) / previousTotalFatigue)
             val avgWeightDifference = 1 + (abs(currentAverageWeightPerRep - previousAverageWeightPerRep) / previousAverageWeightPerRep)
@@ -124,6 +122,12 @@ object VolumeDistributionHelper {
                 1.0
             }
 
+            val maxWeightDifference = if(currentMaxWeight > previousMaxWeight) {
+                (1 + (currentMaxWeight - previousMaxWeight) / previousMaxWeight)
+            } else {
+                1.0
+            }
+
             val intensityStdDev = 1 + combo.map { it.intensity }.standardDeviation()
 
             val differences = listOf(
@@ -132,37 +136,43 @@ object VolumeDistributionHelper {
                 previousVolumeDifference,
                 maxVolumeDifference,
                 intensityStdDev,
-                //volumeStdDev
+                maxWeightDifference
             )
 
             val geometricMean = differences.reduce { acc, d -> acc * d }.pow(1.0 / differences.size)
             return geometricMean
         }
 
-        var result = findBestProgressions(
-            usableSets.filter { it.weight <= previousMaxWeight && it.volume <= previousMaxVolume },
-            params.previousSets.size,
-            params.previousSets.size,
-            params,
-            calculateScore = { combo -> calculateScore(combo) },
-            { combo ->
-                val currentTotalVolume = combo.sumOf { it.volume }
-                val currentAvgWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
-
-                ValidationResult(
-                    shouldReturn = currentTotalVolume < minTotalVolume
-                            || currentTotalVolume > maxTotalVolume
-                            || currentAvgWeightPerRep < previousAverageWeightPerRep
-                            || currentAvgWeightPerRep.isEqualTo(previousAverageWeightPerRep)
-                )
+        fun hasStrictProgression(originalSets: List<ExerciseSet>, newSets: List<ExerciseSet>): Boolean {
+            if (newSets.size < originalSets.size) {
+                return false
             }
-        )
 
-        if(result.isNotEmpty()){
-            return result
+            var atLeastOneImprovement = false
+
+            for (i in originalSets.indices) {
+                val originalSet = originalSets[i]
+                val newSet = newSets[i]
+
+                // Check for a downgrade in any set. If found, it's not a progression.
+                if (newSet.weight < originalSet.weight || newSet.reps < originalSet.reps) {
+                    return false
+                }
+
+                // Check for an improvement in any set.
+                if (newSet.weight > originalSet.weight || newSet.reps > originalSet.reps) {
+                    atLeastOneImprovement = true
+                }
+            }
+
+            if (newSets.size > originalSets.size) {
+                return true
+            }
+
+            return atLeastOneImprovement
         }
 
-        result = findBestProgressions(
+        var result = findBestProgressions(
             usableSets,
             params.previousSets.size,
             params.previousSets.size,
@@ -170,6 +180,12 @@ object VolumeDistributionHelper {
             calculateScore = { combo -> calculateScore(combo) },
             { combo ->
                 val currentTotalVolume = combo.sumOf { it.volume }
+
+                if(hasStrictProgression(params.previousSets, combo)){
+                    return@findBestProgressions  ValidationResult(
+                        shouldReturn = currentTotalVolume > maxTotalVolume
+                    )
+                }
 
                 ValidationResult(
                     shouldReturn = currentTotalVolume < minTotalVolume
