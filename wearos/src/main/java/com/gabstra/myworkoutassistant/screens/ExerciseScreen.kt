@@ -165,7 +165,7 @@ fun ExerciseScreen(
             val exerciseTitleComposable = @Composable {
                 Column(modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 30.dp),
+                    .padding(horizontal = 35.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {

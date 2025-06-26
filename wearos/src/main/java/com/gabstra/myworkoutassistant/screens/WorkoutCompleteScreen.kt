@@ -3,9 +3,6 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
-import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.gabstra.myworkoutassistant.data.Screen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -26,13 +23,15 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.data.SensorDataViewModel
+import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
+import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
-
 import java.time.Duration
-import java.time.LocalDateTime
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
@@ -42,6 +41,7 @@ fun WorkoutCompleteScreen(
     viewModel: AppViewModel,
     state : WorkoutState.Completed,
     hrViewModel: SensorDataViewModel,
+    hapticsViewModel: HapticsViewModel,
     polarViewModel: PolarViewModel
 ){
     val workout by viewModel.selectedWorkout
@@ -75,6 +75,7 @@ fun WorkoutCompleteScreen(
     LaunchedEffect(dataSent) {
         if(!dataSent) return@LaunchedEffect
         delay(1000)
+        hapticsViewModel.doHardVibrationTwiceWithBeep()
         navController.navigate(Screen.WorkoutSelection.route){
             popUpTo(0) { inclusive = true }
         }

@@ -96,10 +96,6 @@ object VolumeDistributionHelper {
         var usableSets = validSets
             .filter { it.weight <= maxWeight && it.volume <= maxVolume }
 
-
-        val minTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.from / 100)
-        val maxTotalVolume = params.previousTotalVolume * (1 + params.volumeProgressionRange.to / 100)
-
         val previousVolume = params.previousTotalVolume
 
         fun calculateScore (combo: List<ExerciseSet>): Double {
@@ -143,7 +139,7 @@ object VolumeDistributionHelper {
             return geometricMean
         }
 
-        fun hasStrictProgression(originalSets: List<ExerciseSet>, newSets: List<ExerciseSet>): Boolean {
+        fun isStrictProgression(originalSets: List<ExerciseSet>, newSets: List<ExerciseSet>): Boolean {
             if (newSets.size < originalSets.size) {
                 return false
             }
@@ -178,20 +174,7 @@ object VolumeDistributionHelper {
             params.previousSets.size,
             params,
             calculateScore = { combo -> calculateScore(combo) },
-            { combo ->
-                val currentTotalVolume = combo.sumOf { it.volume }
-
-                if(hasStrictProgression(params.previousSets, combo)){
-                    return@findBestProgressions  ValidationResult(
-                        shouldReturn = currentTotalVolume > maxTotalVolume
-                    )
-                }
-
-                ValidationResult(
-                    shouldReturn = currentTotalVolume < minTotalVolume
-                            || currentTotalVolume > maxTotalVolume
-                )
-            }
+            isComboValid = { combo -> isStrictProgression(params.previousSets, combo) }
         )
 
         return result
@@ -215,18 +198,13 @@ object VolumeDistributionHelper {
         )
     }
 
-    data class ValidationResult(
-        val shouldReturn: Boolean,
-        val returnValue: Double = Double.MAX_VALUE
-
-    )
     private suspend fun findBestProgressions(
         sets: List<ExerciseSet>,
         minSets: Int,
         maxSets: Int,
         params: WeightExerciseParameters,
-        calculateScore: (List<VolumeDistributionHelper.ExerciseSet>) -> Double,
-        validationRules: (List<ExerciseSet>) -> ValidationResult,
+        calculateScore: (List<ExerciseSet>) -> Double,
+        isComboValid: (List<ExerciseSet>) -> Boolean,
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
         require(minSets <= maxSets) { "Minimum sets cannot exceed maximum sets" }
@@ -243,9 +221,8 @@ object VolumeDistributionHelper {
         var bestScore = Double.MAX_VALUE
 
         fun evaluateGeneralScore(combo: List<ExerciseSet>): Double {
-            val validationResult = validationRules(combo)
-            if (validationResult.shouldReturn )  return validationResult.returnValue
-
+            val isValid = isComboValid(combo)
+            if (!isValid)  return Double.MAX_VALUE
             return calculateScore(combo)
         }
 

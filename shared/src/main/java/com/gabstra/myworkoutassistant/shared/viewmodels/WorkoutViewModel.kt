@@ -412,7 +412,11 @@ open class WorkoutViewModel : ViewModel() {
                 applyProgressions()
                 val workoutStates = generateWorkoutStates()
 
-                workoutStates.forEach {
+                workoutStates.forEachIndexed { index, it ->
+                    if (index == workoutStates.lastIndex && it is WorkoutState.Rest) {
+                        return@forEachIndexed
+                    }
+
                     if(it is WorkoutState.Set){
                         val setHistory = executedSetsHistory.firstOrNull { setHistory -> setHistory.setId == it.set.id }
                         if(setHistory != null){
@@ -690,18 +694,12 @@ open class WorkoutViewModel : ViewModel() {
 
             val newFatigue = exerciseProgression.sets.sumOf { it.fatigue }
             Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)}")
-
-
-            val oldAvgWeightPerRep = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
-            val newAvgWeightPerRep = exerciseProgression.sets.sumOf { it.volume } / exerciseProgression.sets.sumOf { it.reps }
-            val avgWeightIncrease = ((newAvgWeightPerRep - oldAvgWeightPerRep) / oldAvgWeightPerRep) * 100
-
+            
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
-
 
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume.round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) - Weight/Reps: ${oldAvgWeightPerRep.round(2)} kg -> ${newAvgWeightPerRep.round(2)} kg (${if(avgWeightIncrease>0) "+" else ""}${avgWeightIncrease.round(2)}%)"
+                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume.round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
@@ -759,7 +757,10 @@ open class WorkoutViewModel : ViewModel() {
                 applyProgressions()
                 val workoutStates = generateWorkoutStates()
 
-                workoutStates.forEach {
+                workoutStates.forEachIndexed { index, it ->
+                    if (index == workoutStates.lastIndex && it is WorkoutState.Rest) {
+                        return@forEachIndexed
+                    }
                     workoutStateQueue.addLast(it)
                     allWorkoutStates.add(it)
                     if(it is WorkoutState.Set){
