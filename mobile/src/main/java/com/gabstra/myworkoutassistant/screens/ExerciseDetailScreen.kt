@@ -634,7 +634,7 @@ fun ExerciseDetailScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Add,
                                     contentDescription = "Add",
-                                    tint = LightGray,
+                                    tint = MaterialTheme.colorScheme.background,
                                 )
                             }
                         )

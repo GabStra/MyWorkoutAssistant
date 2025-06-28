@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
@@ -878,55 +879,124 @@ fun WorkoutsScreen(
                                                             currentLocale
                                                         )
                                                     }
-                                                    selectedCalendarWorkouts!!.forEach { (workoutHistory, workout) ->
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                        ) {
-                                                            IconButton(
-                                                                modifier= Modifier.clip(CircleShape).size(35.dp),
-                                                                onClick = {
-                                                                    appViewModel.setScreenData(
-                                                                        ScreenData.WorkoutHistory(
-                                                                            workout.id,
-                                                                            workoutHistory.id
-                                                                        )
-                                                                    )
-                                                                }) {
-                                                                Icon(
+                                                    selectedCalendarWorkouts!!
+                                                        .groupBy { it.second.id } // Group by workout.id
+                                                        .forEach { (workoutId, historyAndWorkoutList) ->
+                                                            val moreThanOneWorkout = historyAndWorkoutList.size > 1
 
-                                                                    imageVector = Icons.Filled.Search,
-                                                                    contentDescription = "Details",
-                                                                    tint = LightGray
-                                                                )
+                                                            //create a composable that takes workout history and workout
+                                                            @Composable
+                                                            fun WorkoutHistoryCard(workoutHistory: WorkoutHistory, workout: Workout){
+                                                                Row(
+                                                                    verticalAlignment = Alignment.CenterVertically,
+                                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                                ) {
+                                                                    IconButton(
+                                                                        modifier= Modifier.clip(CircleShape).size(35.dp),
+                                                                        onClick = {
+                                                                            appViewModel.setScreenData(
+                                                                                ScreenData.WorkoutHistory(
+                                                                                    workout.id,
+                                                                                    workoutHistory.id
+                                                                                )
+                                                                            )
+                                                                        }) {
+                                                                        Icon(
+
+                                                                            imageVector = Icons.Filled.Search,
+                                                                            contentDescription = "Details",
+                                                                            tint = LightGray
+                                                                        )
+                                                                    }
+
+                                                                    Text(
+                                                                        modifier = Modifier
+                                                                            .weight(1f)
+                                                                            .basicMarquee(iterations = Int.MAX_VALUE),
+                                                                        text = workout.name,
+                                                                        color = LightGray,
+                                                                        style = MaterialTheme.typography.bodyLarge,
+                                                                    )
+
+                                                                    if (!workoutHistory.isDone) {
+                                                                        Icon(
+                                                                            imageVector = Icons.Default.Close,
+                                                                            contentDescription = "Incomplete",
+                                                                            tint = LightGray
+                                                                        )
+                                                                    }else{
+                                                                        Text(
+                                                                            text = workoutHistory.time.format(
+                                                                                timeFormatter
+                                                                            ),
+                                                                            textAlign = TextAlign.End,
+                                                                            color = LightGray,
+                                                                            style = MaterialTheme.typography.bodyLarge,
+                                                                        )
+                                                                    }
+                                                                }
                                                             }
 
-                                                            Text(
-                                                                modifier = Modifier
-                                                                    .weight(1f)
-                                                                    .basicMarquee(iterations = Int.MAX_VALUE),
-                                                                text = workout.name,
-                                                                color = LightGray,
-                                                                style = MaterialTheme.typography.bodyLarge,
-                                                            )
-
-                                                            if (!workoutHistory.isDone) {
-                                                                Icon(
-                                                                    imageVector = Icons.Default.Close,
-                                                                    contentDescription = "Incomplete",
-                                                                    tint = LightGray
+                                                            if(moreThanOneWorkout){
+                                                                val workout = historyAndWorkoutList[0].second
+                                                                ExpandableContainer(
+                                                                    title = { modifier ->
+                                                                        Row(
+                                                                            modifier = modifier,
+                                                                            verticalAlignment = Alignment.CenterVertically,
+                                                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                                        ) {
+                                                                            Box(
+                                                                                modifier = Modifier
+                                                                                    .clip(CircleShape)
+                                                                                    .size(35.dp)
+                                                                                    .background(MaterialTheme.colorScheme.primary),
+                                                                                contentAlignment = Alignment.Center
+                                                                            ){
+                                                                                Text(
+                                                                                    modifier = Modifier.fillMaxWidth(),
+                                                                                    text =  historyAndWorkoutList.size.toString(),
+                                                                                    color = DarkGray,
+                                                                                    textAlign = TextAlign.Center,
+                                                                                    style = MaterialTheme.typography.titleMedium
+                                                                                )
+                                                                            }
+                                                                            Text(
+                                                                                modifier = Modifier
+                                                                                    .weight(1f)
+                                                                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                                                                text = workout.name,
+                                                                                color = LightGray,
+                                                                                style = MaterialTheme.typography.bodyLarge,
+                                                                            )
+                                                                        }
+                                                                    },
+                                                                    content = {
+                                                                        DashedCard {
+                                                                            Column(
+                                                                                modifier = Modifier
+                                                                                    .fillMaxWidth()
+                                                                                    .padding(10.dp),
+                                                                                verticalArrangement = Arrangement.spacedBy(
+                                                                                    10.dp
+                                                                                )
+                                                                            ) {
+                                                                                historyAndWorkoutList.forEach { (workoutHistory, workout) ->
+                                                                                    WorkoutHistoryCard(
+                                                                                        workoutHistory,
+                                                                                        workout
+                                                                                    )
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
                                                                 )
                                                             }else{
-                                                                Text(
-                                                                    text = workoutHistory.time.format(
-                                                                        timeFormatter
-                                                                    ),
-                                                                    textAlign = TextAlign.End,
-                                                                    color = LightGray,
-                                                                    style = MaterialTheme.typography.bodyLarge,
-                                                                )
+                                                                val workoutHistory = historyAndWorkoutList[0].first
+                                                                val workout = historyAndWorkoutList[0].second
+
+                                                                WorkoutHistoryCard(workoutHistory,workout)
                                                             }
-                                                        }
                                                     }
                                                 }
                                             }
@@ -1017,7 +1087,7 @@ fun WorkoutsScreen(
                                             Icon(
                                                 imageVector = Icons.Filled.Add,
                                                 contentDescription = "Add",
-                                                tint = LightGray,
+                                                tint = MaterialTheme.colorScheme.background,
                                             )
                                         }
                                     }
@@ -1090,8 +1160,6 @@ fun WorkoutsScreen(
                                         horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
                                         verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                                     ) {
-
-
                                         GenericButtonWithMenu(
                                             menuItems = EquipmentType.entries.map { equipmentType ->
                                                 MenuItem("Add ${equipmentType.toDisplayText()}") {
@@ -1104,7 +1172,7 @@ fun WorkoutsScreen(
                                                 Icon(
                                                     imageVector = Icons.Filled.Add,
                                                     contentDescription = "Add",
-                                                    tint = LightGray,
+                                                    tint = MaterialTheme.colorScheme.background,
                                                 )
                                             }
                                         )

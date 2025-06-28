@@ -19,11 +19,10 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyColors
 @Composable
 fun ButtonWithText(
     text: String, enabled:Boolean = true,
+    textColor : Color = MyColors.White,
     backgroundColor: Color = MaterialTheme.colors.background,
     onClick: () -> Unit
 ) {
-    val textColor = MyColors.White
-
     Button(
         onClick,
         modifier = Modifier

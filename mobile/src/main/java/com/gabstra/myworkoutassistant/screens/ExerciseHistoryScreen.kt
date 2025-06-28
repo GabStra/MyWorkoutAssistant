@@ -353,10 +353,10 @@ fun ExerciseHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.ShowChart,
                         contentDescription = "Graphs",
-                        tint = if (selectedMode == 0) LightGray else MediumLightGray
+                        tint = if (selectedMode == 0) DarkGray else MediumLightGray
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Graphs", color =  if (selectedMode == 0) LightGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
+                    Text("Graphs", color =  if (selectedMode == 0) DarkGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
                 }
             }
 
@@ -374,10 +374,10 @@ fun ExerciseHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.List,
                         contentDescription = "Sets",
-                        tint = if (selectedMode == 1) LightGray else MediumLightGray
+                        tint = if (selectedMode == 1) DarkGray else MediumLightGray
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Sets", color =  if (selectedMode == 1) LightGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
+                    Text("Sets", color =  if (selectedMode == 1) DarkGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
                 }
             }
         }

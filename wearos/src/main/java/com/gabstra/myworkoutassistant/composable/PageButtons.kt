@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -85,6 +86,10 @@ fun PageButtons(
                 hapticsViewModel.doGentleVibration()
                 viewModel.toggleScreenDimming()
             },
+            textColor = if (dimmingEnabled)
+                MyColors.White
+            else
+                Color.Transparent,
             backgroundColor = if (dimmingEnabled)
                 MaterialTheme.colors.background
             else

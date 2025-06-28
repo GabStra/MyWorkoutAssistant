@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
+import com.gabstra.myworkoutassistant.ui.theme.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.LightGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MediumGray
@@ -120,7 +121,7 @@ private fun Day(
                 )
                 .padding(3.dp)
         ) {
-            val textColor = if(isOutOfBounds || isAfterToday) MediumGray else LightGray
+            val textColor = if(isOutOfBounds || isAfterToday) MediumGray else if(shouldHighlight) DarkGray else LightGray
 
             val shape = if(shouldHighlight) CircleShape else null
 
