@@ -28,6 +28,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -92,8 +94,8 @@ fun Modifier.verticalColumnScrollbar(
     // Scrollbar appearance
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
-    scrollBarTrackColor: Color = Color.DarkGray,
-    scrollBarColor: Color = Color.Black,
+    scrollBarTrackColor: Color = DarkGray,
+    scrollBarColor: Color = MediumGray,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 0f,
     trackHeight: Dp? = null,
@@ -101,7 +103,7 @@ fun Modifier.verticalColumnScrollbar(
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
-    contentFadeColor: Color = Color.Black
+    contentFadeColor: Color = DarkGray
 ): Modifier {
     // Remember updated state for all parameters accessed within draw lambda
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)

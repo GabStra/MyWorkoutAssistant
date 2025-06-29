@@ -66,11 +66,12 @@ import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
-import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.time.Instant
 import java.time.LocalDate
@@ -123,7 +124,8 @@ fun WorkoutForm(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = if(workout == null) "Insert Workout" else "Edit Workout"
+                        text = if(workout == null) "Insert Workout" else "Edit Workout",
+                        color = LightGray,
                     )
                 },
                 navigationIcon = {
@@ -309,7 +311,7 @@ fun WorkoutForm(
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Add Single", color = LightGray)
+                            Text("Add Single", color = DarkGray)
                         }
 
                         Button(
@@ -318,7 +320,7 @@ fun WorkoutForm(
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Add Multiple", color = LightGray)
+                            Text("Add Multiple", color = DarkGray)
                         }
                     }
                 }
@@ -352,12 +354,12 @@ fun WorkoutForm(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                if(workout==null) Text("Insert Workout", color = LightGray) else Text("Edit Workout", color = LightGray)
+                if(workout==null) Text("Insert Workout", color = DarkGray) else Text("Edit Workout", color = DarkGray)
             }
 
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = {
                     onCancel()
                 },
@@ -555,7 +557,7 @@ fun ScheduleDialog(
         dismissButton = {
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = onDismiss,
             )
         }
@@ -586,7 +588,7 @@ fun ScheduleDialog(
             dismissButton = {
                 CustomOutlinedButton(
                     text = "Cancel",
-                    color = LightGray,
+                    color = MediumGray,
                     onClick = { showDatePicker.value = false },
                 )
             }
@@ -709,7 +711,7 @@ fun TimePickerDialog(
         dismissButton = {
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = onDismiss,
             )
         }
@@ -1059,7 +1061,7 @@ fun BatchScheduleDialog(
         dismissButton = {
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = onDismiss,
             )
         }
@@ -1095,7 +1097,7 @@ fun BatchScheduleDialog(
             dismissButton = {
                 CustomOutlinedButton(
                     text = "Cancel",
-                    color = LightGray,
+                    color = MediumGray,
                     onClick = { showDatePicker.value = false },
                 )
             }

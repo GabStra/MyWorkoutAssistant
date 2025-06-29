@@ -49,8 +49,9 @@ import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
-import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
@@ -221,7 +222,7 @@ fun PlateLoadedCableForm(
             // Cancel button
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = {
                     onCancel()
                 },

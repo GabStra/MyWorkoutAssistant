@@ -34,9 +34,11 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
-import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -67,7 +69,7 @@ fun RestForm(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = if (rest == null) "Insert Rest" else "Edit Rest"
+                        text = if (rest == null) "Insert Rest" else "Edit Rest",
                     )
                 },
                 navigationIcon = {
@@ -136,14 +138,14 @@ fun RestForm(
             ) {
                 if (rest == null) Text("Insert Rest", color = LightGray) else Text(
                     "Edit Rest",
-                    color = LightGray
+                    color = DarkGray
                 )
             }
 
             // Cancel button
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = {
                     onCancel()
                 },

@@ -50,12 +50,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
-import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -552,12 +553,12 @@ fun ExerciseForm(
                     .padding(8.dp),
                 enabled = nameState.value.isNotBlank()
             ) {
-                if (exercise == null) Text("Insert Exercise", color = LightGray) else Text("Edit Exercise", color = LightGray)
+                if (exercise == null) Text("Insert Exercise", color = DarkGray) else Text("Edit Exercise", color = DarkGray)
             }
 
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = {
                     onCancel()
                 },

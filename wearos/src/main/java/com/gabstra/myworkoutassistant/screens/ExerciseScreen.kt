@@ -36,20 +36,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
-import com.gabstra.myworkoutassistant.composable.ExerciseDetail
-import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composable.PageButtons
-import com.gabstra.myworkoutassistant.composable.PageExercises
-import com.gabstra.myworkoutassistant.composable.PageNotes
-import com.gabstra.myworkoutassistant.composable.PagePlates
+import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
+import com.gabstra.myworkoutassistant.composables.ExerciseDetail
+import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composables.PageButtons
+import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.PageNotes
+import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.google.android.horologist.compose.layout.fillMaxRectangle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -151,7 +152,8 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .circleMask(15.dp),
+            .circleMask(15.dp)
+            .fillMaxRectangle(),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(
@@ -164,14 +166,14 @@ fun ExerciseScreen(
 
             val exerciseTitleComposable = @Composable {
                 Column(modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 35.dp),
+                    .fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(horizontal = 15.dp)
                             .clickable {
                                 hapticsViewModel.doGentleVibration()
                                 marqueeEnabled = !marqueeEnabled
@@ -222,7 +224,7 @@ fun ExerciseScreen(
                             if(updatedState.isWarmupSet){
                                 Text(
                                     text = "WARM-UP",
-                                    style = captionStyle
+                                    style = captionStyle,
                                 )
                             }
                         }
@@ -234,7 +236,6 @@ fun ExerciseScreen(
                     CustomHorizontalPager(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(vertical = 25.dp, horizontal = 20.dp)
                             .pointerInput(Unit) {
                                 awaitPointerEventScope {
                                     while (true) {

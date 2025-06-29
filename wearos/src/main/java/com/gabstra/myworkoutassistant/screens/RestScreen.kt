@@ -35,14 +35,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
-import com.gabstra.myworkoutassistant.composable.ControlButtonsVertical
-import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composable.CustomHorizontalPager
-import com.gabstra.myworkoutassistant.composable.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composable.PageButtons
-import com.gabstra.myworkoutassistant.composable.PageExercises
-import com.gabstra.myworkoutassistant.composable.PagePlates
-import com.gabstra.myworkoutassistant.composable.ScalableText
+import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
+import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
+import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composables.PageButtons
+import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.PagePlates
+import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.google.android.horologist.compose.layout.fillMaxRectangle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -232,7 +233,7 @@ fun RestScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 60.dp),
+                .padding(horizontal = 50.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -290,13 +291,13 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .circleMask(15.dp),
+                    .circleMask(15.dp)
+                    .fillMaxRectangle(),
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(vertical = 25.dp, horizontal = 25.dp)
                         .pointerInput(Unit) {
                             awaitPointerEventScope {
                                 while (true) {

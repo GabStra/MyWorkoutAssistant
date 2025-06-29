@@ -45,8 +45,9 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 
 fun SetType.toReadableString(): String {
@@ -94,7 +95,7 @@ fun SetForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         color = LightGray,
                         textAlign = TextAlign.Center,
-                        text = if(set == null) "Insert Set" else "Edit Set"
+                        text = if(set == null) "Insert Set" else "Edit Set",
                     )
                 },
                 navigationIcon = {
@@ -188,7 +189,7 @@ fun SetForm(
 
             CustomOutlinedButton(
                 text = "Cancel",
-                color = LightGray,
+                color = MediumGray,
                 onClick = {
                     onCancel()
                 },

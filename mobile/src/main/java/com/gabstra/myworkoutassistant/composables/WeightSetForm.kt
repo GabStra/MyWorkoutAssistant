@@ -36,9 +36,9 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.ui.theme.DarkGray
-import com.gabstra.myworkoutassistant.ui.theme.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumGray
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -223,7 +223,7 @@ fun WeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (weightSet == null) Text("Insert Weight Set", color = LightGray) else Text("Edit Weight Set", color = LightGray)
+            if (weightSet == null) Text("Insert Weight Set", color = DarkGray) else Text("Edit Weight Set", color = DarkGray)
         }
     }
 }

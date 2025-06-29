@@ -29,12 +29,14 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.composable.ButtonWithText
-import com.gabstra.myworkoutassistant.composable.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.Orange
 import kotlinx.coroutines.flow.drop
 
 @Composable
@@ -125,7 +127,9 @@ fun WorkoutDetailScreen(
                             hapticsViewModel.doGentleVibration()
                             permissionLauncherStart.launch(basePermissions.toTypedArray())
                         },
-                        backgroundColor = MaterialTheme.colors.background,
+                        backgroundColor = Orange,
+                        borderColor = Orange,
+                        textColor = DarkGray,
                         enabled = hasExercises
                     )
                 }

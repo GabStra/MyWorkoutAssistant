@@ -18,7 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 @Composable
