@@ -82,6 +82,11 @@ import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -101,11 +106,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
@@ -176,8 +176,6 @@ fun WorkoutHistoryScreen(
     val currentLocale = Locale.getDefault()
     val scope = rememberCoroutineScope()
     val userAge by appViewModel.userAge
-
-
 
     val dateFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
@@ -835,10 +833,10 @@ fun WorkoutHistoryScreen(
                                                             ),
                                                         )
                                                     }
-                                                    SetHistoriesRenderer(setHistories = setHistories)
+                                                    SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel,workout = workout)
                                                 }
                                             } else {
-                                                SetHistoriesRenderer(setHistories = setHistories)
+                                                SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel,workout = workout)
                                             }
                                         }
                                     )

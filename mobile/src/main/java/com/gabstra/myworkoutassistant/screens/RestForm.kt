@@ -145,7 +145,7 @@ fun RestForm(
             // Cancel button
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

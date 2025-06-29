@@ -83,6 +83,10 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -92,10 +96,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.kizitonwose.calendar.compose.CalendarState
@@ -949,7 +949,7 @@ fun WorkoutsScreen(
                                                                             Box(
                                                                                 modifier = Modifier
                                                                                     .clip(CircleShape)
-                                                                                    .size(35.dp)
+                                                                                    .size(30.dp)
                                                                                     .background(MaterialTheme.colorScheme.primary),
                                                                                 contentAlignment = Alignment.Center
                                                                             ){
@@ -961,9 +961,11 @@ fun WorkoutsScreen(
                                                                                     style = MaterialTheme.typography.titleMedium
                                                                                 )
                                                                             }
+
                                                                             Text(
                                                                                 modifier = Modifier
                                                                                     .weight(1f)
+                                                                                    .padding(start = 5.dp)
                                                                                     .basicMarquee(iterations = Int.MAX_VALUE),
                                                                                 text = workout.name,
                                                                                 color = LightGray,

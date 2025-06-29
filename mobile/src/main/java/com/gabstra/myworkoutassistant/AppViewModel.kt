@@ -6,15 +6,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
-import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -141,7 +142,22 @@ class AppViewModel() : ViewModel() {
     }
 
     fun getExerciseById(workout: Workout, exerciseId: UUID): Exercise? {
-        return workout.workoutComponents.find { it.id == exerciseId && it is Exercise } as Exercise?
+        return findExerciseInComponents(workout.workoutComponents, exerciseId)
+    }
+
+    private fun findExerciseInComponents(components: List<WorkoutComponent>, exerciseId: UUID): Exercise? {
+        for (component in components) {
+            if (component is Exercise && component.id == exerciseId) {
+                return component
+            }
+            if (component is Superset) {
+                val exerciseInSuperset = findExerciseInComponents(component.exercises, exerciseId)
+                if (exerciseInSuperset != null) {
+                    return exerciseInSuperset
+                }
+            }
+        }
+        return null
     }
 
     var workouts: List<Workout>

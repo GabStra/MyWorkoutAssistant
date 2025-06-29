@@ -84,7 +84,7 @@ fun HealthConnectHandler(
                         Log.e("MainActivity", "Error launching permission launcher", e)
                     }
                 }) {
-                Text("Grant Health Connect Permissions", color = LightGray)
+                Text("Grant Health Connect Permissions")
             }
         }
     }

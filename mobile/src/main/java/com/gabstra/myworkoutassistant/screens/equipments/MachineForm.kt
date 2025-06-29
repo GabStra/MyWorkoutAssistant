@@ -265,13 +265,13 @@ fun MachineForm(
                 enabled = nameState.value.isNotBlank() &&
                         availableWeightsState.value.isNotEmpty()
             ) {
-                if (machine == null) Text("Add Machine", color = LightGray) else Text("Edit Machine", color = LightGray)
+                if (machine == null) Text("Add Machine") else Text("Edit Machine")
             }
 
             // Cancel button
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

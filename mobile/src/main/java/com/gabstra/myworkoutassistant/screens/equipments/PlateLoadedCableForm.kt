@@ -216,13 +216,13 @@ fun PlateLoadedCableForm(
                         barLengthState.value.toIntOrNull() != null &&
                         availablePlatesState.value.isNotEmpty()
             ) {
-                if (plateLoadedCable == null) Text("Add Plate-Loaded Cable", color = LightGray) else Text("Edit Plate-Loaded Cable", color = LightGray)
+                if (plateLoadedCable == null) Text("Add Plate-Loaded Cable") else Text("Edit Plate-Loaded Cable")
             }
 
             // Cancel button
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

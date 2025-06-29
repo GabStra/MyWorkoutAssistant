@@ -197,13 +197,13 @@ fun WeightVestForm(
                 enabled = nameState.value.isNotBlank() &&
                         availableWeightsState.value.isNotEmpty()
             ) {
-                if (weightVest == null) Text("Add Weight Vest", color = LightGray) else Text("Edit Weight Vest", color = LightGray)
+                if (weightVest == null) Text("Add Weight Vest") else Text("Edit Weight Vest")
             }
 
             // Cancel button
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

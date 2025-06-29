@@ -10,12 +10,15 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Orange, // Orange
-    background = DarkGray
+    primary = Orange,
+    background = DarkGray,
+    onBackground = LightGray,
+    onPrimary = DarkGray
 )
 
 private val LightColorScheme = lightColorScheme(

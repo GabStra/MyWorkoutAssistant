@@ -260,12 +260,12 @@ fun DumbbellsForm(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = nameState.value.isNotBlank() && availableDumbbellsState.value.isNotEmpty()
             ) {
-                if (dumbbells == null) Text("Add Dumbbells", color = LightGray) else Text("Edit Dumbbells", color = LightGray)
+                if (dumbbells == null) Text("Add Dumbbells") else Text("Edit Dumbbells")
             }
 
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

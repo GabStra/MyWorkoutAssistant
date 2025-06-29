@@ -11,17 +11,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
 
 @Composable
 fun ExerciseRenderer(
@@ -69,10 +71,55 @@ fun ExerciseRenderer(
             },
             content = {
                 Column(
-                    modifier = Modifier.padding(10.dp),
+                    modifier = Modifier.padding(5.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
+                    val equipment = if(exercise.equipmentId != null) appViewModel.getEquipmentById(exercise.equipmentId!!) else null
+
+                    if(equipment != null){
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
+                            text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+
                     var index = 0
+                    Row {
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "#",
+                            style = MaterialTheme.typography.titleSmall,
+                            textAlign = TextAlign.Center,
+                            color = LightGray,
+                        )
+                        if(exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT){
+                            Text(
+                                modifier = Modifier.weight(1f),
+                                text = "WEIGHT (KG)",
+                                style = MaterialTheme.typography.titleSmall,
+                                textAlign = TextAlign.Center,
+                                color = LightGray,
+                            )
+                            Text(
+                                modifier = Modifier.weight(1f),
+                                text = "REPS",
+                                style = MaterialTheme.typography.titleSmall,
+                                textAlign = TextAlign.Center,
+                                color = LightGray,
+                            )
+                        }else{
+                            Text(
+                                modifier = Modifier.weight(1f),
+                                text = "TIME",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = LightGray,
+                            )
+                        }
+                    }
+
+
                     sets.forEach() { set ->
                         if(set !is RestSet){
                             index += 1
@@ -81,32 +128,52 @@ fun ExerciseRenderer(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "$index)",
+                                    modifier = Modifier.weight(1f),
+                                    text = "$index",
                                     style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
                                     color = if (exercise.enabled) LightGray else MediumGray,
                                 )
                                 when (set) {
                                     is WeightSet -> {
-                                        val repLabel = if(set.reps == 1) "rep" else "reps"
-
-                                        val weightText = if (set.weight % 1 == 0.0) {
-                                            "${set.weight.toInt()}"
-                                        } else {
-                                            "${set.weight}"
-                                        }
+                                        val weightText = equipment!!.formatWeight(set.weight)
 
                                         Text(
-                                            text = "${weightText} kg x ${set.reps} ${repLabel}",
+                                            modifier = Modifier.weight(1f),
+                                            text = weightText,
+                                            textAlign = TextAlign.Center,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (exercise.enabled) LightGray else MediumGray,
+                                        )
+                                        Text(
+                                            modifier = Modifier.weight(1f),
+                                            text = "${set.reps}",
+                                            textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = if (exercise.enabled) LightGray else MediumGray,
                                         )
                                     }
 
                                     is BodyWeightSet -> {
-                                        val repLabel = if(set.reps == 1) "rep" else "reps"
+                                        val weightText = when{
+                                            set.additionalWeight > 0 -> {
+
+                                                equipment!!.formatWeight(set.additionalWeight)
+                                            }
+                                            else -> "-"
+                                        }
 
                                         Text(
-                                            text = if(set.additionalWeight<=0) "${set.reps} ${repLabel}" else "${set.additionalWeight} kg x ${set.reps} ${repLabel}",
+                                            modifier = Modifier.weight(1f),
+                                            text = weightText,
+                                            textAlign = TextAlign.Center,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (exercise.enabled) LightGray else MediumGray,
+                                        )
+                                        Text(
+                                            modifier = Modifier.weight(1f),
+                                            text = "${set.reps}",
+                                            textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = if (exercise.enabled) LightGray else MediumGray,
                                         )
@@ -114,16 +181,20 @@ fun ExerciseRenderer(
 
                                     is TimedDurationSet -> {
                                         Text(
-                                            text= formatTime(set.timeInMillis / 1000),
+                                            modifier = Modifier.weight(1f),
+                                            text = formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
+                                            textAlign = TextAlign.Center,
                                             color = if (exercise.enabled) LightGray else MediumGray,
                                         )
                                     }
 
                                     is EnduranceSet -> {
                                         Text(
-                                            formatTime(set.timeInMillis / 1000),
+                                            modifier = Modifier.weight(1f),
+                                            text =formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
+                                            textAlign = TextAlign.Center,
                                             color = if (exercise.enabled) LightGray else MediumGray,
                                         )
                                     }

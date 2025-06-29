@@ -219,7 +219,7 @@ open class AppViewModel : WorkoutViewModel() {
                 val shouldSendData = (currentState != setStates.lastOrNull() || isDone)
 
                 if(currentState is WorkoutState.Set){
-                    upsertWorkoutRecord(currentState.set.id)
+                    upsertWorkoutRecord(currentState.exerciseId,currentState.setIndex)
                 }
 
                 if (shouldSendData && dataClient != null) {

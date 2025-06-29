@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.ui.theme.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.kizitonwose.calendar.compose.CalendarState

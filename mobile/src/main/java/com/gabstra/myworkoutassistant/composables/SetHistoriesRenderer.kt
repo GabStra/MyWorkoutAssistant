@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,27 +9,84 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.LightGray
 
 @Composable
-fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHistory>) {
+fun SetHistoriesRenderer(
+    modifier: Modifier = Modifier,
+    setHistories: List<SetHistory>,
+    appViewModel: AppViewModel,
+    workout: Workout
+) {
     Column(
-        modifier = modifier.padding(10.dp),
-        horizontalAlignment = Alignment.End,
+        modifier = modifier.padding(5.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         var index = 0
+
+        Log.d("SetHistoriesRenderer", "setHistories: $setHistories")
+        val exerciseId = setHistories[0].exerciseId!!
+        var exercise = appViewModel.getExerciseById(workout,exerciseId)
+        Log.d("SetHistoriesRenderer", "Exercise: $exercise")
+        val equipment = if(exercise!!.equipmentId != null) appViewModel.getEquipmentById(exercise.equipmentId!!) else null
+
+        if(equipment != null){
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
+        Row {
+            Text(
+                modifier = Modifier.weight(1f),
+                text = "#",
+                style = MaterialTheme.typography.titleSmall,
+                textAlign = TextAlign.Center,
+                color = LightGray,
+            )
+            if(exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT){
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = "WEIGHT (KG)",
+                    style = MaterialTheme.typography.titleSmall,
+                    textAlign = TextAlign.Center,
+                    color = LightGray,
+                )
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = "REPS",
+                    style = MaterialTheme.typography.titleSmall,
+                    textAlign = TextAlign.Center,
+                    color = LightGray,
+                )
+            }else{
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = "TIME",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = LightGray,
+                )
+            }
+        }
+
         setHistories.forEach() { set ->
             val setData = set.setData
             if(setData !is RestSetData){
@@ -38,53 +96,66 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "${index})",
+                        modifier = Modifier.weight(1f),
+                        text = "$index",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = LightGray
+                        textAlign = TextAlign.Center,
+
                     )
                     when (setData) {
                         is WeightSetData -> {
-                            val repLabel = if(setData.actualReps == 1) "rep" else "reps"
-
-                            val weightText = if (setData.actualWeight % 1 == 0.0) {
-                                "${setData.actualWeight.toInt()}"
-                            } else {
-                                "${setData.actualWeight}"
-                            }
+                            val weightText = equipment!!.formatWeight(setData.actualWeight)
 
                             Text(
-                                text = "${weightText} kg x ${setData.actualReps} ${repLabel}",
+                                modifier = Modifier.weight(1f),
+                                text = weightText,
+                                textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = LightGray
+                            )
+                            Text(
+                                modifier = Modifier.weight(1f),
+                                text = "${setData.actualReps}",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium,
                             )
                         }
 
                         is BodyWeightSetData -> {
-                            val repLabel = if(setData.actualReps == 1) "rep" else "reps"
-                            val weightText = if (setData.additionalWeight % 1 == 0.0) {
-                                "${setData.additionalWeight.toInt()}"
-                            } else {
-                                "${setData.additionalWeight}"
+                            val weightText = when{
+                                setData.additionalWeight > 0 -> {
+
+                                    equipment!!.formatWeight(setData.additionalWeight)
+                                }
+                                else -> "-"
                             }
 
-                            val text = if(setData.additionalWeight != 0.0) "${weightText} kg x ${setData.actualReps} ${repLabel}" else "${setData.actualReps} ${repLabel}"
                             Text(
-                                text = text,
+                                modifier = Modifier.weight(1f),
+                                text = weightText,
+                                textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = LightGray
+                            )
+                            Text(
+                                modifier = Modifier.weight(1f),
+                                text = "${setData.actualReps}",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (exercise.enabled) LightGray else MediumGray,
                             )
                         }
 
                         is TimedDurationSetData -> {
                             if(setData.endTimer == 0) {
                                 Text(
-                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
+                                    modifier = Modifier.weight(1f),
+                                    text = "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = LightGray,
                                 )
                             }else{
                                 Text(
-                                    "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
+                                    modifier = Modifier.weight(1f),
+                                    text = "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = LightGray,
                                 )
@@ -94,13 +165,15 @@ fun SetHistoriesRenderer(modifier: Modifier = Modifier, setHistories: List<SetHi
                         is EnduranceSetData -> {
                             if(setData.endTimer == 0) {
                                 Text(
-                                    "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
+                                    modifier = Modifier.weight(1f),
+                                    text = "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = LightGray,
                                 )
                             }else{
                                 Text(
-                                    "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
+                                    modifier = Modifier.weight(1f),
+                                    text = "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = LightGray,
                                 )

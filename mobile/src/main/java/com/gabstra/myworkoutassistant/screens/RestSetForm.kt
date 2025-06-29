@@ -137,16 +137,13 @@ fun RestSetForm(
                     .fillMaxWidth()
                     .padding(8.dp),
             ) {
-                if (restSet == null) Text("Insert Rest", color = LightGray) else Text(
-                    "Edit Rest",
-                    color = DarkGray
-                )
+                if (restSet == null) Text("Insert Rest") else Text("Edit Rest")
             }
 
 
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

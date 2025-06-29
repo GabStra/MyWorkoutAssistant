@@ -246,7 +246,7 @@ fun WorkoutForm(
                     checked = usePolarDeviceState.value,
                     onCheckedChange = { usePolarDeviceState.value = it },
                     colors = CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor = LightGray,
+                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
                         uncheckedBorderColor = MaterialTheme.colorScheme.primary
                     )
                 )
@@ -359,7 +359,7 @@ fun WorkoutForm(
 
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },
@@ -557,7 +557,7 @@ fun ScheduleDialog(
         dismissButton = {
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = onDismiss,
             )
         }
@@ -588,7 +588,7 @@ fun ScheduleDialog(
             dismissButton = {
                 CustomOutlinedButton(
                     text = "Cancel",
-                    color = MediumGray,
+                    color = MediumLightGray,
                     onClick = { showDatePicker.value = false },
                 )
             }
@@ -711,7 +711,7 @@ fun TimePickerDialog(
         dismissButton = {
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = onDismiss,
             )
         }
@@ -1061,7 +1061,7 @@ fun BatchScheduleDialog(
         dismissButton = {
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = onDismiss,
             )
         }
@@ -1097,7 +1097,7 @@ fun BatchScheduleDialog(
             dismissButton = {
                 CustomOutlinedButton(
                     text = "Cancel",
-                    color = MediumGray,
+                    color = MediumLightGray,
                     onClick = { showDatePicker.value = false },
                 )
             }

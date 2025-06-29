@@ -67,6 +67,10 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getOneRepMax
 import com.gabstra.myworkoutassistant.round
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -80,10 +84,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
@@ -695,10 +695,10 @@ fun ExerciseHistoryScreen(
                                                                             ),
                                                                         )
                                                                     }
-                                                                    SetHistoriesRenderer(setHistories = setHistories)
+                                                                    SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel, workout = workout)
                                                                 }
                                                             } else {
-                                                                SetHistoriesRenderer(setHistories = setHistories)
+                                                                SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel, workout = workout)
                                                             }
                                                         }
                                                     )

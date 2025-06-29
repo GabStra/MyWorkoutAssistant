@@ -562,7 +562,7 @@ fun ExerciseDetailScreen(
                                     checked = showRest,
                                     onCheckedChange = { showRest = it },
                                     colors = CheckboxDefaults.colors().copy(
-                                        checkedCheckmarkColor = LightGray,
+                                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
                                         uncheckedBorderColor = MaterialTheme.colorScheme.primary
                                     )
                                 )

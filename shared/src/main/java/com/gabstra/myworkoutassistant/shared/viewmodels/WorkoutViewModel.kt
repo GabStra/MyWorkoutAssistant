@@ -356,18 +356,20 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    fun upsertWorkoutRecord(setId: UUID) {
+    fun upsertWorkoutRecord(exerciseId : UUID,setIndex: UInt) {
         viewModelScope.launch(Dispatchers.IO) {
             if (_workoutRecord == null) {
                 _workoutRecord = WorkoutRecord(
                     id = UUID.randomUUID(),
                     workoutId = selectedWorkout.value.id,
-                    setId = setId,
+                    exerciseId = exerciseId,
+                    setIndex = setIndex,
                     workoutHistoryId = currentWorkoutHistory!!.id
                 )
             } else {
                 _workoutRecord = _workoutRecord!!.copy(
-                    setId = setId,
+                    exerciseId = exerciseId,
+                    setIndex = setIndex,
                 )
             }
 
@@ -711,8 +713,15 @@ open class WorkoutViewModel : ViewModel() {
     fun resumeLastState() {
         if (_workoutRecord == null) return
 
-        val targetSetId = _workoutRecord!!.setId
-        if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
+        fun isCurrentStateTheTargetResumeSet(): Boolean {
+            val currentWorkoutState = _workoutState.value
+
+            return currentWorkoutState is WorkoutState.Set &&
+                    currentWorkoutState.exerciseId == _workoutRecord!!.exerciseId &&
+                    currentWorkoutState.setIndex == _workoutRecord!!.setIndex
+        }
+
+        if (isCurrentStateTheTargetResumeSet()) {
             return
         }
 
@@ -721,11 +730,10 @@ open class WorkoutViewModel : ViewModel() {
             while (_workoutState.value !is WorkoutState.Completed) {
                 goToNextState()
 
-                if (_workoutState.value is WorkoutState.Set && (_workoutState.value as WorkoutState.Set).set.id == targetSetId) {
+                if (isCurrentStateTheTargetResumeSet()){
                     break
                 }
             }
-
 
 
             delay(2000)
@@ -1170,7 +1178,7 @@ open class WorkoutViewModel : ViewModel() {
                 id = UUID.randomUUID(),
                 setId = currentState.set.id,
                 setData = currentState.currentSetData,
-                order = currentState.order,
+                order = currentState.setIndex,
                 skipped = currentState.skipped,
                 exerciseId = currentState.exerciseId,
                 startTime = currentState.startTime!!,
@@ -1193,7 +1201,7 @@ open class WorkoutViewModel : ViewModel() {
 
         // Search for an existing entry in the history
         val existingIndex = when (currentState) {
-            is WorkoutState.Set -> executedSetsHistory.indexOfFirst { it.setId == currentState.set.id && it.order == currentState.order }
+            is WorkoutState.Set -> executedSetsHistory.indexOfFirst { it.setId == currentState.set.id && it.order == currentState.setIndex }
             is WorkoutState.Rest -> executedSetsHistory.indexOfFirst { it.setId == currentState.set.id && it.order == currentState.order }
             else -> return
         }

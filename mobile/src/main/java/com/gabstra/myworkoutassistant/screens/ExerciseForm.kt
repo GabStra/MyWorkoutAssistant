@@ -52,11 +52,10 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.zoneRanges
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -191,7 +190,7 @@ fun ExerciseForm(
                     checked = keepScreenOn.value,
                     onCheckedChange = { keepScreenOn.value = it },
                     colors = CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor = LightGray,
+                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
                         uncheckedBorderColor = MaterialTheme.colorScheme.primary
                     )
                 )
@@ -310,7 +309,7 @@ fun ExerciseForm(
                         checked = generateWarmupSets.value,
                         onCheckedChange = { generateWarmupSets.value = it },
                         colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = LightGray,
+                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
                             uncheckedBorderColor = MaterialTheme.colorScheme.primary
                         )
                     )
@@ -327,7 +326,7 @@ fun ExerciseForm(
                         checked = enableProgression.value,
                         onCheckedChange = { enableProgression.value = it },
                         colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = LightGray,
+                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
                             uncheckedBorderColor = MaterialTheme.colorScheme.primary
                         )
                     )
@@ -498,7 +497,7 @@ fun ExerciseForm(
                     onCheckedChange = { doNotStoreHistory.value = it },
                     enabled = allowSettingDoNotStoreHistory,
                     colors = CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor = LightGray,
+                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
                         uncheckedBorderColor = MaterialTheme.colorScheme.primary
                     )
                 )
@@ -558,7 +557,7 @@ fun ExerciseForm(
 
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

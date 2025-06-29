@@ -232,13 +232,13 @@ fun BarbellForm(
                         barLengthState.value.toIntOrNull() != null &&
                         availablePlatesState.value.isNotEmpty()
             ) {
-                if (barbell == null) Text("Add Barbell", color = LightGray) else Text("Edit Barbell", color = LightGray)
+                if (barbell == null) Text("Add Barbell") else Text("Edit Barbell")
             }
 
             // Cancel button
             CustomOutlinedButton(
                 text = "Cancel",
-                color = MediumGray,
+                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },
