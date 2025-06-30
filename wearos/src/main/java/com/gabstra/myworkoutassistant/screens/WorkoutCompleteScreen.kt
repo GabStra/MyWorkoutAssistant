@@ -59,6 +59,7 @@ fun WorkoutCompleteScreen(
     var dataSent by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit){
+        hapticsViewModel.doShortImpulse()
         if(!workout.usePolarDevice){
             hrViewModel.stopMeasuringHeartRate()
         }else{
@@ -75,7 +76,6 @@ fun WorkoutCompleteScreen(
     LaunchedEffect(dataSent) {
         if(!dataSent) return@LaunchedEffect
         delay(1000)
-        hapticsViewModel.doHardVibrationTwiceWithBeep()
         navController.navigate(Screen.WorkoutSelection.route){
             popUpTo(0) { inclusive = true }
         }

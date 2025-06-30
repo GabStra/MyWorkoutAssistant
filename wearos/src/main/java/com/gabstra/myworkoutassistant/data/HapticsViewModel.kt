@@ -88,7 +88,7 @@ class HapticsViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        haptics.release() // rilascia il ToneGenerator per evitare leak
+        haptics.release()
     }
 }
 
@@ -99,7 +99,6 @@ class HapticsViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(HapticsViewModel::class.java)) {
-            // Costruisci l’helper con il Context (tipicamente Application o Activity)
             val helper = HapticsHelper(appContext)
             return HapticsViewModel(helper) as T
         }

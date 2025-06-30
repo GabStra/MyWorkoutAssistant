@@ -304,57 +304,53 @@ fun WearApp(
 
         if(!initialized){
             LoadingScreen(appViewModel,"Loading workouts")
-
         }else{
-            NavHost(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colors.background),
-                navController = navController,
-                startDestination = startDestination,
-                enterTransition = {
-                    fadeIn(animationSpec = tween(500))
-                },
-                exitTransition = {
-                    fadeOut(animationSpec = tween(500))
-                },
-                popEnterTransition= {
-                    fadeIn(animationSpec = tween(500))
-                },
-                popExitTransition = {
-                    fadeOut(animationSpec = tween(500))
-                },
-            ) {
-                composable(Screen.WorkoutSelection.route) {
-                    WorkoutSelectionScreen(dataClient,navController, appViewModel,hapticsViewModel, appHelper)
-                }
-                composable(Screen.WorkoutDetail.route) {
-                    WorkoutDetailScreen(navController, appViewModel, hapticsViewModel,hrViewModel)
-                }
-                composable(Screen.Workout.route) {
-                    val enableDimming by appViewModel.enableDimming
-
-                    KeepOn(appViewModel,enableDimming = enableDimming){
+            val enableDimming by appViewModel.enableDimming
+            KeepOn(appViewModel,enableDimming = enableDimming){
+                NavHost(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colors.background),
+                    navController = navController,
+                    startDestination = startDestination,
+                    enterTransition = {
+                        fadeIn(animationSpec = tween(500))
+                    },
+                    exitTransition = {
+                        fadeOut(animationSpec = tween(500))
+                    },
+                    popEnterTransition= {
+                        fadeIn(animationSpec = tween(500))
+                    },
+                    popExitTransition = {
+                        fadeOut(animationSpec = tween(500))
+                    },
+                ) {
+                    composable(Screen.WorkoutSelection.route) {
+                        WorkoutSelectionScreen(dataClient,navController, appViewModel,hapticsViewModel, appHelper)
+                    }
+                    composable(Screen.WorkoutDetail.route) {
+                        WorkoutDetailScreen(navController, appViewModel, hapticsViewModel,hrViewModel)
+                    }
+                    composable(Screen.Workout.route) {
                         WorkoutScreen(navController,appViewModel,hapticsViewModel,heartRateChangeViewModel,hrViewModel,polarViewModel)
                     }
-                }
-                composable(Screen.Loading.route) {
-                    val progress by appViewModel.backupProgress
-                    val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
+                    composable(Screen.Loading.route) {
+                        val progress by appViewModel.backupProgress
+                        val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
 
-                    CircularProgressIndicator(
-                        progress = animatedProgress,
-                        modifier = Modifier.fillMaxSize(),
-                        strokeWidth = 4.dp,
-                        indicatorColor = MaterialTheme.colors.primary,
-                        trackColor = MediumGray
-                    )
+                        CircularProgressIndicator(
+                            progress = animatedProgress,
+                            modifier = Modifier.fillMaxSize(),
+                            strokeWidth = 4.dp,
+                            indicatorColor = MaterialTheme.colors.primary,
+                            trackColor = MediumGray
+                        )
 
-                    LoadingScreen(appViewModel,"Syncing with phone")
+                        LoadingScreen(appViewModel,"Syncing with phone")
+                    }
                 }
             }
         }
-
-
     }
 }
