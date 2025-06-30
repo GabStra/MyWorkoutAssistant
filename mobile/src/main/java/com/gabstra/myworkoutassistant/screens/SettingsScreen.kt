@@ -23,11 +23,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.round
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import java.util.Calendar
 
@@ -143,13 +141,12 @@ fun SettingsScreen(
                     .fillMaxWidth()
                     .padding(8.dp)
             ) {
-                Text("Save Settings", color = LightGray)
+                Text("Save Settings")
             }
 
             // Cancel button
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

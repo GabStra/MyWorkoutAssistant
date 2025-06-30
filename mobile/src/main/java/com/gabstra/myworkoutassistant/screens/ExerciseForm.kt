@@ -49,7 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumGray
@@ -555,9 +555,8 @@ fun ExerciseForm(
                 if (exercise == null) Text("Insert Exercise", color = DarkGray) else Text("Edit Exercise", color = DarkGray)
             }
 
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

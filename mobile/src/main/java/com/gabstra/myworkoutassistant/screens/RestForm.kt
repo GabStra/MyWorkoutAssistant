@@ -31,13 +31,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
@@ -136,16 +133,12 @@ fun RestForm(
                     .fillMaxWidth()
                     .padding(8.dp),
             ) {
-                if (rest == null) Text("Insert Rest", color = LightGray) else Text(
-                    "Edit Rest",
-                    color = DarkGray
-                )
+                if (rest == null) Text("Insert Rest") else Text("Edit Rest")
             }
 
             // Cancel button
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

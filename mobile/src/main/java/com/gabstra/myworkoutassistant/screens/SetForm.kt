@@ -33,7 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
-import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
 import com.gabstra.myworkoutassistant.composables.TimedDurationSetForm
 import com.gabstra.myworkoutassistant.composables.WeightSetForm
@@ -46,7 +46,6 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 
@@ -187,9 +186,8 @@ fun SetForm(
                 }
             }
 
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },

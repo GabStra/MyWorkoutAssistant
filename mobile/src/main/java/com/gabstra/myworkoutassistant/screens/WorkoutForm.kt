@@ -64,7 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.WorkoutTypes
-import com.gabstra.myworkoutassistant.composables.CustomOutlinedButton
+import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
@@ -357,9 +357,8 @@ fun WorkoutForm(
                 if(workout==null) Text("Insert Workout", color = DarkGray) else Text("Edit Workout", color = DarkGray)
             }
 
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = {
                     onCancel()
                 },
@@ -555,9 +554,8 @@ fun ScheduleDialog(
             }
         },
         dismissButton = {
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = onDismiss,
             )
         }
@@ -586,9 +584,8 @@ fun ScheduleDialog(
                 }
             },
             dismissButton = {
-                CustomOutlinedButton(
+                CustomButton(
                     text = "Cancel",
-                    color = MediumLightGray,
                     onClick = { showDatePicker.value = false },
                 )
             }
@@ -614,7 +611,7 @@ fun LabeledButton(
         Text(label)
         Spacer(modifier = Modifier.width(8.dp))
         Button(onClick = onClick) {
-            Text(buttonText, color = LightGray)
+            Text(buttonText)
         }
     }
 }
@@ -709,9 +706,8 @@ fun TimePickerDialog(
             TextButton(onClick = onConfirm) { Text("OK") }
         },
         dismissButton = {
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = onDismiss,
             )
         }
@@ -1059,9 +1055,8 @@ fun BatchScheduleDialog(
             }
         },
         dismissButton = {
-            CustomOutlinedButton(
+            CustomButton(
                 text = "Cancel",
-                color = MediumLightGray,
                 onClick = onDismiss,
             )
         }
@@ -1095,9 +1090,8 @@ fun BatchScheduleDialog(
                 }
             },
             dismissButton = {
-                CustomOutlinedButton(
+                CustomButton(
                     text = "Cancel",
-                    color = MediumLightGray,
                     onClick = { showDatePicker.value = false },
                 )
             }

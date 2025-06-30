@@ -47,7 +47,7 @@ fun EnduranceSetForm(
                 .fillMaxWidth()
                 .padding(8.dp),
         ) {
-            Text("Duration", color = LightGray)
+            Text("Duration")
             Spacer(modifier = Modifier.height(15.dp))
             CustomTimePicker(
                 initialHour = hours,

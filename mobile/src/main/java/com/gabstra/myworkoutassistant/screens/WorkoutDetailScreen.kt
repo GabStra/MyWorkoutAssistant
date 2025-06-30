@@ -248,7 +248,7 @@ fun SupersetForm(
 
         AlertDialog(
             onDismissRequest = { displayDialog.value = false },
-            title = { Text("Add Superset", color = LightGray) },
+            title = { Text("Add Superset") },
             text = {
                 Column(
                     modifier = Modifier
@@ -260,7 +260,7 @@ fun SupersetForm(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
 
-                    Text("Rest Time Between Sets", color = LightGray)
+                    Text("Rest Time Between Sets")
                     CustomTimePicker(
                         initialHour = hours,
                         initialMinute = minutes,
@@ -275,7 +275,7 @@ fun SupersetForm(
                         remember { workout.workoutComponents.filter { it is Exercise && it.enabled } }
 
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text("Select at least two exercises", color = LightGray)
+                    Text("Select at least two exercises")
                     validItems.forEach { item ->
                         val exercise = item as Exercise
 
