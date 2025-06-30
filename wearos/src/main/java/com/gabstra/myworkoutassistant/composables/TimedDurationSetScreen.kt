@@ -193,6 +193,12 @@ fun TimedDurationSetScreen(
 
         if (set.autoStart) {
             delay(500)
+            hapticsViewModel.doHardVibration()
+            delay(1000)
+            hapticsViewModel.doHardVibration()
+            delay(1000)
+            hapticsViewModel.doHardVibration()
+            delay(1000)
             hapticsViewModel.doHardVibrationTwice()
 
             if(state.startTime == null){

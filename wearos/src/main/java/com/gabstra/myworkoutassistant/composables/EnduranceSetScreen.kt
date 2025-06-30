@@ -258,6 +258,12 @@ fun EnduranceSetScreen (
 
         if (set.autoStart) {
             delay(500)
+            hapticsViewModel.doHardVibration()
+            delay(1000)
+            hapticsViewModel.doHardVibration()
+            delay(1000)
+            hapticsViewModel.doHardVibration()
+            delay(1000)
             hapticsViewModel.doHardVibrationTwice()
             startTimerJob()
 
