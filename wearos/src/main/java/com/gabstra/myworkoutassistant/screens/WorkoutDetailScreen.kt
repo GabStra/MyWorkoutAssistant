@@ -35,7 +35,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import kotlinx.coroutines.flow.drop
 
@@ -129,7 +128,7 @@ fun WorkoutDetailScreen(
                         },
                         backgroundColor = Orange,
                         borderColor = Orange,
-                        textColor = DarkGray,
+                        textColor = MaterialTheme.colors.background,
                         enabled = hasExercises
                     )
                 }

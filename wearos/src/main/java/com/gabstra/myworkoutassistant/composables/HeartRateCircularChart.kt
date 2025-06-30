@@ -552,8 +552,8 @@ private fun HeartRateView(
 
             var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else DarkGray)
-            RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else DarkGray)
+            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MediumGray)
+            RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MediumGray)
         }
     }
 }

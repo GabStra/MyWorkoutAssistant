@@ -11,6 +11,7 @@ import android.os.Vibrator
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -94,7 +95,7 @@ fun Modifier.verticalColumnScrollbar(
     // Scrollbar appearance
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
-    scrollBarTrackColor: Color = DarkGray,
+    scrollBarTrackColor: Color = MaterialTheme.colorScheme.background,
     scrollBarColor: Color = MediumGray,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 0f,
@@ -103,7 +104,7 @@ fun Modifier.verticalColumnScrollbar(
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
-    contentFadeColor: Color = DarkGray
+    contentFadeColor: Color = MaterialTheme.colorScheme.background
 ): Modifier {
     // Remember updated state for all parameters accessed within draw lambda
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)

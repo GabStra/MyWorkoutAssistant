@@ -120,8 +120,9 @@ fun CustomDialogYesOnLongPress(
     }
 
     fun onRelease() {
-        currentMillis = 0
+
         showProgressBar = false
+        currentMillis = 0
         startTime = 0
         hasBeenPressedLongEnough = false
 
@@ -138,7 +139,8 @@ fun CustomDialogYesOnLongPress(
             Box(
                 modifier = Modifier
                     .background(MaterialTheme.colors.background)
-                    .fillMaxSize().padding(25.dp), contentAlignment = Alignment.Center
+                    .fillMaxSize()
+                    .padding(25.dp), contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -174,7 +176,7 @@ fun CustomDialogYesOnLongPress(
                             buttonModifier = Modifier
                                 .size(35.dp)
                                 .clip(CircleShape)
-                                .border(1.dp, LightGray,CircleShape),
+                                .border(1.dp, LightGray, CircleShape),
                             colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.background)
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
@@ -187,7 +189,7 @@ fun CustomDialogYesOnLongPress(
                                     longPressCoroutineScope,
                                     thresholdMillis = 10,
                                     intervalMillis = 10,
-                                    onPressStart = {  },
+                                    onPressStart = { },
                                     onBeforeLongPressRepeat = { onBeforeLongPressRepeat() },
                                     onLongPressRepeat = { onLongPressRepeat() },
                                     onRelease = { onRelease() }
@@ -208,10 +210,22 @@ fun CustomDialogYesOnLongPress(
                 }
             }
 
+/*            val progressBarAlpha: Float by animateFloatAsState(
+                targetValue = if (showProgressBar) 1f else 0f,
+                animationSpec = if (showProgressBar) {
+                    tween(durationMillis = 100)
+                } else {
+                    snap()
+                },
+                label = "DialogProgressBarAlpha"
+            )*/
+
             if (showProgressBar) {
                 CircularProgressIndicator(
                     progress = progress,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize(),
+                        //.graphicsLayer(alpha = progressBarAlpha),
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colors.primary,
                     trackColor = MediumGray
