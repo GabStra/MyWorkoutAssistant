@@ -29,8 +29,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -94,9 +92,9 @@ fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     // Scrollbar appearance
     width: Dp = 4.dp,
-    showScrollBarTrack: Boolean = true,
+    showScrollBarTrack: Boolean = false,
     scrollBarTrackColor: Color = MaterialTheme.colorScheme.background,
-    scrollBarColor: Color = MediumGray,
+    scrollBarColor: Color = MaterialTheme.colorScheme.onBackground,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 0f,
     trackHeight: Dp? = null,

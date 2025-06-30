@@ -267,7 +267,7 @@ fun TimedDurationSetScreen(
     @Composable
     fun SetScreen(customModifier: Modifier) {
         Column (
-            modifier = customModifier,
+            modifier = customModifier.padding(vertical = 5.dp),
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

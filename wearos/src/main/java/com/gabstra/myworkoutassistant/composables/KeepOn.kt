@@ -74,6 +74,10 @@ fun KeepOn(
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         },
+        onStarted = {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            wakeUpAndResetTimer()
+        },
         onResumed = {
             window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             wakeUpAndResetTimer()

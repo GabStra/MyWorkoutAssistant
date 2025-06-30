@@ -100,7 +100,6 @@ fun PreparingPolarScreen(
             } else {
                 viewModel.goToNextState()
                 viewModel.setWorkoutStart()
-                hapticsViewModel.doHardVibration()
             }
 
             onReady()

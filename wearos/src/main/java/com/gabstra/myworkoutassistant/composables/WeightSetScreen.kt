@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -100,7 +101,7 @@ fun WeightSetScreen(
 
     val typography = MaterialTheme.typography
     val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize,fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -330,12 +331,43 @@ fun WeightSetScreen(
     @Composable
     fun SetScreen(customModifier: Modifier) {
         Column (
-            modifier = customModifier,
+            modifier = customModifier.padding(vertical = 5.dp),
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ){
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text(
+                            text = "WEIGHT (KG)",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color =  LightGray,
+                        )
+                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text(
+                            text = "REPS",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color =  LightGray,
+                        )
+                        RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
+                }
                 if (equipment != null) {
                     Column(
                         modifier = Modifier.fillMaxWidth().weight(1f),
@@ -373,34 +405,6 @@ fun WeightSetScreen(
                             showWeightInfoDialog = false
                         }
                     )
-                }
-
-                Column(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                ) {
-                    Text(
-                        text = "WEIGHT (KG)",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color =  LightGray,
-                    )
-                    WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
-                }
-
-                Column(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                ) {
-                    Text(
-                        text = "REPS",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color =  LightGray,
-                    )
-                    RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                 }
             }
             /*if(!state.isWarmupSet){
