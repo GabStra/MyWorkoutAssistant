@@ -267,6 +267,7 @@ fun WearApp(
             try{
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                 appViewModel.updateWorkoutStore(workoutStore)
+                appViewModel.lightScreenPermanently()
             }catch(exception: Exception){
                 Toast.makeText(localContext, "Failed to load workout repository", Toast.LENGTH_SHORT).show()
             }
