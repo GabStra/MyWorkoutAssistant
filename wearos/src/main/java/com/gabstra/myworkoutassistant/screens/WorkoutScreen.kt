@@ -119,6 +119,7 @@ fun WorkoutScreen(
                 polarViewModel.disconnectFromDevice()
             }
             cancelWorkoutInProgressNotification(context)
+            viewModel.lightScreenPermanently()
             navController.navigate(Screen.WorkoutSelection.route){
                 popUpTo(0) {
                     inclusive = true

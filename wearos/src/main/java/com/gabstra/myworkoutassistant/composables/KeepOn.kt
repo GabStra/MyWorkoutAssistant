@@ -11,12 +11,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
@@ -33,12 +33,15 @@ fun KeepOn(
     val context = LocalContext.current
     val activity = context.findActivity()
     val window = activity?.window
-    val lifecycleOwner = LocalLifecycleOwner.current
+
     val scope = rememberCoroutineScope()
 
     var isDimmed by remember { mutableStateOf(false) }
     var dimmingJob by remember { mutableStateOf<Job?>(null) }
-    
+
+    val updatedEnableDimming by rememberUpdatedState(enableDimming)
+    val updatedDimDelay by rememberUpdatedState(dimDelay)
+
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
             screenBrightness = brightness
@@ -55,9 +58,9 @@ fun KeepOn(
             isDimmed = false
         }
 
-        if (enableDimming) {
+        if (updatedEnableDimming) {
             dimmingJob = scope.launch {
-                delay(dimDelay)
+                delay(updatedDimDelay)
                 setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF) // Use OFF for minimal brightness
                 isDimmed = true
             }

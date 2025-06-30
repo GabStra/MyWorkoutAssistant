@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -74,7 +75,6 @@ fun PageButtons(
                 showGoBackDialog = true
             },
             enabled = !isHistoryEmpty,
-            backgroundColor = MaterialTheme.colors.background
         )
         val dimmingEnabled by viewModel.currentScreenDimmingState
 
@@ -85,17 +85,13 @@ fun PageButtons(
                 viewModel.toggleScreenDimming()
             },
             textColor = if (dimmingEnabled)
-                LightGray
+                MaterialTheme.colors.onBackground
             else
                 MaterialTheme.colors.background,
             backgroundColor = if (dimmingEnabled)
-                MaterialTheme.colors.background
+                MediumDarkGray
             else
-                MaterialTheme.colors.primary,
-            borderColor = if (dimmingEnabled)
-                MaterialTheme.colors.onBackground
-            else
-                MaterialTheme.colors.primary,
+                MaterialTheme.colors.primary
         )
         if (isMovementSet) {
             ButtonWithText(
@@ -106,8 +102,7 @@ fun PageButtons(
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.addNewSetStandard()
                     }
-                },
-                backgroundColor = MaterialTheme.colors.background
+                }
             )
         }
         if (nextWorkoutState !is WorkoutState.Rest) {
@@ -119,8 +114,7 @@ fun PageButtons(
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.addNewRest()
                     }
-                },
-                backgroundColor = MaterialTheme.colors.background
+                }
             )
         }
 
@@ -133,8 +127,7 @@ fun PageButtons(
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.addNewRestPauseSet()
                     }
-                },
-                backgroundColor = MaterialTheme.colors.background
+                }
             )
         }
     }

@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -24,18 +23,16 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
-
-private val PressInteraction.Press.isPressed: Boolean
-    get() = true
 
 @Composable
 fun ButtonWithText(
     text: String,
     enabled:Boolean = true,
     textColor : Color = MaterialTheme.colors.onBackground,
-    backgroundColor: Color = MaterialTheme.colors.background,
-    borderColor: Color = MaterialTheme.colors.onBackground,
+    backgroundColor: Color = MediumDarkGray,
     onClick: () -> Unit
 ) {
     val backgroundOnPress = lerp(backgroundColor, textColor, 0.2f)
@@ -52,21 +49,14 @@ fun ButtonWithText(
         else -> textColor
     }
 
-    val borderColorToUse = when {
-        !enabled -> disabledColor
-        isPressed ->  Color.Transparent
-        else -> borderColor
-    }
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(50.dp)
             .clip(RoundedCornerShape(50))
-            .border(1.dp, borderColorToUse, RoundedCornerShape(50))
             .background(
                 when {
-                    !enabled -> Color.Transparent
+                    !enabled -> DarkGray
                     isPressed -> backgroundOnPress
                     else -> backgroundColor
                 }

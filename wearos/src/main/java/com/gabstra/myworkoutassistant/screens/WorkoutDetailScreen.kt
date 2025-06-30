@@ -127,7 +127,6 @@ fun WorkoutDetailScreen(
                             permissionLauncherStart.launch(basePermissions.toTypedArray())
                         },
                         backgroundColor = Orange,
-                        borderColor = Orange,
                         textColor = MaterialTheme.colors.background,
                         enabled = hasExercises
                     )
@@ -140,8 +139,7 @@ fun WorkoutDetailScreen(
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 permissionLauncherResume.launch(basePermissions.toTypedArray())
-                            },
-                            backgroundColor = MaterialTheme.colors.background,
+                            }
                         )
                     }
 
@@ -150,8 +148,7 @@ fun WorkoutDetailScreen(
                             text = "Delete record",
                             onClick = {
                                 showDeleteDialog = true
-                            },
-                            backgroundColor = MaterialTheme.colors.background,
+                            }
                         )
                     }
                 }
@@ -172,7 +169,6 @@ fun WorkoutDetailScreen(
                                         .show()
                             }
                         },
-                        backgroundColor = MaterialTheme.colors.background,
                         enabled = hasExercises
                     )
                 }

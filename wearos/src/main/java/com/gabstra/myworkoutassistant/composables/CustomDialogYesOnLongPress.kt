@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +39,7 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
-import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import kotlinx.coroutines.Job
@@ -175,9 +174,8 @@ fun CustomDialogYesOnLongPress(
                             },
                             buttonModifier = Modifier
                                 .size(35.dp)
-                                .clip(CircleShape)
-                                .border(1.dp, LightGray, CircleShape),
-                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.background)
+                                .clip(CircleShape),
+                            colors = ButtonDefaults.buttonColors(backgroundColor = MediumDarkGray)
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
@@ -228,7 +226,7 @@ fun CustomDialogYesOnLongPress(
                         //.graphicsLayer(alpha = progressBarAlpha),
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colors.primary,
-                    trackColor = MediumGray
+                    trackColor = MediumDarkGray
                 )
             }
         }

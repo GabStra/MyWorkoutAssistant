@@ -58,8 +58,7 @@ import java.util.Calendar
 fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
     ButtonWithText(
         text = workout.name,
-        onClick = { onItemClick() },
-        backgroundColor = MaterialTheme.colors.background,
+        onClick = { onItemClick() }
     )
 }
 
@@ -206,8 +205,7 @@ fun WorkoutSelectionScreen(
                                 scope.launch {
                                     openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
                                 }
-                            },
-                            backgroundColor = MaterialTheme.colors.background,
+                            }
                         )
                     }
                 }else{

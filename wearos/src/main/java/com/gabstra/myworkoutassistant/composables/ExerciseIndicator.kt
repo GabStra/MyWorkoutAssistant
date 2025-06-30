@@ -9,7 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -77,7 +77,7 @@ fun ExerciseIndicator(
                         paddingAngle = 0f,
                         startAngle = startAngle,
                         endAngle = endAngle,
-                        trackColor = MediumGray,
+                        trackColor = MediumDarkGray,
                     )
                 }
             }else{
@@ -112,7 +112,7 @@ fun ExerciseIndicator(
                     paddingAngle = 0f,
                     startAngle = startAngle,
                     endAngle = endAngle,
-                    trackColor = MediumGray,
+                    trackColor = MediumDarkGray,
                 )
             }
         }
