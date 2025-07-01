@@ -241,8 +241,7 @@ fun RestScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .combinedClickable(
-                        onClick = {
-                        },
+                        onClick = {},
                         onLongClick = {
                             isTimerInEditMode = !isTimerInEditMode
                             updateInteractionTime()

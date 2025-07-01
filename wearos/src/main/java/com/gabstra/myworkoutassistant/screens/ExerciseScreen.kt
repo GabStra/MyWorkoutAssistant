@@ -181,7 +181,7 @@ fun ExerciseScreen(
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = exercise.name,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

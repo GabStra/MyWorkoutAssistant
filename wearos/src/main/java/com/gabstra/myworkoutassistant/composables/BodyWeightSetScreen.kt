@@ -32,7 +32,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
@@ -106,7 +105,7 @@ fun BodyWeightSetScreen(
 
     val typography = MaterialTheme.typography
     val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize, fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f, fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -340,78 +339,33 @@ fun BodyWeightSetScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ){
-                    if(availableWeights.isNotEmpty() && currentSetData.additionalWeight != 0.0) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                        ) {
-                            Text(
-                                text = "WEIGHT (KG)",
-                                style = headerStyle,
-                                textAlign = TextAlign.Center,
-                                color =  LightGray,
-                            )
-                            WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
-                        }
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                    ) {
-                        Text(
-                            text = "REPS",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center,
-                            color =  LightGray,
-                        )
-                        RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
-                    }
-                }
-                if(equipment!=null && currentSetData.additionalWeight != 0.0) {
+                if(availableWeights.isNotEmpty() && currentSetData.additionalWeight != 0.0) {
                     Column(
                         modifier = Modifier.fillMaxWidth().weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(2.5.dp)
                     ) {
                         Text(
-                            text = "EQUIPMENT",
+                            text = "WEIGHT (KG)",
                             style = headerStyle,
                             textAlign = TextAlign.Center,
-                            color =  LightGray,
+                            color = LightGray,
                         )
-                        ScalableText(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = {},
-                                    onLongClick = {
-                                        startOpenDialogJob()
-                                        hapticsViewModel.doGentleVibration()
-                                    },
-                                    onDoubleClick = {}
-                                ),
-                            text = equipment.type.toDisplayText(),
-                            style = itemStyle,
-                            color =  LightGray,
-                            textAlign = TextAlign.Center
-                        )
+                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                     }
-
-                    WeightInfoDialog(
-                        show = showWeightInfoDialog,
-                        weight = currentSetData.getWeight(),
-                        equipment = equipment,
-                        onClick = {
-                            openDialogJob?.cancel()
-                            showWeightInfoDialog = false
-                        }
+                }
+                Column(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                ) {
+                    Text(
+                        text = "REPS",
+                        style = headerStyle,
+                        textAlign = TextAlign.Center,
+                        color =  LightGray,
                     )
+                    RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                 }
             }
         }
