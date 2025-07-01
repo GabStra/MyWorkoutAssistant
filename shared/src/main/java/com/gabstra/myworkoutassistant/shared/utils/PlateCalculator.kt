@@ -213,13 +213,10 @@ class PlateCalculator {
             val sortedTarget  = target.sortedDescending()
             if (sortedCurrent == sortedTarget) return emptyList()
 
-            // base diff
             val (toAdd, toRemove) = minimizeChanges(sortedCurrent, sortedTarget)
 
-            // biggest new plate
             val maxNew = toAdd.maxOrNull() ?: 0.0
 
-            // temporary removes (lighter than maxNew, but not in toRemove)
             val tempRemove = sortedCurrent.filter { it < maxNew && !toRemove.contains(it) }
 
             val removalSeq = (tempRemove + toRemove).sorted()

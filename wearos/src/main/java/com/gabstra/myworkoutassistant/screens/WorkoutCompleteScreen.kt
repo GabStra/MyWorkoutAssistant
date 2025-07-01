@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +27,6 @@ import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
-import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -59,25 +59,20 @@ fun WorkoutCompleteScreen(
     var dataSent by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit){
+        delay(500)
         hapticsViewModel.doShortImpulse()
         if(!workout.usePolarDevice){
             hrViewModel.stopMeasuringHeartRate()
         }else{
             polarViewModel.disconnectFromDevice()
         }
-        delay(1000)
         cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
             dataSent = true
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-        }
-    }
-
-    LaunchedEffect(dataSent) {
-        if(!dataSent) return@LaunchedEffect
-        delay(1000)
-        navController.navigate(Screen.WorkoutSelection.route){
-            popUpTo(0) { inclusive = true }
+            delay(3000)
+            val activity = (context as? Activity)
+            activity?.finishAndRemoveTask()
         }
     }
 

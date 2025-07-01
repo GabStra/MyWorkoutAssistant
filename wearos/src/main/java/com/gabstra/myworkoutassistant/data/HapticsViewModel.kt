@@ -79,9 +79,9 @@ class HapticsViewModel(
     fun doShortImpulse() {
         viewModelScope.launch {
             haptics.vibrateHard()
-            delay(100)
+            delay(200)
             haptics.vibrateHard()
-            delay(100)
+            delay(200)
             haptics.vibrateHard()
         }
     }

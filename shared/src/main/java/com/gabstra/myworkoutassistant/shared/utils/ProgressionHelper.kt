@@ -91,7 +91,7 @@ object VolumeDistributionHelper {
             .groupBy { it.weight }
             .mapValues { it.value.minOf { set -> set.volume } }
             .values
-            .max()
+            .maxOrNull() ?: Double.MAX_VALUE
 
         var usableSets = validSets
             .filter { it.weight <= maxWeight && it.volume <= maxVolume }
