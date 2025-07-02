@@ -53,6 +53,7 @@ fun showWorkoutInProgressNotification(context: Context) {
 
     val ongoingActivity =
         OngoingActivity.Builder(context, notificationId, notificationBuilder)
+            .setAnimatedIcon(R.drawable.ic_workout)
             .setStaticIcon(R.drawable.ic_workout) // The icon to show on the watch face
             .setTouchIntent(pendingIntent)       // The intent to fire on tap
             .setStatus(ongoingActivityStatus)    // Optional: Add status text

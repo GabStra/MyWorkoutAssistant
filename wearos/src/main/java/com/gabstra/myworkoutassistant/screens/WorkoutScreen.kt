@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,6 +63,8 @@ fun WorkoutScreen(
 
     LaunchedEffect(triggerMobileNotification){
         if(triggerMobileNotification==null) return@LaunchedEffect
+        val notificationHelper = WorkoutNotificationHelper(context)
+        notificationHelper.clearChannelNotifications()
         showWorkoutInProgressNotification(context)
     }
 
