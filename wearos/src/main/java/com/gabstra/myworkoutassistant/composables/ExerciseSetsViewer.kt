@@ -40,9 +40,9 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -340,7 +340,7 @@ fun ExerciseSetsViewer(
                     val backgroundColor = if (index % 2 == 0) {
                         Color.Transparent
                     } else {
-                        MediumDarkGray
+                        DarkGray
                     }
 
                     SetTableRow(
@@ -402,7 +402,7 @@ fun ExerciseSetsViewer(
                     val backgroundColor = if (index % 2 == 0) {
                         Color.Transparent
                     } else {
-                        MediumDarkGray
+                        DarkGray
                     }
 
                     SetTableRow(

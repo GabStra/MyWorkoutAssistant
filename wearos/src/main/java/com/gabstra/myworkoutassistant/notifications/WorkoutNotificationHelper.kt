@@ -53,7 +53,7 @@ class WorkoutNotificationHelper(private val context: Context) {
 
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_workout)
+            .setSmallIcon(R.drawable.ic_workout_icon)
             .setContentTitle(workout.name)
             .setContentText(if (schedule.label.isNotEmpty()) schedule.label else "Time for your workout!")
             .setContentIntent(pendingIntent)

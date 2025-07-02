@@ -38,7 +38,7 @@ fun showWorkoutInProgressNotification(context: Context) {
 
     // Build the notification builder
     val notificationBuilder = NotificationCompat.Builder(context, channelId)
-        .setSmallIcon(R.drawable.ic_workout)
+        .setSmallIcon(R.drawable.ic_workout_icon)
         .setContentTitle("Workout in Progress")
         .setContentText("Tap to open the app.")
         .setContentIntent(pendingIntent)
@@ -53,8 +53,8 @@ fun showWorkoutInProgressNotification(context: Context) {
 
     val ongoingActivity =
         OngoingActivity.Builder(context, notificationId, notificationBuilder)
-            .setAnimatedIcon(R.drawable.ic_workout)
-            .setStaticIcon(R.drawable.ic_workout) // The icon to show on the watch face
+            .setAnimatedIcon(R.drawable.ic_workout_icon)
+            .setStaticIcon(R.drawable.ic_workout_icon) // The icon to show on the watch face
             .setTouchIntent(pendingIntent)       // The intent to fire on tap
             .setStatus(ongoingActivityStatus)    // Optional: Add status text
             .build()
