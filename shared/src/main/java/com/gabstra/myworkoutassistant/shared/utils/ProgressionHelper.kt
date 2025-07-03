@@ -83,9 +83,6 @@ object VolumeDistributionHelper {
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.rir in minRir..maxRir }
 
-        val maxWeight = validSets.filter { it.weight > previousMaxWeight }
-            .minBy { it.weight }.weight
-
         val maxVolume = validSets
             .filter { it.volume > previousMaxVolume }
             .groupBy { it.weight }
@@ -94,9 +91,13 @@ object VolumeDistributionHelper {
             .maxOrNull() ?: Double.MAX_VALUE
 
         var usableSets = validSets
-            .filter { it.weight <= maxWeight && it.volume <= maxVolume }
+            .filter {  it.volume <= maxVolume }
 
-        val previousVolume = params.previousTotalVolume
+        //Log.d("WorkoutViewModel", "usableSets: ${usableSets.map { "${it.weight} x ${it.reps}"}}")
+
+        val previousTotalVolume = params.previousTotalVolume
+
+        val sortedPreviousSets = params.previousSets.sortedByDescending { it.volume }
 
         fun calculateScore (combo: List<ExerciseSet>): Double {
             val currentTotalFatigue = combo.sumOf { it.fatigue }
@@ -108,7 +109,7 @@ object VolumeDistributionHelper {
 
             val totalFatigueDifference = 1 + (abs(currentTotalFatigue - previousTotalFatigue) / previousTotalFatigue)
             val avgWeightDifference = 1 + (abs(currentAverageWeightPerRep - previousAverageWeightPerRep) / previousAverageWeightPerRep)
-            val previousVolumeDifference = 1 + (abs(currentTotalVolume - previousVolume) / previousVolume)
+            val previousVolumeDifference = 1 + (abs(currentTotalVolume - previousTotalVolume) / previousTotalVolume)
 
             val overPreviousMaxVolumeCount = combo.count { it.volume > previousMaxVolume }
 
@@ -174,8 +175,19 @@ object VolumeDistributionHelper {
             params.previousSets.size,
             params,
             calculateScore = { combo -> calculateScore(combo) },
-            isComboValid = { combo -> isStrictProgression(params.previousSets, combo) }
+            isComboValid = { combo -> isStrictProgression(sortedPreviousSets, combo) }
         )
+
+        if(result.isEmpty()){
+            return findBestProgressions(
+                usableSets,
+                params.previousSets.size,
+                params.previousSets.size,
+                params,
+                calculateScore = { combo -> calculateScore(combo) },
+                isComboValid = {  combo -> true }
+            )
+        }
 
         return result
     }

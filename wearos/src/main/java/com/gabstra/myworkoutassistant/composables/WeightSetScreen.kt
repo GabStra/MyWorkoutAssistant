@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -330,7 +329,7 @@ fun WeightSetScreen(
     @Composable
     fun SetScreen(customModifier: Modifier) {
         Column (
-            modifier = customModifier.padding(vertical = 5.dp),
+            modifier = customModifier,
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -347,7 +346,7 @@ fun WeightSetScreen(
                         textAlign = TextAlign.Center,
                         color =  LightGray,
                     )
-                    WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    WeightRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
                 }
 
                 Column(
@@ -361,7 +360,7 @@ fun WeightSetScreen(
                         textAlign = TextAlign.Center,
                         color =  LightGray,
                     )
-                    RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    RepsRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
                 }
             }
             /*if(!state.isWarmupSet){

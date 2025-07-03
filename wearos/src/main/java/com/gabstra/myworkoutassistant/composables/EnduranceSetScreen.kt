@@ -276,7 +276,7 @@ fun EnduranceSetScreen (
     @Composable
     fun SetScreen(customModifier: Modifier) {
         Column (
-            modifier = customModifier.padding(vertical = 5.dp),
+            modifier = customModifier,
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

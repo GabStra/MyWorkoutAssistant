@@ -7,9 +7,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -329,17 +329,20 @@ fun BodyWeightSetScreen(
         }
     }
 
+
     @SuppressLint("DefaultLocale")
     @Composable
     fun SetScreen(customModifier: Modifier) {
+        val shouldShowWeights = availableWeights.isNotEmpty() && currentSetData.additionalWeight != 0.0
+
         Column (
-            modifier = customModifier.padding(vertical = 5.dp),
+            modifier = customModifier,
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                if(availableWeights.isNotEmpty() && currentSetData.additionalWeight != 0.0) {
+                if(shouldShowWeights) {
                     Column(
                         modifier = Modifier.fillMaxWidth().weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -351,7 +354,7 @@ fun BodyWeightSetScreen(
                             textAlign = TextAlign.Center,
                             color = LightGray,
                         )
-                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                        WeightRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
                     }
                 }
                 Column(
@@ -365,7 +368,11 @@ fun BodyWeightSetScreen(
                         textAlign = TextAlign.Center,
                         color =  LightGray,
                     )
-                    RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    RepsRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
+                }
+
+                if(!shouldShowWeights){
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
