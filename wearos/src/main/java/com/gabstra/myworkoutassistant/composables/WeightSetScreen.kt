@@ -62,6 +62,11 @@ fun WeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
+    val repsRange = IntRange(
+        exercise.minReps,
+        exercise.maxReps
+    )
+
     val equipment = state.equipment
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 
@@ -159,8 +164,11 @@ fun WeightSetScreen(
     fun onMinusClick() {
         updateInteractionTime()
         if (isRepsInEditMode && (currentSetData.actualReps > 1)) {
+            val newRep = currentSetData.actualReps - 1
+            if(newRep < repsRange.first) return
+
             val newSetData = currentSetData.copy(
-                actualReps = currentSetData.actualReps - 1
+                actualReps = newRep
             )
 
             currentSetData = currentSetData.copy(
@@ -194,8 +202,11 @@ fun WeightSetScreen(
     fun onPlusClick() {
         updateInteractionTime()
         if (isRepsInEditMode) {
+            val newRep = currentSetData.actualReps + 1
+            if(newRep > repsRange.last) return
+
             val newSetData = currentSetData.copy(
-                actualReps = currentSetData.actualReps + 1
+                actualReps = newRep
             )
 
             currentSetData = currentSetData.copy(
@@ -207,7 +218,7 @@ fun WeightSetScreen(
         }
         if (isWeightInEditMode) {
             selectedWeightIndex?.let {
-                if (it < availableWeights!!.size - 1) {
+                if (it < availableWeights.size - 1) {
                     selectedWeightIndex = it + 1
 
                     val newSetData = currentSetData.copy(

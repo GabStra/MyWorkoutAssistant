@@ -568,17 +568,22 @@ open class WorkoutViewModel : ViewModel() {
             }
         }.average()
 
+        val repsRange =
+            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) IntRange(3, 30) else IntRange(
+                exercise.minReps,
+                exercise.maxReps
+            )
 
         var setsForProgression = exerciseSets.map {
             when (it) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     val weight = it.getWeight(relativeBodyWeight)
-                    createSet(weight, it.reps, oneRepMax)
+                    createSet(weight, it.reps.coerceIn(repsRange), oneRepMax)
                 }
 
                 is WeightSet -> {
-                    createSet(it.weight, it.reps, oneRepMax)
+                    createSet(it.weight, it.reps.coerceIn(repsRange), oneRepMax)
                 }
 
                 else -> throw IllegalArgumentException("Unknown set type")
@@ -615,11 +620,6 @@ open class WorkoutViewModel : ViewModel() {
         }
 
         val maxLoadPercent = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) 93.0 else exercise.maxLoadPercent
-        val repsRange =
-            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) IntRange(3, 30) else IntRange(
-                exercise.minReps,
-                exercise.maxReps
-            )
 
         if(exercise.exerciseType == ExerciseType.BODY_WEIGHT){
             val relativeBodyWeight =
@@ -653,10 +653,10 @@ open class WorkoutViewModel : ViewModel() {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     set.getWeight(relativeBodyWeight)
 
-                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps}"
+                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps.coerceIn(repsRange)}"
                 }
                 is WeightSet -> {
-                    "${set.weight} kg x ${set.reps}"
+                    "${set.weight} kg x ${set.reps.coerceIn(repsRange)}"
                 }
                 else -> throw IllegalArgumentException("Unknown set type")
             }
