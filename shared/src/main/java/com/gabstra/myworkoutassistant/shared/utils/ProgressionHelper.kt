@@ -11,7 +11,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
 import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.pow
 
 
@@ -83,12 +82,12 @@ object VolumeDistributionHelper {
         val previousMinVolume = params.previousSets.minOf { it.volume }
 
         val avgPreviousRir = params.previousSets.map { it.rir }.average()
-        val minRir = (floor(avgPreviousRir)).toInt().coerceIn(0, 10)
+
         val maxRir = (ceil(avgPreviousRir)).toInt().coerceIn(0, 10)
 
         var validSets = possibleSets
             .filter { set -> set.weight in nearAverageWeights }
-            .filter { set -> set.rir in minRir..maxRir }
+            .filter { set -> set.rir <= maxRir }
 
         if(atUpperLimit){
             val sortedValidSets = validSets.filter { it.weight > previousMaxWeight }.sortedWith(
@@ -191,27 +190,13 @@ object VolumeDistributionHelper {
         }
 
         var result = findBestProgressions(
-            usableSets.filter { it.weight <= previousMaxWeight },
+            usableSets,
             params.previousSets.size,
             params.previousSets.size,
             params,
             calculateScore = { combo -> calculateScore(combo) },
-            isComboValid = { combo ->
-                val currentAvgWeightPerRep = combo.sumOf { it.volume } / combo.sumOf { it.reps }
-                currentAvgWeightPerRep <= previousAverageWeightPerRep && isStrictProgression(params.previousSets, combo)
-            }
+            isComboValid = { combo -> isStrictProgression(params.previousSets, combo) }
         )
-
-        if(result.isEmpty()){
-             result = findBestProgressions(
-                usableSets,
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                calculateScore = { combo -> calculateScore(combo) },
-                isComboValid = { combo -> isStrictProgression(params.previousSets, combo) }
-            )
-        }
 
         if(result.isEmpty()){
             result = findBestProgressions(
@@ -220,7 +205,7 @@ object VolumeDistributionHelper {
                 params.previousSets.size,
                 params,
                 calculateScore = { combo -> calculateScore(combo) },
-                isComboValid = {  combo -> true }
+                isComboValid = { combo -> true }
             )
         }
 
