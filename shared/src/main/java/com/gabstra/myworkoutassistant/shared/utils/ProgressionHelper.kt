@@ -83,7 +83,7 @@ object VolumeDistributionHelper {
 
         val avgPreviousRir = params.previousSets.map { it.rir }.average()
 
-        val maxRir = (ceil(avgPreviousRir)).toInt().coerceIn(0, 10)
+        val maxRir = (ceil(avgPreviousRir) + 1).toInt().coerceIn(0, 10)
 
         var validSets = possibleSets
             .filter { set -> set.weight in nearAverageWeights }
@@ -190,7 +190,7 @@ object VolumeDistributionHelper {
         }
 
         var result = findBestProgressions(
-            usableSets,
+            usableSets.filter { it.weight <= previousMaxWeight},
             params.previousSets.size,
             params.previousSets.size,
             params,

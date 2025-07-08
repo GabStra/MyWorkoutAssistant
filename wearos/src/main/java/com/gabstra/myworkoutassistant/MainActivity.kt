@@ -69,6 +69,7 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 class MyReceiver(
@@ -264,6 +265,7 @@ fun WearApp(
         var startDestination by remember { mutableStateOf(Screen.WorkoutSelection.route) }
 
         LaunchedEffect(Unit) {
+            val startTime = System.currentTimeMillis()
             try{
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                 appViewModel.updateWorkoutStore(workoutStore)
@@ -273,6 +275,12 @@ fun WearApp(
             }
 
             appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
+
+            var now = System.currentTimeMillis()
+            if(now - startTime < 2000){
+                delay(2000 - (now - startTime))
+            }
+
             initialized = true
 
             onNavControllerAvailable(navController)
