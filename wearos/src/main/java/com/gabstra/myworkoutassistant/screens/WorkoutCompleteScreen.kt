@@ -13,9 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -56,8 +54,6 @@ fun WorkoutCompleteScreen(
     val seconds = remember { duration.seconds % 60 }
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
-    var dataSent by remember { mutableStateOf(false) }
-
     LaunchedEffect(Unit){
         delay(500)
         hapticsViewModel.doShortImpulse()
@@ -68,7 +64,6 @@ fun WorkoutCompleteScreen(
         }
         cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
-            dataSent = true
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
             delay(3000)
             val activity = (context as? Activity)

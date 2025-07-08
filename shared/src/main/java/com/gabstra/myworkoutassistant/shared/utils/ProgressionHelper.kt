@@ -10,7 +10,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.pow
 
 
@@ -36,7 +35,6 @@ object VolumeDistributionHelper {
         val previousTotalVolume : Double,
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
-        val maxLoadPercent: Double,
         val repsRange: IntRange,
         val volumeProgressionRange: FloatRange,
     )
@@ -66,12 +64,6 @@ object VolumeDistributionHelper {
             return emptyList()
         }
 
-
-        //if params.previousSets reps are higher than params.repsRange.last set them to that
-
-        //check if all reps of params.previousSets are equal or higher to params.repsRange.last
-        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last } && params.previousSets.all { it.weight == params.previousSets.first().weight }
-
         val previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
         var nearAverageWeights = getNearAverageWeights(params)
 
@@ -81,21 +73,28 @@ object VolumeDistributionHelper {
         val previousMaxVolume = params.previousSets.maxOf { it.volume }
         val previousMinVolume = params.previousSets.minOf { it.volume }
 
-        val avgPreviousRir = params.previousSets.map { it.rir }.average()
+        val maxRir = params.previousSets.maxOf { it.rir }
 
-        val maxRir = (ceil(avgPreviousRir) + 1).toInt().coerceIn(0, 10)
+/*        val avgPreviousRir = params.previousSets.map { it.rir }.average()
+
+        val maxRir = (ceil(avgPreviousRir)).toInt().coerceIn(0, 10)*/
 
         var validSets = possibleSets
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.rir <= maxRir }
 
+        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last }
+
         if(atUpperLimit){
-            val sortedValidSets = validSets.filter { it.weight > previousMaxWeight }.sortedWith(
+            val sortedValidSets = validSets.filter { it.weight > previousAverageWeightPerRep }.sortedWith(
                 compareByDescending<ExerciseSet> { it.weight }
                     .thenByDescending { it.reps }
             )
 
-            validSets = listOf(sortedValidSets.last())
+            validSets = when {
+                sortedValidSets.isNotEmpty() ->  listOf(sortedValidSets.last())
+                else -> emptyList()
+            }
         }
 
         val maxVolume = validSets
@@ -190,7 +189,7 @@ object VolumeDistributionHelper {
         }
 
         var result = findBestProgressions(
-            usableSets.filter { it.weight <= previousMaxWeight},
+            usableSets,
             params.previousSets.size,
             params.previousSets.size,
             params,
@@ -389,7 +388,6 @@ object VolumeDistributionHelper {
         previousSets:  List<ExerciseSet>,
         oneRepMax: Double,
         availableWeights: Set<Double>,
-        maxLoadPercent: Double,
         repsRange: IntRange,
         volumeProgressionRange: FloatRange,
     ): ExerciseProgression? {
@@ -400,7 +398,6 @@ object VolumeDistributionHelper {
             previousTotalVolume = exerciseVolume,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
-            maxLoadPercent = maxLoadPercent,
             repsRange = repsRange,
             volumeProgressionRange = volumeProgressionRange,
         )

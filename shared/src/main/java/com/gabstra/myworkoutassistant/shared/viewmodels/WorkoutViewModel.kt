@@ -618,8 +618,6 @@ open class WorkoutViewModel : ViewModel() {
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
 
-        val maxLoadPercent = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) 93.0 else exercise.maxLoadPercent
-
         if(exercise.exerciseType == ExerciseType.BODY_WEIGHT){
             val relativeBodyWeight =
                 bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
@@ -674,7 +672,6 @@ open class WorkoutViewModel : ViewModel() {
                 previousSets = setsForProgression,
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
-                maxLoadPercent = maxLoadPercent,
                 repsRange = repsRange,
                 volumeProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
             )
