@@ -1,7 +1,11 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
+import android.app.AlarmManager
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -116,9 +121,34 @@ fun NotificationPermissionHandler(content: @Composable (Boolean, () -> Unit) -> 
     content(permissionState, requestPermission)
 }
 
+@Composable
+fun rememberCanScheduleExactAlarmsState(context: Context): State<Boolean> {
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val canScheduleState = remember { mutableStateOf(alarmManager.canScheduleExactAlarms()) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canScheduleState.value = alarmManager.canScheduleExactAlarms()
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    return canScheduleState
+}
+
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutSelectionScreen(
+    alarmManager: AlarmManager,
     dataClient: DataClient,
     navController: NavController,
     viewModel: AppViewModel,
@@ -134,6 +164,8 @@ fun WorkoutSelectionScreen(
     val userAge by viewModel.userAge
     val context = LocalContext.current
     val versionName = getVersionName(context);
+
+    val canScheduleExactAlarms by rememberCanScheduleExactAlarmsState(context)
 
     var showClearData by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -177,13 +209,17 @@ fun WorkoutSelectionScreen(
             }
 
             item{
-                NotificationPermissionHandler { hasPermission, requestPermission ->
-                    if (!hasPermission) {
-                        ButtonWithText(text = "Request notification permission", onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            requestPermission()
-                        })
-                    }
+                if(!canScheduleExactAlarms){
+                    ButtonWithText(
+                        text = "Request alarms permission",
+                        onClick = {
+                            val intent = Intent(
+                                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                "package:${context.packageName}".toUri()
+                            )
+
+                            context.startActivity(intent)
+                    })
                 }
             }
 

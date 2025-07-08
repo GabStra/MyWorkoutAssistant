@@ -38,7 +38,7 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -118,7 +118,7 @@ fun BodyWeightSetForm(
                     DropdownMenu(
                         expanded = expandedWeights.value,
                         onDismissRequest = { expandedWeights.value = false },
-                        border = BorderStroke(1.dp, MediumGray),
+                        border = BorderStroke(1.dp, MediumLightGray),
                         modifier = Modifier.fillMaxWidth(.75f),
                         containerColor =  DarkGray
                     ) {

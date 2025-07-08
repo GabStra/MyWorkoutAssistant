@@ -17,7 +17,7 @@ import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -140,7 +140,7 @@ fun SetHistoriesRenderer(
                                 text = "${setData.actualReps}",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (exercise.enabled) LightGray else MediumGray,
+                                color = if (exercise.enabled) LightGray else MediumLightGray,
                             )
                         }
 
@@ -150,6 +150,7 @@ fun SetHistoriesRenderer(
                                     modifier = Modifier.weight(1f),
                                     text = "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
                                     color = LightGray,
                                 )
                             }else{
@@ -157,6 +158,7 @@ fun SetHistoriesRenderer(
                                     modifier = Modifier.weight(1f),
                                     text = "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
                                     color = LightGray,
                                 )
                             }
@@ -168,6 +170,7 @@ fun SetHistoriesRenderer(
                                     modifier = Modifier.weight(1f),
                                     text = "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
                                     color = LightGray,
                                 )
                             }else{
@@ -175,6 +178,7 @@ fun SetHistoriesRenderer(
                                     modifier = Modifier.weight(1f),
                                     text = "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
                                     color = LightGray,
                                 )
                             }

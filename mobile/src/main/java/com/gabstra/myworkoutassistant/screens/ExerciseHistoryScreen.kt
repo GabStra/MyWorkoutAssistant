@@ -69,7 +69,7 @@ import com.gabstra.myworkoutassistant.getOneRepMax
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -683,7 +683,7 @@ fun ExerciseHistoryScreen(
                                                                         Spacer(Modifier.height(5.dp))
                                                                         SimpleProgressIndicator(
                                                                             progress = progress,
-                                                                            trackColor = MediumGray,
+                                                                            trackColor = MediumLightGray,
                                                                             modifier = Modifier
                                                                                 .fillMaxWidth()
                                                                                 .height(16.dp)

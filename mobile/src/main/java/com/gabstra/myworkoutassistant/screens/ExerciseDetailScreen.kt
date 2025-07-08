@@ -72,7 +72,7 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.flow.Flow
@@ -432,7 +432,7 @@ fun ExerciseDetailScreen(
                                         selectedSets = emptyList()
                                     }) {
                                     val isEnabled = selectedSets.isNotEmpty()
-                                    val color = if (isEnabled) LightGray else MediumGray
+                                    val color = if (isEnabled) LightGray else MediumLightGray
 
                                     Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
                                 }

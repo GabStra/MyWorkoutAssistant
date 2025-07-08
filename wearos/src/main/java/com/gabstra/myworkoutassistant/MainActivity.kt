@@ -14,7 +14,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -36,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -175,6 +173,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if(alarmManager.canScheduleExactAlarms()){
+            val scheduler = WorkoutAlarmScheduler(this)
+            scheduler.rescheduleAllWorkouts()
+        }
+    }
+
     @OptIn(ExperimentalHorologistApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         // Handle intent if app was launched from notification
@@ -184,15 +190,8 @@ class MainActivity : ComponentActivity() {
         val wearDataLayerRegistry  = WearDataLayerRegistry.fromContext(this, lifecycleScope)
         appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
 
-        if(!alarmManager.canScheduleExactAlarms()){
-            requestScheduleAlarmPermission()
-        }else{
-            val scheduler = WorkoutAlarmScheduler(this)
-            scheduler.rescheduleAllWorkouts()
-        }
-
         setContent {
-            WearApp(dataClient, appViewModel,hapticsViewModel, heartRateChangeViewModel, appHelper, workoutStoreRepository){
+            WearApp(dataClient, appViewModel,hapticsViewModel, heartRateChangeViewModel, appHelper, alarmManager, workoutStoreRepository){
                 navController ->
                     if(::myReceiver.isInitialized) return@WearApp
                     myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
@@ -229,14 +228,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    private fun requestScheduleAlarmPermission() {
-        val intent = Intent().apply {
-            action = Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
-            data = "package:${packageName}".toUri()
-        }
-        this.startActivity(intent)
-    }
 }
 
 
@@ -248,6 +239,7 @@ fun WearApp(
     hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel: HeartRateChangeViewModel,
     appHelper: WearDataLayerAppHelper,
+    alarmManager: AlarmManager,
     workoutStoreRepository: WorkoutStoreRepository,
     onNavControllerAvailable: (NavController) -> Unit
 ) {
@@ -336,7 +328,7 @@ fun WearApp(
                     },
                 ) {
                     composable(Screen.WorkoutSelection.route) {
-                        WorkoutSelectionScreen(dataClient,navController, appViewModel,hapticsViewModel, appHelper)
+                        WorkoutSelectionScreen(alarmManager,dataClient,navController, appViewModel,hapticsViewModel, appHelper)
                     }
                     composable(Screen.WorkoutDetail.route) {
                         WorkoutDetailScreen(navController, appViewModel, hapticsViewModel,hrViewModel)

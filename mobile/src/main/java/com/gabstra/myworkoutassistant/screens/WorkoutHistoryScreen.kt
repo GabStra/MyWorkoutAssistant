@@ -85,7 +85,7 @@ import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -144,7 +144,7 @@ fun Menu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            border = BorderStroke(1.dp, MediumGray)
+            border = BorderStroke(1.dp, MediumLightGray)
         ) {
             DropdownMenuItem(
                 text = { Text("Delete Selected History") },
@@ -821,7 +821,7 @@ fun WorkoutHistoryScreen(
                                                         Spacer(Modifier.height(5.dp))
                                                         SimpleProgressIndicator(
                                                             progress = progress,
-                                                            trackColor = MediumGray,
+                                                            trackColor = MediumLightGray,
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
                                                                 .height(16.dp)

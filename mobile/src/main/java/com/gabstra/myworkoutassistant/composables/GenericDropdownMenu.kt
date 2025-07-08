@@ -17,7 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 @Composable
 fun <T> GenericDropdownMenu(
@@ -37,7 +37,7 @@ fun <T> GenericDropdownMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
-            border = BorderStroke(1.dp, MediumGray)
+            border = BorderStroke(1.dp, MediumLightGray)
         ) {
             items.forEach { item ->
                 DropdownMenuItem(

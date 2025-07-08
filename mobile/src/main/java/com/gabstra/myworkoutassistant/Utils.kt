@@ -45,7 +45,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.delay
@@ -485,7 +485,7 @@ fun Modifier.verticalColumnScrollbar(
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
     scrollBarTrackColor: Color = DarkGray,
-    scrollBarColor: Color = MediumGray,
+    scrollBarColor: Color = MediumLightGray,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
     trackHeight: Dp? = null,

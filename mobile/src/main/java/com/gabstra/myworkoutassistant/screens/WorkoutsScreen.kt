@@ -85,7 +85,7 @@ import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -142,7 +142,7 @@ fun Menu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                border = BorderStroke(1.dp, MediumGray)
+                border = BorderStroke(1.dp, MediumLightGray)
             ) {
                 DropdownMenuItem(
                     text = { Text("Sync with Watch") },
@@ -869,7 +869,7 @@ fun WorkoutsScreen(
                                                                 .padding(15.dp),
                                                             text = "No workouts on this day",
                                                             textAlign = TextAlign.Center,
-                                                            color = MediumGray,
+                                                            color = MediumLightGray,
                                                         )
                                                     }
                                                 } else {

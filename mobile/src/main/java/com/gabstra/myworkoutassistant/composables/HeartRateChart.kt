@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
@@ -254,14 +254,14 @@ fun HeartRateChart(
                             rememberHorizontalLine(MaterialTheme.colorScheme.background, 100.0),
                         ),
                         startAxis = VerticalAxis.rememberStart(
-                            line = rememberAxisLineComponent(fill(MediumGray)),
-                            tick = rememberAxisTickComponent(fill(MediumGray)),
+                            line = rememberAxisLineComponent(fill(MediumLightGray)),
+                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
                             guideline = null,
                             valueFormatter = startAxisValueFormatter,
                             itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
                         bottomAxis = HorizontalAxis.rememberBottom(
-                            line = rememberAxisLineComponent(fill(MediumGray)),
-                            tick = rememberAxisTickComponent(fill(MediumGray)),
+                            line = rememberAxisLineComponent(fill(MediumLightGray)),
+                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
                             guideline = null,
                             valueFormatter = bottomAxisValueFormatter,
                             itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),

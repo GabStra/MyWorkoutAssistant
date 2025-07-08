@@ -25,7 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 @Composable
 fun CustomButton(
@@ -39,7 +39,7 @@ fun CustomButton(
     val backgroundOnPress = lerp(backgroundColor, textColor, 0.2f)
     val textColorOnPress = lerp(textColor, MaterialTheme.colorScheme.background, 0.2f)
 
-    val disabledColor = MediumGray
+    val disabledColor = MediumLightGray
     val interactionSource = remember { MutableInteractionSource() }
     val interactions = interactionSource.interactions
     val isPressed = if (enabled) interactions.collectAsState(initial = null).value is PressInteraction.Press else false

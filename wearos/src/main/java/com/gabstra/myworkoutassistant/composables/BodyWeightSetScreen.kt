@@ -63,7 +63,10 @@ fun BodyWeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val repsRange =  IntRange(3, 30)
+    val repsRange = IntRange(
+        exercise.minReps,
+        exercise.maxReps
+    )
 
     val equipment = state.equipment
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }

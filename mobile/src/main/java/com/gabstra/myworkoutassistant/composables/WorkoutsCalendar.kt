@@ -34,7 +34,7 @@ import com.gabstra.myworkoutassistant.optionalClip
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
@@ -121,7 +121,7 @@ private fun Day(
                 )
                 .padding(3.dp)
         ) {
-            val textColor = if(isOutOfBounds || isAfterToday) MediumGray else if(shouldHighlight) DarkGray else LightGray
+            val textColor = if(isOutOfBounds || isAfterToday) MediumLightGray else if(shouldHighlight) DarkGray else LightGray
 
             val shape = if(shouldHighlight) CircleShape else null
 

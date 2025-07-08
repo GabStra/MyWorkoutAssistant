@@ -87,7 +87,7 @@ import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -127,7 +127,7 @@ fun Menu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier.background(MaterialTheme.colorScheme.background),
-            border = BorderStroke(1.dp, MediumGray)
+            border = BorderStroke(1.dp, MediumLightGray)
         ) {
             DropdownMenuItem(
                 text = { Text("Edit Workout") },
@@ -181,7 +181,7 @@ fun WorkoutComponentRenderer(
                         Text(
                             text = "Rest " + formatTime(workoutComponent.timeInSeconds),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = if (workoutComponent.enabled) LightGray else MediumGray,
+                            color = if (workoutComponent.enabled) LightGray else MediumLightGray,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -194,7 +194,7 @@ fun WorkoutComponentRenderer(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, MediumGray),
+                    .border(1.dp, MediumLightGray),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Text(
@@ -293,7 +293,7 @@ fun SupersetForm(
                                 },
                             text = exercise.name,
                             style = MaterialTheme.typography.bodyMedium,
-                            color =  if (selectedWorkoutComponents.contains(exercise)) LightGray else MediumGray
+                            color =  if (selectedWorkoutComponents.contains(exercise)) LightGray else MediumLightGray
                         )
                     }
 
@@ -537,7 +537,7 @@ fun WorkoutDetailScreen(
                         }) {
                         val isEnabled = selectedWorkoutComponents.isNotEmpty()
                         val color =
-                            if (isEnabled) LightGray else MediumGray
+                            if (isEnabled) LightGray else MediumLightGray
 
                         Icon(
                             imageVector = Icons.Default.ContentCopy,

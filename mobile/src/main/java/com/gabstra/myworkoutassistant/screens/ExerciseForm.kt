@@ -52,7 +52,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
@@ -217,7 +217,7 @@ fun ExerciseForm(
                             expanded = expandedType.value,
                             onDismissRequest = { expandedType.value = false },
                             modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                            border = BorderStroke(1.dp, MediumGray)
+                            border = BorderStroke(1.dp, MediumLightGray)
                         ) {
                             exerciseTypeDescriptions.forEach { ExerciseDescription ->
                                 DropdownMenuItem(
@@ -237,7 +237,7 @@ fun ExerciseForm(
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            if(selectedExerciseType.value == ExerciseType.WEIGHT){
+            if(selectedExerciseType.value == ExerciseType.WEIGHT || (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)){
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -355,7 +355,7 @@ fun ExerciseForm(
                         expanded = expandedEquipment.value,
                         onDismissRequest = { expandedEquipment.value = false },
                         modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MediumGray)
+                        border = BorderStroke(1.dp, MediumLightGray)
                     ) {
                         DropdownMenuItem(
                             onClick = {
@@ -428,7 +428,7 @@ fun ExerciseForm(
                         expanded = expandedHeartRateZone.value,
                         onDismissRequest = { expandedHeartRateZone.value = false },
                         modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MediumGray)
+                        border = BorderStroke(1.dp, MediumLightGray)
                     ) {
                         heartRateZones.forEachIndexed { index, zone ->
                             DropdownMenuItem(

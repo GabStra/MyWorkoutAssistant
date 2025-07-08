@@ -18,9 +18,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
@@ -128,7 +128,7 @@ fun StandardChart(
                             rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
                         ),
                         startAxis = VerticalAxis.rememberStart(
-                            line = rememberAxisLineComponent(fill(MediumGray)),
+                            line = rememberAxisLineComponent(fill(MediumLightGray)),
                             label = rememberTextComponent(
                                 color = LightGray,
                                 textSize = 12.sp,
@@ -137,11 +137,11 @@ fun StandardChart(
                             ),
                             valueFormatter = startAxisValueFormatter,
                             itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) },
-                            tick = rememberAxisTickComponent(fill(MediumGray)),
+                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
                             guideline = null,
                         ),
                         bottomAxis = HorizontalAxis.rememberBottom(
-                            line = rememberAxisLineComponent(fill(MediumGray)),
+                            line = rememberAxisLineComponent(fill(MediumLightGray)),
                             label = rememberTextComponent(
                                 color = LightGray,
                                 textSize = 12.sp,
@@ -152,7 +152,7 @@ fun StandardChart(
                             labelRotationDegrees = -90f,
                             valueFormatter = bottomAxisValueFormatter,
                             guideline = null,
-                            tick = rememberAxisTickComponent(fill(MediumGray)),
+                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
 
                             ),
                         persistentMarkers = if (markerPosition != null)  { _ ->

@@ -68,7 +68,7 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -200,7 +200,7 @@ fun WorkoutForm(
                         expanded = expanded.value,
                         onDismissRequest = { expanded.value = false },
                         modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MediumGray)
+                        border = BorderStroke(1.dp, MediumLightGray)
                     ) {
                         WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
                             DropdownMenuItem(

@@ -568,8 +568,7 @@ open class WorkoutViewModel : ViewModel() {
             }
         }.average()
 
-        val repsRange =
-            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) IntRange(3, 30) else IntRange(
+        val repsRange = IntRange(
                 exercise.minReps,
                 exercise.maxReps
             )

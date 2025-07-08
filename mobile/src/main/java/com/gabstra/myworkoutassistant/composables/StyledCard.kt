@@ -9,7 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 @Composable
 fun StyledCard(
@@ -18,7 +18,7 @@ fun StyledCard(
 ) {
     Box(
         modifier = modifier
-            .border(1.dp, MediumGray)
+            .border(1.dp, MediumLightGray)
             .background(DarkGray)
             .wrapContentSize(),
         contentAlignment = Alignment.Center,
