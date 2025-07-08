@@ -83,7 +83,7 @@ object VolumeDistributionHelper {
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.rir <= maxRir }
 
-        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last }
+        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last } && params.previousSets.all { it.weight == params.previousSets.first().weight }
 
         if(atUpperLimit){
             val sortedValidSets = validSets.filter { it.weight > previousAverageWeightPerRep }.sortedWith(
