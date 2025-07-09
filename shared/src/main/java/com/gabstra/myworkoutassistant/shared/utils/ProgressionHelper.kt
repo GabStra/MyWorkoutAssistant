@@ -83,7 +83,7 @@ object VolumeDistributionHelper {
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.rir <= maxRir }
 
-        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last } && params.previousSets.all { it.weight == params.previousSets.first().weight }
+/*        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last } && params.previousSets.all { it.weight == params.previousSets.first().weight }
 
         if(atUpperLimit){
             val sortedValidSets = validSets.filter { it.weight > previousAverageWeightPerRep }.sortedWith(
@@ -95,7 +95,7 @@ object VolumeDistributionHelper {
                 sortedValidSets.isNotEmpty() ->  listOf(sortedValidSets.last())
                 else -> emptyList()
             }
-        }
+        }*/
 
         val maxVolume = validSets
             .filter { it.volume > previousMaxVolume }
@@ -197,7 +197,7 @@ object VolumeDistributionHelper {
             isComboValid = { combo -> isStrictProgression(params.previousSets, combo) }
         )
 
-        if(result.isEmpty()){
+/*        if(result.isEmpty()){
             result = findBestProgressions(
                 usableSets,
                 params.previousSets.size,
@@ -206,7 +206,7 @@ object VolumeDistributionHelper {
                 calculateScore = { combo -> calculateScore(combo) },
                 isComboValid = { combo -> true }
             )
-        }
+        }*/
 
         return result
     }
@@ -265,8 +265,6 @@ object VolumeDistributionHelper {
                 mutex.withLock {
                     val adjustedCombo = recalculateExerciseFatigue(currentCombo)
                     val currentScore = evaluateGeneralScore(adjustedCombo)
-
-
 
                     if (currentScore != Double.MAX_VALUE && bestScore != Double.MAX_VALUE) {
                         if (currentScore > bestScore) return
