@@ -111,6 +111,7 @@ class PolarViewModel : ViewModel() {
             try {
                 disposables.clear()
                 api.disconnectFromDevice(deviceId)
+                api.shutDown()
             } catch (e: Exception) {
                 Log.e("MyApp", "Error disconnecting from device ${deviceId}: $e")
             }
@@ -143,7 +144,7 @@ class PolarViewModel : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
-        api.shutDown()
+
         disposables.dispose()
     }
 }

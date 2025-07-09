@@ -65,7 +65,7 @@ fun WorkoutCompleteScreen(
         cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-            delay(3000)
+            delay(5000)
             val activity = (context as? Activity)
             activity?.finishAndRemoveTask()
         }
