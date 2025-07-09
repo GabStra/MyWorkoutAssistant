@@ -125,26 +125,26 @@ object VolumeDistributionHelper {
             val currentTotalVolume = combo.sumOf { it.volume }
             val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
 
-            val currentMaxVolume = combo.maxOf { it.volume }
-            val currentMaxWeight = combo.maxOf { it.weight }
-
             val totalFatigueDifference = 1 + (abs(currentTotalFatigue - previousTotalFatigue) / previousTotalFatigue)
             val avgWeightDifference = 1 + (abs(currentAverageWeightPerRep - previousAverageWeightPerRep) / previousAverageWeightPerRep)
             val targetVolumeDifference = 1 + (abs(currentTotalVolume - previousTotalVolume) / previousTotalVolume)
 
-            val overPreviousMaxVolumeCount = combo.count { it.volume > previousMaxVolume }
+            val maxVolumeDifference = combo.map {
+                if(it.volume > previousMaxVolume) {
+                    1 + (it.volume - previousMaxVolume) / previousMaxVolume)
+                } else {
+                    1.0
+                }
+            }.reduce { acc, d -> acc * d }
 
-            val maxVolumeDifference = if(currentMaxVolume > previousMaxVolume) {
-                (1 + (currentMaxVolume - previousMaxVolume) / previousMaxVolume) * overPreviousMaxVolumeCount
-            } else {
-                1.0
-            }
+            val maxWeightDifference = combo.map {
+                if(it.weight > previousMaxWeight) {
+                    1 + (it.weight - previousMaxWeight) / previousMaxWeight)
+                } else {
+                    1.0
+                }
+            }.reduce { acc, d -> acc * d }
 
-            val maxWeightDifference = if(currentMaxWeight > previousMaxWeight) {
-                (1 + (currentMaxWeight - previousMaxWeight) / previousMaxWeight)
-            } else {
-                1.0
-            }
             val intensityStdDev = 1 + combo.map { it.intensity }.standardDeviation()
 
             val differences = listOf(
