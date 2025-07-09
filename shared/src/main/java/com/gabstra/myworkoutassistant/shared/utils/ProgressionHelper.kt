@@ -199,16 +199,16 @@ object VolumeDistributionHelper {
             isComboValid = { combo -> isStrictProgression(params.previousSets, combo) }
         )
 
-//        if(result.isEmpty()){
-//            result = findBestProgressions(
-//                usableSets,
-//                params.previousSets.size,
-//                params.previousSets.size,
-//                params,
-//                calculateScore = { combo -> calculateScore(combo) },
-//                isComboValid = { combo -> true }
-//            )
-//        }
+        if(result.isEmpty()){
+            result = findBestProgressions(
+                usableSets,
+                params.previousSets.size,
+                params.previousSets.size,
+                params,
+                calculateScore = { combo -> calculateScore(combo) },
+                isComboValid = { combo -> true }
+            )
+        }
 
         return result
     }

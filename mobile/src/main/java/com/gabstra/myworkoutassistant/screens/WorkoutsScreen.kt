@@ -86,7 +86,6 @@ import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -123,7 +122,8 @@ fun Menu(
     onOpenSettingsClick: () -> Unit,
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
-    onSyncToHealthConnectClick: () -> Unit
+    onSyncToHealthConnectClick: () -> Unit,
+    onExportWorkouts: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -144,6 +144,13 @@ fun Menu(
                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
                 border = BorderStroke(1.dp, MediumLightGray)
             ) {
+                DropdownMenuItem(
+                    text = { Text("Settings") },
+                    onClick = {
+                        onOpenSettingsClick()
+                        expanded = false
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text("Sync with Watch") },
                     onClick = {
@@ -166,9 +173,9 @@ fun Menu(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Settings") },
+                    text = { Text("Export Workouts") },
                     onClick = {
-                        onOpenSettingsClick()
+                        onExportWorkouts()
                         expanded = false
                     }
                 )
@@ -179,6 +186,7 @@ fun Menu(
                         expanded = false
                     }
                 )
+
                 DropdownMenuItem(
                     text = { Text("Clear partial workouts") },
                     onClick = {
@@ -246,6 +254,7 @@ fun WorkoutsScreen(
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
     onSyncToHealthConnectClick: () -> Unit,
+    onExportWorkouts: () -> Unit,
     selectedTabIndex: Int
 ) {
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
@@ -637,7 +646,8 @@ fun WorkoutsScreen(
                         onRestoreClick = onRestoreClick,
                         onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
                         onClearAllHistories = onClearAllHistories,
-                        onSyncToHealthConnectClick = onSyncToHealthConnectClick
+                        onSyncToHealthConnectClick = onSyncToHealthConnectClick,
+                        onExportWorkouts = onExportWorkouts
                     )
                 }
             )

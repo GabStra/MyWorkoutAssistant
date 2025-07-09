@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
@@ -141,6 +142,9 @@ open class AppViewModel : WorkoutViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             val workoutHistory =
                 workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
+
+            Log.d("WorkoutDetailScreen", "workoutHistory: $workoutHistory")
+
             if (workoutHistory == null) {
                 withContext(Dispatchers.Main) {
                     onEnd(false)

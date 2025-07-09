@@ -33,12 +33,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -96,7 +95,7 @@ fun BodyWeightSetForm(
                 Box(){
                     Box(){
                         OutlinedTextField(
-                            value = additionalWeightState.value,
+                            value = equipment.formatWeight(additionalWeightState.value.toDouble()),
                             readOnly = true,
                             onValueChange = {
                             },
@@ -153,17 +152,17 @@ fun BodyWeightSetForm(
                                 verticalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 filteredCombinations.forEach { (combo,label) ->
-                                    StyledCard {
+                                    StyledCard(
+                                        modifier = Modifier.clickable{
+                                            expandedWeights.value = false
+                                            additionalWeightState.value = combo.toString()
+                                        }) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth().padding(5.dp),
                                             horizontalArrangement = Arrangement.Center,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                modifier = Modifier.clickable{
-                                                    expandedWeights.value = false
-                                                    additionalWeightState.value = combo.toString()
-                                                },
                                                 text = label
                                             )
                                         }

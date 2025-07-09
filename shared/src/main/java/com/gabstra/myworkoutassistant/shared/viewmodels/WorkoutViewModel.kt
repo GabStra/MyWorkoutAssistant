@@ -578,11 +578,11 @@ open class WorkoutViewModel : ViewModel() {
                 is BodyWeightSet -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     val weight = it.getWeight(relativeBodyWeight)
-                    createSet(weight, it.reps.coerceIn(repsRange), oneRepMax)
+                    createSet(weight, it.reps, oneRepMax)
                 }
 
                 is WeightSet -> {
-                    createSet(it.weight, it.reps.coerceIn(repsRange), oneRepMax)
+                    createSet(it.weight, it.reps, oneRepMax)
                 }
 
                 else -> throw IllegalArgumentException("Unknown set type")
@@ -650,10 +650,10 @@ open class WorkoutViewModel : ViewModel() {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     set.getWeight(relativeBodyWeight)
 
-                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps.coerceIn(repsRange)}"
+                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps}"
                 }
                 is WeightSet -> {
-                    "${set.weight} kg x ${set.reps.coerceIn(repsRange)}"
+                    "${set.weight} kg x ${set.reps}"
                 }
                 else -> throw IllegalArgumentException("Unknown set type")
             }

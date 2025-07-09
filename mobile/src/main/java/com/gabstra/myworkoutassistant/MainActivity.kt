@@ -53,6 +53,7 @@ import com.gabstra.myworkoutassistant.screens.equipments.PlateLoadedCableForm
 import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -64,11 +65,11 @@ import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
@@ -440,6 +441,18 @@ fun MyWorkoutAssistantNavHost(
                     },
                     onRestoreClick = {
                         jsonPickerLauncher.launch(arrayOf("application/json"))
+                    },
+                    onExportWorkouts = {
+                        val sdf = SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.getDefault())
+                        val currentDate = sdf.format(Date())
+                        val filename = "workout_store_$currentDate.json"
+                        val jsonString = fromWorkoutStoreToJSON(appViewModel.workoutStore)
+                        writeJsonToDownloadsFolder(context, filename, jsonString)
+                        Toast.makeText(
+                            context,
+                            "Workouts saved to downloads folder",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     onClearUnfinishedWorkouts = {
                         scope.launch {

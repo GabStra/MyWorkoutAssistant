@@ -26,6 +26,11 @@ class Barbell(
 
     override fun formatWeight(weight: Double): String {
         val sideWeight = (weight - barWeight) / 2
+
+        if(sideWeight == 0.0){
+            return "No Plates"
+        }
+
         return "${com.gabstra.myworkoutassistant.shared.formatWeight(sideWeight)} x 2"
     }
 }

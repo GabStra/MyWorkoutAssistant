@@ -61,6 +61,9 @@ import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -70,10 +73,6 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -96,7 +95,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                     ) {
 
                         Text(
-                            text = "${set.weight} kg",
+                            text = "Weight (kg): ${equipment!!.formatWeight(set.weight)}",
                             color = LightGray,
                             style = MaterialTheme.typography.bodyMedium,)
                         Text(
@@ -112,6 +111,8 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is BodyWeightSet -> {
+            val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+
             StyledCard {
                 Row(
                     modifier = Modifier.padding(15.dp),
@@ -122,9 +123,9 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        if(set.additionalWeight != 0.0){
+                        if(set.additionalWeight != 0.0 && equipment != null){
                             Text(
-                                text = "${set.additionalWeight} kg",
+                                text = "Weight (kg): ${equipment.formatWeight(set.additionalWeight)}",
                                 color = LightGray,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
