@@ -83,19 +83,21 @@ object VolumeDistributionHelper {
             .filter { set -> set.weight in nearAverageWeights }
             .filter { set -> set.rir <= maxRir }
 
-/*        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last } && params.previousSets.all { it.weight == params.previousSets.first().weight }
-
-        if(atUpperLimit){
-            val sortedValidSets = validSets.filter { it.weight > previousAverageWeightPerRep }.sortedWith(
-                compareByDescending<ExerciseSet> { it.weight }
-                    .thenByDescending { it.reps }
-            )
-
-            validSets = when {
-                sortedValidSets.isNotEmpty() ->  listOf(sortedValidSets.last())
-                else -> emptyList()
-            }
-        }*/
+//        val atUpperLimit = params.previousSets.all { it.reps >= params.repsRange.last } && params.previousSets.all { it.weight == params.previousSets.first().weight }
+//
+//        if(atUpperLimit){
+//            val sortedValidSets = validSets
+//                .filter { it.weight > previousAverageWeightPerRep }
+//                .sortedWith(
+//                    compareByDescending<ExerciseSet> { it.weight }
+//                    .thenByDescending { it.reps }
+//                )
+//
+//            validSets = when {
+//                sortedValidSets.isNotEmpty() ->  listOf(sortedValidSets.last())
+//                else -> emptyList()
+//            }
+//        }
 
         val maxVolume = validSets
             .filter { it.volume > previousMaxVolume }
@@ -197,16 +199,16 @@ object VolumeDistributionHelper {
             isComboValid = { combo -> isStrictProgression(params.previousSets, combo) }
         )
 
-/*        if(result.isEmpty()){
-            result = findBestProgressions(
-                usableSets,
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                calculateScore = { combo -> calculateScore(combo) },
-                isComboValid = { combo -> true }
-            )
-        }*/
+//        if(result.isEmpty()){
+//            result = findBestProgressions(
+//                usableSets,
+//                params.previousSets.size,
+//                params.previousSets.size,
+//                params,
+//                calculateScore = { combo -> calculateScore(combo) },
+//                isComboValid = { combo -> true }
+//            )
+//        }
 
         return result
     }
