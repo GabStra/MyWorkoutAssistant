@@ -131,7 +131,7 @@ object VolumeDistributionHelper {
 
             val maxVolumeDifference = combo.map {
                 if(it.volume > previousMaxVolume) {
-                    1 + (it.volume - previousMaxVolume) / previousMaxVolume)
+                    1 + ((it.volume - previousMaxVolume) / previousMaxVolume)
                 } else {
                     1.0
                 }
@@ -139,7 +139,7 @@ object VolumeDistributionHelper {
 
             val maxWeightDifference = combo.map {
                 if(it.weight > previousMaxWeight) {
-                    1 + (it.weight - previousMaxWeight) / previousMaxWeight)
+                    1 + ((it.weight - previousMaxWeight) / previousMaxWeight)
                 } else {
                     1.0
                 }
