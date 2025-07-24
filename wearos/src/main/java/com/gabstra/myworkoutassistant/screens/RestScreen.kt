@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -20,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -31,7 +33,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -70,7 +71,8 @@ fun RestScreen(
 ) {
     val set = state.set as RestSet
 
-    val context = LocalContext.current
+    Log.d("RestScreen", "RestScreen")
+
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
     var goBackJob by remember { mutableStateOf<Job?>(null) }
@@ -113,12 +115,16 @@ fun RestScreen(
         }
     }
 
-    val exerciseDetailPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.EXERCISE_DETAIL)
+    val exerciseDetailPageIndex by remember(pageTypes) {
+        derivedStateOf {
+            pageTypes.indexOf(PageType.EXERCISE_DETAIL).coerceAtLeast(0)
+        }
     }
 
-    val platesPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.PLATES)
+    val platesPageIndex by remember(pageTypes) {
+        derivedStateOf {
+            pageTypes.indexOf(PageType.PLATES)
+        }
     }
 
     val pagerState = rememberPagerState(
@@ -132,7 +138,9 @@ fun RestScreen(
         goBackJob?.cancel()
         goBackJob = scope.launch {
             delay(10000)
-            if(pagerState.currentPage != exerciseDetailPageIndex || pagerState.currentPage != platesPageIndex) {
+            val isOnExerciseDetailPage = pagerState.currentPage == exerciseDetailPageIndex
+            val isOnPlatesPage = pagerState.currentPage == platesPageIndex
+            if (!isOnExerciseDetailPage && !isOnPlatesPage) {
                 pagerState.scrollToPage(exerciseDetailPageIndex)
             }
         }
@@ -313,6 +321,8 @@ fun RestScreen(
                         },
                     pagerState = pagerState,
                 ) { pageIndex ->
+                    Log.d("pageIndex", pageIndex.toString())
+
                     val pageType = pageTypes[pageIndex]
                     when (pageType) {
                         PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
