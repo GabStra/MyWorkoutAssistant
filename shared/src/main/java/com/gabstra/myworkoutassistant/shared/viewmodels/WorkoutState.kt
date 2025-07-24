@@ -32,7 +32,8 @@ sealed class WorkoutState {
         val streak: Int,
         val isDeloading: Boolean,
         val isWarmupSet: Boolean,
-        val equipment: WeightLoadedEquipment?
+        val equipment: WeightLoadedEquipment?,
+        val oneRepMax: Double
     ) : WorkoutState()
 
     data class Rest(

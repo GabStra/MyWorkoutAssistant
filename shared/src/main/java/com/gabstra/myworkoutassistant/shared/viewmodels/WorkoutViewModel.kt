@@ -1390,20 +1390,22 @@ open class WorkoutViewModel : ViewModel() {
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
-        if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
-            val exerciseSets = exercise.sets.filter { it !is RestSet }
+        val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-            val oneRepMax = exerciseSets.map {
-                when (it) {
-                    is BodyWeightSet -> {
-                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                        calculateOneRepMax(it.getWeight(relativeBodyWeight), it.reps)
-                    }
-
-                    is WeightSet -> calculateOneRepMax(it.weight, it.reps)
-                    else -> 0.0
+        val oneRepMax = exerciseSets.map {
+            when (it) {
+                is BodyWeightSet -> {
+                    val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                    calculateOneRepMax(it.getWeight(relativeBodyWeight), it.reps)
                 }
-            }.average()
+
+                is WeightSet -> calculateOneRepMax(it.weight, it.reps)
+                else -> 0.0
+            }
+        }.average()
+
+        if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
+
 
             val (workWeight,workReps) = exerciseSets.first().let  {
                 when (it) {
@@ -1556,7 +1558,6 @@ open class WorkoutViewModel : ViewModel() {
             exerciseAllSets.addAll(exercise.sets)
         }
 
-        val exerciseSets = exerciseAllSets.filter { it !is RestSet }
         val plateChangeResults = getPlateChangeResults(exercise, exerciseSets, equipment)
 
         for ((index, set) in exerciseAllSets.withIndex()) {
@@ -1620,7 +1621,8 @@ open class WorkoutViewModel : ViewModel() {
                     exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
                     isDeloading ?: false,
                     isWarmupSet,
-                    exercise.equipmentId?.let { getEquipmentById(it) }
+                    exercise.equipmentId?.let { getEquipmentById(it) },
+                    oneRepMax
                 )
 
                 states.add(setState)

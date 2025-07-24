@@ -104,9 +104,12 @@ fun ExerciseScreen(
         }
     }
 
-    // Find index of exercise detail page to scroll to on changes
     val exerciseDetailPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.EXERCISE_DETAIL).coerceAtLeast(0)
+        pageTypes.indexOf(PageType.EXERCISE_DETAIL)
+    }
+
+    val platesPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.PLATES)
     }
 
     val pagerState = rememberPagerState(
@@ -131,7 +134,7 @@ fun ExerciseScreen(
 
         goBackJob = scope.launch {
             delay(10000)
-            if(pagerState.currentPage != exerciseDetailPageIndex) {
+            if(pagerState.currentPage != exerciseDetailPageIndex || pagerState.currentPage != platesPageIndex) {
                 pagerState.scrollToPage(exerciseDetailPageIndex)
             }
         }

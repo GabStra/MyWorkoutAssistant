@@ -62,6 +62,11 @@ fun WeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
+    var oneRepMaxMode by remember { mutableStateOf(false) }
+    val oneRepMaxPercentage = remember(currentSetData) {
+        (currentSetData.getWeight() / state.oneRepMax) * 100
+    }
+
     val equipment = state.equipment
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 
@@ -135,24 +140,11 @@ fun WeightSetScreen(
         }
     }
 
-    val previousTotalVolume = remember(exercise.id, equipment) {
-        viewModel.getAllSetHistoriesByExerciseId(exercise.id)
-            .filter { it.setData is WeightSetData }
-            .map{ it.setData as WeightSetData }
-            .sumOf { it.calculateVolume()}
-    }
-
-    val executedVolume = remember(exercise.id, equipment, currentSetData, state ) {
-        viewModel.getAllExecutedSetsByExerciseId(exercise.id)
-            .filter { it.setData is WeightSetData && it.setId != state.set.id }
-            .map{ it.setData as WeightSetData }
-            .sumOf { it.calculateVolume()} + currentSetData.calculateVolume()
-    }
-
     LaunchedEffect(forceStopEditMode) {
         if (forceStopEditMode) {
             isRepsInEditMode = false
             isWeightInEditMode = false
+            oneRepMaxMode = false
         }
     }
 
@@ -284,9 +276,11 @@ fun WeightSetScreen(
             modifier = modifier
                 .combinedClickable(
                     onClick = {
+                        oneRepMaxMode = !oneRepMaxMode
+                        hapticsViewModel.doGentleVibration()
                     },
                     onLongClick = {
-                        if (forceStopEditMode) return@combinedClickable
+                        if (forceStopEditMode || oneRepMaxMode) return@combinedClickable
 
                         isWeightInEditMode = !isWeightInEditMode
                         updateInteractionTime()
@@ -317,7 +311,10 @@ fun WeightSetScreen(
                 else -> Green
             }
 
-            val weightText = equipment!!.formatWeight(currentSetData.getWeight())
+            val weightText = when(oneRepMaxMode){
+                true -> "${"%.1f".format(oneRepMaxPercentage).replace(",", ".")}%"
+                else -> equipment!!.formatWeight(currentSetData.getWeight())
+            }
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),

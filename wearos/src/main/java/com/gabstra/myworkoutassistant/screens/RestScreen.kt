@@ -114,7 +114,11 @@ fun RestScreen(
     }
 
     val exerciseDetailPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.EXERCISES).coerceAtLeast(0)
+        pageTypes.indexOf(PageType.EXERCISE_DETAIL)
+    }
+
+    val platesPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.PLATES)
     }
 
     val pagerState = rememberPagerState(
@@ -128,7 +132,7 @@ fun RestScreen(
         goBackJob?.cancel()
         goBackJob = scope.launch {
             delay(10000)
-            if(pagerState.currentPage != exerciseDetailPageIndex) {
+            if(pagerState.currentPage != exerciseDetailPageIndex || pagerState.currentPage != platesPageIndex) {
                 pagerState.scrollToPage(exerciseDetailPageIndex)
             }
         }

@@ -16,7 +16,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,9 +34,7 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -69,6 +66,12 @@ fun BodyWeightSetScreen(
     var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
     var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
     var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
+
+    var oneRepMaxMode by remember { mutableStateOf(false) }
+
+    val oneRepMaxPercentage = remember(currentSetData) {
+        (currentSetData.getWeight() / state.oneRepMax) * 100
+    }
 
     LaunchedEffect(equipment) {
         availableWeights = if (equipment == null) {
@@ -115,6 +118,7 @@ fun BodyWeightSetScreen(
         if(forceStopEditMode){
             isRepsInEditMode = false
             isWeightInEditMode = false
+            oneRepMaxMode = false
         }
     }
 
@@ -131,35 +135,6 @@ fun BodyWeightSetScreen(
         } else {
             onEditModeDisabled()
         }
-    }
-
-    var openDialogJob by remember { mutableStateOf<Job?>(null) }
-    val coroutineScope = rememberCoroutineScope()
-
-    var showWeightInfoDialog by remember { mutableStateOf(false) }
-
-    fun startOpenDialogJob() {
-        if( openDialogJob?.isActive == true) return
-        openDialogJob?.cancel()
-        openDialogJob = coroutineScope.launch {
-            showWeightInfoDialog = true
-            delay(5000L)
-            showWeightInfoDialog = false
-        }
-    }
-
-    val previousTotalVolume = remember(exercise.id, equipment) {
-        viewModel.getAllSetHistoriesByExerciseId(exercise.id)
-            .filter { it.setData is BodyWeightSetData }
-            .map{ it.setData as BodyWeightSetData }
-            .sumOf { it.calculateVolume()}
-    }
-
-    val executedVolume = remember(exercise.id, equipment, currentSetData, state ) {
-        viewModel.getAllExecutedSetsByExerciseId(exercise.id)
-            .filter { it.setData is BodyWeightSetData  && it.setId != state.set.id }
-            .map{ it.setData as BodyWeightSetData }
-            .sumOf { it.calculateVolume()} + currentSetData.calculateVolume()
     }
 
     fun onMinusClick(){
@@ -288,9 +263,11 @@ fun BodyWeightSetScreen(
             modifier = modifier
                 .combinedClickable(
                     onClick = {
+                        oneRepMaxMode = !oneRepMaxMode
+                        hapticsViewModel.doGentleVibration()
                     },
                     onLongClick = {
-                        if (forceStopEditMode) return@combinedClickable
+                        if (forceStopEditMode || oneRepMaxMode) return@combinedClickable
 
                         isWeightInEditMode = !isWeightInEditMode
                         updateInteractionTime()
@@ -321,7 +298,10 @@ fun BodyWeightSetScreen(
                 else -> Green
             }
 
-            val weightText = equipment!!.formatWeight(currentSetData.additionalWeight)
+            val weightText = when(oneRepMaxMode){
+                true -> "${"%.1f".format(oneRepMaxPercentage).replace(",", ".")}%"
+                else -> equipment!!.formatWeight(currentSetData.additionalWeight)
+            }
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
