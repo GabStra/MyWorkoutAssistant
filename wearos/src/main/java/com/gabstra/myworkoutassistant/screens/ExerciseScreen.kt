@@ -20,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,16 +104,12 @@ fun ExerciseScreen(
         }
     }
 
-    val exerciseDetailPageIndex by remember(pageTypes) {
-        derivedStateOf {
-            pageTypes.indexOf(PageType.EXERCISE_DETAIL).coerceAtLeast(0)
-        }
+    val exerciseDetailPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.EXERCISE_DETAIL)
     }
 
-    val platesPageIndex by remember(pageTypes) {
-        derivedStateOf {
-            pageTypes.indexOf(PageType.PLATES)
-        }
+    val platesPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.PLATES)
     }
 
     val pagerState = rememberPagerState(

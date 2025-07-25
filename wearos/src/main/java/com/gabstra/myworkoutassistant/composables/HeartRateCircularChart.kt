@@ -266,7 +266,7 @@ fun HeartRateCircularChart(
 @Composable
 private fun HeartRateDisplay(
     modifier: Modifier = Modifier,
-    hr: Int,
+    bpm: Int,
     displayMode: Int,
     textToDisplay: String,
     currentZone: Int,
@@ -280,9 +280,9 @@ private fun HeartRateDisplay(
     ) {
         Spacer(modifier = Modifier.weight(1f))
 
-        HeartIcon(
-            modifier = Modifier.size(15.dp),
-            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone]
+        PulsingHeartWithBpm(
+            bpm = bpm,
+            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
         if (displayMode != 1) {
@@ -290,17 +290,17 @@ private fun HeartRateDisplay(
                 text = textToDisplay,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption1,
-                color = if (hr == 0) MediumLightGray else LightGray
+                color = if (bpm == 0) MediumLightGray else LightGray
             )
         } else {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val textColor by remember(confidenceLevel, hr) {
+                val textColor by remember(confidenceLevel, bpm) {
                     derivedStateOf {
                         when {
-                            hr == 0 -> MediumLightGray
+                            bpm == 0 -> MediumLightGray
                             confidenceLevel > 0.7f -> Green
                             confidenceLevel > 0.3f -> Yellow
                             confidenceLevel >= 0f -> Red // Include 0 confidence in Red
@@ -310,12 +310,12 @@ private fun HeartRateDisplay(
                 }
 
                 Text(
-                    text = if (hr == 0) "--" else textToDisplay,
+                    text = if (bpm == 0) "--" else textToDisplay,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.caption1,
                     color = textColor
                 )
-                if (hr != 0) {
+                if (bpm != 0) {
                     val trendIcon = when (hrTrend) {
                         TrendDirection.INCREASING -> Icons.Filled.ArrowUpward
                         TrendDirection.DECREASING -> Icons.Filled.ArrowDownward
@@ -505,7 +505,7 @@ private fun HeartRateView(
                 .height(20.dp)
                 .padding(top = 5.dp)
                 .clickable(onClick = onSwitchClick),
-            hr = hr,
+            bpm = hr,
             displayMode = displayMode,
             textToDisplay = textToDisplay,
             currentZone = currentZone,

@@ -136,6 +136,8 @@ fun WorkoutDetailScreen(
                     item {
                         ButtonWithText(
                             text = "Resume",
+                            backgroundColor = Orange,
+                            textColor = MaterialTheme.colors.background,
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 permissionLauncherResume.launch(basePermissions.toTypedArray())

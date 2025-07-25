@@ -1405,8 +1405,6 @@ open class WorkoutViewModel : ViewModel() {
         }.average()
 
         if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
-
-
             val (workWeight,workReps) = exerciseSets.first().let  {
                 when (it) {
                     is BodyWeightSet -> {
@@ -1558,7 +1556,7 @@ open class WorkoutViewModel : ViewModel() {
             exerciseAllSets.addAll(exercise.sets)
         }
 
-        val plateChangeResults = getPlateChangeResults(exercise, exerciseSets, equipment)
+        val plateChangeResults = getPlateChangeResults(exercise, exerciseAllSets, equipment)
 
         for ((index, set) in exerciseAllSets.withIndex()) {
             if (set is RestSet) {
@@ -1597,7 +1595,7 @@ open class WorkoutViewModel : ViewModel() {
                     }
                 }
 
-                val plateChangeResult = plateChangeResults.getOrNull(exerciseSets.indexOf(set))
+                val plateChangeResult = plateChangeResults.getOrNull(exerciseAllSets.indexOf(set))
 
                 val isWarmupSet = when(set) {
                     is BodyWeightSet -> set.isWarmupSet

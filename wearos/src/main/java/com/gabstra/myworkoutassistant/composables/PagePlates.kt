@@ -24,8 +24,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
-
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
@@ -39,9 +38,9 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Plates",
+        ScalableText(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp),
+            text = "Plate Adjustment Guide",
             style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
             textAlign = TextAlign.Center
         )
@@ -56,7 +55,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         } else {
             if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
                 Text(
-                    text = "Keep current plates",
+                    text = "NO CHANGES",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
@@ -85,7 +84,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         )
                         Text(
                             modifier = Modifier.weight(2f),
-                            text = "PLATES",
+                            text = "PLATES (KG)",
                             style = headerStyle,
                             textAlign = TextAlign.Center,
                             color = LightGray
@@ -109,9 +108,9 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
                                 val backgroundColor = if (index % 2 == 0) {
-                                    Color.Transparent
+                                    MediumDarkGray
                                 } else {
-                                    MediumGray
+                                    Color.Transparent
                                 }
 
                                 Row(
@@ -125,7 +124,6 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                         textAlign = TextAlign.Center
                                     )
                                     val weightText = String.format("%.2f", step.weight).replace(",", ".")
-
 
                                     val actionText =
                                         if (step.action == PlateCalculator.Companion.Action.ADD) {

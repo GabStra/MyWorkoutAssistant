@@ -8,10 +8,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.Red
 
@@ -19,27 +18,31 @@ import com.gabstra.myworkoutassistant.shared.Red
 @Composable
 fun PulsingHeartWithBpm(
     bpm: Int,
+    tint: Color = Red
 ) {
-    // Convert BPM to duration in milliseconds for each beat
-    val beatDuration = remember(bpm) {
-        60000 / bpm
+    val shouldPulse = bpm > 0
+
+    val scale = if (shouldPulse) {
+        val beatDuration = 60000 / bpm
+        val infiniteTransition = rememberInfiniteTransition(label = "heart-transition")
+
+        infiniteTransition.animateFloat(
+            initialValue = 0.8f,
+            targetValue = 1.2f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = beatDuration, easing = FastOutLinearInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "heart-scale"
+        ).value
+    } else {
+        1f
     }
 
-    val infiniteTransition = rememberInfiniteTransition("animation")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 1.2f,
-        animationSpec = infiniteRepeatable(
-            // Set the duration of the animation based on the BPM
-            animation = tween(beatDuration, easing = FastOutLinearInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label="animation"
-    )
-
-    HeartIcon(modifier = Modifier
-        .size(15.dp)
-        .scale(if (beatDuration != 0) scale else 1f),
-        tint = Red
+    HeartIcon(
+        modifier = Modifier
+            .size(15.dp)
+            .scale(scale),
+        tint = tint
     )
 }
