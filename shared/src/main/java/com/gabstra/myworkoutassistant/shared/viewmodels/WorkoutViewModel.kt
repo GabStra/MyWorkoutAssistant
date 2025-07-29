@@ -1358,14 +1358,13 @@ open class WorkoutViewModel : ViewModel() {
             val plateWeights = equipment.availablePlates.map { it.weight } .toList()
 
             try {
-                plateChangeResults.addAll(
-                    PlateCalculator.calculatePlateChanges(
-                        plateWeights,
-                        setWeights,
-                        equipment.barWeight,
-                        initialSetup,
-                    )
+                val results = PlateCalculator.calculatePlateChanges(
+                    plateWeights,
+                    setWeights,
+                    equipment.barWeight,
+                    initialSetup,
                 )
+                plateChangeResults.addAll(results)
             } catch (e: Exception) {
                 Log.e("PlatesCalculator", "Error calculating plate changes", e)
             }
@@ -1558,6 +1557,8 @@ open class WorkoutViewModel : ViewModel() {
 
         val plateChangeResults = getPlateChangeResults(exercise, exerciseAllSets, equipment)
 
+        val weightSets = exerciseAllSets.filterIsInstance<WeightSet>()
+
         for ((index, set) in exerciseAllSets.withIndex()) {
             if (set is RestSet) {
                 val restSet = RestSet(set.id, set.timeInSeconds)
@@ -1595,7 +1596,8 @@ open class WorkoutViewModel : ViewModel() {
                     }
                 }
 
-                val plateChangeResult = plateChangeResults.getOrNull(exerciseAllSets.indexOf(set))
+                val weightSetIndex = weightSets.indexOf(set)
+                val plateChangeResult = plateChangeResults.getOrNull(weightSetIndex)
 
                 val isWarmupSet = when(set) {
                     is BodyWeightSet -> set.isWarmupSet

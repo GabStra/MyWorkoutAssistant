@@ -86,7 +86,7 @@ fun WorkoutCompleteScreen(
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Text(
                 text = workout.name,
@@ -103,7 +103,7 @@ fun WorkoutCompleteScreen(
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Text(
                 text = "TIME SPENT",

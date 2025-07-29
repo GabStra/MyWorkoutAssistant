@@ -40,7 +40,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
     ) {
         ScalableText(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp),
-            text = "Plate Adjustment Guide",
+            text = "Loading Guide",
             style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
             textAlign = TextAlign.Center
         )
@@ -77,13 +77,6 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     ) {
                         Text(
                             modifier = Modifier.weight(1f),
-                            text = "#",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center,
-                            color = LightGray
-                        )
-                        Text(
-                            modifier = Modifier.weight(2f),
                             text = "PLATES (KG)",
                             style = headerStyle,
                             textAlign = TextAlign.Center,
@@ -117,12 +110,6 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                     modifier = Modifier.fillMaxWidth().background(backgroundColor),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        modifier = Modifier.weight(1f),
-                                        text = "${index + 1}",
-                                        style = MaterialTheme.typography.body1,
-                                        textAlign = TextAlign.Center
-                                    )
                                     val weightText = String.format("%.2f", step.weight).replace(",", ".")
 
                                     val actionText =
@@ -133,7 +120,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                         }
 
                                     Row(
-                                        modifier = Modifier.weight(2f),
+                                        modifier = Modifier.weight(1f),
                                         horizontalArrangement = Arrangement.Center
                                     ) {
                                         Row(
