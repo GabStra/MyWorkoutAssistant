@@ -673,7 +673,7 @@ open class WorkoutViewModel : ViewModel() {
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
                 repsRange = repsRange,
-                volumeProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
+                fatigueProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
             )
         }
 
@@ -695,9 +695,16 @@ open class WorkoutViewModel : ViewModel() {
             
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
 
+            val fatigueIncrease = ((newFatigue - oldFatigue) / oldFatigue) * 100
+
             Log.d(
                 "WorkoutViewModel",
-                "Progression found - Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume.round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)"
+                "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume.round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)"
+            )
+
+            Log.d(
+                "WorkoutViewModel",
+                "Fatigue: ${oldFatigue.round(2)} -> ${newFatigue.round(2)} (${if(fatigueIncrease>0) "+" else ""}${fatigueIncrease.round(2)}%)"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")

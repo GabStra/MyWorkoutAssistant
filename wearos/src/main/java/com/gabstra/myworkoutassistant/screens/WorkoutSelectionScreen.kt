@@ -211,7 +211,7 @@ fun WorkoutSelectionScreen(
             item{
                 if(!canScheduleExactAlarms){
                     ButtonWithText(
-                        text = "Request alarms permission",
+                        text = "Request Alarms Permission",
                         onClick = {
                             val intent = Intent(
                                 Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
@@ -235,7 +235,7 @@ fun WorkoutSelectionScreen(
                     }
                     item{
                         ButtonWithText(
-                            text = "Open mobile app",
+                            text = "Open Mobile App",
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 scope.launch {
