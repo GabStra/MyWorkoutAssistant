@@ -199,7 +199,7 @@ fun PageExercises(
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     ExerciseSetsViewer(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().padding(bottom = 2.dp),
                         viewModel = viewModel,
                         hapticsViewModel = hapticsViewModel,
                         exercise = updatedExercise,

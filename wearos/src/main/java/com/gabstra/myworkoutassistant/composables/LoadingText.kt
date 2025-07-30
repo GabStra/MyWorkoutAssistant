@@ -17,10 +17,10 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun LoadingText(baseText: String) {
-    val dotCount = remember { mutableIntStateOf(0) }
+    val dotCount = remember(baseText) { mutableIntStateOf(0) }
 
     val textWithDots = "$baseText..."
-    val textWithDotsWidth = remember { mutableIntStateOf(0) }
+    val textWithDotsWidth = remember(baseText) { mutableIntStateOf(0) }
 
     if(textWithDotsWidth.intValue == 0){
         Layout(
@@ -42,7 +42,7 @@ fun LoadingText(baseText: String) {
         }
     }
 
-    LaunchedEffect(textWithDotsWidth.intValue) {
+    LaunchedEffect(baseText,textWithDotsWidth.intValue) {
         if (textWithDotsWidth.intValue != 0) {
             while (true) {
                 delay(500)

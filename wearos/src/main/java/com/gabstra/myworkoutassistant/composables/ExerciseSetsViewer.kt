@@ -396,7 +396,6 @@ fun ExerciseSetsViewer(
                         scrollBarColor = LightGray
                     )
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 exerciseSetStates.forEachIndexed { index, nextSetState ->
                     val backgroundColor = if (index % 2 == 0) {
