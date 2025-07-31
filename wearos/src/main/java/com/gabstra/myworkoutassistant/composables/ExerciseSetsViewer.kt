@@ -9,8 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -93,7 +93,7 @@ fun SetTableRow(
     }
 
     val indicatorComposable = @Composable {
-        Box(modifier= Modifier.width(18.dp).fillMaxHeight(), contentAlignment = Alignment.Center){
+        Box(modifier= Modifier.width(18.dp), contentAlignment = Alignment.Center){
             Canvas(modifier = Modifier.size((triangleSize * 2 / density).dp)) {
                 val trianglePath = Path().apply {
                     val height = (triangleSize * 2 / density).dp.toPx()
@@ -128,7 +128,7 @@ fun SetTableRow(
     }
 
     val warmupIndicatorComposable = @Composable{
-        Box(modifier= Modifier.width(18.dp).fillMaxHeight(), contentAlignment = Alignment.Center){
+        Box(modifier= Modifier.width(18.dp), contentAlignment = Alignment.Center){
             Text(
                 text = "W",
                 style = captionStyle,
@@ -139,7 +139,7 @@ fun SetTableRow(
     }
 
     Row(
-        modifier = modifier,
+        modifier = modifier.height(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if(isCurrentSet && !setState.isWarmupSet){
@@ -154,7 +154,6 @@ fun SetTableRow(
                 val weightSetData = (setState.currentSetData as WeightSetData)
                 ScalableText(
                     modifier = Modifier
-                        .fillMaxHeight()
                         .weight(2f)
                         .combinedClickable(
                             onClick = {},
@@ -301,6 +300,48 @@ fun ExerciseSetsViewer(
         scrollState.scrollTo(position)
     }
 
+    @Composable
+    fun MeasuredSetTableRow(
+        setStateForThisRow:  WorkoutState.Set, // Renamed from nextSetState for clarity
+        rowIndex: Int,                          // Renamed from index for clarity
+        rowBackgroundColor: Color
+    ) {
+        SetTableRow( // Assuming SetTableRow is an existing composable you have
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(rowBackgroundColor)
+                .onGloballyPositioned { coordinates ->
+                    val height = coordinates.size.height
+                    if (itemHeights[rowIndex] != height) {
+                        itemHeights[rowIndex] = height
+                        measuredItems.value++
+
+                        if (measuredItems.value == exerciseSetStates.size) {
+                            allItemsMeasured.value = true
+                        }
+                    }
+                },
+            hapticsViewModel = hapticsViewModel, // Accessed from ExerciseSetsViewer's scope
+            viewModel = viewModel,               // Accessed from ExerciseSetsViewer's scope
+            setState = setStateForThisRow,
+            index = rowIndex, // This 'index' prop for SetTableRow might refer to its position in the overall exercise
+            isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
+            color = if (customColor != null) {
+                customColor
+            } else {
+                when {
+                    rowIndex < setIndex -> Orange // Orange, LightGray, MediumLightGray from outer scope
+                    rowIndex == setIndex -> LightGray
+                    else -> MediumLightGray
+                }
+            }
+        )
+    }
+
+    val prototypeItem = @Composable {
+        MeasuredSetTableRow(exerciseSetStates[0], 0, Color.Transparent)
+    }
+
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(5.dp)
@@ -324,53 +365,36 @@ fun ExerciseSetsViewer(
                     textAlign = TextAlign.Center
                 )
             }
-            Column(
+
+            DynamicHeightColumn(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalColumnScrollbar(
-                        scrollState = scrollState,
-                        scrollBarColor = LightGray,
-                        enableTopFade = false,
-                        enableBottomFade = false
-                    )
-                    .verticalScroll(scrollState),
-                //verticalArrangement = Arrangement.spacedBy(0.dp),
+                    .weight(1f) // Fills remaining vertical space
+                    .fillMaxWidth(), // Still need to fill width
+                prototypeItem = { prototypeItem() } // Pass the item for measurement
             ) {
-                exerciseSetStates.forEachIndexed { index, nextSetState ->
-                    val backgroundColor = if (index % 2 == 0) {
-                        MediumDarkGray
-                    } else {
-                        Color.Transparent
-                    }
-
-                    SetTableRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(backgroundColor)
-                            .onGloballyPositioned { coordinates ->
-                                val height = coordinates.size.height
-                                if (itemHeights[index] != height) {
-                                    itemHeights[index] = height
-                                    measuredItems.value++
-
-                                    if (measuredItems.value == exerciseSetStates.size) {
-                                        allItemsMeasured.value = true
-                                    }
-                                }
-                            },
-                        hapticsViewModel = hapticsViewModel,
-                        viewModel = viewModel,
-                        setState = nextSetState,
-                        index = index,
-                        isCurrentSet = index == setIndex,
-                        color = if(customColor!= null) customColor else when {
-                            index < setIndex -> Orange
-                            index == setIndex -> LightGray
-                            else -> MediumLightGray
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalColumnScrollbar(
+                            scrollState = scrollState,
+                            scrollBarColor = LightGray,
+                            enableTopFade = false,
+                            enableBottomFade = false
+                        )
+                        .verticalScroll(scrollState)
+                ) {
+                    exerciseSetStates.forEachIndexed { index, nextSetState ->
+                        val backgroundColor = if (index % 2 == 0) {
+                            MediumDarkGray
+                        } else {
+                            Color.Transparent
                         }
-                    )
+
+                        MeasuredSetTableRow(nextSetState,index,backgroundColor)
+                    }
                 }
             }
+
             return
         }
 
@@ -388,48 +412,32 @@ fun ExerciseSetsViewer(
                 )
                 Spacer(modifier = Modifier.width(18.dp))
             }
-            Column(
+            DynamicHeightColumn(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalColumnScrollbar(
-                        scrollState = scrollState,
-                        scrollBarColor = LightGray
-                    )
-                    .verticalScroll(scrollState),
+                    .weight(1f) // Fills remaining vertical space
+                    .fillMaxWidth(), // Still need to fill width
+                prototypeItem = { prototypeItem() } // Pass the item for measurement
             ) {
-                exerciseSetStates.forEachIndexed { index, nextSetState ->
-                    val backgroundColor = if (index % 2 == 0) {
-                        MediumDarkGray
-                    } else {
-                        Color.Transparent
-                    }
-
-                    SetTableRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(backgroundColor)
-                            .onGloballyPositioned { coordinates ->
-                                val height = coordinates.size.height
-                                if (itemHeights[index] != height) {
-                                    itemHeights[index] = height
-                                    measuredItems.value++
-
-                                    if (measuredItems.value == exerciseSetStates.size) {
-                                        allItemsMeasured.value = true
-                                    }
-                                }
-                            },
-                        hapticsViewModel = hapticsViewModel,
-                        viewModel = viewModel,
-                        setState = nextSetState,
-                        index = index,
-                        isCurrentSet = index == setIndex,
-                        color = if(customColor!= null) customColor else when {
-                            index < setIndex -> Orange
-                            index == setIndex -> LightGray
-                            else -> MediumLightGray
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalColumnScrollbar(
+                            scrollState = scrollState,
+                            scrollBarColor = LightGray,
+                            enableTopFade = false,
+                            enableBottomFade = false
+                        )
+                        .verticalScroll(scrollState),
+                ) {
+                    exerciseSetStates.forEachIndexed { index, nextSetState ->
+                        val backgroundColor = if (index % 2 == 0) {
+                            MediumDarkGray
+                        } else {
+                            Color.Transparent
                         }
-                    )
+
+                        MeasuredSetTableRow(nextSetState,index,backgroundColor)
+                    }
                 }
             }
             return

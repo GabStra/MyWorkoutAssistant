@@ -136,7 +136,7 @@ fun PageExercises(
                 modifier = Modifier
                     .fillMaxHeight()
                     .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(2.5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
