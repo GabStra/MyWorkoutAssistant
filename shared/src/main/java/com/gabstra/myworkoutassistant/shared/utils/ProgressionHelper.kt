@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.utils
 import androidx.annotation.FloatRange
 import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
+import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.standardDeviation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -29,6 +30,8 @@ object VolumeDistributionHelper {
         val newVolume: Double,
         val usedOneRepMax: Double,
         val previousVolume: Double,
+        val newFatigue : Double,
+        val previousFatigue : Double
     )
 
     data class WeightExerciseParameters(
@@ -38,6 +41,7 @@ object VolumeDistributionHelper {
         val availableWeights: Set<Double>,
         val repsRange: IntRange,
         val fatigueProgressionRange: FloatRange,
+        val targetFatigue: Double
     )
 
     fun recalculateExerciseFatigue(
@@ -101,9 +105,6 @@ object VolumeDistributionHelper {
 
         val previousTotalVolume = params.previousTotalVolume
 
-        val minFatigueIncrease = previousTotalFatigue * (1 + params.fatigueProgressionRange.from / 100)
-        val maxFatigueIncrease = previousTotalFatigue * (1 + params.fatigueProgressionRange.to / 100)
-
         fun calculateScore (combo: List<ExerciseSet>): Double {
             val currentTotalFatigue = combo.sumOf { it.fatigue }
             val currentTotalVolume = combo.sumOf { it.volume }
@@ -154,12 +155,22 @@ object VolumeDistributionHelper {
             isComboValid = { combo ->
                 val currentTotalFatigue = combo.sumOf { it.fatigue }
 
-                currentTotalFatigue.isEqualTo(minFatigueIncrease)
-                        || currentTotalFatigue.isEqualTo(maxFatigueIncrease)
-                        || (currentTotalFatigue > minFatigueIncrease && currentTotalFatigue < maxFatigueIncrease)
-
+                combo != params.previousSets && currentTotalFatigue > previousTotalFatigue && (currentTotalFatigue < params.targetFatigue || currentTotalFatigue.isEqualTo(params.targetFatigue))
             }
         )
+
+        if(result.isEmpty()){
+            result = findBestProgressions(
+                usableSets,
+                params.previousSets.size,
+                params.previousSets.size,
+                params,
+                calculateScore = { combo -> calculateScore(combo) },
+                isComboValid = { combo ->
+                    val currentTotalFatigue = combo.sumOf { it.fatigue }
+                    combo != params.previousSets && !currentTotalFatigue.isEqualTo(previousTotalFatigue)}
+            )
+        }
 
         return result
     }
@@ -176,9 +187,11 @@ object VolumeDistributionHelper {
 
         return ExerciseProgression(
             sets = validSetCombination,
-            newVolume =  validSetCombination.sumOf { it.volume },
+            newVolume = validSetCombination.sumOf { it.volume },
             usedOneRepMax = params.oneRepMax,
             previousVolume = params.previousSets.sumOf { it.volume },
+            newFatigue = validSetCombination.sumOf { it.fatigue },
+            previousFatigue = params.previousSets.sumOf { it.fatigue }
         )
     }
 
@@ -188,7 +201,7 @@ object VolumeDistributionHelper {
         maxSets: Int,
         params: WeightExerciseParameters,
         calculateScore: (List<ExerciseSet>) -> Double,
-        isComboValid: (List<ExerciseSet>) -> Boolean,
+        isComboValid: (List<ExerciseSet>) -> Boolean = { true },
     ) = coroutineScope {
         require(minSets > 0) { "Minimum sets must be positive" }
         require(minSets <= maxSets) { "Minimum sets cannot exceed maximum sets" }
@@ -341,6 +354,7 @@ object VolumeDistributionHelper {
         availableWeights: Set<Double>,
         repsRange: IntRange,
         fatigueProgressionRange: FloatRange,
+        targetFatigue: Double,
     ): ExerciseProgression? {
         val exerciseVolume = previousSets.sumOf { it.volume }
 
@@ -351,6 +365,7 @@ object VolumeDistributionHelper {
             availableWeights = availableWeights,
             repsRange = repsRange,
             fatigueProgressionRange = fatigueProgressionRange,
+            targetFatigue = targetFatigue
         )
 
         var currentExerciseProgression = getProgression(baseParams)
@@ -359,5 +374,80 @@ object VolumeDistributionHelper {
         }
 
         return currentExerciseProgression
+    }
+
+    suspend fun getClosestToTargetFatigue(
+        previousSets:  List<ExerciseSet>,
+        oneRepMax: Double,
+        availableWeights: Set<Double>,
+        repsRange: IntRange,
+        fatigueProgressionRange: FloatRange,
+        targetFatigue: Double,
+    ): ExerciseProgression?{
+        var bestExerciseProgression = generateExerciseProgression(
+            previousSets = previousSets,
+            oneRepMax = oneRepMax,
+            availableWeights = availableWeights,
+            repsRange = repsRange,
+            fatigueProgressionRange = fatigueProgressionRange,
+            targetFatigue = targetFatigue
+        )
+
+        // If the first progression is invalid no valid solution exists.
+        if (bestExerciseProgression == null) {
+            //Log.d("WorkoutViewModel", "No base progression found.")
+            return null
+        }
+
+        // If it goes over the target return anyway as only existing solution
+        if(bestExerciseProgression.newFatigue.round(2)  > targetFatigue.round(2)){
+            //Log.d("WorkoutViewModel", "Progression over target since first return anyway")
+            return bestExerciseProgression
+        }
+
+        //Log.d("WorkoutViewModel", "Best one: ${bestExerciseProgression.newFatigue.round(2)} ${bestExerciseProgression.sets}")
+
+        // Loop to find subsequent progressions until the target fatigue is exceeded.
+        while (true) {
+            // Generate the next progression based on the sets of the last successful one.
+            val nextProgression = generateExerciseProgression(
+                previousSets = bestExerciseProgression!!.sets,
+                oneRepMax = oneRepMax,
+                availableWeights = availableWeights,
+                repsRange = repsRange,
+                fatigueProgressionRange = fatigueProgressionRange,
+                targetFatigue = targetFatigue
+            )
+
+            // If no further progression can be generated, or if the next progression's fatigue
+            // is over the target, we stop. The current `bestExerciseProgression` is our final answer.
+
+            if (nextProgression == null) {
+                break
+            }
+
+            if (nextProgression.newFatigue.round(2) > targetFatigue.round(2) ) {
+                //Log.d("WorkoutViewModel", "Progression over target ${nextProgression.newFatigue.round(2)}")
+                break
+            }
+
+            if(nextProgression.newFatigue < bestExerciseProgression.newFatigue){
+                //Log.d("WorkoutViewModel", "Progression worse than best")
+                break
+            }
+
+            if(nextProgression.newFatigue == bestExerciseProgression.newFatigue){
+                //Log.d("WorkoutViewModel", "Progression same as best")
+                break
+            }
+
+            //Log.d("WorkoutViewModel", "Best one: ${bestExerciseProgression.newFatigue.round(2)} New progression: ${nextProgression.newFatigue.round(2) }")
+
+            // If the next progression is valid and within the fatigue limit, it becomes our new best.
+            bestExerciseProgression = nextProgression
+        }
+
+        // Return the last valid progression that was at or below the target fatigue.
+        return bestExerciseProgression
     }
 }

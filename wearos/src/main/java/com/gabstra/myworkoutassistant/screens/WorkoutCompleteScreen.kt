@@ -74,8 +74,8 @@ fun WorkoutCompleteScreen(
     }
 
     val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.title3.copy(fontWeight = FontWeight.Bold) }
-    val itemStyle = remember(typography)  { typography.body1 }
+    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f, fontWeight = FontWeight.Bold) }
 
     Column(
         verticalArrangement = Arrangement.Center,
@@ -89,13 +89,13 @@ fun WorkoutCompleteScreen(
             verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Text(
-                text = workout.name,
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                text = "COMPLETED",
+                textAlign = TextAlign.Center,
                 style = headerStyle
             )
             Text(
-                text = "COMPLETED",
-                textAlign = TextAlign.Center,
+                text = workout.name,
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                 style = itemStyle
             )
         }
@@ -109,12 +109,12 @@ fun WorkoutCompleteScreen(
                 text = "TIME SPENT",
                 modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                 textAlign = TextAlign.Center,
-                style = itemStyle
+                style = headerStyle
             )
             Text(
                 text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
                 textAlign = TextAlign.Center,
-                style =  headerStyle
+                style =  itemStyle
             )
         }
     }
