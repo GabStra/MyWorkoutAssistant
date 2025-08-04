@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,10 @@ fun PreparingStandardScreen(
     state: WorkoutState.Preparing,
     onReady: () -> Unit = {}
 ){
+    BackHandler(true) {
+        // Do nothing
+    }
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var currentMillis by remember { mutableIntStateOf(0) }
@@ -84,7 +89,7 @@ fun PreparingStandardScreen(
         contentAlignment = Alignment.CenterStart
     ){
         Column(horizontalAlignment = Alignment.CenterHorizontally){
-            Text(modifier = Modifier.fillMaxWidth(), text = "Preparing\nHR Sensor", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
+            Text(modifier = Modifier.fillMaxWidth(), text = "Preparing\nHR Sensor", style = MaterialTheme.typography.body1, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(15.dp))
             Row (modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
                 LoadingText(baseText = "Please wait")

@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TimedDurationSetScreen(
@@ -81,6 +82,9 @@ fun TimedDurationSetScreen(
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
+
+    var displayStartingDialog by remember { mutableStateOf(false) }
+    var countdownValue by remember(set) { mutableIntStateOf(3) }
 
     val previousSet =  state.previousSetData as TimedDurationSetData
     var currentSet by remember(set.id) { mutableStateOf(state.currentSetData as TimedDurationSetData) }
@@ -191,13 +195,17 @@ fun TimedDurationSetScreen(
         }
 
         if (set.autoStart) {
+            displayStartingDialog = true
             delay(500)
             hapticsViewModel.doHardVibration()
             delay(1000)
+            countdownValue = 2
             hapticsViewModel.doHardVibration()
             delay(1000)
+            countdownValue = 1
             hapticsViewModel.doHardVibration()
             delay(1000)
+            displayStartingDialog = false
             hapticsViewModel.doHardVibrationTwice()
 
             if(state.startTime == null){
@@ -391,5 +399,7 @@ fun TimedDurationSetScreen(
             handleOnAutomaticClose = {},
             holdTimeInMillis = 1000
         )
+
+        CountDownDialog(displayStartingDialog,countdownValue)
     }
 }

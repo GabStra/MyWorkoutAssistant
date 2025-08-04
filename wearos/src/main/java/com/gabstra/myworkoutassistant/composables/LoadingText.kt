@@ -11,12 +11,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import kotlinx.coroutines.delay
 
 @Composable
-fun LoadingText(baseText: String) {
+fun LoadingText(baseText: String, style: TextStyle = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold)) {
     val dotCount = remember(baseText) { mutableIntStateOf(0) }
 
     val textWithDots = "$baseText..."
@@ -27,7 +29,7 @@ fun LoadingText(baseText: String) {
             content = {
                 Text(
                     text = textWithDots,
-                    style = MaterialTheme.typography.title3,
+                    style = style,
                     onTextLayout = { textLayoutResult ->
                         textWithDotsWidth.intValue = textLayoutResult.size.width
                     },
@@ -56,7 +58,7 @@ fun LoadingText(baseText: String) {
     ) {
         Text(
             text = baseText + ".".repeat(dotCount.intValue),
-            style = MaterialTheme.typography.title3,
+            style = style,
         )
     }
 }

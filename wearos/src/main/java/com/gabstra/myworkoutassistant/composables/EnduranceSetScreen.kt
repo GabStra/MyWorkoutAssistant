@@ -51,6 +51,8 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
+
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EnduranceSetScreen (
@@ -80,6 +82,9 @@ fun EnduranceSetScreen (
     var isOverLimit by remember { mutableStateOf(false) }
 
     val set = state.set as EnduranceSet
+
+    var displayStartingDialog by remember { mutableStateOf(false) }
+    var countdownValue by remember(set) { mutableIntStateOf(3) }
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
@@ -255,13 +260,17 @@ fun EnduranceSetScreen (
         }
 
         if (set.autoStart) {
+            displayStartingDialog = true
             delay(500)
             hapticsViewModel.doHardVibration()
             delay(1000)
+            countdownValue = 2
             hapticsViewModel.doHardVibration()
             delay(1000)
+            countdownValue = 1
             hapticsViewModel.doHardVibration()
             delay(1000)
+            displayStartingDialog = false
             hapticsViewModel.doHardVibrationTwice()
             startTimerJob()
 
@@ -399,5 +408,7 @@ fun EnduranceSetScreen (
             handleOnAutomaticClose = {},
             holdTimeInMillis = 1000
         )
+
+        CountDownDialog(displayStartingDialog,countdownValue)
     }
 }

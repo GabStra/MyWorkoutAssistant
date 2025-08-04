@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -53,6 +54,10 @@ fun PreparingPolarScreen(
     state: WorkoutState.Preparing,
     onReady: () -> Unit = {}
 ) {
+    BackHandler(true) {
+        // Do nothing
+    }
+
     val deviceConnectionInfo by polarViewModel.deviceConnectionState.collectAsState()
 
     val scope = rememberCoroutineScope()
@@ -114,12 +119,12 @@ fun PreparingPolarScreen(
             Text(
                 modifier = Modifier.fillMaxWidth(),
                 text = "Preparing\nPolar Sensor",
-                style = MaterialTheme.typography.body2,
+                style = MaterialTheme.typography.body1,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(15.dp))
             Row (modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
-                LoadingText(baseText = if (deviceConnectionInfo == null) "Connecting" else "Please Wait")
+                LoadingText(baseText = if (deviceConnectionInfo == null) "Connecting" else "Please wait")
             }
 
 

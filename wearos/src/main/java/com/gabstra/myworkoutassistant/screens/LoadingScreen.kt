@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.wear.compose.material.MaterialTheme
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
