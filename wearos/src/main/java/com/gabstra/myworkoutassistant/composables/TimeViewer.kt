@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,7 +50,7 @@ fun TimeViewer(
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(1.dp)
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
 
         if(hours > 0){
@@ -66,7 +67,7 @@ fun TimeViewer(
                 style = style,
                 color = if (showDots) color else MediumGray,
                 textAlign = TextAlign.Center,
-                modifier = Modifier,
+                modifier = Modifier.padding(bottom = 3.dp),
             )
         }
 
@@ -83,7 +84,7 @@ fun TimeViewer(
             style = style,
             color = if (showDots) color else MediumGray,
             textAlign = TextAlign.Center,
-            modifier = Modifier,
+            modifier = Modifier.padding(bottom = 3.dp),
         )
 
         Text(

@@ -3,7 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,10 +42,9 @@ fun CurrentTime() {
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(1.dp)
+        horizontalArrangement = Arrangement.spacedBy(1.5.dp)
     ) {
         Text(
-            modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.hour),
             style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.Center,
@@ -57,11 +56,10 @@ fun CurrentTime() {
             style = MaterialTheme.typography.caption1,
             color = if (showDots) LightGray else MediumDarkGray,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxHeight(),
+            modifier = Modifier.padding(bottom = 2.dp),
         )
 
         Text(
-            modifier = Modifier.fillMaxHeight(),
             text = String.format("%02d", currentTime.minute),
             style = MaterialTheme.typography.caption1,
             textAlign = TextAlign.Center,

@@ -178,7 +178,7 @@ fun WorkoutSelectionScreen(
         }
     ) {
         ScalingLazyColumn(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.padding(10.dp),
             state = scalingLazyListState,
         ) {
             item {
@@ -227,8 +227,8 @@ fun WorkoutSelectionScreen(
                 if(viewModel.isPhoneConnectedAndHasApp){
                     item{
                         Text(
-                            modifier = Modifier,
-                            text = "Input your Age on the phone",
+                            modifier = Modifier.padding(vertical = 5.dp),
+                            text = "Input your age on the phone",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.caption1,
                         )
@@ -247,8 +247,8 @@ fun WorkoutSelectionScreen(
                 }else{
                     item{
                         Text(
-                            modifier = Modifier,
-                            text = "Please install companion app on your phone",
+                            modifier = Modifier.padding(vertical = 5.dp),
+                            text = "Please install the companion app on your phone",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.caption1,
                         )
