@@ -12,7 +12,7 @@ import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 
 @Composable
-fun LoadingScreen(appViewModel: AppViewModel, text: String = "Loading...", extraContent: @Composable () -> Unit = {}) {
+fun LoadingScreen(appViewModel: AppViewModel, text: String = "Loading", extraContent: @Composable () -> Unit = {}) {
     BackHandler(true) {
         // Do nothing
     }

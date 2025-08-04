@@ -304,7 +304,7 @@ fun WearApp(
         }
 
         if(!initialized){
-            LoadingScreen(appViewModel,"Loading workouts")
+            LoadingScreen(appViewModel)
         }else{
             val enableDimming by appViewModel.enableDimming
             KeepOn(appViewModel,enableDimming = enableDimming){

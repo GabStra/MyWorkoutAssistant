@@ -667,23 +667,23 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "${exercise.name} (${exercise.exerciseType}) Relative BodyWeight: ${relativeBodyWeight} - Volume ${exerciseVolume.round(2)} - 1RM ${
+                "${exercise.name} (${exercise.exerciseType}) Relative BodyWeight: ${relativeBodyWeight} - 1RM ${
                     String.format(
                         "%.2f",
                         oneRepMax
                     ).replace(",", ".")
-                } Current Fatigue ${currentFatigue.round(2)} Target Fatigue: ${targetFatigue.round(2)}"
+                }"
             )
 
         }else{
             Log.d(
                 "WorkoutViewModel",
-                "${exercise.name} (${exercise.exerciseType}) - Volume ${exerciseVolume.round(2)} - 1RM ${
+                "${exercise.name} (${exercise.exerciseType}) - 1RM ${
                     String.format(
                         "%.2f",
                         oneRepMax
                     ).replace(",", ".")
-                } Current Fatigue ${currentFatigue.round(2)} Target Fatigue: ${targetFatigue.round(2)}"
+                }"
             )
         }
 
@@ -737,18 +737,17 @@ open class WorkoutViewModel : ViewModel() {
             
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
 
-            val fatigueIncrease = ((newFatigue - oldFatigue) / oldFatigue) * 100
+            val fatigueIncrease = ((exerciseProgression.newFatigue - exerciseProgression.previousFatigue) / exerciseProgression.previousFatigue) * 100
 
-            val newVolume = exerciseProgression.sets.sumOf { it.volume}
 
             Log.d(
                 "WorkoutViewModel",
-                "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${newVolume.round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)"
+                "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume .round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)"
             )
 
             Log.d(
                 "WorkoutViewModel",
-                "Fatigue: ${oldFatigue.round(2)} -> ${newFatigue.round(2)} (${if(fatigueIncrease>0) "+" else ""}${fatigueIncrease.round(2)}%)"
+                "Fatigue: ${exerciseProgression.previousFatigue.round(2)} -> ${exerciseProgression.newFatigue.round(2)} (${if(fatigueIncrease>0) "+" else ""}${fatigueIncrease.round(2)}%)"
             )
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")

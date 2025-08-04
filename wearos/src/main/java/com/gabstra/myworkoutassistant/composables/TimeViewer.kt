@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composables
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -12,20 +11,28 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
 @SuppressLint("DefaultLocale")
 @Composable
-fun CurrentTime() {
-    var currentTime by remember { mutableStateOf(LocalDateTime.now()) }
+fun TimeViewer(
+    modifier: Modifier = Modifier,
+    seconds: Int,
+    color: Color,
+    style: TextStyle,
+) {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val remainingSeconds = seconds % 60
+
 
     var showDots by remember { mutableStateOf(true) }
 
@@ -33,7 +40,6 @@ fun CurrentTime() {
     LaunchedEffect(Unit) {
         while (true) {
             val now = LocalDateTime.now()
-            currentTime = now
             showDots = !showDots
             val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
             delay(java.time.Duration.between(now, nextSecond).toMillis())
@@ -41,33 +47,51 @@ fun CurrentTime() {
     }
 
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
+
+        if(hours > 0){
+            Text(
+                modifier = Modifier,
+                text = String.format("%02d", hours),
+                style = style,
+                textAlign = TextAlign.Center,
+                color =  color,
+            )
+
+            Text(
+                text = ":",
+                style = style,
+                color = if (showDots) color else MediumGray,
+                textAlign = TextAlign.Center,
+                modifier = Modifier,
+            )
+        }
+
         Text(
-            modifier = Modifier.fillMaxHeight(),
-            text = String.format("%02d", currentTime.hour),
-            style = MaterialTheme.typography.caption1,
+            modifier = Modifier,
+            text = String.format("%02d", minutes),
+            style = style,
             textAlign = TextAlign.Center,
-            color =  LightGray,
+            color =  color,
         )
 
         Text(
             text = ":",
-            style = MaterialTheme.typography.caption1,
-            color = if (showDots) LightGray else MediumDarkGray,
+            style = style,
+            color = if (showDots) color else MediumGray,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxHeight(),
+            modifier = Modifier,
         )
 
         Text(
-            modifier = Modifier.fillMaxHeight(),
-            text = String.format("%02d", currentTime.minute),
-            style = MaterialTheme.typography.caption1,
+            modifier = Modifier,
+            text = String.format("%02d", remainingSeconds),
+            style = style,
             textAlign = TextAlign.Center,
-            color =  LightGray,
+            color =  color,
         )
     }
 }
-
-

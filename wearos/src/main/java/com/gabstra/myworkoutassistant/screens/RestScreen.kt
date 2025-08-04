@@ -42,12 +42,12 @@ import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PagePlates
-import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -244,9 +244,8 @@ fun RestScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            ScalableText(
+            TimeViewer(
                 modifier = Modifier
-                    .fillMaxWidth()
                     .combinedClickable(
                         onClick = {},
                         onLongClick = {
@@ -256,8 +255,9 @@ fun RestScreen(
                         },
                         onDoubleClick = {}
                     ),
-                text = FormatTime(currentSeconds),
-                style = MaterialTheme.typography.display2.copy(fontWeight = FontWeight.Bold),
+                seconds = currentSeconds,
+                style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Bold),
+                color = LightGray,
             )
         }
     }

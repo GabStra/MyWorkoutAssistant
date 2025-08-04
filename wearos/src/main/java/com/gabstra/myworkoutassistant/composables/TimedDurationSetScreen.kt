@@ -38,7 +38,6 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LightGray
@@ -235,9 +234,8 @@ fun TimedDurationSetScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            ScalableText(
+            TimeViewer(
                 modifier = Modifier
-                    .fillMaxWidth()
                     .combinedClickable(
                         onClick = {
                         },
@@ -257,9 +255,9 @@ fun TimedDurationSetScreen(
                             }
                         }
                     ),
-                text = FormatTime(currentMillis / 1000),
+                seconds = currentMillis / 1000,
                 style = MaterialTheme.typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold),
-                color =  if(isDifferent) Orange else LightGray,
+                color =  if(isDifferent) Orange else LightGray
             )
         }
     }

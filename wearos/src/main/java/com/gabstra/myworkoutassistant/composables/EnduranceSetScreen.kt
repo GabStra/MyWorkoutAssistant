@@ -37,7 +37,6 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LightGray
@@ -139,32 +138,31 @@ fun EnduranceSetScreen (
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ){
-            ScalableText(
+            TimeViewer(
                 modifier = Modifier
-                    .fillMaxWidth()
                     .combinedClickable(
-                    onClick = {
-                    },
-                    onLongClick = {
-                        if (showStartButton) {
-                            isTimerInEditMode = !isTimerInEditMode
-                            updateInteractionTime()
-                            hapticsViewModel.doGentleVibration()
-                        }
-                    },
-                    onDoubleClick = {
-                        if (isTimerInEditMode) {
-                            currentSet = currentSet.copy(
-                                startTimer = previousSet.startTimer
-                            )
+                        onClick = {
+                        },
+                        onLongClick = {
+                            if (showStartButton) {
+                                isTimerInEditMode = !isTimerInEditMode
+                                updateInteractionTime()
+                                hapticsViewModel.doGentleVibration()
+                            }
+                        },
+                        onDoubleClick = {
+                            if (isTimerInEditMode) {
+                                currentSet = currentSet.copy(
+                                    startTimer = previousSet.startTimer
+                                )
 
-                            hapticsViewModel.doHardVibrationTwice()
+                                hapticsViewModel.doHardVibrationTwice()
+                            }
                         }
-                    }
-                ),
-                color = if(isOverLimit) Green else if(isDifferent) Orange else LightGray,
-                text = FormatTime((if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000),
+                    ),
+                seconds = (if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000,
                 style = MaterialTheme.typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold),
+                color = if(isOverLimit) Green else if(isDifferent) Orange else LightGray,
             )
         }
     }

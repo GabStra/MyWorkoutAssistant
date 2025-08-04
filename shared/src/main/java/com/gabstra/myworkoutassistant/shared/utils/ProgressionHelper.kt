@@ -154,8 +154,11 @@ object VolumeDistributionHelper {
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
                 val currentTotalFatigue = combo.sumOf { it.fatigue }
-
-                combo != params.previousSets && currentTotalFatigue > previousTotalFatigue && (currentTotalFatigue < params.targetFatigue || currentTotalFatigue.isEqualTo(params.targetFatigue))
+                val currentTotalVolume = combo.sumOf { it.volume }
+                combo != params.previousSets &&
+                        currentTotalFatigue > previousTotalFatigue &&
+                        currentTotalVolume > previousTotalVolume &&
+                        (currentTotalFatigue < params.targetFatigue || currentTotalFatigue.isEqualTo(params.targetFatigue))
             }
         )
 
@@ -168,7 +171,11 @@ object VolumeDistributionHelper {
                 calculateScore = { combo -> calculateScore(combo) },
                 isComboValid = { combo ->
                     val currentTotalFatigue = combo.sumOf { it.fatigue }
-                    combo != params.previousSets && !currentTotalFatigue.isEqualTo(previousTotalFatigue)}
+                    val currentTotalVolume = combo.sumOf { it.volume }
+                    combo != params.previousSets &&
+                            !currentTotalFatigue.isEqualTo(previousTotalFatigue)
+                            !currentTotalVolume.isEqualTo(previousTotalVolume)
+                }
             )
         }
 
@@ -448,6 +455,9 @@ object VolumeDistributionHelper {
         }
 
         // Return the last valid progression that was at or below the target fatigue.
-        return bestExerciseProgression
+        return bestExerciseProgression.copy(
+            previousVolume = previousSets.sumOf { it.volume },
+            previousFatigue = previousSets.sumOf { it.fatigue }
+        )
     }
 }
