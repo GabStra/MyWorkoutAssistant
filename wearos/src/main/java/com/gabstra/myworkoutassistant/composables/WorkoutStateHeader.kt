@@ -100,7 +100,6 @@ fun WorkoutStateHeader(
                 Text(
                     text = ":",
                     style = MaterialTheme.typography.caption1,
-
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxHeight(),
                 )

@@ -67,7 +67,6 @@ fun TimeViewer(
                 style = style,
                 color = if (showDots) color else MediumGray,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 3.dp),
             )
         }
 

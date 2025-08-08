@@ -17,8 +17,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
@@ -34,7 +32,6 @@ import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberFadingEdges
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
-
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.fill
 import com.patrykandpatrick.vico.core.cartesian.Zoom
@@ -85,10 +82,8 @@ fun StandardChart(
         indicator = { _ -> shapeComponent }
     )
 
-    cartesianChartModel.models.first().minY
-
-    var minY = minValue ?: cartesianChartModel.models.first().minY * 0.75f
-    var maxY = maxValue ?: cartesianChartModel.models.first().maxY * 1.25f
+    var minY = minValue ?: cartesianChartModel.models.first().minY
+    var maxY = maxValue ?: cartesianChartModel.models.first().maxY
 
     StyledCard{
         ExpandableContainer(
@@ -136,7 +131,7 @@ fun StandardChart(
                                 textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
                             ),
                             valueFormatter = startAxisValueFormatter,
-                            itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) },
+                            itemPlacer = remember { VerticalAxis.ItemPlacer.count() },
                             tick = rememberAxisTickComponent(fill(MediumLightGray)),
                             guideline = null,
                         ),

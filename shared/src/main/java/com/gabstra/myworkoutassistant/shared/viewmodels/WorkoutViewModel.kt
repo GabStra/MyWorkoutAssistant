@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.shared.viewmodels
 
 import android.content.Context
 import android.util.Log
-import androidx.annotation.FloatRange
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -95,8 +94,7 @@ open class WorkoutViewModel : ViewModel() {
             birthDateYear = 0,
             weightKg = 0.0,
             equipments = emptyList(),
-            workloadProgressionLowerRange = 0.0,
-            workloadProgressionUpperRange = 0.0
+            progressionPercentageAmount = 0.0,
         )
     )
 
@@ -145,8 +143,7 @@ open class WorkoutViewModel : ViewModel() {
                 birthDateYear = 0,
                 weightKg = 0.0,
                 equipments = emptyList(),
-                workloadProgressionLowerRange = 0.0,
-                workloadProgressionUpperRange = 0.0
+                progressionPercentageAmount = 0.0,
             )
         )
     }
@@ -595,9 +592,10 @@ open class WorkoutViewModel : ViewModel() {
             .flatten()
             .sumOf { it.fatigue }
 
-        val fatigueBudget = fatigueBaseline * 1.01
+        val fatigueBudget = fatigueBaseline * (1 + workoutStore.progressionPercentageAmount/100)
         val fatigueSurplus = fatigueBudget - fatigueBaseline
-
+        
+        Log.d("WorkoutViewModel", "Fatigue Baseline: ${fatigueBaseline.round(2)} - Fatigue Budget: ${fatigueBudget.round(2)} - Progression Percentage Amount: ${workoutStore.progressionPercentageAmount.round(2)}%")
         // Process exercises sequentially
         validExercises.forEach { exercise ->
 
@@ -716,7 +714,6 @@ open class WorkoutViewModel : ViewModel() {
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
                 repsRange = repsRange,
-                fatigueProgressionRange = FloatRange(workoutStore.workloadProgressionLowerRange, workoutStore.workloadProgressionUpperRange),
                 targetFatigue = targetFatigue
             )
         }

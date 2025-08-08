@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import androidx.annotation.FloatRange
 import com.gabstra.myworkoutassistant.shared.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
@@ -40,8 +39,8 @@ object VolumeDistributionHelper {
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
         val repsRange: IntRange,
-        val fatigueProgressionRange: FloatRange,
-        val targetFatigue: Double
+        val targetFatigue: Double,
+        val maxWeight: Double
     )
 
     fun recalculateExerciseFatigue(
@@ -70,7 +69,7 @@ object VolumeDistributionHelper {
         }
 
         val previousTotalFatigue = params.previousSets.sumOf { it.fatigue }
-        var nearAverageWeights = getNearAverageWeights(params)
+        var nearAverageWeights =  params.previousSets.minOf { it.weight }   .. params.maxWeight
 
         val previousAverageWeightPerRep = params.previousTotalVolume / params.previousSets.sumOf { it.reps }
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
@@ -155,9 +154,12 @@ object VolumeDistributionHelper {
             isComboValid = { combo ->
                 val currentTotalFatigue = combo.sumOf { it.fatigue }
                 val currentTotalVolume = combo.sumOf { it.volume }
+
+                val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
+
                 combo != params.previousSets &&
                         currentTotalFatigue > previousTotalFatigue &&
-                        currentTotalVolume > previousTotalVolume &&
+                        (currentTotalVolume > previousTotalVolume || currentTotalVolume.isEqualTo(previousTotalVolume) && currentAverageWeightPerRep > previousAverageWeightPerRep) &&
                         (currentTotalFatigue < params.targetFatigue || currentTotalFatigue.isEqualTo(params.targetFatigue))
             }
         )
@@ -172,9 +174,10 @@ object VolumeDistributionHelper {
                 isComboValid = { combo ->
                     val currentTotalFatigue = combo.sumOf { it.fatigue }
                     val currentTotalVolume = combo.sumOf { it.volume }
+                    val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
                     combo != params.previousSets &&
-                            !currentTotalFatigue.isEqualTo(previousTotalFatigue)
-                            !currentTotalVolume.isEqualTo(previousTotalVolume)
+                            !currentTotalFatigue.isEqualTo(previousTotalFatigue) &&
+                            (currentTotalVolume > previousTotalVolume || currentTotalVolume.isEqualTo(previousTotalVolume) && currentAverageWeightPerRep > previousAverageWeightPerRep)
                 }
             )
         }
@@ -360,8 +363,8 @@ object VolumeDistributionHelper {
         oneRepMax: Double,
         availableWeights: Set<Double>,
         repsRange: IntRange,
-        fatigueProgressionRange: FloatRange,
         targetFatigue: Double,
+        maxWeight: Double,
     ): ExerciseProgression? {
         val exerciseVolume = previousSets.sumOf { it.volume }
 
@@ -371,8 +374,8 @@ object VolumeDistributionHelper {
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             repsRange = repsRange,
-            fatigueProgressionRange = fatigueProgressionRange,
-            targetFatigue = targetFatigue
+            targetFatigue = targetFatigue,
+            maxWeight = maxWeight
         )
 
         var currentExerciseProgression = getProgression(baseParams)
@@ -388,16 +391,19 @@ object VolumeDistributionHelper {
         oneRepMax: Double,
         availableWeights: Set<Double>,
         repsRange: IntRange,
-        fatigueProgressionRange: FloatRange,
         targetFatigue: Double,
     ): ExerciseProgression?{
+
+        val currentMaxWeight = previousSets.maxOf { it.weight }
+        val maxWeight = availableWeights.filter { it >  currentMaxWeight }.minOrNull() ?: currentMaxWeight
+
         var bestExerciseProgression = generateExerciseProgression(
             previousSets = previousSets,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             repsRange = repsRange,
-            fatigueProgressionRange = fatigueProgressionRange,
-            targetFatigue = targetFatigue
+            targetFatigue = targetFatigue,
+            maxWeight = maxWeight
         )
 
         // If the first progression is invalid no valid solution exists.
@@ -422,8 +428,8 @@ object VolumeDistributionHelper {
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
                 repsRange = repsRange,
-                fatigueProgressionRange = fatigueProgressionRange,
-                targetFatigue = targetFatigue
+                targetFatigue = targetFatigue,
+                maxWeight = maxWeight
             )
 
             // If no further progression can be generated, or if the next progression's fatigue

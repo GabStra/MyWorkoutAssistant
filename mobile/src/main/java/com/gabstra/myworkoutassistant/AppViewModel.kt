@@ -125,8 +125,7 @@ class AppViewModel() : ViewModel() {
         birthDateYear = 0,
         weightKg = 0.0,
         equipments = emptyList(),
-        workloadProgressionLowerRange = 0.0,
-        workloadProgressionUpperRange = 0.0,
+        progressionPercentageAmount = 0.0
     ))
         private set
 

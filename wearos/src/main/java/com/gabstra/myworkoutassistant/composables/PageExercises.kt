@@ -193,27 +193,33 @@ fun PageExercises(
                                 text = "${setIndex + 1}/${exerciseSetIds.size}",
                                 style = captionStyle
                             )
+
+                            if(currentStateSet.isWarmupSet){
+                                Text(
+                                    text = "WARM-UP",
+                                    style = captionStyle,
+                                )
+                            }
                         }
                     }
                 }
 
-                Box(modifier = Modifier.fillMaxSize()) {
-                    ExerciseSetsViewer(
-                        modifier = Modifier.fillMaxSize().padding(bottom = 2.dp),
-                        viewModel = viewModel,
-                        hapticsViewModel = hapticsViewModel,
-                        exercise = updatedExercise,
-                        currentSet = currentStateSet.set,
-                        customColor = when {
-                            updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> Orange
-                            updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MediumLightGray
-                            else -> null
-                        },
-                        overrideSetIndex = if (updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
-                            overrideSetIndex
-                        } else null
-                    )
-                }
+                ExerciseSetsViewer(
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    viewModel = viewModel,
+                    hapticsViewModel = hapticsViewModel,
+                    exercise = updatedExercise,
+                    currentSet = currentStateSet.set,
+                    customColor = when {
+                        updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> Orange
+                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MediumLightGray
+                        else -> null
+                    },
+                    overrideSetIndex = if (updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                        overrideSetIndex
+                    } else null
+                )
             }
         }
 

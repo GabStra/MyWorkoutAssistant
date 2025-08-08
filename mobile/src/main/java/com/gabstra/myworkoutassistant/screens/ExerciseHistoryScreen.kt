@@ -70,7 +70,6 @@ import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -532,7 +531,9 @@ fun ExerciseHistoryScreen(
                                         StandardChart(
                                             cartesianChartModel = oneRepMaxEntryModel!!,
                                             title = "One Rep Max",
-                                            startAxisValueFormatter = volumeAxisValueFormatter,
+                                            startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
+                                                value.toString()
+                                            },
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                         )
                                     }

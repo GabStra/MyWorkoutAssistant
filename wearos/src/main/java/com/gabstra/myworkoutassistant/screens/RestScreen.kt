@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -239,8 +238,7 @@ fun RestScreen(
     val textComposable = @Composable {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 50.dp),
+                .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -256,7 +254,7 @@ fun RestScreen(
                         onDoubleClick = {}
                     ),
                 seconds = currentSeconds,
-                style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
                 color = LightGray,
             )
         }

@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import android.app.Activity
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -56,6 +57,8 @@ fun WorkoutCompleteScreen(
     val seconds = remember { duration.seconds % 60 }
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
+    val countDownTimer = remember { mutableIntStateOf(5) }
+
     LaunchedEffect(Unit){
         delay(500)
         hapticsViewModel.doShortImpulse()
@@ -67,7 +70,12 @@ fun WorkoutCompleteScreen(
         cancelWorkoutInProgressNotification(context)
         viewModel.pushAndStoreWorkoutData(true,context){
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-            delay(5000)
+
+            while(countDownTimer.intValue > 0){
+                countDownTimer.intValue--
+                delay(1000)
+            }
+
             val activity = (context as? Activity)
             activity?.finishAndRemoveTask()
         }
@@ -93,9 +101,8 @@ fun WorkoutCompleteScreen(
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
-            Text(
+            ScalableText(
                 text = workout.name,
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                 style = itemStyle
             )
         }
@@ -107,15 +114,20 @@ fun WorkoutCompleteScreen(
         ) {
             Text(
                 text = "TIME SPENT",
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
-            Text(
+            ScalableText(
                 text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
                 textAlign = TextAlign.Center,
                 style =  itemStyle
             )
         }
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "CLOSING IN: ${countDownTimer.intValue}",
+            style = MaterialTheme.typography.caption1,
+            textAlign = TextAlign.Center,
+        )
     }
 }

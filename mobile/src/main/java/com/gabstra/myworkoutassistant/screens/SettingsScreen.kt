@@ -13,7 +13,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -26,7 +26,6 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.round
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,8 +42,7 @@ fun SettingsScreen(
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString() ?: "") }
 
-    val minWorkloadProgressionState = remember { mutableStateOf(workoutStore.workloadProgressionLowerRange) }
-    val maxWorkloadProgressionState = remember { mutableStateOf(workoutStore.workloadProgressionUpperRange) }
+    val progressionPercentageAmount = remember { mutableStateOf(workoutStore.progressionPercentageAmount) }
 
 
     Box(
@@ -97,17 +95,16 @@ fun SettingsScreen(
             )
 
             Text(
-                text = "Workload Progress Range (${minWorkloadProgressionState.value.round(2)}% - ${maxWorkloadProgressionState.value.round(2)}%)",
+                text = "Progress between Sessions: ${progressionPercentageAmount.value.round(2)}%",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             )
 
-            RangeSlider(
-                value = minWorkloadProgressionState.value.toFloat()..maxWorkloadProgressionState.value.toFloat(),
-                onValueChange = { range ->
-                    minWorkloadProgressionState.value = range.start.toDouble()
-                    maxWorkloadProgressionState.value = range.endInclusive.toDouble()
+            Slider(
+                value = progressionPercentageAmount.value.toFloat(),
+                onValueChange = { value ->
+                    progressionPercentageAmount.value = value.toDouble()
                 },
                 valueRange = 0f..5f,
                 steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps
@@ -132,8 +129,7 @@ fun SettingsScreen(
                         polarDeviceId = polarDeviceIdState.value,
                         birthDateYear = birthDateYear,
                         weightKg = weightState.value.toDoubleOrNull() ?: 0.0,
-                        workloadProgressionLowerRange = minWorkloadProgressionState.value,
-                        workloadProgressionUpperRange = maxWorkloadProgressionState.value
+                        progressionPercentageAmount = progressionPercentageAmount.value
                     )
                     onSave(newWorkoutStore)
                 },
