@@ -126,7 +126,7 @@ fun WorkoutCompleteScreen(
         Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = "CLOSING IN: ${countDownTimer.intValue}",
-            style = MaterialTheme.typography.caption1,
+            style = headerStyle,
             textAlign = TextAlign.Center,
         )
     }
