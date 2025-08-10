@@ -189,7 +189,7 @@ fun SetTableRow(
 
             is BodyWeightSetData -> {
                 val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                val weightText = if(setState.equipment != null) {
+                val weightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                     setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
                 }else {
                     "-"

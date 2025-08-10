@@ -161,7 +161,7 @@ fun BarbellForm(
                         barWeightState.value = it
                     }
                 },
-                label = { Text("Bar Weight (kg)") },
+                label = { Text("Bar Weight (KG)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -258,7 +258,7 @@ fun BarbellForm(
                                 newPlateWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (kg)") },
+                        label = { Text("Weight (KG)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )

@@ -82,8 +82,14 @@ fun StandardChart(
         indicator = { _ -> shapeComponent }
     )
 
-    var minY = minValue ?: cartesianChartModel.models.first().minY
-    var maxY = maxValue ?: cartesianChartModel.models.first().maxY
+    val firstModel = cartesianChartModel.models.firstOrNull()
+
+    val minY = minValue ?: firstModel?.minY ?: 0.0
+    var maxY = maxValue ?: firstModel?.maxY ?: 1.0
+
+    if (minY == maxY) {
+        maxY = minY + 1.0
+    }
 
     StyledCard{
         ExpandableContainer(

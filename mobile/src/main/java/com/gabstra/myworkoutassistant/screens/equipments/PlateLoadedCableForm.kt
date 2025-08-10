@@ -241,7 +241,7 @@ fun PlateLoadedCableForm(
                                 newPlateWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (kg)") },
+                        label = { Text("Weight (KG)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )

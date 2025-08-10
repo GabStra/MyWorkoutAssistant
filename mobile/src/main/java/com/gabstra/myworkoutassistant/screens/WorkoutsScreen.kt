@@ -85,6 +85,7 @@ import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -127,7 +128,6 @@ fun Menu(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-
     Box(
         modifier = Modifier.wrapContentSize(Alignment.TopEnd)
     ) {
@@ -141,7 +141,7 @@ fun Menu(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                modifier = Modifier.background(MediumDarkGray),
                 border = BorderStroke(1.dp, MediumLightGray)
             ) {
                 DropdownMenuItem(

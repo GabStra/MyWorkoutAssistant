@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
@@ -14,12 +15,14 @@ import com.gabstra.myworkoutassistant.shared.MediumLightGray
 @Composable
 fun StyledCard(
     modifier: Modifier = Modifier,
+    borderColor : Color = MediumLightGray,
+    backgroundColor: Color = DarkGray,
     content: @Composable () -> Unit,
 ) {
     Box(
         modifier = modifier
-            .border(1.dp, MediumLightGray)
-            .background(DarkGray)
+            .border(1.dp, borderColor)
+            .background(backgroundColor)
             .wrapContentSize(),
         contentAlignment = Alignment.Center,
     ) {

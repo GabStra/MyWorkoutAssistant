@@ -77,7 +77,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
             is Superset -> {
                 jsonObject.addProperty("enabled", src.enabled)
                 jsonObject.add("exercises", context.serialize(src.exercises))
-                jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
+                jsonObject.add("restSecondsByExercise", context.serialize(src.restSecondsByExercise))
             }
         }
         return jsonObject
@@ -222,8 +222,22 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 val enabled = jsonObject.get("enabled").asBoolean
                 val exercisesType = object : TypeToken<List<Exercise>>() {}.type
                 val exercises: List<Exercise> = context.deserialize(jsonObject.get("exercises"), exercisesType)
-                val timeInSeconds = jsonObject.get("timeInSeconds").asInt
-                Superset(id, enabled, exercises, timeInSeconds)
+
+                val restSecondsByExercise = when{
+                    jsonObject.has("restSecondsByExercise") -> {
+                        val restMapType = object : TypeToken<Map<UUID, Int>>() {}.type
+                        context.deserialize(jsonObject.get("restSecondsByExercise"), restMapType)
+                    }
+                    else -> {
+                        val restMap = mutableMapOf<UUID, Int>()
+                        exercises.forEach { exercise ->
+                            restMap[exercise.id] = 0
+                        }
+                        restMap
+                    }
+                }
+
+                Superset(id, enabled, exercises, restSecondsByExercise)
             }
 
             else -> throw RuntimeException("Unsupported workout component type")

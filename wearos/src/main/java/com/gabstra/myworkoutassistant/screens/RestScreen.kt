@@ -31,6 +31,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
@@ -235,7 +236,8 @@ fun RestScreen(
         }
     }
 
-    val textComposable = @Composable {
+    @Composable
+    fun textComposable(style: TextStyle =  MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold)){
         Row(
             modifier = Modifier
                 .fillMaxWidth(),
@@ -254,7 +256,7 @@ fun RestScreen(
                         onDoubleClick = {}
                     ),
                 seconds = currentSeconds,
-                style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+                style = style,
                 color = LightGray,
             )
         }
@@ -287,7 +289,7 @@ fun RestScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     content = {
-                        textComposable()
+                        textComposable(MaterialTheme.typography.title1.copy(fontWeight = FontWeight.Bold))
                     }
                 )
             }

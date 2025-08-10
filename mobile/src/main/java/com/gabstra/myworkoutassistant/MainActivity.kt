@@ -41,6 +41,7 @@ import com.gabstra.myworkoutassistant.screens.RestForm
 import com.gabstra.myworkoutassistant.screens.RestSetForm
 import com.gabstra.myworkoutassistant.screens.SetForm
 import com.gabstra.myworkoutassistant.screens.SettingsScreen
+import com.gabstra.myworkoutassistant.screens.SupersetForm
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
 import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
@@ -725,6 +726,38 @@ fun MyWorkoutAssistantNavHost(
                 )
             }
 
+            is ScreenData.NewSuperset -> {
+                val screenData = currentScreen as ScreenData.NewSuperset
+                val workouts by appViewModel.workoutsFlow.collectAsState()
+
+                var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+                var currentWorkout = selectedWorkout
+
+                while(!currentWorkout.isActive){
+                    val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                    currentWorkout = nextWorkout
+                }
+
+                selectedWorkout = currentWorkout
+
+                SupersetForm(
+                    onSupersetUpsert = { newSuperset ->
+                        val newWorkoutComponents = selectedWorkout.workoutComponents.filter { item ->
+                            newSuperset.exercises.none { it === item }
+                        } + newSuperset
+
+                        val adjustedComponents =
+                            ensureRestSeparatedByExercises(newWorkoutComponents)
+                        val updatedWorkout = selectedWorkout.copy(workoutComponents = adjustedComponents)
+                        appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
+
+                        appViewModel.goBack()
+                    },
+                    onCancel = { appViewModel.goBack() },
+                    availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>()
+                )
+            }
+
             is ScreenData.EditExercise -> {
                 val screenData = currentScreen as ScreenData.EditExercise
                 val workouts by appViewModel.workoutsFlow.collectAsState()
@@ -745,8 +778,6 @@ fun MyWorkoutAssistantNavHost(
                     screenData.selectedExerciseId
                 ) as Exercise
 
-                Log.d("EditExercise", "selectedExercise: $selectedExercise")
-
                 ExerciseForm(
                     appViewModel,
                     onExerciseUpsert = { updatedExercise ->
@@ -762,6 +793,41 @@ fun MyWorkoutAssistantNavHost(
                     },
                     exercise = selectedExercise,
                     allowSettingDoNotStoreHistory = true
+                )
+            }
+
+            is ScreenData.EditSuperset -> {
+                val screenData = currentScreen as ScreenData.EditSuperset
+                val workouts by appViewModel.workoutsFlow.collectAsState()
+
+                var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+                var currentWorkout = selectedWorkout
+
+                while(!currentWorkout.isActive){
+                    val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                    currentWorkout = nextWorkout
+                }
+
+                selectedWorkout = currentWorkout
+
+                val selectedSuperset = findWorkoutComponentByIdInWorkout(
+                    selectedWorkout,
+                    screenData.selectedSupersetId
+                ) as Superset
+
+                SupersetForm(
+                    onSupersetUpsert = { updatedSuperset ->
+                        appViewModel.updateWorkoutComponentOld(
+                            selectedWorkout,
+                            selectedSuperset,
+                            updatedSuperset
+                        )
+                        appViewModel.goBack()
+                    },
+                    onCancel = { appViewModel.goBack() },
+                    availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
+                    superset = selectedSuperset
                 )
             }
 

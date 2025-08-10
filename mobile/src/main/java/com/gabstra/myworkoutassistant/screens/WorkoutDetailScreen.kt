@@ -15,10 +15,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
@@ -33,7 +31,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MoveDown
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -51,12 +48,10 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,7 +66,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
@@ -79,7 +73,6 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -87,7 +80,6 @@ import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -104,7 +96,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 @Composable
 fun Menu(
@@ -126,7 +117,7 @@ fun Menu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.background),
+            modifier = Modifier.background(MediumDarkGray),
             border = BorderStroke(1.dp, MediumLightGray)
         ) {
             DropdownMenuItem(
@@ -201,7 +192,7 @@ fun WorkoutComponentRenderer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(10.dp),
-                    text = "Super Set",
+                    text = "Superset",
                     style = MaterialTheme.typography.bodyLarge,
                     color =  if (superSet.enabled) LightGray else MediumDarkGray,
                 )
@@ -232,111 +223,6 @@ fun WorkoutComponentRenderer(
     }
 }
 
-@Composable
-fun SupersetForm(
-    displayDialog: MutableState<Boolean>,
-    appViewModel: AppViewModel,
-    workout: Workout,
-) {
-    var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
-
-    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(0)) }
-    val (hours, minutes, seconds) = hms.value
-
-    if (displayDialog.value) {
-        val scrollState = rememberScrollState()
-
-        AlertDialog(
-            onDismissRequest = { displayDialog.value = false },
-            title = { Text("Add Superset") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = 10.dp)
-                        .verticalColumnScrollbar(scrollState)
-                        .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-
-                    Text("Rest Time Between Sets")
-                    CustomTimePicker(
-                        initialHour = hours,
-                        initialMinute = minutes,
-                        initialSecond = seconds,
-                        onTimeChange = { hour, minute, second ->
-                            hms.value = Triple(hour, minute, second)
-                        }
-                    )
-
-
-                    val validItems =
-                        remember { workout.workoutComponents.filter { it is Exercise && it.enabled } }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text("Select at least two exercises")
-                    validItems.forEach { item ->
-                        val exercise = item as Exercise
-
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE)
-                                .clickable {
-                                    if (selectedWorkoutComponents.any { it === item }) {
-                                        selectedWorkoutComponents =
-                                            selectedWorkoutComponents.filter { it !== item }
-                                    } else {
-                                        selectedWorkoutComponents = selectedWorkoutComponents + item
-                                    }
-                                },
-                            text = exercise.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color =  if (selectedWorkoutComponents.contains(exercise)) LightGray else MediumLightGray
-                        )
-                    }
-
-                    Text("Selected exercises:")
-                    selectedWorkoutComponents.forEach { it ->
-                        Text((it as Exercise).name)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val newSuperset = Superset(
-                            id = UUID.randomUUID(),
-                            exercises = selectedWorkoutComponents.map { it as Exercise },
-                            timeInSeconds = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
-                            enabled = true
-                        )
-
-                        val newWorkoutComponents = workout.workoutComponents.filter { item ->
-                            selectedWorkoutComponents.none { it === item }
-                        } + newSuperset
-
-                        val adjustedComponents =
-                            ensureRestSeparatedByExercises(newWorkoutComponents)
-                        val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
-                        appViewModel.updateWorkoutOld(workout, updatedWorkout)
-                        displayDialog.value = false
-                    },
-                    enabled = selectedWorkoutComponents.size >= 2
-                ) {
-                    Text("Create Super set")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { displayDialog.value = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-}
-
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -351,8 +237,6 @@ fun WorkoutDetailScreen(
 ) {
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
-
-    var displaySupersetDialog = remember { mutableStateOf(false) }
 
     var showRest by remember { mutableStateOf(false) }
 
@@ -791,6 +675,15 @@ fun WorkoutDetailScreen(
                                         )
                                     }
 
+                                    is Superset -> {
+                                        appViewModel.setScreenData(
+                                            ScreenData.EditSuperset(
+                                                workout.id,
+                                                it.id
+                                            )
+                                        )
+                                    }
+
                                     else -> {}
                                 }
                             },
@@ -844,7 +737,11 @@ fun WorkoutDetailScreen(
                                     );
                                 },
                                 MenuItem("Add Superset") {
-                                    displaySupersetDialog.value = true
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewSuperset(
+                                            workout.id
+                                        )
+                                    );
                                 }
                             ),
                             content = {
@@ -858,7 +755,6 @@ fun WorkoutDetailScreen(
                     }
                 }
 
-                SupersetForm(displaySupersetDialog, appViewModel, workout)
 
                 MoveExercisesToWorkoutDialog(
                     show = showMoveWorkoutDialog,

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,7 +53,7 @@ fun WeightSetForm(
 ) {
     // Mutable state for form fields
     val repsState = remember { mutableStateOf(weightSet?.reps?.toString() ?: "") }
-    val weightState = remember { mutableStateOf(weightSet?.weight?.toString() ?: "") }
+    val weightState = remember { mutableStateOf(weightSet?.weight?.toString() ?: "0") }
 
     var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet())}
 
@@ -98,7 +99,7 @@ fun WeightSetForm(
                         value = equipment.formatWeight(weightState.value.toDouble()),
                         readOnly = true,
                         onValueChange = {},
-                        label = { Text("Weight (kg)") },
+                        label = { Text("Weight (KG)") },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(8.dp)
@@ -115,9 +116,8 @@ fun WeightSetForm(
                 DropdownMenu(
                     expanded = expandedWeights.value,
                     onDismissRequest = { expandedWeights.value = false },
+                    modifier = Modifier.background(MaterialTheme.colorScheme.background).fillMaxWidth(.75f),
                     border = BorderStroke(1.dp, MediumLightGray),
-                    modifier = Modifier.fillMaxWidth(.75f),
-                    containerColor =  DarkGray
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 10.dp),

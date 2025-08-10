@@ -35,6 +35,9 @@ sealed class ScreenData() {
     class NewExercise(val workoutId: UUID,) : ScreenData()
     class EditExercise(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
 
+    class NewSuperset(val workoutId: UUID,) : ScreenData()
+    class EditSuperset(val workoutId: UUID, val selectedSupersetId: UUID) : ScreenData()
+
     class NewRest(val workoutId: UUID, val parentExerciseId: UUID?) : ScreenData()
     class EditRest(val workoutId: UUID, val selectedRest: Rest) : ScreenData()
 

@@ -17,10 +17,11 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
-import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.colorsByZone
+import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
@@ -41,10 +42,8 @@ import com.patrykandpatrick.vico.compose.common.fill
 import com.patrykandpatrick.vico.compose.common.shape.dashedShape
 import com.patrykandpatrick.vico.core.cartesian.CartesianDrawingContext
 import com.patrykandpatrick.vico.core.cartesian.Zoom
-
 import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
-
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
@@ -55,7 +54,6 @@ import com.patrykandpatrick.vico.core.cartesian.marker.CartesianMarker
 import com.patrykandpatrick.vico.core.cartesian.marker.ColumnCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.core.cartesian.marker.DefaultCartesianMarker
 import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
-
 import com.patrykandpatrick.vico.core.common.Insets
 import com.patrykandpatrick.vico.core.common.shape.CorneredShape
 
@@ -246,12 +244,12 @@ fun HeartRateChart(
                             ),
                         ),
                         decorations = listOf(
-                            rememberHorizontalLine(Color.hsl(208f, 0.61f, 0.76f, .5f), 50.0),
-                            rememberHorizontalLine(Color.hsl(200f, 0.66f, 0.49f, .5f), 60.0),
-                            rememberHorizontalLine(Color.hsl(113f, 0.79f, 0.34f, .5f), 70.0),
-                            rememberHorizontalLine(Color.hsl(27f, 0.97f, 0.54f, .5f), 80.0),
-                            rememberHorizontalLine(Color.hsl(9f, 0.88f, 0.45f, .5f), 90.0),
-                            rememberHorizontalLine(MaterialTheme.colorScheme.background, 100.0),
+                            rememberHorizontalLine(colorsByZone[1].copy(alpha = 0.75f), 50.0),
+                            rememberHorizontalLine(colorsByZone[2].copy(alpha = 0.75f), 60.0),
+                            rememberHorizontalLine(colorsByZone[3].copy(alpha = 0.75f), 70.0),
+                            rememberHorizontalLine(colorsByZone[4].copy(alpha = 0.75f), 80.0),
+                            rememberHorizontalLine(colorsByZone[5].copy(alpha = 0.75f), 90.0),
+                            rememberHorizontalLine(Color.Black, 100.0),
                         ),
                         startAxis = VerticalAxis.rememberStart(
                             line = rememberAxisLineComponent(fill(MediumLightGray)),

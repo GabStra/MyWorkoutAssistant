@@ -26,3 +26,4 @@ wearos/release/wearos-release.apk
 *.kts
 mobile/version.properties.mobile
 .aider*
+repomix-output.xml

@@ -52,7 +52,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
@@ -216,7 +216,7 @@ fun ExerciseForm(
                         DropdownMenu(
                             expanded = expandedType.value,
                             onDismissRequest = { expandedType.value = false },
-                            modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                            modifier = Modifier.background(MediumDarkGray),
                             border = BorderStroke(1.dp, MediumLightGray)
                         ) {
                             exerciseTypeDescriptions.forEach { ExerciseDescription ->
@@ -354,7 +354,7 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expandedEquipment.value,
                         onDismissRequest = { expandedEquipment.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                        modifier = Modifier.background(MediumDarkGray),
                         border = BorderStroke(1.dp, MediumLightGray)
                     ) {
                         DropdownMenuItem(
@@ -427,7 +427,7 @@ fun ExerciseForm(
                     DropdownMenu(
                         expanded = expandedHeartRateZone.value,
                         onDismissRequest = { expandedHeartRateZone.value = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                        modifier = Modifier.background(MediumDarkGray),
                         border = BorderStroke(1.dp, MediumLightGray)
                     ) {
                         heartRateZones.forEachIndexed { index, zone ->

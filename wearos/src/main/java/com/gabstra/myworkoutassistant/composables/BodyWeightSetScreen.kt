@@ -300,7 +300,7 @@ fun BodyWeightSetScreen(
 
             val weightText = when(oneRepMaxMode){
                 true -> "${"%.1f".format(oneRepMaxPercentage).replace(",", ".")}%"
-                else -> equipment!!.formatWeight(currentSetData.additionalWeight)
+                else -> if(currentSetData.additionalWeight != 0.0) equipment!!.formatWeight(currentSetData.additionalWeight) else "-"
             }
 
             ScalableText(

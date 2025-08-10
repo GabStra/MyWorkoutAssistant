@@ -143,7 +143,7 @@ fun Menu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            modifier = Modifier.background(MediumDarkGray),
             border = BorderStroke(1.dp, MediumLightGray)
         ) {
             DropdownMenuItem(

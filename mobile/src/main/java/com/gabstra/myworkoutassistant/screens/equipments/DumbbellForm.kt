@@ -284,7 +284,7 @@ fun DumbbellForm(
                                 newDumbbellWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (kg)") },
+                        label = { Text("Weight (KG)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -328,7 +328,7 @@ fun DumbbellForm(
                                 newExtraWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (kg)") },
+                        label = { Text("Weight (KG)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )

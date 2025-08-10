@@ -291,7 +291,7 @@ fun MachineForm(
                                 newWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (kg)") },
+                        label = { Text("Weight (KG)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -334,7 +334,7 @@ fun MachineForm(
                                 newExtraWeightState.value = it
                             }
                         },
-                        label = { Text("Weight (kg)") },
+                        label = { Text("Weight (KG)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )

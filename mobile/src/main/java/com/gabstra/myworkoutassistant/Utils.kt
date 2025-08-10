@@ -31,6 +31,8 @@ import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
 import com.gabstra.myworkoutassistant.shared.AppBackup
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -44,8 +46,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.delay
@@ -165,6 +165,10 @@ fun findWorkoutComponentByIdInWorkout(workout: Workout, id: UUID): WorkoutCompon
         }
 
         if(workoutComponent is Superset){
+            if (workoutComponent.id == id) {
+                return workoutComponent
+            }
+
             workoutComponent.exercises.forEach { exercise ->
                 if(exercise.id == id){
                     return exercise

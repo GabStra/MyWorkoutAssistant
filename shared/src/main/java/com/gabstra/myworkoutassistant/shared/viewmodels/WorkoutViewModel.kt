@@ -1307,60 +1307,81 @@ open class WorkoutViewModel : ViewModel() {
 
                 is Superset -> {
                     val superset = workoutComponent as Superset
+                    val queues = superset.exercises.map { ex -> mutableListOf(*addStatesFromExercise(ex).toTypedArray()) }
+                    val out = mutableListOf<WorkoutState>()
 
-                    val exerciseStates = superset.exercises.map { exercise ->
-                        mutableListOf(*addStatesFromExercise(exercise).toTypedArray())
-                    }
-
-                    val count = exerciseStates.minOfOrNull { it.size }!!
-                    val states = mutableListOf<WorkoutState>()
-
-                    for (i in 0 until count) {
-                        //get the first element of each list
-
-                        val items = mutableListOf<WorkoutState>()
-
-                        for (exerciseState in exerciseStates) {
-                            if (exerciseState.isNotEmpty()) {
-                                items.add(exerciseState.first())
-                                exerciseState.removeAt(0)
+                    // 1) Alternate WARM-UPS across exercises (keep their intrinsic rest)
+                    var anyWarmups = true
+                    while (anyWarmups) {
+                        anyWarmups = false
+                        for (q in queues) {
+                            if (q.isEmpty() || q.first() !is WorkoutState.Set) continue
+                            val s = q.first() as WorkoutState.Set
+                            if (!s.isWarmupSet) continue
+                            anyWarmups = true
+                            out.add(q.removeAt(0) as WorkoutState.Set)
+                            if (q.isNotEmpty() && q.first() is WorkoutState.Rest) {
+                                val r = q.first() as WorkoutState.Rest
+                                q.removeAt(0) //if (r.exerciseId == s.exerciseId) out.add(q.removeAt(0))
                             }
                         }
-
-                        //check if all the items are of type WorkoutState.Set
-                        val allItemsAreSets = items.all { it is WorkoutState.Set }
-
-                        if(!allItemsAreSets){
-                            continue
-                        }
-
-                        states.addAll(items)
-
-                        if(i != count - 1){
-                            val restSet = RestSet(UUID.randomUUID(),superset.timeInSeconds)
-                            val restState = WorkoutState.Rest(
-                                set = restSet,
-                                order = (i+1).toUInt(),
-                                currentSetData = initializeSetData(RestSet(UUID.randomUUID(), superset.timeInSeconds)),
-                            )
-                            states.add(restState)
-                        }
                     }
 
-                    while(exerciseStates.any { it.isNotEmpty() }){
-                        val items = mutableListOf<WorkoutState>()
+                    // Strip any leading rest before work phase
+                    for (q in queues) while (q.isNotEmpty() && q.first() is WorkoutState.Rest) q.removeAt(0)
 
-                        for (exerciseState in exerciseStates) {
-                            if (exerciseState.isNotEmpty()) {
-                                items.add(exerciseState.first())
-                                exerciseState.removeAt(0)
+                    fun workCount(q: MutableList<WorkoutState>) =
+                        q.count { it is WorkoutState.Set && !(it as WorkoutState.Set).isWarmupSet }
+                    val rounds = queues.minOfOrNull { workCount(it) } ?: 0
+
+                    // 2) Alternate WORK sets; rest comes from superset.restSecondsByExercise
+                    for (round in 0 until rounds) {
+                        for (q in queues) {
+                            while (q.isNotEmpty() && q.first() !is WorkoutState.Set) q.removeAt(0)
+                            if (q.isEmpty()) continue
+                            val s = q.first() as WorkoutState.Set
+                            if (s.isWarmupSet) { q.removeAt(0); continue } // safety, should be none now
+
+                            out.add(q.removeAt(0) as WorkoutState.Set)
+
+                            val restSec = superset.restSecondsByExercise[s.exerciseId] ?: 0
+                            if (restSec > 0) {
+                                val restSet = RestSet(UUID.randomUUID(), restSec)
+                                out.add(
+                                    WorkoutState.Rest(
+                                        set = restSet,
+                                        order = (round + 1).toUInt(),
+                                        currentSetData = initializeSetData(restSet),
+                                        exerciseId = s.exerciseId
+                                    )
+                                )
                             }
-                        }
 
-                        states.addAll(items)
+                            // Drop intrinsic rest after work sets to avoid double-rest
+                            while (q.isNotEmpty() && q.first() is WorkoutState.Rest) q.removeAt(0)
+                        }
                     }
 
-                    totalStates.addAll(states)
+                    // 3) Tail: append any leftover sets (skip leftover rests)
+//                    while (queues.any { it.isNotEmpty() }) {
+//                        for (q in queues) {
+//                            while (q.isNotEmpty() && q.first() !is WorkoutState.Set) q.removeAt(0)
+//                            if (q.isNotEmpty()) out.add(q.removeAt(0) as WorkoutState.Set)
+//                        }
+//                    }
+
+                    val cleaned = mutableListOf<WorkoutState>()
+                    for (st in out) {
+                        if (st is WorkoutState.Rest) {
+                            if (cleaned.isEmpty() || cleaned.last() is WorkoutState.Rest) continue
+                        }
+                        cleaned.add(st)
+                    }
+// strip any rest at the very start/end
+                    while (cleaned.firstOrNull() is WorkoutState.Rest) cleaned.removeAt(0)
+                    while (cleaned.lastOrNull() is WorkoutState.Rest)  cleaned.removeAt(cleaned.lastIndex)
+
+                    totalStates.addAll(cleaned)
                 }
             }
         }
@@ -1560,7 +1581,6 @@ open class WorkoutViewModel : ViewModel() {
                     if (warmUpSets.size >= numberOfWarmUpSets) break
 
                     val target = workWeight * weightPercentage
-
                     val potentialWeights = sortedUniqueAvailableWeights.filter { it !in chosenWeights }
 
                     val selectedWeight = findBestWarmupWeight(
@@ -1577,6 +1597,27 @@ open class WorkoutViewModel : ViewModel() {
                         chosenWeights.add(selectedWeight)
                     }
                 }
+
+/*                if(warmUpSets.size < numberOfWarmUpSets && warmUpSets.isNotEmpty()){
+                    fun lerp(start: Double, end: Double, fraction: Double): Double {
+                        return start + fraction * (end - start)
+                    }
+
+                    val remainingSets = numberOfWarmUpSets - warmUpSets.size
+                    val lastWarmUpSet = warmUpSets.last()
+                    val lastWarmupWeight = lastWarmUpSet.first
+                    val lastRIR = calculateRIR(lastWarmUpSet.first, lastWarmUpSet.second, oneRepMax)
+
+                    for (i in 1..remainingSets) {
+                        val fraction = i.toDouble() / (remainingSets + 1)
+                        val weight = lerp(lastWarmupWeight, workWeight, fraction)
+
+                        val rir = (lastRIR - i).coerceAtLeast(2).toDouble()
+                        val reps = repsForTargetRIR(weight, oneRepMax, rir)
+
+                        warmUpSets.add(weight to floor(reps).toInt().coerceAtLeast(2))
+                    }
+                }*/
 
                 return warmUpSets
             }

@@ -95,7 +95,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                     ) {
 
                         Text(
-                            text = "Weight (kg): ${equipment!!.formatWeight(set.weight)}",
+                            text = "Weight (KG): ${equipment!!.formatWeight(set.weight)}",
                             color = LightGray,
                             style = MaterialTheme.typography.bodyMedium,)
                         Text(
@@ -125,7 +125,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                     ) {
                         if(set.additionalWeight != 0.0 && equipment != null){
                             Text(
-                                text = "Weight (kg): ${equipment.formatWeight(set.additionalWeight)}",
+                                text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
                                 color = LightGray,
                                 style = MaterialTheme.typography.bodyMedium,
                             )

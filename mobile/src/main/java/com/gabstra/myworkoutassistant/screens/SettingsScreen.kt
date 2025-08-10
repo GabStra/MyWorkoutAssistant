@@ -1,59 +1,110 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.CustomButton
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.round
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onSave:(WorkoutStore) -> Unit,
+    onSave: (WorkoutStore) -> Unit,
     onCancel: () -> Unit,
     workoutStore: WorkoutStore
-)
-{
+) {
     val context = LocalContext.current
 
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
-    val weightState = remember { mutableStateOf(workoutStore.weightKg.toString() ?: "") }
-
+    val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
     val progressionPercentageAmount = remember { mutableStateOf(workoutStore.progressionPercentageAmount) }
 
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                modifier = Modifier.drawBehind {
+                    drawLine(
+                        color = MediumLightGray,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
+                        text = "Settings",
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    // Invisible icon to balance the title correctly
+                    IconButton(modifier = Modifier.alpha(0f), onClick = { /* No-op */ }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = null
+                        )
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        val scrollState = rememberScrollState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.Center,
+                .padding(paddingValues)
+                .verticalColumnScrollbar(scrollState)
+                .verticalScroll(scrollState)
+                .padding(horizontal = 15.dp)
         ) {
             OutlinedTextField(
                 value = polarDeviceIdState.value,
@@ -67,8 +118,7 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = birthDateYearState.value,
                 onValueChange = { input ->
-                    if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                        // Update the state only if the input is empty or all characters are digits
+                    if (input.isEmpty() || input.all { it.isDigit() }) {
                         birthDateYearState.value = input
                     }
                 },
@@ -82,13 +132,13 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = weightState.value,
                 onValueChange = { input ->
-                    if (input.isEmpty() || (input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
-                        // Update the state only if the input is empty or all characters are digits
+                    // Allow a single dot for decimals, but not as the first character
+                    if (input.isEmpty() || (input.count { it == '.' } <= 1 && input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
                         weightState.value = input
                     }
                 },
-                label = { Text("Weight (kg)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                label = { Text("Weight (KG)") },
+                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
@@ -98,7 +148,9 @@ fun SettingsScreen(
                 text = "Progress between Sessions: ${progressionPercentageAmount.value.round(2)}%",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp, bottom = 8.dp)
             )
 
             Slider(
@@ -107,7 +159,7 @@ fun SettingsScreen(
                     progressionPercentageAmount.value = value.toDouble()
                 },
                 valueRange = 0f..5f,
-                steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps
+                steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps for 0.25 increments
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -116,19 +168,24 @@ fun SettingsScreen(
             Button(
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                 onClick = {
-                    val birthDateYear = birthDateYearState.value.toIntOrNull() ?: 0
-
+                    val birthDateYear = birthDateYearState.value.toIntOrNull()
                     val currentYear = Calendar.getInstance().get(Calendar.YEAR)
 
-                    if (birthDateYear < 1900 || birthDateYear > currentYear) {
+                    if (birthDateYear == null || birthDateYear < 1900 || birthDateYear > currentYear) {
                         Toast.makeText(context, "Invalid birth year", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
 
+                    val weight = weightState.value.toDoubleOrNull()
+                    if (weight == null || weight <= 0) {
+                        Toast.makeText(context, "Invalid weight", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+
                     val newWorkoutStore = workoutStore.copy(
-                        polarDeviceId = polarDeviceIdState.value,
+                        polarDeviceId = polarDeviceIdState.value.ifBlank { null },
                         birthDateYear = birthDateYear,
-                        weightKg = weightState.value.toDoubleOrNull() ?: 0.0,
+                        weightKg = weight,
                         progressionPercentageAmount = progressionPercentageAmount.value
                     )
                     onSave(newWorkoutStore)
@@ -139,18 +196,6 @@ fun SettingsScreen(
             ) {
                 Text("Save Settings")
             }
-
-            // Cancel button
-            CustomButton(
-                text = "Cancel",
-                onClick = {
-                    onCancel()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
         }
     }
-
 }
