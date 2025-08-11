@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
-import com.gabstra.myworkoutassistant.shared.LightGray
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,7 +97,7 @@ fun TimedDurationSetForm(
             onClick = {
                 val newTimedDurationSet = TimedDurationSet(
                     id = UUID.randomUUID(),
-                    timeInMillis = TimeConverter.hmsTotalSeconds(hours, minutes, seconds)* 1000,
+                    timeInMillis = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)* 1000,
                     autoStart = autoStartState.value,
                     autoStop = autoStopState.value,
                 )

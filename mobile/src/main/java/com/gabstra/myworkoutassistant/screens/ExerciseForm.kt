@@ -50,6 +50,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.CustomButton
+import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -91,6 +93,9 @@ fun ExerciseForm(
     val notesState = remember { mutableStateOf(exercise?.notes ?: "") }
     val doNotStoreHistory = remember { mutableStateOf(exercise?.doNotStoreHistory ?: !allowSettingDoNotStoreHistory) }
 
+    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(exercise?.intraSetRestInSeconds ?: 0)) }
+    val (hours, minutes, seconds) = hms.value
+
     val exerciseTypeDescriptions = getExerciseTypeDescriptions()
     val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
 
@@ -113,10 +118,35 @@ fun ExerciseForm(
 
     val equipments by viewModel.equipmentsFlow.collectAsState()
 
+    val heartRateZones = listOf("None") + listOf("Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
+    val selectedLowerBoundMaxHRPercent = remember { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
+    val selectedUpperBoundMaxHRPercent = remember { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
+
+    //get the index from zoneRanges that contains both selectedLowerBoundMaxHRPercent and selectedUpperBoundMaxHRPercent
+    val selectedTargetZone = remember(selectedLowerBoundMaxHRPercent.value,selectedUpperBoundMaxHRPercent.value) {
+        mutableStateOf(
+            if(selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) null
+            else {
+                val index = zoneRanges.indexOfFirst { it.first == selectedLowerBoundMaxHRPercent.value && it.second== selectedUpperBoundMaxHRPercent.value }
+                if(index == -1) {
+                    index
+                }else if(index <= 1){
+                    null
+                }else{
+                    index - 1
+                }
+            }
+        )
+    }
+
+    val expandedHeartRateZone = remember { mutableStateOf(false) }
+    val showCustomTargetZone = remember (selectedTargetZone.value) { selectedTargetZone.value!=null && selectedTargetZone.value == -1 } // Show only when custom is selected
+
     val selectedEquipmentId = remember { mutableStateOf<UUID?>(exercise?.equipmentId) }
     val expandedEquipment = remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -332,157 +362,150 @@ fun ExerciseForm(
                     )
                     Text(text = "Enable Progression")
                 }
-            }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                Text(text = "Equipment:", style = MaterialTheme.typography.titleMedium)
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
-                    Text(
-                        text = selectedEquipment?.name ?: "None",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { expandedEquipment.value = true }
-                            .padding(8.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                ) {
+                    Text("Intra-Set Rest")
+                    Spacer(modifier = Modifier.height(15.dp))
+                    CustomTimePicker(
+                        initialHour = hours,
+                        initialMinute = minutes,
+                        initialSecond = seconds,
+                        onTimeChange = { hour, minute, second ->
+                            hms.value = Triple(hour, minute, second)
+                        }
                     )
-                    DropdownMenu(
-                        expanded = expandedEquipment.value,
-                        onDismissRequest = { expandedEquipment.value = false },
-                        modifier = Modifier.background(MediumDarkGray),
-                        border = BorderStroke(1.dp, MediumLightGray)
-                    ) {
-                        DropdownMenuItem(
-                            onClick = {
-                                selectedEquipmentId.value =null
-                                expandedEquipment.value = false
-                            },
-                            text = {
-                                Text(text = "None")
-                            }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                ) {
+                    Text(text = "Equipment:", style = MaterialTheme.typography.titleMedium)
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
+                        Text(
+                            text = selectedEquipment?.name ?: "None",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { expandedEquipment.value = true }
+                                .padding(8.dp)
                         )
-                        equipments.forEach { equipment ->
+                        DropdownMenu(
+                            expanded = expandedEquipment.value,
+                            onDismissRequest = { expandedEquipment.value = false },
+                            modifier = Modifier.background(MediumDarkGray),
+                            border = BorderStroke(1.dp, MediumLightGray)
+                        ) {
                             DropdownMenuItem(
                                 onClick = {
-                                    selectedEquipmentId.value = equipment.id
+                                    selectedEquipmentId.value =null
                                     expandedEquipment.value = false
                                 },
                                 text = {
-                                    Text(text = equipment.name)
+                                    Text(text = "None")
                                 }
                             )
-                        }
-                    }
-                }
-            }
-
-            val heartRateZones = listOf("None") + listOf("Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
-            val selectedLowerBoundMaxHRPercent = remember { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
-            val selectedUpperBoundMaxHRPercent = remember { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
-
-            //get the index from zoneRanges that contains both selectedLowerBoundMaxHRPercent and selectedUpperBoundMaxHRPercent
-            val selectedTargetZone = remember(selectedLowerBoundMaxHRPercent.value,selectedUpperBoundMaxHRPercent.value) {
-                mutableStateOf(
-                    if(selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) null
-                    else {
-                        val index = zoneRanges.indexOfFirst { it.first == selectedLowerBoundMaxHRPercent.value && it.second== selectedUpperBoundMaxHRPercent.value }
-                        if(index == -1) {
-                            index
-                        }else if(index <= 1){
-                            null
-                        }else{
-                            index - 1
-                        }
-                    }
-                )
-            }
-
-            val expandedHeartRateZone = remember { mutableStateOf(false) }
-            val showCustomTargetZone = remember (selectedTargetZone.value) { selectedTargetZone.value!=null && selectedTargetZone.value == -1 } // Show only when custom is selected
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                Text(text = "Target HR Zone:")
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = when(selectedTargetZone.value) {
-                            null -> heartRateZones[0] // None
-                            -1 -> heartRateZones[5] // Custom
-                            else -> heartRateZones[selectedTargetZone.value!! + 1] // Zone 1-5 (index + 1)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { expandedHeartRateZone.value = true }
-                            .padding(8.dp)
-                    )
-                    DropdownMenu(
-                        expanded = expandedHeartRateZone.value,
-                        onDismissRequest = { expandedHeartRateZone.value = false },
-                        modifier = Modifier.background(MediumDarkGray),
-                        border = BorderStroke(1.dp, MediumLightGray)
-                    ) {
-                        heartRateZones.forEachIndexed { index, zone ->
-                            DropdownMenuItem(
-                                onClick = {
-                                    when (index) {
-                                        0 -> { // None
-                                            selectedLowerBoundMaxHRPercent.value = null
-                                            selectedUpperBoundMaxHRPercent.value = null
-                                            selectedTargetZone.value = null
-                                        }
-                                        in 1..4 -> { // Zone 2-5
-                                            val (lowerBound, upperBound) = zoneRanges[index + 1] // Adjust index for zoneRanges
-                                            selectedLowerBoundMaxHRPercent.value = lowerBound
-                                            selectedUpperBoundMaxHRPercent.value = upperBound
-                                            selectedTargetZone.value = index // Store zone index
-                                        }
-                                        5 -> { // Custom
-                                            selectedLowerBoundMaxHRPercent.value = 50f // Default custom range
-                                            selectedUpperBoundMaxHRPercent.value = 60f
-                                            selectedTargetZone.value = -1 // Indicate custom
-                                        }
+                            equipments.forEach { equipment ->
+                                DropdownMenuItem(
+                                    onClick = {
+                                        selectedEquipmentId.value = equipment.id
+                                        expandedEquipment.value = false
+                                    },
+                                    text = {
+                                        Text(text = equipment.name)
                                     }
-                                    expandedHeartRateZone.value = false
-                                },
-                                text = {
-                                    Text(text = zone)
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }
-            }
+            }else{
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                ) {
+                    Text(text = "Target HR Zone:")
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = when(selectedTargetZone.value) {
+                                null -> heartRateZones[0] // None
+                                -1 -> heartRateZones[5] // Custom
+                                else -> heartRateZones[selectedTargetZone.value!! + 1] // Zone 1-5 (index + 1)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { expandedHeartRateZone.value = true }
+                                .padding(8.dp)
+                        )
+                        DropdownMenu(
+                            expanded = expandedHeartRateZone.value,
+                            onDismissRequest = { expandedHeartRateZone.value = false },
+                            modifier = Modifier.background(MediumDarkGray),
+                            border = BorderStroke(1.dp, MediumLightGray)
+                        ) {
+                            heartRateZones.forEachIndexed { index, zone ->
+                                DropdownMenuItem(
+                                    onClick = {
+                                        when (index) {
+                                            0 -> { // None
+                                                selectedLowerBoundMaxHRPercent.value = null
+                                                selectedUpperBoundMaxHRPercent.value = null
+                                                selectedTargetZone.value = null
+                                            }
+                                            in 1..4 -> { // Zone 2-5
+                                                val (lowerBound, upperBound) = zoneRanges[index + 1] // Adjust index for zoneRanges
+                                                selectedLowerBoundMaxHRPercent.value = lowerBound
+                                                selectedUpperBoundMaxHRPercent.value = upperBound
+                                                selectedTargetZone.value = index // Store zone index
+                                            }
+                                            5 -> { // Custom
+                                                selectedLowerBoundMaxHRPercent.value = 50f // Default custom range
+                                                selectedUpperBoundMaxHRPercent.value = 60f
+                                                selectedTargetZone.value = -1 // Indicate custom
+                                            }
+                                        }
+                                        expandedHeartRateZone.value = false
+                                    },
+                                    text = {
+                                        Text(text = zone)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
 
-            if(showCustomTargetZone){
-                Column(modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)) { // Wrap in column for better spacing
-                    Text(
-                        text = "Custom HR Zone (${selectedLowerBoundMaxHRPercent.value?.toInt()}% - ${selectedUpperBoundMaxHRPercent.value?.toInt()}%)",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    RangeSlider(
-                        value =  selectedLowerBoundMaxHRPercent.value!!..selectedUpperBoundMaxHRPercent.value!!,
-                        onValueChange = { range ->
-                            selectedLowerBoundMaxHRPercent.value = range.start.roundToInt().toFloat()
-                            selectedUpperBoundMaxHRPercent.value = range.endInclusive.roundToInt().toFloat()
-                        },
-                        valueRange = 1f..100f,
-                        steps = 99,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp)
-                    )
+                if(showCustomTargetZone){
+                    Column(modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)) { // Wrap in column for better spacing
+                        Text(
+                            text = "Custom HR Zone (${selectedLowerBoundMaxHRPercent.value?.toInt()}% - ${selectedUpperBoundMaxHRPercent.value?.toInt()}%)",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        RangeSlider(
+                            value =  selectedLowerBoundMaxHRPercent.value!!..selectedUpperBoundMaxHRPercent.value!!,
+                            onValueChange = { range ->
+                                selectedLowerBoundMaxHRPercent.value = range.start.roundToInt().toFloat()
+                                selectedUpperBoundMaxHRPercent.value = range.endInclusive.roundToInt().toFloat()
+                            },
+                            valueRange = 1f..100f,
+                            steps = 99,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp)
+                        )
+                    }
                 }
             }
 
@@ -542,7 +565,8 @@ fun ExerciseForm(
                         bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                         generateWarmUpSets = generateWarmupSets.value,
                         enableProgression = enableProgression.value,
-                        keepScreenOn = keepScreenOn.value
+                        keepScreenOn = keepScreenOn.value,
+                        intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)
                     )
 
                     onExerciseUpsert(newExercise)

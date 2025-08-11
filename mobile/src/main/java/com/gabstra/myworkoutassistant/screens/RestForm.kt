@@ -124,7 +124,7 @@ fun RestForm(
                     val newRest = Rest(
                         id = rest?.id ?: java.util.UUID.randomUUID(),
                         enabled = rest?.enabled ?: true,
-                        timeInSeconds = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
+                        timeInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
                     )
 
                     onRestUpsert(newRest)

@@ -285,6 +285,9 @@ open class WorkoutViewModel : ViewModel() {
     val setsByExerciseId: Map<UUID, List<WorkoutState.Set>>
         get() = setStates
             .groupBy { it.exerciseId }
+            .mapValues { (_, sets) ->
+                sets.distinctBy { it.set.id }
+            }
 
     protected var _workoutRecord by mutableStateOf<WorkoutRecord?>(null)
 
@@ -1713,7 +1716,21 @@ open class WorkoutViewModel : ViewModel() {
                     oneRepMax
                 )
 
-                states.add(setState)
+                if(!isWarmupSet && exercise.intraSetRestInSeconds != null){
+                    val restSet = RestSet(UUID.randomUUID(), exercise.intraSetRestInSeconds)
+
+                    val restState = WorkoutState.Rest(
+                        set = restSet,
+                        order = index.toUInt(),
+                        currentSetData = initializeSetData(restSet),
+                        exerciseId = exercise.id
+                    )
+                    states.add(setState)
+                    states.add(restState)
+                    states.add(setState)
+                }else{
+                    states.add(setState)
+                }
             }
         }
 

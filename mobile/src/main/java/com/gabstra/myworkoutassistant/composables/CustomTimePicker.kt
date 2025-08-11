@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
@@ -28,7 +27,7 @@ object TimeConverter {
      * @param seconds The number of seconds.
      * @return The total number of seconds.
      */
-    fun hmsTotalSeconds(hours: Int, minutes: Int, seconds: Int): Int {
+    fun hmsToTotalSeconds(hours: Int, minutes: Int, seconds: Int): Int {
         return hours * 3600 + minutes * 60 + seconds
     }
 

@@ -24,4 +24,5 @@ data class Exercise (
     val generateWarmUpSets: Boolean = false,
     val enableProgression : Boolean = false,
     val keepScreenOn : Boolean = false,
+    val intraSetRestInSeconds : Int? = null,
     ): WorkoutComponent(id,enabled)

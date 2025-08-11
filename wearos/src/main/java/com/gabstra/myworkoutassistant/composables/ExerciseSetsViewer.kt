@@ -275,7 +275,12 @@ fun ExerciseSetsViewer(
     val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
 
-    val exerciseSetStates = remember(exercise.id) { viewModel.getAllExerciseWorkoutStates(exercise.id).filter { it.set !is RestSet } }
+    val exerciseSetStates = remember(exercise.id) {
+        viewModel.getAllExerciseWorkoutStates(exercise.id)
+            .filter { it.set !is RestSet }
+            .distinctBy { it.set.id }
+    }
+
 
     val typography = MaterialTheme.typography
     val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }

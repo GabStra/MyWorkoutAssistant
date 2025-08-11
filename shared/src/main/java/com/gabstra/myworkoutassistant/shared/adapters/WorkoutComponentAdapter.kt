@@ -67,6 +67,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.addProperty("generateWarmUpSets", src.generateWarmUpSets)
                 jsonObject.addProperty("enableProgression", src.enableProgression)
                 jsonObject.addProperty("keepScreenOn", src.keepScreenOn)
+                jsonObject.addProperty("intraSetRestInSeconds", src.intraSetRestInSeconds)
             }
 
             is Rest -> {
@@ -190,6 +191,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     false
                 }
 
+                val intraSetRestInSeconds = if (jsonObject.has("intraSetRestInSeconds")) {
+                    jsonObject.get("intraSetRestInSeconds").asInt
+                } else {
+                    null
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -208,7 +215,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     bodyWeightPercentage,
                     generateWarmUpSets,
                     enableProgression,
-                    keepScreenOn
+                    keepScreenOn,
+                    intraSetRestInSeconds
                 )
             }
 

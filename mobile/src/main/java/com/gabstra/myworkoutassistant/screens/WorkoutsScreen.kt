@@ -923,18 +923,12 @@ fun WorkoutsScreen(
                                                                         modifier = Modifier
                                                                             .weight(1f)
                                                                             .basicMarquee(iterations = Int.MAX_VALUE),
-                                                                        text = workout.name,
+                                                                        text = if(workoutHistory.isDone) workout.name else workout.name + " (Incomplete)",
                                                                         color = LightGray,
                                                                         style = MaterialTheme.typography.bodyLarge,
                                                                     )
-
-                                                                    if (!workoutHistory.isDone) {
-                                                                        Icon(
-                                                                            imageVector = Icons.Default.Close,
-                                                                            contentDescription = "Incomplete",
-                                                                            tint = LightGray
-                                                                        )
-                                                                    }else{
+                                                                    
+                                                                    if (workoutHistory.isDone) {
                                                                         Text(
                                                                             text = workoutHistory.time.format(
                                                                                 timeFormatter

@@ -126,7 +126,7 @@ fun RestSetForm(
                 onClick = {
                     val newRest = RestSet(
                         id = restSet?.id ?: UUID.randomUUID(),
-                        timeInSeconds = TimeConverter.hmsTotalSeconds(hours, minutes, seconds),
+                        timeInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
                     )
 
                     onRestSetUpsert(newRest)

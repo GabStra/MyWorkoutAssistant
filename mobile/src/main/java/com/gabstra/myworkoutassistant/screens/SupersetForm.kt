@@ -245,7 +245,7 @@ fun SupersetForm(
                     // Convert the H:M:S triples into a map of [UUID, Int] for total seconds
                     val restSecondsByExercise = selectedExercises.associate { ex ->
                         val (h, m, s) = restsByExerciseHms[ex.id] ?: Triple(0, 0, 0)
-                        ex.id to TimeConverter.hmsTotalSeconds(h, m, s)
+                        ex.id to TimeConverter.hmsToTotalSeconds(h, m, s)
                     }
 
                     val newOrUpdatedSuperset = Superset(
