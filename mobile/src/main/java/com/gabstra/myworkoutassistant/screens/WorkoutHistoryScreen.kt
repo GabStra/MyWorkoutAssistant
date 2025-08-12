@@ -85,7 +85,7 @@ import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -143,7 +143,7 @@ fun Menu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.background(MediumDarkGray),
+            modifier = Modifier.background(MediumDarkerGray),
             border = BorderStroke(1.dp, MediumLightGray)
         ) {
             DropdownMenuItem(
@@ -444,6 +444,7 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
                     title = "Total volume over time",
+                    markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                 )

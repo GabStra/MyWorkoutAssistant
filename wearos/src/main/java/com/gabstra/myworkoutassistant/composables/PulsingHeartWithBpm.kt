@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -30,7 +30,7 @@ fun PulsingHeartWithBpm(
             initialValue = 0.8f,
             targetValue = 1.2f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = beatDuration, easing = FastOutLinearInEasing),
+                animation = tween(durationMillis = beatDuration / 2, easing = FastOutSlowInEasing),
                 repeatMode = RepeatMode.Reverse
             ),
             label = "heart-scale"

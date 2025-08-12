@@ -522,6 +522,7 @@ fun ExerciseHistoryScreen(
                                         StandardChart(
                                             cartesianChartModel = volumeEntryModel!!,
                                             title = "Volume",
+                                            markerTextFormatter = { formatNumber(it) },
                                             startAxisValueFormatter = volumeAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                         )
@@ -532,7 +533,7 @@ fun ExerciseHistoryScreen(
                                             cartesianChartModel = oneRepMaxEntryModel!!,
                                             title = "One Rep Max",
                                             startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
-                                                value.toString()
+                                                value.round(2).toString()
                                             },
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                         )

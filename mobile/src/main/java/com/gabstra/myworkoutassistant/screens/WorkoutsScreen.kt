@@ -85,7 +85,7 @@ import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -141,7 +141,7 @@ fun Menu(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MediumDarkGray),
+                modifier = Modifier.background(MediumDarkerGray),
                 border = BorderStroke(1.dp, MediumLightGray)
             ) {
                 DropdownMenuItem(
@@ -927,7 +927,7 @@ fun WorkoutsScreen(
                                                                         color = LightGray,
                                                                         style = MaterialTheme.typography.bodyLarge,
                                                                     )
-                                                                    
+
                                                                     if (workoutHistory.isDone) {
                                                                         Text(
                                                                             text = workoutHistory.time.format(

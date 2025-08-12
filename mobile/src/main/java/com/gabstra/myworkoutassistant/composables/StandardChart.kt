@@ -100,7 +100,7 @@ fun StandardChart(
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 10.dp),
+                        .padding(top = 10.dp),
                     text = title,
                     textAlign = TextAlign.Center,
                     color = LightGray,
@@ -109,7 +109,7 @@ fun StandardChart(
             },
             content = {
                 CartesianChartHost(
-                    modifier = Modifier.padding(10.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp),
                     zoomState = rememberVicoZoomState(
                         initialZoom = Zoom.Content,
                         zoomEnabled = isZoomEnabled
