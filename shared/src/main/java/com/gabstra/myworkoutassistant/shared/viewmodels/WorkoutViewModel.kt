@@ -1219,6 +1219,8 @@ open class WorkoutViewModel : ViewModel() {
             if (exercise.doNotStoreHistory || currentState.isWarmupSet) return
         }
 
+        if(currentState is WorkoutState.Rest && currentState.isIntraSetRest) return
+
         val newSetHistory = when (currentState) {
             is WorkoutState.Set -> SetHistory(
                 id = UUID.randomUUID(),
@@ -1723,7 +1725,8 @@ open class WorkoutViewModel : ViewModel() {
                         set = restSet,
                         order = index.toUInt(),
                         currentSetData = initializeSetData(restSet),
-                        exerciseId = exercise.id
+                        exerciseId = exercise.id,
+                        isIntraSetRest = true
                     )
                     states.add(setState)
                     states.add(restState)

@@ -145,6 +145,29 @@ object VolumeDistributionHelper {
             return geometricMean
         }
 
+        if(previousMaxWeight < params.maxWeight){
+            val result = findBestProgressions(
+                usableSets.filter { it.weight <= previousMaxWeight },
+                params.previousSets.size,
+                params.previousSets.size,
+                params,
+                calculateScore = { combo -> calculateScore(combo) },
+                isComboValid = { combo ->
+                    val currentTotalFatigue = combo.sumOf { it.fatigue }
+                    val currentTotalVolume = combo.sumOf { it.volume }
+
+                    val currentAverageWeightPerRep = currentTotalVolume / combo.sumOf { it.reps }
+
+                    combo != params.previousSets &&
+                            currentTotalFatigue > previousTotalFatigue &&
+                            (currentTotalVolume > previousTotalVolume || currentTotalVolume.isEqualTo(previousTotalVolume) && currentAverageWeightPerRep > previousAverageWeightPerRep) &&
+                            (currentTotalFatigue < params.targetFatigue || currentTotalFatigue.isEqualTo(params.targetFatigue))
+                }
+            )
+
+            if(result.isNotEmpty()) return result
+        }
+
         var result = findBestProgressions(
             usableSets,
             params.previousSets.size,

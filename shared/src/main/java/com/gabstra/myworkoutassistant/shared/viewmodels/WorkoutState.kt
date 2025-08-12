@@ -43,6 +43,7 @@ sealed class WorkoutState {
         val exerciseId: UUID? = null,
         var nextStateSets: List<WorkoutState.Set> = emptyList(),
         var startTime : LocalDateTime? = null,
+        var isIntraSetRest: Boolean = false,
     ) : WorkoutState()
 
     data class Completed(val startWorkoutTime: LocalDateTime) : WorkoutState()
