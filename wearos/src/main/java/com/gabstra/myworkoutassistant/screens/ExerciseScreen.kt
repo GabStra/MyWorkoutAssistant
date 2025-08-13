@@ -46,11 +46,9 @@ import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.google.android.horologist.compose.layout.fillMaxRectangle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -157,8 +155,7 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .circleMask(15.dp)
-            .fillMaxRectangle(),
+            .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 25.dp),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(

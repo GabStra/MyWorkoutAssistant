@@ -58,79 +58,85 @@ fun PageButtons(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalColumnScrollbar(
-                scrollState = scrollState,
-                scrollBarColor = LightGray
+    modifier = Modifier
+        .fillMaxSize(),
+        verticalArrangement = Arrangement.Center
+    ){
+        Column(
+            modifier = Modifier
+                .verticalColumnScrollbar(
+                    scrollState = scrollState,
+                    scrollBarColor = LightGray
+                )
+                .padding(horizontal = 15.dp)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            ButtonWithText(
+                text = "Back",
+                onClick = {
+                    hapticsViewModel.doGentleVibration()
+                    showGoBackDialog = true
+                },
+                enabled = !isHistoryEmpty,
             )
-            .padding(horizontal = 15.dp)
-            .verticalScroll(scrollState),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        ButtonWithText(
-            text = "Back",
-            onClick = {
-                hapticsViewModel.doGentleVibration()
-                showGoBackDialog = true
-            },
-            enabled = !isHistoryEmpty,
-        )
-        val dimmingEnabled by viewModel.currentScreenDimmingState
+            val dimmingEnabled by viewModel.currentScreenDimmingState
 
-        ButtonWithText(
-            text = if (dimmingEnabled) "Disable Dimming" else "Enable Dimming",
-            onClick = {
-                hapticsViewModel.doGentleVibration()
-                viewModel.toggleScreenDimming()
-            },
-            textColor = if (dimmingEnabled)
-                MaterialTheme.colors.onBackground
-            else
-                MaterialTheme.colors.background,
-            backgroundColor = if (dimmingEnabled)
-                MediumDarkGray
-            else
-                MaterialTheme.colors.primary
-        )
-        if (isMovementSet) {
             ButtonWithText(
-                text = "Add Set",
+                text = if (dimmingEnabled) "Disable Dimming" else "Enable Dimming",
                 onClick = {
                     hapticsViewModel.doGentleVibration()
-                    viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false, context) {
-                        viewModel.addNewSetStandard()
-                    }
-                }
+                    viewModel.toggleScreenDimming()
+                },
+                textColor = if (dimmingEnabled)
+                    MaterialTheme.colors.onBackground
+                else
+                    MaterialTheme.colors.background,
+                backgroundColor = if (dimmingEnabled)
+                    MediumDarkGray
+                else
+                    MaterialTheme.colors.primary
             )
-        }
-        if (nextWorkoutState !is WorkoutState.Rest) {
-            ButtonWithText(
-                text = "Add Rest",
-                onClick = {
-                    hapticsViewModel.doGentleVibration()
-                    viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false, context) {
-                        viewModel.addNewRest()
+            if (isMovementSet) {
+                ButtonWithText(
+                    text = "Add Set",
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.storeSetData()
+                        viewModel.pushAndStoreWorkoutData(false, context) {
+                            viewModel.addNewSetStandard()
+                        }
                     }
-                }
-            )
-        }
+                )
+            }
+            /*        if (nextWorkoutState !is WorkoutState.Rest) {
+                        ButtonWithText(
+                            text = "Add Rest",
+                            onClick = {
+                                hapticsViewModel.doGentleVibration()
+                                viewModel.storeSetData()
+                                viewModel.pushAndStoreWorkoutData(false, context) {
+                                    viewModel.addNewRest()
+                                }
+                            }
+                        )
+                    }*/
 
-        if (isMovementSet && isLastSet) {
-            ButtonWithText(
-                text = "Add Rest-Pause Set",
-                onClick = {
-                    hapticsViewModel.doGentleVibration()
-                    viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false, context) {
-                        viewModel.addNewRestPauseSet()
+            if (isMovementSet && isLastSet) {
+                ButtonWithText(
+                    text = "Add Rest-Pause Set",
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.storeSetData()
+                        viewModel.pushAndStoreWorkoutData(false, context) {
+                            viewModel.addNewRestPauseSet()
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     }
+
 
     LaunchedEffect(Unit) {
         snapshotFlow { showGoBackDialog }

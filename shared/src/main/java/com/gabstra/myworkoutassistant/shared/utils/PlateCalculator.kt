@@ -42,7 +42,7 @@ class PlateCalculator {
             sets: List<Double>,
             barWeight: Double,
             initialPlates: List<Double> = emptyList(),
-            sidesOnBarbell: Double = 2.0
+            sidesOnBarbell: UInt = 2u
         ): List<PlateChangeResult> {
             val plateCounts = availablePlates.groupingBy { it }.eachCount()
 
@@ -132,7 +132,7 @@ class PlateCalculator {
         private fun generateValidCombos(
             plateCounts: Map<Double, Int>,
             targetTotalWeight: Double,
-            sidesOnBarbell: Double
+            sidesOnBarbell: UInt
         ): List<List<Double>> {
 
             if (abs(targetTotalWeight) < 1e-9) return listOf(emptyList())
@@ -150,7 +150,7 @@ class PlateCalculator {
 
                 val plateWeight = uniqueWeights[comboIndex]
                 val availableCount = plateCounts.getValue(plateWeight)
-                val weightOfOnePair = sidesOnBarbell * plateWeight
+                val weightOfOnePair = sidesOnBarbell.toDouble() * plateWeight
 
                 // Option 1: Skip this plate weight and move to the next.
                 backtrack(comboIndex + 1, platesForOneSide, currentTotalWeight)
@@ -196,45 +196,54 @@ class PlateCalculator {
             return generatePhysicalSteps(a, b).size.toDouble()
         }
 
-        private fun getTotalWeight(platesOnOneSide: List<Double>, barWeight: Double, sides: Double): Double {
-            val totalPlateWeight = platesOnOneSide.sumOf { it * sides }
+        private fun getTotalWeight(platesOnOneSide: List<Double>, barWeight: Double, sides: UInt): Double {
+            val totalPlateWeight = platesOnOneSide.sumOf { it * sides.toDouble() }
             return barWeight + totalPlateWeight
         }
 
-        /**
-         * Generates a sequence of physical steps (add/remove) to transition between plate configurations.
-         * This respects the physical constraint that outer plates must be removed first.
-         */
         fun generatePhysicalSteps(
             current: List<Double>,
             target: List<Double>
         ): List<PlateStep> {
-            val sortedCurrent = current.sortedDescending()
-            val sortedTarget  = target.sortedDescending()
-            if (sortedCurrent == sortedTarget) return emptyList()
+            if (current.groupingBy { it }.eachCount() == target.groupingBy { it }.eachCount()) {
+                return emptyList()
+            }
 
-            val (toAdd, toRemove) = minimizeChanges(sortedCurrent, sortedTarget)
+            // Calculate the net changes (multiset difference).
+            // toAdd: plates in target but not in current.
+            // toRemove: plates in current but not in target.
+            val (toAdd, toRemove) = minimizeChanges(current, target)
 
-            val maxNew = toAdd.maxOrNull() ?: 0.0
-
-            val tempRemove = sortedCurrent.filter { it < maxNew && !toRemove.contains(it) }
-
-            val removalSeq = (tempRemove + toRemove).sorted()
-
-            val reAdd = tempRemove
-                .distinct()
-                .flatMap { p ->
-                    val cntTemp   = tempRemove.count { it == p }
-                    val cntTarget = sortedTarget.count  { it == p }
-                    List(min(cntTemp, cntTarget)) { p }
+            // Calculate the multiset intersection to find plates that are common to both setups.
+            val currentCounts = current.groupingBy { it }.eachCount()
+            val targetCounts = target.groupingBy { it }.eachCount()
+            val commonPlates = buildList {
+                (currentCounts.keys + targetCounts.keys).distinct().forEach { plate ->
+                    val numInCurrent = currentCounts[plate] ?: 0
+                    val numInTarget = targetCounts[plate] ?: 0
+                    repeat(min(numInCurrent, numInTarget)) { add(plate) }
                 }
+            }
 
-            var toAddAndReAdd = toAdd + reAdd
-            toAddAndReAdd = toAddAndReAdd.sortedDescending()
+            // Find the largest plate we need to add.
+            val maxNewPlate = toAdd.maxOrNull() ?: 0.0
 
+            // Any common plate that is smaller than the largest new plate must be temporarily
+            // removed and then re-added.
+            val platesToReAdd = commonPlates.filter { it < maxNewPlate }
+
+            // The full removal sequence: permanently removed plates + temporarily removed plates.
+            // Sorted ascending: remove smaller, outer plates first.
+            val fullRemovalList = (toRemove + platesToReAdd).sorted()
+
+            // The full addition sequence: new plates + re-added plates.
+            // Sorted descending: add larger, inner plates first.
+            val fullAdditionList = (toAdd + platesToReAdd).sortedDescending()
+
+            // Construct the final list of physical steps.
             return buildList {
-                removalSeq.forEach { add(PlateStep(Action.REMOVE, it)) }
-                toAddAndReAdd    .forEach { add(PlateStep(Action.ADD,    it)) }
+                fullRemovalList.forEach { add(PlateStep(Action.REMOVE, it)) }
+                fullAdditionList.forEach { add(PlateStep(Action.ADD, it)) }
             }
         }
     }

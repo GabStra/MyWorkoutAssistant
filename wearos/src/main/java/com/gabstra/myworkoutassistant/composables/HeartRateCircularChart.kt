@@ -18,10 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.QuestionMark
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -56,12 +54,10 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.Yellow
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
-import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel.TrendDirection
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
@@ -267,12 +263,9 @@ fun HeartRateCircularChart(
 private fun HeartRateDisplay(
     modifier: Modifier = Modifier,
     bpm: Int,
-    displayMode: Int,
     textToDisplay: String,
     currentZone: Int,
     colorsByZone: Array<Color>,
-    confidenceLevel: Float,
-    hrTrend: TrendDirection,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -285,52 +278,12 @@ private fun HeartRateDisplay(
             tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
-        if (displayMode != 1) {
-            Text(
-                text = textToDisplay,
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1,
-                color = if (bpm == 0) MediumLightGray else LightGray
-            )
-        } else {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val textColor by remember(confidenceLevel, bpm) {
-                    derivedStateOf {
-                        when {
-                            bpm == 0 -> MediumLightGray
-                            confidenceLevel > 0.7f -> Green
-                            confidenceLevel > 0.3f -> Yellow
-                            confidenceLevel >= 0f -> Red // Include 0 confidence in Red
-                            else -> LightGray // Fallback
-                        }
-                    }
-                }
-
-                Text(
-                    text = if (bpm == 0) "--" else textToDisplay,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.caption1,
-                    color = textColor
-                )
-                if (bpm != 0) {
-                    val trendIcon = when (hrTrend) {
-                        TrendDirection.INCREASING -> Icons.Filled.ArrowUpward
-                        TrendDirection.DECREASING -> Icons.Filled.ArrowDownward
-                        TrendDirection.STABLE -> Icons.AutoMirrored.Filled.ArrowForward
-                        TrendDirection.UNKNOWN -> Icons.Filled.QuestionMark
-                    }
-                    Icon(
-                        imageVector = trendIcon,
-                        contentDescription = "Heart rate trend: ${hrTrend.name}",
-                        modifier = Modifier.size(15.dp),
-                        tint = textColor
-                    )
-                }
-            }
-        }
+        Text(
+            text = textToDisplay,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.caption1,
+            color = if (bpm == 0) MediumLightGray else LightGray
+        )
         Spacer(modifier = Modifier.weight(1f))
     }
 }
@@ -452,17 +405,17 @@ private fun HeartRateView(
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
 ) {
-    val formattedChangeRate by heartRateChangeViewModel.formattedChangeRate.collectAsState()
-    val confidenceLevel by heartRateChangeViewModel.confidenceLevel.collectAsState()
-    val hrTrend by heartRateChangeViewModel.heartRateTrend.collectAsState()
     val displayMode by appViewModel.hrDisplayMode
 
     val textToDisplay by remember(hr, mhrPercentage) {
         derivedStateOf {
-            when (displayMode) {
-                0 -> if (hr == 0) "-" else hr.toString()
-                1 -> formattedChangeRate
-                else -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
+            if (hr == 0) { "-" }
+            else{
+                when (displayMode) {
+                    0 -> hr.toString()
+                    1 -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
+                    else -> throw IllegalArgumentException("Invalid display mode: $displayMode")
+                }
             }
         }
     }
@@ -472,8 +425,8 @@ private fun HeartRateView(
     }
 
     val zoneCount = colorsByZone.size - 1
-    val totalStartAngle = 120f
-    val totalEndAngle = 240f
+    val totalStartAngle = 130f
+    val totalEndAngle = 230f
     val paddingAngle = 2f
 
     val totalArcAngle by remember { derivedStateOf { totalEndAngle - totalStartAngle } }
@@ -504,14 +457,11 @@ private fun HeartRateView(
                 .width(90.dp)
                 .height(20.dp)
                 .padding(top = 5.dp)
-                .clickable(onClick = onSwitchClick),
+                .clickable(onClick = onSwitchClick, enabled = hr != 0),
             bpm = hr,
-            displayMode = displayMode,
             textToDisplay = textToDisplay,
             currentZone = currentZone,
             colorsByZone = colorsByZone,
-            confidenceLevel = confidenceLevel,
-            hrTrend = hrTrend
         )
 
         val (lowerBoundRotationAngle, upperBoundRotationAngle) = extractRotationAngles(

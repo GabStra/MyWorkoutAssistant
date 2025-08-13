@@ -31,7 +31,8 @@ fun ExerciseIndicator(
     val exerciseOrSupersetId = if(viewModel.supersetIdByExerciseId.containsKey(set.exerciseId)) viewModel.supersetIdByExerciseId[set.exerciseId] else set.exerciseId
     val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(exerciseOrSupersetId)
 
-    val totalArcAngle = 120f
+    val startingAngle = -50f
+    val totalArcAngle = 100f
     val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -66,7 +67,7 @@ fun ExerciseIndicator(
                         indicatorColor = if (index != currentExerciseOrSupersetIndex) Orange else LightGray
                     )
 
-                    val startAngle = -60f + index * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)
+                    val startAngle = startingAngle + index * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)
                     val endAngle = startAngle + subSegmentArcAngle
 
                     SegmentedProgressIndicator(
@@ -101,7 +102,7 @@ fun ExerciseIndicator(
                 // Calculate angle for each indicator to space them evenly
                 // Total arc: 65f - (-60f) = 125f
 
-                val startAngle = -60f + index * (segmentArcAngle + 2f)
+                val startAngle = startingAngle + index * (segmentArcAngle + 2f)
                 val endAngle = startAngle + segmentArcAngle
 
                 SegmentedProgressIndicator(
@@ -118,7 +119,7 @@ fun ExerciseIndicator(
         }
     }
 
-    val startAngle = -60f + currentExerciseOrSupersetIndex * (segmentArcAngle + 2f)
+    val startAngle = startingAngle + currentExerciseOrSupersetIndex * (segmentArcAngle + 2f)
     val middleAngle = startAngle + (segmentArcAngle / 2f)
 
     RotatingIndicator(middleAngle, LightGray)

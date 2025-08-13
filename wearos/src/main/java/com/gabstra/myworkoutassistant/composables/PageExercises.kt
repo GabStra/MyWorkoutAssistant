@@ -1,10 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,7 +32,6 @@ import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import kotlinx.coroutines.delay
 
 @Composable
 fun PageExercises(
@@ -68,8 +61,6 @@ fun PageExercises(
     val captionStyle =
         remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
-    var isNavigationLocked by remember { mutableStateOf(false) }
-
     val isSuperset = remember(currentExerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
     }
@@ -81,33 +72,19 @@ fun PageExercises(
         } else null
     }
 
-    LaunchedEffect(isNavigationLocked) {
-        if (isNavigationLocked) {
-            delay(500)
-            isNavigationLocked = false
+    Box(modifier = Modifier.fillMaxSize()) { 
+        val selectedExerciseOrSupersetId = remember(selectedExercise) {
+            if (viewModel.supersetIdByExerciseId.containsKey(selectedExercise.id)) viewModel.supersetIdByExerciseId[selectedExercise.id] else selectedExercise.id
         }
-    }
-
-    AnimatedContent(
-        modifier = Modifier.fillMaxSize(),
-        targetState = selectedExercise,
-        transitionSpec = {
-            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-        },
-        label = "",
-    ) { updatedExercise ->
-        val updatedExerciseOrSupersetId = remember(updatedExercise) {
-            if (viewModel.supersetIdByExerciseId.containsKey(updatedExercise.id)) viewModel.supersetIdByExerciseId[updatedExercise.id] else updatedExercise.id
-        }
-        val updatedExerciseOrSupersetIndex = remember(updatedExerciseOrSupersetId) {
-            exerciseOrSupersetIds.indexOf(updatedExerciseOrSupersetId)
+        val selectedExerciseOrSupersetIndex = remember(selectedExerciseOrSupersetId) {
+            exerciseOrSupersetIds.indexOf(selectedExerciseOrSupersetId)
         }
 
-        val isSuperset = remember(updatedExerciseOrSupersetId) {
-            viewModel.exercisesBySupersetId.containsKey(updatedExerciseOrSupersetId)
+        val isSuperset = remember(selectedExerciseOrSupersetId) {
+            viewModel.exercisesBySupersetId.containsKey(selectedExerciseOrSupersetId)
         }
 
-        val currentIndex = remember(updatedExercise) { exerciseIds.indexOf(updatedExercise.id) }
+        val currentIndex = remember(selectedExercise) { exerciseIds.indexOf(selectedExercise.id) }
 
         val backArrowModifier = remember(currentIndex) {
             if (currentIndex > 0)
@@ -136,7 +113,7 @@ fun PageExercises(
                 modifier = Modifier
                     .fillMaxHeight()
                     .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.5.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
@@ -151,7 +128,7 @@ fun PageExercises(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = updatedExercise.name,
+                        text = selectedExercise.name,
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,
@@ -166,14 +143,14 @@ fun PageExercises(
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
                             textAlign = TextAlign.Center,
-                            text = "${updatedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                            text = "${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
                             style = captionStyle
                         )
                         if (isSuperset) {
                             val supersetExercises =
-                                remember { viewModel.exercisesBySupersetId[updatedExerciseOrSupersetId]!! }
+                                remember { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
                             val supersetIndex =
-                                remember { supersetExercises.indexOf(updatedExercise) }
+                                remember { supersetExercises.indexOf(selectedExercise) }
 
                             Text(
                                 textAlign = TextAlign.Center,
@@ -182,9 +159,9 @@ fun PageExercises(
                             )
                         }
 
-                        if (updatedExercise.id == currentExercise.id) {
+                        if (selectedExercise.id == currentExercise.id) {
                             val exerciseSetIds =
-                                remember { viewModel.setsByExerciseId[updatedExercise.id]!!.map { it.set.id } }
+                                remember { viewModel.setsByExerciseId[selectedExercise.id]!!.map { it.set.id } }
                             val setIndex =
                                 remember { exerciseSetIds.indexOf(currentStateSet.set.id) }
 
@@ -209,14 +186,14 @@ fun PageExercises(
                         .fillMaxSize(),
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
-                    exercise = updatedExercise,
+                    exercise = selectedExercise,
                     currentSet = currentStateSet.set,
                     customColor = when {
-                        updatedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> Orange
-                        updatedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MediumLightGray
+                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> Orange
+                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MediumLightGray
                         else -> null
                     },
-                    overrideSetIndex = if (updatedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                    overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
                         overrideSetIndex
                     } else null
                 )
@@ -233,13 +210,12 @@ fun PageExercises(
                         .fillMaxHeight()
                         .weight(1f)
                         .clickable(
-                            enabled = !isNavigationLocked && currentIndex > 0
+                            enabled = currentIndex > 0
                         ) {
                             hapticsViewModel.doGentleVibration()
                             val newIndex = currentIndex - 1
                             selectedExercise =
                                 viewModel.exercisesById[exerciseIds[newIndex]]!!
-                            isNavigationLocked = true
                         }
                         .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
                     verticalAlignment = Alignment.CenterVertically,
@@ -260,13 +236,12 @@ fun PageExercises(
                         .fillMaxHeight()
                         .weight(1f)
                         .clickable(
-                            enabled = !isNavigationLocked && currentIndex < exerciseIds.size - 1
+                            enabled = currentIndex < exerciseIds.size - 1
                         ) {
                             hapticsViewModel.doGentleVibration()
                             val newIndex = currentIndex + 1
                             selectedExercise =
                                 viewModel.exercisesById[exerciseIds[newIndex]]!!
-                            isNavigationLocked = true
                         }
                         .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
                     verticalAlignment = Alignment.CenterVertically,

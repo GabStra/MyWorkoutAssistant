@@ -8,6 +8,7 @@ package com.gabstra.myworkoutassistant
 
 import android.app.Activity
 import android.app.AlarmManager
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -175,6 +176,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (km.isKeyguardLocked) {
+            km.requestDismissKeyguard(this, null) // callback optional
+        }
+
         if(alarmManager.canScheduleExactAlarms()){
             val scheduler = WorkoutAlarmScheduler(this)
             scheduler.rescheduleAllWorkouts()
@@ -183,7 +190,13 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalHorologistApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+
+
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
+
         // Handle intent if app was launched from notification
+
         handleNotificationIntent(intent)
         super.onCreate(savedInstanceState)
         appViewModel.initDataClient(dataClient)

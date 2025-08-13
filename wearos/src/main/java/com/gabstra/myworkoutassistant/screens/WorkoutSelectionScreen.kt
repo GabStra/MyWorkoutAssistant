@@ -178,13 +178,13 @@ fun WorkoutSelectionScreen(
         }
     ) {
         ScalingLazyColumn(
-            modifier = Modifier.padding(10.dp),
+            modifier = Modifier.padding(horizontal = 10.dp),
             state = scalingLazyListState,
         ) {
             item {
                 Text(
                     modifier = Modifier
-                        .padding(vertical = 10.dp)
+                        .padding(vertical = 5.dp)
                         .combinedClickable(
                             onClick = {},
                             onLongClick = {

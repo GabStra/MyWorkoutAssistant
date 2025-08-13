@@ -100,7 +100,7 @@ fun WorkoutDetailScreen(
             }
         ) {
             ScalingLazyColumn(
-                modifier = Modifier.padding(10.dp),
+                modifier = Modifier.padding(horizontal = 10.dp),
                 state = scalingLazyListState,
             ) {
                 item {
@@ -111,7 +111,7 @@ fun WorkoutDetailScreen(
                                 marqueeEnabled = !marqueeEnabled
                             })
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
-                            .padding(0.dp, 0.dp, 0.dp, 10.dp),
+                            .padding(bottom = 5.dp),
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,

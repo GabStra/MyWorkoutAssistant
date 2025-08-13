@@ -3,7 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -155,20 +155,16 @@ fun SetTableRow(
                 ScalableText(
                     modifier = Modifier
                         .weight(2f)
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClick = {
-                                startOpenDialogJob()
-                                hapticsViewModel.doGentleVibration()
-                            },
-                            onDoubleClick = {}
-                    ),
+                        .clickable{
+                            startOpenDialogJob()
+                            hapticsViewModel.doGentleVibration()
+                        },
                     text = equipment!!.formatWeight(weightSetData.actualWeight),
                     style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
                 )
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(1f),
                     text = "${weightSetData.actualReps}",
                     style = itemStyle,
@@ -198,20 +194,16 @@ fun SetTableRow(
                 ScalableText(
                     modifier = Modifier
                         .weight(2f)
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClick = {
-                                startOpenDialogJob()
-                                hapticsViewModel.doGentleVibration()
-                            },
-                            onDoubleClick = {}
-                        ),
+                        .clickable{
+                            startOpenDialogJob()
+                            hapticsViewModel.doGentleVibration()
+                        },
                     text = weightText,
                     style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
                 )
-                Text(
+                ScalableText(
                     modifier = Modifier.weight(1f),
                     text = "${bodyWeightSetData.actualReps}",
                     style = itemStyle,

@@ -52,7 +52,7 @@ fun ButtonWithText(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .height(40.dp)
             .clip(RoundedCornerShape(50))
             .background(
                 when {

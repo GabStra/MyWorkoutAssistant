@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTimeFilled
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -61,8 +65,9 @@ fun WorkoutStateHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+
+            .padding(top = 10.dp)
             .height(20.dp)
-            .padding(top = 5.dp)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null
@@ -87,11 +92,17 @@ fun WorkoutStateHeader(
             val seconds = remember(duration) { duration.seconds % 60 }
 
             Row(
+                modifier = Modifier.fillMaxHeight(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(1.dp)
             ) {
+                Icon(
+                    modifier = Modifier.size(15.dp),
+                    imageVector = Icons.Filled.AccessTimeFilled,
+                    contentDescription = "clock",
+                )
+                Spacer(modifier = Modifier.width(2.dp))
                 Text(
-                    modifier = Modifier.fillMaxHeight(),
                     text = String.format("%02d", hours),
                     style = MaterialTheme.typography.caption1,
                     textAlign = TextAlign.Center
@@ -101,11 +112,9 @@ fun WorkoutStateHeader(
                     text = ":",
                     style = MaterialTheme.typography.caption1,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxHeight(),
                 )
 
                 Text(
-                    modifier = Modifier.fillMaxHeight(),
                     text = String.format("%02d", minutes),
                     style = MaterialTheme.typography.caption1,
                     textAlign = TextAlign.Center
@@ -115,11 +124,9 @@ fun WorkoutStateHeader(
                     text = ":",
                     style = MaterialTheme.typography.caption1,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxHeight(),
                 )
 
                 Text(
-                    modifier = Modifier.fillMaxHeight(),
                     text = String.format("%02d", seconds),
                     style = MaterialTheme.typography.caption1,
                     textAlign = TextAlign.Center

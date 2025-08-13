@@ -65,7 +65,7 @@ open class AppViewModel : WorkoutViewModel() {
     private val _previousScreenDimmingState = mutableStateOf(true)
 
     fun switchHrDisplayMode() {
-        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 3
+        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
     }
 
     fun switchHeaderDisplayMode() {
@@ -78,7 +78,7 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     fun lightScreenPermanently() {
-        _previousScreenDimmingState.value = _currentScreenDimmingState.value
+        //_previousScreenDimmingState.value = _currentScreenDimmingState.value
         _currentScreenDimmingState.value = false
     }
 

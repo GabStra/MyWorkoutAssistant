@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -45,14 +45,12 @@ import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.circleMask
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.google.android.horologist.compose.layout.fillMaxRectangle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -69,8 +67,6 @@ fun RestScreen(
     onTimerEnd: () -> Unit,
 ) {
     val set = state.set as RestSet
-
-    Log.d("RestScreen", "RestScreen")
 
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
@@ -156,6 +152,23 @@ fun RestScreen(
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
+    }
+
+    var userScrollEnabled by remember { mutableStateOf(true) }
+
+    var isWaitingForRestToEnd by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pagerState.currentPage,currentSeconds){
+        if(isWaitingForRestToEnd) return@LaunchedEffect
+
+        val isOnExerciseDetailPage = pagerState.currentPage == exerciseDetailPageIndex
+        if (!isOnExerciseDetailPage && currentSeconds <= 5){
+            isWaitingForRestToEnd = true
+
+            pagerState.scrollToPage(exerciseDetailPageIndex)
+            userScrollEnabled = false
+            viewModel.lightScreenUp()
+        }
     }
 
     fun onMinusClick() {
@@ -272,7 +285,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .circleMask(15.dp),
+                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 25.dp),
                 contentAlignment = Alignment.Center
             ) {
                 ControlButtonsVertical(
@@ -297,11 +310,11 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .circleMask(15.dp)
-                    .fillMaxRectangle(),
+                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 25.dp),
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(
+                    userScrollEnabled = userScrollEnabled,
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
@@ -316,8 +329,6 @@ fun RestScreen(
                         },
                     pagerState = pagerState,
                 ) { pageIndex ->
-                    Log.d("pageIndex", pageIndex.toString())
-
                     val pageType = pageTypes[pageIndex]
                     when (pageType) {
                         PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)

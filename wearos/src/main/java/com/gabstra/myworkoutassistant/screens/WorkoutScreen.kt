@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -19,7 +18,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -178,8 +176,7 @@ fun WorkoutScreen(
 
     Box(
         modifier = Modifier
-            .fillMaxSize()
-            .padding(5.dp),
+            .fillMaxSize(),
     ) {
         if(isResuming){
             LoadingScreen(viewModel,"Resuming workout")
