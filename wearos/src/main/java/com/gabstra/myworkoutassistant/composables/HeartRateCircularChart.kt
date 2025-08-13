@@ -456,7 +456,6 @@ private fun HeartRateView(
             modifier = Modifier
                 .width(90.dp)
                 .height(20.dp)
-                .padding(top = 5.dp)
                 .clickable(onClick = onSwitchClick, enabled = hr != 0),
             bpm = hr,
             textToDisplay = textToDisplay,
