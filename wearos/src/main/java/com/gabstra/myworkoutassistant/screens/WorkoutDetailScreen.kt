@@ -14,7 +14,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -36,22 +35,21 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.shared.Orange
-import kotlinx.coroutines.flow.drop
 
 @Composable
 fun WorkoutDetailScreen(
     navController: NavController,
-    appViewModel: AppViewModel,
+    viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     hrViewModel : SensorDataViewModel
 ) {
-    val workout by appViewModel.selectedWorkout
+    val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 
     var showDeleteDialog by remember { mutableStateOf(false) }
 
-    val hasWorkoutRecord by appViewModel.hasWorkoutRecord.collectAsState()
-    val hasExercises by appViewModel.hasExercises.collectAsState()
+    val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+    val hasExercises by viewModel.hasExercises.collectAsState()
 
     val basePermissions = listOf(
         Manifest.permission.BODY_SENSORS,
@@ -66,10 +64,10 @@ fun WorkoutDetailScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         if (result.all { it.value }) {
-            if(hasWorkoutRecord) appViewModel.deleteWorkoutRecord()
-            appViewModel.startWorkout()
+            if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
+            viewModel.startWorkout()
             navController.navigate(Screen.Workout.route)
-            appViewModel.consumeStartWorkout()
+            viewModel.consumeStartWorkout()
         }
     }
 
@@ -77,18 +75,18 @@ fun WorkoutDetailScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         if (result.all { it.value }) {
-            appViewModel.resumeWorkoutFromRecord()
+            viewModel.resumeWorkoutFromRecord()
             navController.navigate(Screen.Workout.route)
         }
     }
 
-    LaunchedEffect(appViewModel.executeStartWorkout) {
-        if(appViewModel.executeStartWorkout.value!=null) {
+    LaunchedEffect(viewModel.executeStartWorkout) {
+        if(viewModel.executeStartWorkout.value!=null) {
             permissionLauncherStart.launch(basePermissions.toTypedArray())
         }
     }
 
-    if(appViewModel.executeStartWorkout.value == null){
+    if(viewModel.executeStartWorkout.value == null){
         var marqueeEnabled by remember { mutableStateOf(false) }
         val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
 
@@ -159,7 +157,7 @@ fun WorkoutDetailScreen(
                         text = "Send history",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
-                            appViewModel.sendWorkoutHistoryToPhone() { success ->
+                            viewModel.sendWorkoutHistoryToPhone() { success ->
                                 if (success)
                                     Toast.makeText(
                                         context,
@@ -178,25 +176,13 @@ fun WorkoutDetailScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { showDeleteDialog }
-            .drop(1)
-            .collect { isDialogShown ->
-                if (isDialogShown) {
-                    appViewModel.lightScreenPermanently()
-                } else {
-                    appViewModel.restoreScreenDimmingState()
-                }
-            }
-    }
-
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,
         title = "Resume Workout",
         message = "Do you want to proceed?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
-            appViewModel.deleteWorkoutRecord()
+            viewModel.deleteWorkoutRecord()
             showDeleteDialog = false
         },
         handleNoClick = {
@@ -207,6 +193,13 @@ fun WorkoutDetailScreen(
         handleOnAutomaticClose = {
             showDeleteDialog = false
         },
-        holdTimeInMillis = 1000
+        holdTimeInMillis = 1000,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
     )
 }

@@ -82,7 +82,7 @@ fun PreparingPolarScreen(
             while (true) {
                 delay(1000) // Update every sec.
                 currentMillis += 1000
-                if (currentMillis >= 5000) {
+                if (currentMillis >= 5000 && !hasTriggeredNextState) {
                     canSkip = true
                     break
                 }
@@ -99,7 +99,7 @@ fun PreparingPolarScreen(
         if (isReady) {
             hasTriggeredNextState = true
 
-            viewModel.restoreScreenDimmingState()
+            viewModel.lightScreenUp()
             if (hasWorkoutRecord) {
                 viewModel.resumeLastState()
             } else {
@@ -124,7 +124,7 @@ fun PreparingPolarScreen(
             )
             Spacer(modifier = Modifier.height(15.dp))
             Row (modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
-                LoadingText(baseText = if (deviceConnectionInfo == null) "Connecting" else "Please wait")
+                LoadingText(baseText = "Connecting")
             }
 
 
@@ -145,7 +145,6 @@ fun PreparingPolarScreen(
                                 viewModel.goToNextState()
                                 viewModel.lightScreenUp()
                                 viewModel.setWorkoutStart()
-                                viewModel.restoreScreenDimmingState()
                                 onReady()
                             },
                             modifier = Modifier.size(35.dp),

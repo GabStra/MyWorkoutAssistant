@@ -14,7 +14,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -36,7 +35,6 @@ import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.drop
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
@@ -96,18 +94,6 @@ fun WorkoutScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { showWorkoutInProgressDialog }
-            .drop(1)
-            .collect { isDialogShown ->
-                if (isDialogShown) {
-                    viewModel.lightScreenPermanently()
-                } else {
-                    viewModel.restoreScreenDimmingState()
-                }
-            }
-    }
-
     CustomDialogYesOnLongPress(
         show = showWorkoutInProgressDialog,
         title = "Workout in progress",
@@ -120,7 +106,6 @@ fun WorkoutScreen(
                 polarViewModel.disconnectFromDevice()
             }
             cancelWorkoutInProgressNotification(context)
-            viewModel.lightScreenPermanently()
             navController.navigate(Screen.WorkoutSelection.route){
                 popUpTo(0) {
                     inclusive = true
@@ -138,7 +123,14 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
         },
-        holdTimeInMillis = 1000
+        holdTimeInMillis = 1000,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
     )
 
     val isCustomDialogOpen by viewModel.isCustomDialogOpen.collectAsState()

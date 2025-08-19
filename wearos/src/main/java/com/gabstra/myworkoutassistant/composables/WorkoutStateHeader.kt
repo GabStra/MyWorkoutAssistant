@@ -49,7 +49,7 @@ fun WorkoutStateHeader(
     var duration by remember { mutableStateOf(Duration.ZERO) }
     val context = LocalContext.current
 
-    if(displayMode == 1){
+    if(displayMode == 1 && viewModel.startWorkoutTime != null){
         LaunchedEffect(Unit) {
             while (true) {
                 val now = LocalDateTime.now()

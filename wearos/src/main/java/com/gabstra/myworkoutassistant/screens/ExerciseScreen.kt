@@ -25,7 +25,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -51,7 +50,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 enum class PageType {
@@ -155,7 +153,7 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 25.dp),
+            .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 35.dp),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(
@@ -281,18 +279,6 @@ fun ExerciseScreen(
         hearthRateChart()
     }
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { showNextDialog }
-            .drop(1)
-            .collect { isDialogShown ->
-                if (isDialogShown) {
-                    viewModel.lightScreenPermanently()
-                } else {
-                    viewModel.restoreScreenDimmingState()
-                }
-            }
-    }
-
     CustomDialogYesOnLongPress(
         show = showNextDialog,
         title = "Complete Set",
@@ -315,7 +301,14 @@ fun ExerciseScreen(
         handleOnAutomaticClose = {
             viewModel.closeCustomDialog()
         },
-        holdTimeInMillis = 1000
+        holdTimeInMillis = 1000,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
     )
 
     DisposableEffect(Unit) {

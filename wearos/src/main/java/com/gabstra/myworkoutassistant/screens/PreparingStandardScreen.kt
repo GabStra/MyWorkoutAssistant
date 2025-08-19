@@ -72,7 +72,7 @@ fun PreparingStandardScreen(
         if (isReady) {
             hasTriggeredNextState = true
 
-            viewModel.restoreScreenDimmingState()
+            viewModel.lightScreenUp()
             if(hasWorkoutRecord){
                 viewModel.resumeLastState()
             }else{

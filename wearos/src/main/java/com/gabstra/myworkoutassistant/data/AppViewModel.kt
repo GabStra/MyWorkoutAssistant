@@ -53,8 +53,8 @@ open class AppViewModel : WorkoutViewModel() {
     val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
     private val _headerDisplayMode = mutableStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
-    private val _currentScreenDimmingState = mutableStateOf(true)
-    private val _previousScreenDimmingState = mutableStateOf(true)
+    private val _currentScreenDimmingState = mutableStateOf(false)
+
     val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
     val lightScreenUp = _lightScreenUp.receiveAsFlow()
@@ -73,21 +73,26 @@ open class AppViewModel : WorkoutViewModel() {
 
     fun toggleScreenDimming() {
         _currentScreenDimmingState.value = !_currentScreenDimmingState.value
-        _previousScreenDimmingState.value = _currentScreenDimmingState.value
+
     }
 
-    fun lightScreenPermanently() {
-        _previousScreenDimmingState.value = _currentScreenDimmingState.value
-        _currentScreenDimmingState.value = false
-    }
-
-    fun restoreScreenDimmingState() {
-        _currentScreenDimmingState.value = _previousScreenDimmingState.value
+    fun setDimming(shouldDim: Boolean) {
+        _currentScreenDimmingState.value = shouldDim
     }
 
     fun lightScreenUp() {
         viewModelScope.launch {
             _lightScreenUp.send(Unit)
+        }
+    }
+
+    fun reEvaluateDimmingForCurrentState() {
+        val currentState = workoutState.value
+        if (currentState is WorkoutState.Set) {
+            val exercise = exercisesById[currentState.exerciseId]!!
+            _currentScreenDimmingState.value = !exercise.keepScreenOn
+        } else if (currentState is WorkoutState.Rest) {
+            _currentScreenDimmingState.value = true
         }
     }
 
@@ -180,29 +185,21 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun startWorkout() {
-        _currentScreenDimmingState.value = true
-        _previousScreenDimmingState.value = true
-
+        _currentScreenDimmingState.value = false
+        _headerDisplayMode.value = 0
+        _hrDisplayMode.value = 0
         super.startWorkout()
-        lightScreenPermanently()
     }
 
     override fun goToNextState() {
         super.goToNextState()
-
-        if (workoutState.value is WorkoutState.Set) {
-            val exercise = exercisesById[(workoutState.value as WorkoutState.Set).exerciseId]!!
-            if(exercise.keepScreenOn){
-                lightScreenPermanently()
-            }else{
-                restoreScreenDimmingState()
-            }
-        }
+        reEvaluateDimmingForCurrentState()
     }
 
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
-        _currentScreenDimmingState.value = true
-        _previousScreenDimmingState.value = true
+        _currentScreenDimmingState.value = false
+        _headerDisplayMode.value = 0
+        _hrDisplayMode.value = 0
 
         super.resumeWorkoutFromRecord {
             lightScreenUp()

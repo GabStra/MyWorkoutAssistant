@@ -263,7 +263,6 @@ fun ExerciseSetsViewer(
     customColor: Color? = null,
     overrideSetIndex: Int? = null
 ){
-
     val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
 
@@ -272,7 +271,6 @@ fun ExerciseSetsViewer(
             .filter { it.set !is RestSet }
             .distinctBy { it.set.id }
     }
-
 
     val typography = MaterialTheme.typography
     val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
@@ -285,7 +283,7 @@ fun ExerciseSetsViewer(
     val measuredItems = remember(exerciseSetStates.size) { mutableStateOf(0) }
 
     // Effect to handle scrolling whenever heights are updated or setIndex changes
-    LaunchedEffect(allItemsMeasured.value, setIndex) {
+    LaunchedEffect(allItemsMeasured.value, setIndex, exercise) {
         if (!allItemsMeasured.value || setIndex == -1) {
             return@LaunchedEffect
         }

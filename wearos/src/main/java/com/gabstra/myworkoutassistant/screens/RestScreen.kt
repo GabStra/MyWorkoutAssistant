@@ -27,7 +27,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -53,7 +52,6 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
@@ -285,7 +283,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 25.dp),
+                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 35.dp),
                 contentAlignment = Alignment.Center
             ) {
                 ControlButtonsVertical(
@@ -310,7 +308,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 25.dp),
+                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 35.dp),
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(
@@ -370,18 +368,6 @@ fun RestScreen(
         hearthRateChart()
     }
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { showSkipDialog }
-            .drop(1)
-            .collect { isDialogShown ->
-                if (isDialogShown) {
-                    viewModel.lightScreenPermanently()
-                } else {
-                    viewModel.restoreScreenDimmingState()
-                }
-            }
-    }
-
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
         title = "Skip Rest",
@@ -404,6 +390,13 @@ fun RestScreen(
             viewModel.closeCustomDialog()
             startTimerJob()
         },
-        holdTimeInMillis = 1000
+        holdTimeInMillis = 1000,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
     )
 }

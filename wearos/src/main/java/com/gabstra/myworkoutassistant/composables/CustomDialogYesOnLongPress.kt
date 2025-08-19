@@ -40,7 +40,6 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
@@ -59,7 +58,10 @@ fun CustomDialogYesOnLongPress(
     closeTimerInMillis: Long = 0,
     handleOnAutomaticClose: () -> Unit = {},
     holdTimeInMillis: Long = 0,
+    onVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    var hasBeenShownOnce by remember { mutableStateOf(false) }
+
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val longPressCoroutineScope = rememberCoroutineScope()
@@ -83,6 +85,14 @@ fun CustomDialogYesOnLongPress(
     }
 
     LaunchedEffect(show) {
+        if (show) {
+            hasBeenShownOnce = true
+        }
+
+        if (hasBeenShownOnce) {
+            onVisibilityChange(show)
+        }
+
         if (show && closeTimerInMillis > 0) {
             startAutomaticCloseTimer()
         }

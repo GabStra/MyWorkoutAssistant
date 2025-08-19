@@ -13,7 +13,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -23,11 +22,9 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import kotlinx.coroutines.flow.drop
 
 
 @Composable
@@ -137,19 +134,6 @@ fun PageButtons(
         }
     }
 
-
-    LaunchedEffect(Unit) {
-        snapshotFlow { showGoBackDialog }
-            .drop(1)
-            .collect { isDialogShown ->
-                if (isDialogShown) {
-                    viewModel.lightScreenPermanently()
-                } else {
-                    viewModel.restoreScreenDimmingState()
-                }
-            }
-    }
-
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
         title = "Go to previous Set",
@@ -168,6 +152,13 @@ fun PageButtons(
         handleOnAutomaticClose = {
             showGoBackDialog = false
         },
-        holdTimeInMillis = 1000
+        holdTimeInMillis = 1000,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
     )
 }

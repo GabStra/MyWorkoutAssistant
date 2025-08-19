@@ -364,18 +364,6 @@ fun TimedDurationSetScreen(
             }
         }
 
-        LaunchedEffect(Unit) {
-            snapshotFlow { showStopDialog }
-                .drop(1)
-                .collect { isDialogShown ->
-                    if (isDialogShown) {
-                        viewModel.lightScreenPermanently()
-                    } else {
-                        viewModel.restoreScreenDimmingState()
-                    }
-                }
-        }
-
         CustomDialogYesOnLongPress(
             show = showStopDialog,
             title = "Stop Exercise",
@@ -397,7 +385,14 @@ fun TimedDurationSetScreen(
             },
             closeTimerInMillis = 5000,
             handleOnAutomaticClose = {},
-            holdTimeInMillis = 1000
+            holdTimeInMillis = 1000,
+            onVisibilityChange = { isVisible ->
+                if (isVisible) {
+                    viewModel.setDimming(false)
+                } else {
+                    viewModel.reEvaluateDimmingForCurrentState()
+                }
+            }
         )
 
         CountDownDialog(displayStartingDialog,countdownValue)
