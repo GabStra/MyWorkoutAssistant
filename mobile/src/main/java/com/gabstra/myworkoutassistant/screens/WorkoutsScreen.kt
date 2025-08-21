@@ -123,7 +123,7 @@ fun Menu(
     onOpenSettingsClick: () -> Unit,
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
-    onSyncToHealthConnectClick: () -> Unit,
+    onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -159,6 +159,20 @@ fun Menu(
                     }
                 )
                 DropdownMenuItem(
+                    text = { Text("Sync with Health Connect") },
+                    onClick = {
+                        onSyncWithHealthConnectClick()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Export Workouts") },
+                    onClick = {
+                        onExportWorkouts()
+                        expanded = false
+                    }
+                )
+                DropdownMenuItem(
                     text = { Text("Save Backup") },
                     onClick = {
                         onBackupClick()
@@ -173,29 +187,14 @@ fun Menu(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Export Workouts") },
-                    onClick = {
-                        onExportWorkouts()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Sync to Health Connect") },
-                    onClick = {
-                        onSyncToHealthConnectClick()
-                        expanded = false
-                    }
-                )
-
-                DropdownMenuItem(
-                    text = { Text("Clear partial workouts") },
+                    text = { Text("Clear all incomplete workouts") },
                     onClick = {
                         onClearUnfinishedWorkouts()
                         expanded = false
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Clear all histories") },
+                    text = { Text("Clear history") },
                     onClick = {
                         onClearAllHistories()
                         expanded = false
@@ -646,7 +645,7 @@ fun WorkoutsScreen(
                         onRestoreClick = onRestoreClick,
                         onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
                         onClearAllHistories = onClearAllHistories,
-                        onSyncToHealthConnectClick = onSyncToHealthConnectClick,
+                        onSyncWithHealthConnectClick = onSyncToHealthConnectClick,
                         onExportWorkouts = onExportWorkouts
                     )
                 }

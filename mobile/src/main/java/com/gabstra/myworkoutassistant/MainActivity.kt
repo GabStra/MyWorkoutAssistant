@@ -488,7 +488,7 @@ fun MyWorkoutAssistantNavHost(
                                 workoutHistoryDao.deleteAll()
                                 setHistoryDao.deleteAll()
                             }
-                            Toast.makeText(context, "All histories cleared", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Histories cleared", Toast.LENGTH_SHORT).show()
 
                             appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
                             appViewModel.triggerUpdate()
@@ -511,10 +511,10 @@ fun MyWorkoutAssistantNavHost(
                                         weightKg = weight
                                     )
                                 }
-                                Toast.makeText(context, "Synced to HealthConnect", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Synced with HealthConnect", Toast.LENGTH_SHORT).show()
                             }catch (e: Exception){
-                                Log.e("MainActivity", "Error syncing to HealthConnect", e)
-                                Toast.makeText(context, "Error syncing to HealthConnect", Toast.LENGTH_SHORT).show()
+                                Log.e("MainActivity", "Error syncing with HealthConnect", e)
+                                Toast.makeText(context, "Error syncing with HealthConnect", Toast.LENGTH_SHORT).show()
                             }
                         }
                     },

@@ -277,13 +277,20 @@ fun ExerciseSetsViewer(
 
     val scrollState = rememberScrollState()
     val itemHeights = remember { mutableStateMapOf<Int, Int>() }
-    val density = LocalDensity.current
 
     val allItemsMeasured = remember(exerciseSetStates.size) { mutableStateOf(false) }
     val measuredItems = remember(exerciseSetStates.size) { mutableStateOf(0) }
 
+    LaunchedEffect(exercise) {
+        scrollState.scrollTo(0)
+        itemHeights.clear()
+        measuredItems.value = 0
+        allItemsMeasured.value = false // Ensure this is reset so the other effect waits
+    }
+
     // Effect to handle scrolling whenever heights are updated or setIndex changes
-    LaunchedEffect(allItemsMeasured.value, setIndex, exercise) {
+    LaunchedEffect(allItemsMeasured.value, setIndex) {
+
         if (!allItemsMeasured.value || setIndex == -1) {
             return@LaunchedEffect
         }

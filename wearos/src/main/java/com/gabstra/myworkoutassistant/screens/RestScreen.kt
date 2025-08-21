@@ -172,7 +172,7 @@ fun RestScreen(
     fun onMinusClick() {
         if (currentSeconds > 5) {
             val newTimerValue = currentSeconds - 5
-            currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
+            //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
             currentSeconds = newTimerValue
             hapticsViewModel.doGentleVibration()
         }
@@ -181,7 +181,7 @@ fun RestScreen(
 
     fun onPlusClick() {
         val newTimerValue = currentSeconds + 5
-        currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
+        //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
         currentSeconds = newTimerValue
         hapticsViewModel.doGentleVibration()
         updateInteractionTime()

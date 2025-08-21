@@ -484,7 +484,7 @@ open class WorkoutViewModel : ViewModel() {
                         var newRestSet = RestSet(UUID.randomUUID(), 90, false)
 
                         if (previousRestSet != null) {
-                            newRestSet = newRestSet.copy(id = previousRestSet.id)
+                            newRestSet = newRestSet.copy(id = previousRestSet.id,previousRestSet.timeInSeconds)
                         }
 
                         newSets.add(newRestSet)
@@ -1718,7 +1718,7 @@ open class WorkoutViewModel : ViewModel() {
                     oneRepMax
                 )
 
-                if(!isWarmupSet && exercise.intraSetRestInSeconds != null){
+                if(!isWarmupSet && exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds > 0){
                     val restSet = RestSet(UUID.randomUUID(), exercise.intraSetRestInSeconds)
 
                     val restState = WorkoutState.Rest(
