@@ -712,12 +712,13 @@ open class WorkoutViewModel : ViewModel() {
             Log.d("WorkoutViewModel", "Deloading ${exercise.name}")
             //TODO: Implement deloading
         } else {
-            exerciseProgression = VolumeDistributionHelper.getClosestToTargetFatigue(
+            exerciseProgression = VolumeDistributionHelper.generateExerciseProgression(
                 previousSets = setsForProgression,
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
                 repsRange = repsRange,
-                targetFatigue = targetFatigue
+                targetFatigue = targetFatigue,
+                progressionIncrease = 1 + workoutStore.progressionPercentageAmount/100
             )
         }
 
@@ -739,16 +740,19 @@ open class WorkoutViewModel : ViewModel() {
 
             val fatigueIncrease = ((exerciseProgression.newFatigue - exerciseProgression.previousFatigue) / exerciseProgression.previousFatigue) * 100
 
+            val previousAverageWeightPerRep = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
+            val newAverageWeightPerRep = exerciseProgression.newVolume / exerciseProgression.sets.sumOf { it.reps }
+
+            val averageWeightPerRepIncrease = ((newAverageWeightPerRep - previousAverageWeightPerRep) / previousAverageWeightPerRep) * 100
 
             Log.d(
                 "WorkoutViewModel",
-                "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume .round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)"
+                "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume .round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
+                        + "Fatigue: ${exerciseProgression.previousFatigue.round(2)} -> ${exerciseProgression.newFatigue.round(2)} (${if(fatigueIncrease>0) "+" else ""}${fatigueIncrease.round(2)}%) "
+                        + "Intensity: ${previousAverageWeightPerRep.round(2)} kg -> ${newAverageWeightPerRep.round(2)} kg (${if(averageWeightPerRepIncrease>0) "+" else ""}${averageWeightPerRepIncrease.round(2)}%)"
             )
 
-            Log.d(
-                "WorkoutViewModel",
-                "Fatigue: ${exerciseProgression.previousFatigue.round(2)} -> ${exerciseProgression.newFatigue.round(2)} (${if(fatigueIncrease>0) "+" else ""}${fatigueIncrease.round(2)}%)"
-            )
+
         } else {
             Log.d("WorkoutViewModel", "Failed to find progression for ${exercise.name}")
         }

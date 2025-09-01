@@ -150,6 +150,16 @@ fun ExerciseScreen(
 
     val context = LocalContext.current
 
+    LaunchedEffect(pagerState.currentPage) {
+        val isOnPlatesPage = pagerState.currentPage == platesPageIndex
+
+        if (isOnPlatesPage) {
+            viewModel.setDimming(false)
+        } else {
+            viewModel.reEvaluateDimmingForCurrentState()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()

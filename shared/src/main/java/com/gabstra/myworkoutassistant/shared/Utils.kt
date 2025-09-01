@@ -462,6 +462,25 @@ fun List<Double>.standardDeviation(): Double {
     return sqrt(variance)
 }
 
+fun List<Double>.coefficientOfVariation(): Double {
+    if (this.isEmpty()) {
+        throw IllegalArgumentException("Cannot calculate coefficient of variation of an empty list.")
+    }
+
+    val mean = this.average()
+    val stdDev = this.standardDeviation()
+
+    // Handle the edge case where the mean is 0.
+    if (mean == 0.0) {
+        // If the standard deviation is also 0, there's no variation.
+        // Otherwise, the relative variation is infinitely large.
+        return if (stdDev == 0.0) 0.0 else Double.POSITIVE_INFINITY
+    }
+
+    return stdDev / mean
+}
+
+
 fun formatWeight(weight:Double): String {
     if (weight % 1.0 == 0.0) {
         return weight.toInt().toString()

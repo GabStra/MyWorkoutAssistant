@@ -52,7 +52,7 @@ fun ButtonWithText(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(50.dp)
             .clip(RoundedCornerShape(50))
             .background(
                 when {
@@ -62,11 +62,10 @@ fun ButtonWithText(
                 }
             )
             .clickable(
-                enabled = enabled,
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
+                enabled = enabled
+            ){
+                onClick()
+            }
     ) {
         Row(
             modifier = Modifier
@@ -79,7 +78,7 @@ fun ButtonWithText(
                 modifier = Modifier.fillMaxSize(),
                 text = text,
                 textAlign = TextAlign.Center,
-                color = displayColor, // Use the state-aware displayColor
+                color = displayColor,
                 style = MaterialTheme.typography.title3
             )
         }

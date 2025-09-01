@@ -169,6 +169,16 @@ fun RestScreen(
         }
     }
 
+    LaunchedEffect(pagerState.currentPage) {
+        val isOnPlatesPage = pagerState.currentPage == platesPageIndex
+
+        if (isOnPlatesPage) {
+            viewModel.setDimming(false)
+        } else {
+            viewModel.reEvaluateDimmingForCurrentState()
+        }
+    }
+
     fun onMinusClick() {
         if (currentSeconds > 5) {
             val newTimerValue = currentSeconds - 5
