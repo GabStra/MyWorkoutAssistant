@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,10 +17,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,8 +51,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -75,22 +72,9 @@ fun SetTableRow(
     val itemStyle = remember(typography) { typography.body1.copy(fontWeight = FontWeight.Bold) }
     val context = LocalContext.current
 
-    var openDialogJob by remember { mutableStateOf<Job?>(null) }
-    val coroutineScope = rememberCoroutineScope()
 
-    var showWeightInfoDialog by remember { mutableStateOf(false) }
 
     val equipment = setState.equipment
-
-    fun startOpenDialogJob() {
-        if( openDialogJob?.isActive == true) return
-        openDialogJob?.cancel()
-        openDialogJob = coroutineScope.launch {
-            showWeightInfoDialog = true
-            kotlinx.coroutines.delay(5000L)
-            showWeightInfoDialog = false
-        }
-    }
 
     val indicatorComposable = @Composable {
         Box(modifier= Modifier.width(18.dp), contentAlignment = Alignment.Center){
@@ -154,11 +138,7 @@ fun SetTableRow(
                 val weightSetData = (setState.currentSetData as WeightSetData)
                 ScalableText(
                     modifier = Modifier
-                        .weight(2f)
-                        .clickable{
-                            startOpenDialogJob()
-                            hapticsViewModel.doGentleVibration()
-                        },
+                        .weight(2f),
                     text = equipment!!.formatWeight(weightSetData.actualWeight),
                     style = itemStyle,
                     textAlign = TextAlign.Center,
@@ -170,16 +150,6 @@ fun SetTableRow(
                     style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
-                )
-
-                WeightInfoDialog(
-                    show = showWeightInfoDialog,
-                    weight = weightSetData.getWeight(),
-                    equipment = setState.equipment,
-                    onClick = {
-                        openDialogJob?.cancel()
-                        showWeightInfoDialog = false
-                    }
                 )
             }
 
@@ -193,11 +163,7 @@ fun SetTableRow(
 
                 ScalableText(
                     modifier = Modifier
-                        .weight(2f)
-                        .clickable{
-                            startOpenDialogJob()
-                            hapticsViewModel.doGentleVibration()
-                        },
+                        .weight(2f),
                     text = weightText,
                     style = itemStyle,
                     textAlign = TextAlign.Center,
@@ -209,16 +175,6 @@ fun SetTableRow(
                     style = itemStyle,
                     textAlign = TextAlign.Center,
                     color = color
-                )
-
-                WeightInfoDialog(
-                    show = showWeightInfoDialog,
-                    weight = bodyWeightSetData.additionalWeight,
-                    equipment = setState.equipment,
-                    onClick = {
-                        openDialogJob?.cancel()
-                        showWeightInfoDialog = false
-                    }
                 )
             }
 
@@ -263,6 +219,8 @@ fun ExerciseSetsViewer(
     customColor: Color? = null,
     overrideSetIndex: Int? = null
 ){
+    var selectedExercise by remember { mutableStateOf<Exercise?>(null) }
+
     val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
 
@@ -279,23 +237,23 @@ fun ExerciseSetsViewer(
     val itemHeights = remember { mutableStateMapOf<Int, Int>() }
 
     val allItemsMeasured = remember(exerciseSetStates.size) { mutableStateOf(false) }
-    val measuredItems = remember(exerciseSetStates.size) { mutableStateOf(0) }
+    val measuredItems = remember(exerciseSetStates.size) { mutableIntStateOf(0) }
 
-    LaunchedEffect(exercise) {
-        scrollState.scrollTo(0)
-        itemHeights.clear()
-        measuredItems.value = 0
-        allItemsMeasured.value = false // Ensure this is reset so the other effect waits
-    }
-
-    // Effect to handle scrolling whenever heights are updated or setIndex changes
-    LaunchedEffect(allItemsMeasured.value, setIndex) {
+    LaunchedEffect(allItemsMeasured.value, setIndex,exercise) {
+        if(selectedExercise == null){
+            selectedExercise = exercise
+        }else if (selectedExercise != exercise){
+            scrollState.scrollTo(0)
+            itemHeights.clear()
+            measuredItems.intValue = 0
+            allItemsMeasured.value = false
+            return@LaunchedEffect
+        }
 
         if (!allItemsMeasured.value || setIndex == -1) {
             return@LaunchedEffect
         }
-        // Calculate position including spacing
-        //val spacingHeight = with(density) { 2.dp.toPx().toInt() }
+
         val position = (0 until setIndex).sumOf { index ->
             (itemHeights[index] ?: 0) // + spacingHeight
         }
@@ -304,11 +262,11 @@ fun ExerciseSetsViewer(
 
     @Composable
     fun MeasuredSetTableRow(
-        setStateForThisRow:  WorkoutState.Set, // Renamed from nextSetState for clarity
-        rowIndex: Int,                          // Renamed from index for clarity
+        setStateForThisRow:  WorkoutState.Set,
+        rowIndex: Int,
         rowBackgroundColor: Color
     ) {
-        SetTableRow( // Assuming SetTableRow is an existing composable you have
+        SetTableRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(rowBackgroundColor)
@@ -328,15 +286,12 @@ fun ExerciseSetsViewer(
             setState = setStateForThisRow,
             index = rowIndex, // This 'index' prop for SetTableRow might refer to its position in the overall exercise
             isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
-            color = if (customColor != null) {
-                customColor
-            } else {
-                when {
+            color = customColor
+                ?: when {
                     rowIndex < setIndex -> Orange // Orange, LightGray, MediumLightGray from outer scope
                     rowIndex == setIndex -> LightGray
                     else -> MediumLightGray
                 }
-            }
         )
     }
 

@@ -481,7 +481,7 @@ open class WorkoutViewModel : ViewModel() {
                     if (index > 0) {
                         val previousRestSet = restSets.getOrNull(index - 1)
 
-                        var newRestSet = RestSet(UUID.randomUUID(), 90, false)
+                        var newRestSet = RestSet(UUID.randomUUID(), 90)
 
                         if (previousRestSet != null) {
                             newRestSet = newRestSet.copy(id = previousRestSet.id,previousRestSet.timeInSeconds)
@@ -1724,17 +1724,20 @@ open class WorkoutViewModel : ViewModel() {
 
                 if(!isWarmupSet && exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds > 0){
                     val restSet = RestSet(UUID.randomUUID(), exercise.intraSetRestInSeconds)
-
                     val restState = WorkoutState.Rest(
                         set = restSet,
                         order = index.toUInt(),
                         currentSetData = initializeSetData(restSet),
+                        nextStateSets = listOf(setState),
                         exerciseId = exercise.id,
                         isIntraSetRest = true
                     )
-                    states.add(setState)
+
+                    val newSetState = setState.copy(intraSetTotal = 2, intraSetCounter = 1)
+
+                    states.add(newSetState)
                     states.add(restState)
-                    states.add(setState)
+                    states.add(newSetState)
                 }else{
                     states.add(setState)
                 }
@@ -1805,12 +1808,12 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    fun completeExercise() {
+    fun goToNextExercise() {
         val currentState = _workoutState.value as WorkoutState.Set
         val currentExerciseId = currentState.exerciseId
 
         while (workoutStateQueue.isNotEmpty()) {
-            val state = workoutStateQueue.pollFirst()
+            val state = _workoutState.value
 
             if (state is WorkoutState.Set) {
                 val stateExerciseId = state.exerciseId
@@ -1824,6 +1827,8 @@ open class WorkoutViewModel : ViewModel() {
                 _workoutState.value = state
                 break
             }
+
+            goToNextState()
         }
     }
 

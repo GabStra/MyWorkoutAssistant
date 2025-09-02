@@ -456,7 +456,8 @@ private fun HeartRateView(
             modifier = Modifier
                 .width(90.dp)
                 .height(20.dp)
-                .clickable(onClick = onSwitchClick, enabled = hr != 0),
+                .clickable(onClick = onSwitchClick, enabled = hr != 0)
+                .padding(bottom = 5.dp),
             bpm = hr,
             textToDisplay = textToDisplay,
             currentZone = currentZone,

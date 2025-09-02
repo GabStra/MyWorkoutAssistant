@@ -39,10 +39,8 @@ fun SetHistoriesRenderer(
     ) {
         var index = 0
 
-        Log.d("SetHistoriesRenderer", "setHistories: $setHistories")
         val exerciseId = setHistories[0].exerciseId!!
         var exercise = appViewModel.getExerciseById(workout,exerciseId)
-        Log.d("SetHistoriesRenderer", "Exercise: $exercise")
         val equipment = if(exercise!!.equipmentId != null) appViewModel.getEquipmentById(exercise.equipmentId!!) else null
 
         if(equipment != null){

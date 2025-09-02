@@ -65,8 +65,7 @@ fun WorkoutStateHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-
-            .padding(top = 10.dp)
+            .padding(top = 5.dp)
             .height(20.dp)
             .clickable(
                 interactionSource = interactionSource,

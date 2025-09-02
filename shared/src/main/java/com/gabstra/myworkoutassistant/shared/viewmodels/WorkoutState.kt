@@ -33,7 +33,9 @@ sealed class WorkoutState {
         val isDeloading: Boolean,
         val isWarmupSet: Boolean,
         val equipment: WeightLoadedEquipment?,
-        val oneRepMax: Double
+        val oneRepMax: Double,
+        val intraSetTotal: Int? = null,
+        var intraSetCounter: Int = 0
     ) : WorkoutState()
 
     data class Rest(
@@ -43,7 +45,7 @@ sealed class WorkoutState {
         val exerciseId: UUID? = null,
         var nextStateSets: List<WorkoutState.Set> = emptyList(),
         var startTime : LocalDateTime? = null,
-        var isIntraSetRest: Boolean = false,
+        val isIntraSetRest : Boolean = false
     ) : WorkoutState()
 
     data class Completed(val startWorkoutTime: LocalDateTime) : WorkoutState()

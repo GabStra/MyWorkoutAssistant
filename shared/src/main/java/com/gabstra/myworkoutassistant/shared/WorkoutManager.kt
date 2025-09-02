@@ -3,9 +3,9 @@ package com.gabstra.myworkoutassistant.shared
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -21,7 +21,7 @@ class WorkoutManager {
             }
         }
 
-       /* fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
+        fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
             val newVersion = updatedWorkout.copy(
                 id = UUID.randomUUID(), // Genera un nuovo ID per la nuova versione
                 creationDate = LocalDate.now(), // Imposta la data corrente
@@ -33,13 +33,13 @@ class WorkoutManager {
             return workouts.map { workout ->
                 if (workout == oldWorkout) updatedOldWorkout else workout
             } + newVersion
-        }*/
+        }
 
-        fun updateWorkoutComponent(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
+/*        fun updateWorkoutComponent(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
             val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
             val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
-            return updateWorkoutOld(workouts, parentWorkout, updatedWorkout)
-        }
+            return updateWorkout(workouts, parentWorkout, updatedWorkout)
+        }*/
 
         fun updateWorkoutComponentOld(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
             val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)

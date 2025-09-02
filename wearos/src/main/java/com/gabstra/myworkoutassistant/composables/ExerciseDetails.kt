@@ -3,16 +3,25 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
 @Composable
@@ -25,10 +34,28 @@ fun ExerciseDetail(
     onTimerDisabled: () -> Unit,
     onTimerEnabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
-    exerciseTitleComposable: @Composable () -> Unit,
+    exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit,
+
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+
+    var openDialogJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    var showWeightInfoDialog by remember { mutableStateOf(false) }
+
+    fun startOpenDialogJob() {
+        if( openDialogJob?.isActive == true) return
+        openDialogJob?.cancel()
+        viewModel.setDimming(false)
+        openDialogJob = coroutineScope.launch {
+            showWeightInfoDialog = true
+            kotlinx.coroutines.delay(10000L)
+            showWeightInfoDialog = false
+            viewModel.reEvaluateDimmingForCurrentState()
+        }
+    }
 
     when (updatedState.set) {
         is WeightSet -> {
@@ -47,9 +74,26 @@ fun ExerciseDetail(
                 onEditModeDisabled = onEditModeDisabled,
                 onEditModeEnabled = onEditModeEnabled,
                 extraInfo = extraInfo,
-                exerciseTitleComposable = exerciseTitleComposable,
+                exerciseTitleComposable = { exerciseTitleComposable {
+                    startOpenDialogJob()
+                    hapticsViewModel.doGentleVibration()
+                } },
                 customComponentWrapper = customComponentWrapper
             )
+
+            val weightSetData = (updatedState.currentSetData as WeightSetData)
+            WeightInfoDialog(
+                show = showWeightInfoDialog,
+                weight = weightSetData.getWeight(),
+                equipment = updatedState.equipment,
+                oneRepMax = updatedState.oneRepMax,
+                onClick = {
+                    openDialogJob?.cancel()
+                    viewModel.reEvaluateDimmingForCurrentState()
+                    showWeightInfoDialog = false
+                }
+            )
+
         }
 
         is BodyWeightSet -> {
@@ -68,8 +112,20 @@ fun ExerciseDetail(
                 onEditModeDisabled = onEditModeDisabled,
                 onEditModeEnabled = onEditModeEnabled,
                 extraInfo = extraInfo,
-                exerciseTitleComposable = exerciseTitleComposable,
+                exerciseTitleComposable = { exerciseTitleComposable {} },
                 customComponentWrapper = customComponentWrapper
+            )
+
+            val bodyWeightSetData = (updatedState.currentSetData as BodyWeightSetData)
+            WeightInfoDialog(
+                show = showWeightInfoDialog,
+                weight = bodyWeightSetData.additionalWeight,
+                equipment = updatedState.equipment,
+                oneRepMax = updatedState.oneRepMax,
+                onClick = {
+                    openDialogJob?.cancel()
+                    showWeightInfoDialog = false
+                }
             )
         }
 
@@ -89,7 +145,7 @@ fun ExerciseDetail(
                 onTimerDisabled = onTimerDisabled,
                 onTimerEnabled = onTimerEnabled,
                 extraInfo = extraInfo,
-                exerciseTitleComposable = exerciseTitleComposable,
+                exerciseTitleComposable = { exerciseTitleComposable {} },
                 customComponentWrapper = customComponentWrapper
             )
         }
@@ -109,7 +165,7 @@ fun ExerciseDetail(
             onTimerDisabled = onTimerDisabled,
             onTimerEnabled = onTimerEnabled,
             extraInfo = extraInfo,
-            exerciseTitleComposable = exerciseTitleComposable,
+            exerciseTitleComposable = { exerciseTitleComposable {} },
             customComponentWrapper = customComponentWrapper
         )
 

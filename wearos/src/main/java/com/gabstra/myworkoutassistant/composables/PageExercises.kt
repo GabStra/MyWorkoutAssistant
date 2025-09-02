@@ -119,7 +119,6 @@ fun PageExercises(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 15.dp)
                         .clickable {
                             marqueeEnabled = !marqueeEnabled
                             hapticsViewModel.doGentleVibration()
@@ -175,8 +174,18 @@ fun PageExercises(
                                 Text(
                                     text = "WARM-UP",
                                     style = captionStyle,
+                                    color = Orange
                                 )
                             }
+
+                            if(currentStateSet.intraSetTotal != null){
+                                Text(
+                                    textAlign = TextAlign.Center,
+                                    text =  "${currentStateSet.intraSetCounter}/${currentStateSet.intraSetTotal}",
+                                    style = captionStyle
+                                )
+                            }
+
                         }
                     }
                 }

@@ -7,7 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +46,7 @@ import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
@@ -163,7 +164,7 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 35.dp),
+            .padding(top = 30.dp, start = 45.dp, end = 45.dp, bottom = 30.dp),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(
@@ -174,20 +175,24 @@ fun ExerciseScreen(
         ) { updatedState ->
             val setIndex = remember(updatedState.set.id) { exerciseSetIds.indexOf(updatedState.set.id)  }
 
-            val exerciseTitleComposable = @Composable {
-                Column(modifier = Modifier
-                    .fillMaxWidth(),
+            val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit = { providedOnLongClick ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 15.dp)
-                            .clickable {
-                                hapticsViewModel.doGentleVibration()
-                                marqueeEnabled = !marqueeEnabled
-                            }
+                            .combinedClickable(
+                                onClick = {
+                                    hapticsViewModel.doGentleVibration()
+                                    marqueeEnabled = !marqueeEnabled
+                                },
+                                onLongClick = {
+                                    providedOnLongClick.invoke()
+                                }
+                            )
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = exercise.name,
                         textAlign = TextAlign.Center,
@@ -235,6 +240,15 @@ fun ExerciseScreen(
                                 Text(
                                     text = "WARM-UP",
                                     style = captionStyle,
+                                    color = Orange
+                                )
+                            }
+
+                            if(updatedState.intraSetTotal != null){
+                                Text(
+                                    textAlign = TextAlign.Center,
+                                    text =  "${updatedState.intraSetCounter}/${updatedState.intraSetTotal}",
+                                    style = captionStyle
                                 )
                             }
                         }
@@ -272,6 +286,43 @@ fun ExerciseScreen(
                     }
                 }
             )
+
+            CustomDialogYesOnLongPress(
+                show = showNextDialog,
+                title =  if(updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Continue Set" else "Complete Set",
+                message = "Do you want to proceed?",
+                handleYesClick = {
+
+                    if(updatedState.intraSetTotal != null){
+                        updatedState.intraSetCounter++
+                    }
+
+                    hapticsViewModel.doGentleVibration()
+                    viewModel.storeSetData()
+                    viewModel.pushAndStoreWorkoutData(false, context) {
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                    }
+
+                    viewModel.closeCustomDialog()
+                },
+                handleNoClick = {
+                    viewModel.closeCustomDialog()
+                    hapticsViewModel.doGentleVibration()
+                },
+                closeTimerInMillis = 5000,
+                handleOnAutomaticClose = {
+                    viewModel.closeCustomDialog()
+                },
+                holdTimeInMillis = 1000,
+                onVisibilityChange = { isVisible ->
+                    if (isVisible) {
+                        viewModel.setDimming(false)
+                    } else {
+                        viewModel.reEvaluateDimmingForCurrentState()
+                    }
+                }
+            )
         }
     }
 
@@ -288,38 +339,6 @@ fun ExerciseScreen(
 
         hearthRateChart()
     }
-
-    CustomDialogYesOnLongPress(
-        show = showNextDialog,
-        title = "Complete Set",
-        message = "Do you want to proceed?",
-        handleYesClick = {
-            hapticsViewModel.doGentleVibration()
-            viewModel.storeSetData()
-            viewModel.pushAndStoreWorkoutData(false, context) {
-                viewModel.goToNextState()
-                viewModel.lightScreenUp()
-            }
-
-            viewModel.closeCustomDialog()
-        },
-        handleNoClick = {
-            viewModel.closeCustomDialog()
-            hapticsViewModel.doGentleVibration()
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            viewModel.closeCustomDialog()
-        },
-        holdTimeInMillis = 1000,
-        onVisibilityChange = { isVisible ->
-            if (isVisible) {
-                viewModel.setDimming(false)
-            } else {
-                viewModel.reEvaluateDimmingForCurrentState()
-            }
-        }
-    )
 
     DisposableEffect(Unit) {
         onDispose {

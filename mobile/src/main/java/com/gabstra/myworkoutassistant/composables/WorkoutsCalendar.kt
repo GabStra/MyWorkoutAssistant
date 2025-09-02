@@ -35,7 +35,6 @@ import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
 import com.kizitonwose.calendar.compose.rememberCalendarState
@@ -236,7 +235,7 @@ fun WorkoutsCalendar(
     val currentMonth = remember { YearMonth.now() }
 
     val startMonth = remember { currentMonth.minusMonths(1200) }
-    val endMonth = remember { currentMonth }
+    val endMonth = remember { currentMonth.plusMonths(1) }
 
     val daysOfWeek = remember { daysOfWeek() }
 
@@ -244,7 +243,6 @@ fun WorkoutsCalendar(
         startMonth = startMonth,
         endMonth = endMonth,
         firstVisibleMonth = currentMonth,
-        firstDayOfWeek = daysOfWeek.first(),
         outDateStyle = OutDateStyle.EndOfGrid,
     )
 
@@ -273,7 +271,7 @@ fun WorkoutsCalendar(
                 }
             },
             monthHeader = {
-                MonthHeader(daysOfWeek = daysOfWeek())
+                MonthHeader(daysOfWeek = daysOfWeek)
             },
         )
     }

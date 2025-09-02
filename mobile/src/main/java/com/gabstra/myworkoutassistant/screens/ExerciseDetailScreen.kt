@@ -313,7 +313,7 @@ fun ExerciseDetailScreen(
                                         val adjustedComponents = ensureRestSeparatedBySets(newSets)
                                         val updatedExercise = exercise.copy(sets = adjustedComponents)
 
-                                        appViewModel.updateWorkoutComponent(
+                                        appViewModel.updateWorkoutComponentOld(
                                             workout,
                                             exercise,
                                             updatedExercise
@@ -365,7 +365,7 @@ fun ExerciseDetailScreen(
 
                                         sets = adjustedComponents
 
-                                        appViewModel.updateWorkoutComponent(
+                                        appViewModel.updateWorkoutComponentOld(
                                             workout,
                                             exercise,
                                             updatedExercise
@@ -388,7 +388,7 @@ fun ExerciseDetailScreen(
 
                                     sets = adjustedComponents
 
-                                    appViewModel.updateWorkoutComponent(
+                                    appViewModel.updateWorkoutComponentOld(
                                         workout,
                                         exercise,
                                         updatedExercise
@@ -424,7 +424,7 @@ fun ExerciseDetailScreen(
 
                                         sets = adjustedComponents
 
-                                        appViewModel.updateWorkoutComponent(
+                                        appViewModel.updateWorkoutComponentOld(
                                             workout,
                                             exercise,
                                             updatedExercise
@@ -602,7 +602,7 @@ fun ExerciseDetailScreen(
                                 if (!showRest) return@GenericSelectableList
                                 val adjustedComponents = ensureRestSeparatedBySets(newComponents)
                                 val updatedExercise = exercise.copy(sets = adjustedComponents)
-                                appViewModel.updateWorkoutComponent(workout, exercise, updatedExercise)
+                                appViewModel.updateWorkoutComponentOld(workout, exercise, updatedExercise)
                                 sets = adjustedComponents
                             },
                             isDragDisabled = true,

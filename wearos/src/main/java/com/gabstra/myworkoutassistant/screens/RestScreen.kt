@@ -318,7 +318,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 35.dp),
+                    .padding(top = 30.dp, start = 45.dp, end = 45.dp, bottom = 30.dp),
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(

@@ -131,6 +131,14 @@ fun PageButtons(
                     }
                 )
             }
+
+/*            ButtonWithText(
+                text = "Go to Next Exercise",
+                onClick = {
+                    hapticsViewModel.doGentleVibration()
+                    viewModel.goToNextExercise()
+                }
+            )*/
         }
     }
 

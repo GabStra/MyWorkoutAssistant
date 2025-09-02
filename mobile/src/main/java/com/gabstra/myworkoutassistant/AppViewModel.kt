@@ -165,8 +165,22 @@ class AppViewModel() : ViewModel() {
     var workouts: List<Workout>
         get() = workoutStore.workouts
         private set(value) {
-            _workoutsFlow.value = value
-            workoutStore = workoutStore.copy(workouts = value)
+            val adjustedWorkouts = value.map { workout ->
+                val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
+                    when (workoutComponent) {
+                        is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
+                        is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
+                            exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
+                        })
+                        is Rest -> workoutComponent
+                    }
+                }
+
+                workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
+            }
+
+            _workoutsFlow.value = adjustedWorkouts
+            workoutStore = workoutStore.copy(workouts = adjustedWorkouts)
             triggerMobile()
         }
 
@@ -182,7 +196,21 @@ class AppViewModel() : ViewModel() {
     val equipmentsFlow = _equipmentsFlow.asStateFlow()
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore,triggerSend:Boolean = true) {
-        workoutStore = newWorkoutStore
+        val adjustedWorkouts = newWorkoutStore.workouts.map { workout ->
+            val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
+                when (workoutComponent) {
+                    is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
+                    is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
+                        exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
+                    })
+                    is Rest -> workoutComponent
+                }
+            }
+
+            workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
+        }
+
+        workoutStore = newWorkoutStore.copy(workouts = adjustedWorkouts)
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue =  currentYear - workoutStore.birthDateYear
         _workoutsFlow.value = newWorkoutStore.workouts
@@ -202,13 +230,13 @@ class AppViewModel() : ViewModel() {
         workouts = WorkoutManager.updateWorkoutOld(workouts,oldWorkout,updatedWorkout)
     }
 
-    fun updateWorkout(oldWorkout: Workout, updatedWorkout: Workout) {
-        workouts = WorkoutManager.updateWorkoutOld(workouts,oldWorkout,updatedWorkout)
-    }
+/*    fun updateWorkout(oldWorkout: Workout, updatedWorkout: Workout) {
+        workouts = WorkoutManager.updateWorkout(workouts,oldWorkout,updatedWorkout)
+    }*/
 
-    fun updateWorkoutComponent(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
+/*    fun updateWorkoutComponent(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
         workouts = WorkoutManager.updateWorkoutComponent(workouts,parentWorkout,oldWorkoutComponent,updatedWorkoutComponent)
-    }
+    }*/
 
     fun updateWorkoutComponentOld(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
         workouts = WorkoutManager.updateWorkoutComponentOld(workouts,parentWorkout,oldWorkoutComponent,updatedWorkoutComponent)

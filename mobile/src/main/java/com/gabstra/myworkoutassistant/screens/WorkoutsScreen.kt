@@ -524,7 +524,7 @@ fun WorkoutsScreen(
                                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                                 onClick = {
                                     for (workout in selectedWorkouts) {
-                                        appViewModel.updateWorkout(
+                                        appViewModel.updateWorkoutOld(
                                             workout,
                                             workout.copy(enabled = true)
                                         )
@@ -539,7 +539,7 @@ fun WorkoutsScreen(
                                 modifier = Modifier.padding(5.dp),
                                 onClick = {
                                     for (workout in selectedWorkouts) {
-                                        appViewModel.updateWorkout(
+                                        appViewModel.updateWorkoutOld(
                                             workout,
                                             workout.copy(enabled = false)
                                         )

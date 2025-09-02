@@ -460,7 +460,6 @@ fun WorkoutHistoryScreen(
                 )
             }
             if (workoutDurationEntryModel != null) {
-                Log.d("WorkoutHistoryScreen", "Workout Durations: $workoutDurations")
                 StandardChart(
                     isZoomEnabled = true,
                     modifier = Modifier,

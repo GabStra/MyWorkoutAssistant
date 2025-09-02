@@ -62,11 +62,6 @@ fun WeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    var oneRepMaxMode by remember { mutableStateOf(false) }
-    val oneRepMaxPercentage = remember(currentSetData) {
-        (currentSetData.getWeight() / state.oneRepMax) * 100
-    }
-
     val equipment = state.equipment
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 
@@ -144,7 +139,6 @@ fun WeightSetScreen(
         if (forceStopEditMode) {
             isRepsInEditMode = false
             isWeightInEditMode = false
-            oneRepMaxMode = false
         }
     }
 
@@ -275,12 +269,9 @@ fun WeightSetScreen(
         Row(
             modifier = modifier
                 .combinedClickable(
-                    onClick = {
-                        oneRepMaxMode = !oneRepMaxMode
-                        hapticsViewModel.doGentleVibration()
-                    },
+                    onClick = {},
                     onLongClick = {
-                        if (forceStopEditMode || oneRepMaxMode) return@combinedClickable
+                        if (forceStopEditMode) return@combinedClickable
 
                         isWeightInEditMode = !isWeightInEditMode
                         updateInteractionTime()
@@ -311,10 +302,7 @@ fun WeightSetScreen(
                 else -> Green
             }
 
-            val weightText = when(oneRepMaxMode){
-                true -> "${"%.1f".format(oneRepMaxPercentage).replace(",", ".")}%"
-                else -> equipment!!.formatWeight(currentSetData.getWeight())
-            }
+            val weightText = equipment!!.formatWeight(currentSetData.getWeight())
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),

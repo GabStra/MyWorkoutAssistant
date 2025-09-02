@@ -346,11 +346,26 @@ fun MyWorkoutAssistantNavHost(
                     workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
                 }
 
+                val adjustedWorkouts = allowedWorkouts.map { workout ->
+                    val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
+                        when (workoutComponent) {
+                            is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
+                            is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
+                                exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
+                            })
+                            is Rest -> workoutComponent
+                        }
+                    }
+
+                    workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
+                }
+
                 val workoutRecords = workoutRecordDao.getAll()
 
                 val validWorkoutHistories = workoutHistories
                     .filter { workoutHistory -> allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id }) }
-                    .groupBy { it.workoutId } //IF FOR WHATEVER REASON WATCH NEEDS TO HAVE ALL HISTORIES, REMOVE THE FOLLOWING LINES
+                    .groupBy { it.workoutId }
+                    //IF FOR WHATEVER REASON WATCH NEEDS TO HAVE ALL HISTORIES, REMOVE THE FOLLOWING LINES
                     .mapNotNull { (_, histories) -> histories.maxByOrNull { it.startTime } }
 
                 val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
@@ -360,7 +375,7 @@ fun MyWorkoutAssistantNavHost(
                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
                 val workoutSchedules = workoutScheduleDao.getAllSchedules()
 
-                val appBackup = AppBackup(appViewModel.workoutStore, validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords)
+                val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords)
                 sendAppBackup(dataClient, appBackup)
             }
             Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
@@ -895,7 +910,7 @@ fun MyWorkoutAssistantNavHost(
 
                         val updatedExercise = parentExercise.copy(sets = modifiedSets)
 
-                        appViewModel.updateWorkoutComponent(
+                        appViewModel.updateWorkoutComponentOld(
                             selectedWorkout,
                             parentExercise,
                             updatedExercise
@@ -976,7 +991,7 @@ fun MyWorkoutAssistantNavHost(
                             ensureRestSeparatedByExercises(modifiedWorkoutComponents)
 
                         val updatedWorkout = selectedWorkout.copy(workoutComponents = adjustedComponents)
-                        appViewModel.updateWorkout(selectedWorkout, updatedWorkout)
+                        appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
                         appViewModel.goBack()
                     },
                     onCancel = { appViewModel.goBack() },

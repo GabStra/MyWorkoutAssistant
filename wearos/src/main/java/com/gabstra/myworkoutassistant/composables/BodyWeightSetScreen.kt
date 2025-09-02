@@ -67,12 +67,6 @@ fun BodyWeightSetScreen(
     var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
     var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
 
-    var oneRepMaxMode by remember { mutableStateOf(false) }
-
-    val oneRepMaxPercentage = remember(currentSetData) {
-        (currentSetData.getWeight() / state.oneRepMax) * 100
-    }
-
     LaunchedEffect(equipment) {
         availableWeights = if (equipment == null) {
             emptySet()
@@ -118,7 +112,6 @@ fun BodyWeightSetScreen(
         if(forceStopEditMode){
             isRepsInEditMode = false
             isWeightInEditMode = false
-            oneRepMaxMode = false
         }
     }
 
@@ -262,12 +255,9 @@ fun BodyWeightSetScreen(
         Row(
             modifier = modifier
                 .combinedClickable(
-                    onClick = {
-                        oneRepMaxMode = !oneRepMaxMode
-                        hapticsViewModel.doGentleVibration()
-                    },
+                    onClick = {},
                     onLongClick = {
-                        if (forceStopEditMode || oneRepMaxMode) return@combinedClickable
+                        if (forceStopEditMode) return@combinedClickable
 
                         isWeightInEditMode = !isWeightInEditMode
                         updateInteractionTime()
@@ -298,10 +288,7 @@ fun BodyWeightSetScreen(
                 else -> Green
             }
 
-            val weightText = when(oneRepMaxMode){
-                true -> "${"%.1f".format(oneRepMaxPercentage).replace(",", ".")}%"
-                else -> if(currentSetData.additionalWeight != 0.0) equipment!!.formatWeight(currentSetData.additionalWeight) else "-"
-            }
+            val weightText = if(currentSetData.additionalWeight != 0.0) equipment!!.formatWeight(currentSetData.additionalWeight) else "-"
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
@@ -336,7 +323,7 @@ fun BodyWeightSetScreen(
                             text = "WEIGHT (KG)",
                             style = headerStyle,
                             textAlign = TextAlign.Center,
-                            color = LightGray,
+                            color =  LightGray,
                         )
                         WeightRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
                     }
