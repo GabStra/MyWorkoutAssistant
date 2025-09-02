@@ -694,7 +694,7 @@ open class WorkoutViewModel : ViewModel() {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                     set.getWeight(relativeBodyWeight)
 
-                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg x ${set.reps}"
+                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg (TOT: ${set.getWeight(relativeBodyWeight)}) x ${set.reps}"
                 }
                 is WeightSet -> {
                     "${set.weight} kg x ${set.reps}"
@@ -727,7 +727,7 @@ open class WorkoutViewModel : ViewModel() {
                 if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight =
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    "${set.weight - relativeBodyWeight} kg x ${set.reps}"
+                    "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps}"
                 } else {
                     "${set.weight} kg x ${set.reps}"
                 }
@@ -749,7 +749,7 @@ open class WorkoutViewModel : ViewModel() {
                 "WorkoutViewModel",
                 "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume .round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
                         + "Fatigue: ${exerciseProgression.previousFatigue.round(2)} -> ${exerciseProgression.newFatigue.round(2)} (${if(fatigueIncrease>0) "+" else ""}${fatigueIncrease.round(2)}%) "
-                        + "Intensity: ${previousAverageWeightPerRep.round(2)} kg -> ${newAverageWeightPerRep.round(2)} kg (${if(averageWeightPerRepIncrease>0) "+" else ""}${averageWeightPerRepIncrease.round(2)}%)"
+                        + "Weight/Rep: ${previousAverageWeightPerRep.round(2)} kg -> ${newAverageWeightPerRep.round(2)} kg (${if(averageWeightPerRepIncrease>0) "+" else ""}${averageWeightPerRepIncrease.round(2)}%)"
             )
 
 
