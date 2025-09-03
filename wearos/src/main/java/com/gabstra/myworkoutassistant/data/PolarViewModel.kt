@@ -5,10 +5,12 @@ import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.polar.androidcommunications.api.ble.model.DisInfo
 import com.polar.sdk.api.PolarBleApi
 import com.polar.sdk.api.PolarBleApiCallback
 import com.polar.sdk.api.PolarBleApiDefaultImpl
 import com.polar.sdk.api.model.PolarDeviceInfo
+import com.polar.sdk.api.model.PolarHealthThermometerData
 import com.polar.sdk.api.model.PolarHrData
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -83,9 +85,19 @@ class PolarViewModel : ViewModel() {
                 }
             }
 
+            override fun disInformationReceived(
+                identifier: String,
+                disInfo: DisInfo
+            ) {}
+
             override fun bleSdkFeatureReady(identifier: String, feature: PolarBleApi.PolarBleSdkFeature) {}
 
             override fun disInformationReceived(identifier: String, uuid: UUID, value: String) {}
+            override fun htsNotificationReceived(
+                identifier: String,
+                data: PolarHealthThermometerData
+            ) {
+            }
 
             override fun batteryLevelReceived(identifier: String, level: Int) {
                 Toast.makeText(applicationContext, "Connected to $deviceId - Battery level: $level", Toast.LENGTH_SHORT).show()

@@ -48,7 +48,6 @@ import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.ExerciseProgression
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.ExerciseSet
 import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.createSet
-import com.gabstra.myworkoutassistant.shared.utils.VolumeDistributionHelper.recalculateExerciseFatigue
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -550,7 +549,7 @@ open class WorkoutViewModel : ViewModel() {
                 }
 
 
-                var setsForProgression = exerciseSets.map { it ->
+                val setsForProgression = exerciseSets.map { it ->
                     when (it) {
                         is BodyWeightSet -> {
                             val relativeBodyWeight = bodyWeight * (exercise.bodyWeightPercentage!! / 100)
@@ -564,8 +563,6 @@ open class WorkoutViewModel : ViewModel() {
                         else -> throw IllegalStateException("Unknown set type encountered after filtering.")
                     }
                 }
-
-                setsForProgression = recalculateExerciseFatigue(setsForProgression)
 
                 exercise.id to setsForProgression
             }
@@ -590,25 +587,25 @@ open class WorkoutViewModel : ViewModel() {
 
         val progressionSetsByExerciseId = getProgressionSetsByExerciseId(validExercises, bodyWeight.value)
 
-        val fatigueBaseline = progressionSetsByExerciseId
+        val volumeBaseline = progressionSetsByExerciseId
             .values
             .flatten()
-            .sumOf { it.fatigue }
+            .sumOf { it.volume }
 
-        val fatigueBudget = fatigueBaseline * (1 + workoutStore.progressionPercentageAmount/100)
-        val fatigueSurplus = fatigueBudget - fatigueBaseline
+        val volumeBudget = volumeBaseline * (1 + workoutStore.progressionPercentageAmount/100)
+        val volumeSurplus = volumeBudget - volumeBaseline
         
-        Log.d("WorkoutViewModel", "Fatigue Baseline: ${fatigueBaseline.round(2)} - Fatigue Budget: ${fatigueBudget.round(2)} - Progression Percentage Amount: ${workoutStore.progressionPercentageAmount.round(2)}%")
+        Log.d("WorkoutViewModel", "Volume Baseline: ${volumeBaseline.round(2)} - Volume Budget: ${volumeBudget.round(2)} - Progression Percentage Amount: ${workoutStore.progressionPercentageAmount.round(2)}%")
         // Process exercises sequentially
         validExercises.forEach { exercise ->
 
             val setsForProgression = progressionSetsByExerciseId[exercise.id] ?: emptyList()
             if(setsForProgression.isEmpty()) return@forEach
 
-            val totalFatigue = setsForProgression.sumOf { it.fatigue }
-            val exerciseWeight = totalFatigue / fatigueBaseline
-            val fatigueDeltaProgression = fatigueSurplus * exerciseWeight
-            val targetFatigue = totalFatigue + fatigueDeltaProgression
+            val totalFatigue = setsForProgression.sumOf { it.volume }
+            val exerciseWeight = totalFatigue / volumeBaseline
+            val volumeDeltaProgression = volumeSurplus * exerciseWeight
+            val targetFatigue = totalFatigue + volumeDeltaProgression
 
             val result = processExercise(exercise,setsForProgression,targetFatigue)
             result?.let { (exerciseId, progression) ->
@@ -641,9 +638,6 @@ open class WorkoutViewModel : ViewModel() {
                 exercise.minReps,
                 exercise.maxReps
             )
-
-        val exerciseVolume = setsForProgression.sumOf { it.volume }
-        val currentFatigue = setsForProgression.sumOf { it.fatigue }
 
         val shouldDeload = false // exerciseInfo != null && exerciseInfo.sessionFailedCounter >= 2u //( || exerciseInfo.successfulSessionCounter >= 7u)
 
@@ -703,8 +697,7 @@ open class WorkoutViewModel : ViewModel() {
             }
         }
 
-        val oldFatigue = setsForProgression.sumOf { it.fatigue }
-        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")} - Fatigue: ${oldFatigue.round(2)}")
+        Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")}")
 
         var exerciseProgression: ExerciseProgression? = null
 
@@ -717,7 +710,7 @@ open class WorkoutViewModel : ViewModel() {
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
                 repsRange = repsRange,
-                targetFatigue = targetFatigue,
+                targetVolume = targetFatigue,
                 progressionIncrease = 1 + workoutStore.progressionPercentageAmount/100
             )
         }
@@ -733,12 +726,10 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            val newFatigue = exerciseProgression.sets.sumOf { it.fatigue }
-            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")} - Fatigue: ${newFatigue.round(2)}")
+            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")}")
             
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
 
-            val fatigueIncrease = ((exerciseProgression.newFatigue - exerciseProgression.previousFatigue) / exerciseProgression.previousFatigue) * 100
 
             val previousAverageWeightPerRep = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
             val newAverageWeightPerRep = exerciseProgression.newVolume / exerciseProgression.sets.sumOf { it.reps }
@@ -748,7 +739,6 @@ open class WorkoutViewModel : ViewModel() {
             Log.d(
                 "WorkoutViewModel",
                 "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume .round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
-                        + "Fatigue: ${exerciseProgression.previousFatigue.round(2)} -> ${exerciseProgression.newFatigue.round(2)} (${if(fatigueIncrease>0) "+" else ""}${fatigueIncrease.round(2)}%) "
                         + "Weight/Rep: ${previousAverageWeightPerRep.round(2)} kg -> ${newAverageWeightPerRep.round(2)} kg (${if(averageWeightPerRepIncrease>0) "+" else ""}${averageWeightPerRepIncrease.round(2)}%)"
             )
 
