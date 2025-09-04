@@ -57,6 +57,9 @@ class PolarViewModel : ViewModel() {
             )
         )
 
+        api.setAutomaticReconnection(true);
+        api.setMtu(70)
+
         val enableSdkLogs = false
         if(enableSdkLogs) {
             api.setApiLogger { s: String -> Log.d("MyApp", s) }
@@ -130,8 +133,8 @@ class PolarViewModel : ViewModel() {
         }
     }
 
-    private val _hrDataState = MutableStateFlow<Int?>(null)
-    val hrDataState = _hrDataState.asStateFlow()
+    private val _hrBpm = MutableStateFlow<Int?>(null)
+    val hrBpm = _hrBpm.asStateFlow()
 
     private fun startHrStreaming(deviceId: String) {
         viewModelScope.launch {
@@ -140,7 +143,7 @@ class PolarViewModel : ViewModel() {
                     .observeOn(AndroidSchedulers.mainThread())
                     .subscribe(
                         { hrData: PolarHrData ->
-                            _hrDataState.value = hrData.samples.map { it.hr }.average().toInt()
+                            _hrBpm.value =  hrData.samples.map { if(it.correctedHr > 0) it.correctedHr else it.hr }.average().toInt()
                         },
                         { error: Throwable ->
                             Log.e("MyApp", "HR stream failed. Reason $error")

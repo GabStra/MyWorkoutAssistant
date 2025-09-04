@@ -13,6 +13,8 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.OneRM.calculateOneRepMax
+import com.gabstra.myworkoutassistant.shared.OneRM.repsForTargetRIR
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -26,7 +28,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.calculateOneRepMax
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -34,7 +35,6 @@ import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
-import com.gabstra.myworkoutassistant.shared.repsForTargetRIR
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -529,11 +529,12 @@ open class WorkoutViewModel : ViewModel() {
                 }
 
                 // 2. Calculate the average 1RM from all performance sets
-                var oneRepMax = exerciseSets.map {
+                val oneRepMax = exerciseSets.maxOf {
                     when (it) {
                         is BodyWeightSet -> {
                             requireNotNull(exercise.bodyWeightPercentage) { "BodyWeightPercentage must be set for BodyWeightSet." }
-                            val relativeBodyWeight = bodyWeight * (exercise.bodyWeightPercentage!! / 100)
+                            val relativeBodyWeight =
+                                bodyWeight * (exercise.bodyWeightPercentage / 100)
                             val weight = it.getWeight(relativeBodyWeight)
                             calculateOneRepMax(weight, it.reps)
                         }
@@ -541,7 +542,7 @@ open class WorkoutViewModel : ViewModel() {
                         is WeightSet -> calculateOneRepMax(it.weight, it.reps)
                         else -> 0.0
                     }
-                }.average()
+                }
 
 
                 if (oneRepMax.isNaN() || oneRepMax <= 0) {
@@ -590,24 +591,24 @@ open class WorkoutViewModel : ViewModel() {
         val volumeBaseline = progressionSetsByExerciseId
             .values
             .flatten()
-            .sumOf { it.volume }
+            .sumOf { it.relativeVolume }
 
         val volumeBudget = volumeBaseline * (1 + workoutStore.progressionPercentageAmount/100)
         val volumeSurplus = volumeBudget - volumeBaseline
         
-        Log.d("WorkoutViewModel", "Volume Baseline: ${volumeBaseline.round(2)} - Volume Budget: ${volumeBudget.round(2)} - Progression Percentage Amount: ${workoutStore.progressionPercentageAmount.round(2)}%")
+        Log.d("WorkoutViewModel", "Relative Volume Baseline: ${volumeBaseline.round(2)} - Relative Volume Budget: ${volumeBudget.round(2)} - Progression: ${workoutStore.progressionPercentageAmount.round(2)}%")
         // Process exercises sequentially
         validExercises.forEach { exercise ->
 
             val setsForProgression = progressionSetsByExerciseId[exercise.id] ?: emptyList()
             if(setsForProgression.isEmpty()) return@forEach
 
-            val totalFatigue = setsForProgression.sumOf { it.volume }
-            val exerciseWeight = totalFatigue / volumeBaseline
+            val totalRelativeVolume = setsForProgression.sumOf { it.relativeVolume }
+            val exerciseWeight = totalRelativeVolume / volumeBaseline
             val volumeDeltaProgression = volumeSurplus * exerciseWeight
-            val targetFatigue = totalFatigue + volumeDeltaProgression
+            val targetRelativeVolume = totalRelativeVolume + volumeDeltaProgression
 
-            val result = processExercise(exercise,setsForProgression,targetFatigue)
+            val result = processExercise(exercise,setsForProgression,targetRelativeVolume)
             result?.let { (exerciseId, progression) ->
                 exerciseProgressionByExerciseId[exerciseId] = progression
             }
@@ -618,11 +619,11 @@ open class WorkoutViewModel : ViewModel() {
     private suspend fun processExercise(
         exercise: Exercise,
         setsForProgression: List<ExerciseSet>,
-        targetFatigue: Double
+        targetRelativeVolume: Double
     ): Pair<UUID, Pair<ExerciseProgression?, Boolean>>? {
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-        var oneRepMax = exerciseSets.map {
+        val oneRepMax = exerciseSets.maxOf {
             when (it) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
@@ -632,7 +633,7 @@ open class WorkoutViewModel : ViewModel() {
                 is WeightSet -> calculateOneRepMax(it.weight, it.reps)
                 else -> 0.0
             }
-        }.average()
+        }
 
         val repsRange = IntRange(
                 exercise.minReps,
@@ -678,22 +679,17 @@ open class WorkoutViewModel : ViewModel() {
                         "%.2f",
                         oneRepMax
                     ).replace(",", ".")
-                }"
+                } kg"
             )
         }
 
-        val oldSets = exerciseSets.map { set ->
-            when (set) {
-                is BodyWeightSet -> {
-                    val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    set.getWeight(relativeBodyWeight)
-
-                    "${set.getWeight(relativeBodyWeight) - relativeBodyWeight} kg (TOT: ${set.getWeight(relativeBodyWeight)}) x ${set.reps}"
-                }
-                is WeightSet -> {
-                    "${set.weight} kg x ${set.reps}"
-                }
-                else -> throw IllegalArgumentException("Unknown set type")
+        val oldSets = setsForProgression.mapIndexed { index, set ->
+            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+                val relativeBodyWeight =
+                    bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps} (RIR: ${set.rir})"
+            } else {
+                "${set.weight} kg x ${set.reps} (RIR: ${set.rir})"
             }
         }
 
@@ -710,7 +706,7 @@ open class WorkoutViewModel : ViewModel() {
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
                 repsRange = repsRange,
-                targetVolume = targetFatigue,
+                targetVolume = targetRelativeVolume,
                 progressionIncrease = 1 + workoutStore.progressionPercentageAmount/100
             )
         }
@@ -720,9 +716,9 @@ open class WorkoutViewModel : ViewModel() {
                 if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight =
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps}"
+                    "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps} (RIR: ${set.rir})"
                 } else {
-                    "${set.weight} kg x ${set.reps}"
+                    "${set.weight} kg x ${set.reps} (RIR: ${set.rir})"
                 }
             }
 
@@ -731,15 +727,15 @@ open class WorkoutViewModel : ViewModel() {
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
 
 
-            val previousAverageWeightPerRep = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
-            val newAverageWeightPerRep = exerciseProgression.newVolume / exerciseProgression.sets.sumOf { it.reps }
+            val previousAverageIntensity = setsForProgression.sumOf { it.relativeVolume } / setsForProgression.sumOf { it.reps }
+            val newAverageIntensity = exerciseProgression.newVolume / exerciseProgression.sets.sumOf { it.reps }
 
-            val averageWeightPerRepIncrease = ((newAverageWeightPerRep - previousAverageWeightPerRep) / previousAverageWeightPerRep) * 100
+            val averageIntensityIncrease = ((newAverageIntensity - previousAverageIntensity) / previousAverageIntensity) * 100
 
             Log.d(
                 "WorkoutViewModel",
-                "Volume: ${exerciseProgression.previousVolume.round(2)} kg -> ${exerciseProgression.newVolume .round(2)} kg (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
-                        + "Weight/Rep: ${previousAverageWeightPerRep.round(2)} kg -> ${newAverageWeightPerRep.round(2)} kg (${if(averageWeightPerRepIncrease>0) "+" else ""}${averageWeightPerRepIncrease.round(2)}%)"
+                "Relative Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
+                        + "Avg 1RM %: ${(previousAverageIntensity*100).round(2)}% -> ${(newAverageIntensity*100).round(2)}% (${if(averageIntensityIncrease>0) "+" else ""}${averageIntensityIncrease.round(2)}%)"
             )
 
 

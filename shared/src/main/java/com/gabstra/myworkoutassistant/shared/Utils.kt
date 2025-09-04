@@ -44,7 +44,6 @@ import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
 import kotlin.math.pow
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
@@ -391,51 +390,76 @@ fun Double.isEqualTo(other: Double, epsilon: Double = 1e-2): Boolean {
     return abs(this - other) < epsilon
 }
 
-fun calculateOneRepMax(weight: Double, reps: Int): Double =
-    weight * reps.toDouble().pow(0.10)
+object OneRM {
 
-fun calculateRIR(
-    weight: Double,
-    reps: Int,
-    oneRepMax: Double
-): Int {
-    require(reps > 0)        { "Reps must be positive" }
+    private const val BLEND_LO_START = 12.0   // where low-rep formulas start fading out
+    private const val BLEND_RANGE    = 18.0   // fully high-rep by 30 reps (12 + 18)
 
-    val avgRepsToFailure = maxRepsForWeight(weight, oneRepMax)
+    private fun meanOrNull(vararg xs: Double): Double? {
+        val v = xs.filter { it.isFinite() && !it.isNaN() }
+        return if (v.isEmpty()) null else v.sum() / v.size
+    }
 
-    // RIR = reps-to-failure minus actual reps, clamped at ≥0
-    return (avgRepsToFailure - reps).coerceAtLeast(0)
-}
+    /** Blended 1RM estimator that behaves well from low to high reps. */
+    fun est1RMBlended(weight: Double, reps: Double): Double {
+        require(weight > 0 && reps > 0)
 
-fun maxRepsForWeight(weight: Double, oneRepMax: Double): Int {
-    require(weight > 0)      { "Weight must be positive" }
-    require(oneRepMax > 0)   { "1RM must be positive" }
+        val r = reps
+        // Low-rep trio (guard domains)
+        val epley   = weight * (1.0 + r / 30.0)
+        val brzycki = if (r < 37.0) weight * 36.0 / (37.0 - r) else Double.NaN
+        val landerD = 101.3 - 2.67123 * r
+        val lander  = if (landerD > 0.0) 100.0 * weight / landerD else Double.NaN
+        val lowMean = meanOrNull(epley, brzycki, lander)
 
-    // 1) Epley: 1RM = w * (1 + r/30) → r_fail = (1RM/w - 1)*30
-    val rEpley = ((oneRepMax / weight - 1.0) * 30.0)
+        // High-rep trio
+        val mayhew  = weight / (0.522 + 0.419 * kotlin.math.exp(-0.055 * r))
+        val wathen  = weight / (0.488 + 0.538 * kotlin.math.exp(-0.075 * r))
+        val lombardi= weight * r.pow(0.10)
+        val highMean= meanOrNull(mayhew, wathen, lombardi)
 
-    // 2) Brzycki: 1RM = w * 36/(37 - r) → r_fail = 37 - 36*w/1RM
-    val rBrzycki = (37.0 - 36.0 * weight / oneRepMax)
+        // If one side is invalid, fall back to the other
+        if (highMean == null) return lowMean ?: Double.NaN
+        if (lowMean  == null) return highMean
 
-    // 3) Landers: 1RM = w / (1.013 - 0.0267123*r)
-    //    → r_fail = (1.013 - w/1RM) / 0.0267123
-    val rLanders = ((1.013 - weight / oneRepMax) / 0.0267123)
+        // Smooth blend: 0 at 12 reps, 1 at 30+ reps
+        val a = ((r - BLEND_LO_START) / BLEND_RANGE).coerceIn(0.0, 1.0)
+        return (1 - a) * lowMean + a * highMean
+    }
 
-    // average them and round
-    val avgRepsToFailure = listOf(rEpley, rBrzycki, rLanders)
-        .average()
-        .roundToInt()
+    /** Numerically invert est1RMBlended to get max reps for given load and 1RM. */
+    fun maxRepsForWeight(weight: Double, oneRepMax: Double, tol: Double = 1e-3): Double {
+        require(weight > 0 && oneRepMax > 0)
+        if (oneRepMax <= weight) return 1.0  // heavier than 1RM => at most 1 rep
 
-    return avgRepsToFailure
-}
+        var lo = 1.0
+        var hi = 30.0
+        // Adapt hi upward until estimate >= target or cap
+        while (est1RMBlended(weight, hi) < oneRepMax && hi < 80.0) {
+            lo = hi
+            hi *= 1.5
+        }
 
-fun repsForTargetRIR(
-    weight: Double,
-    oneRepMax: Double,
-    targetRIR: Double = 2.0
-): Double {
-    val repsToFailure = (oneRepMax / weight).pow(1.0 / 0.10)
-    return repsToFailure - targetRIR
+        repeat(60) { // bisection with tighter tol
+            val mid = 0.5 * (lo + hi)
+            val est = est1RMBlended(weight, mid)
+            if (kotlin.math.abs(hi - lo) < tol) return mid
+            if (est < oneRepMax) lo = mid else hi = mid
+        }
+        return 0.5 * (lo + hi)
+    }
+
+    fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double): Double =
+        maxRepsForWeight(weight, oneRepMax) - reps
+
+    fun calculateOneRepMax(weight: Double, reps: Int): Double =
+        est1RMBlended(weight, reps.toDouble())
+
+    fun repsForTargetRIR(weight: Double, oneRepMax: Double, targetRIR: Double): Double {
+        require(weight > 0 && oneRepMax > 0)
+        val maxReps = maxRepsForWeight(weight, oneRepMax)
+        return (maxReps - targetRIR).coerceAtLeast(1.0)
+    }
 }
 
 fun List<Double>.median(): Double {

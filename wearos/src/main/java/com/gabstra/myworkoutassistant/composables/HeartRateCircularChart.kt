@@ -553,13 +553,13 @@ fun HeartRatePolar(
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
 ) {
-    val hrData by polarViewModel.hrDataState.collectAsState()
+    val hrData by polarViewModel.hrBpm.collectAsState()
     val hr = hrData ?: 0
 
     LaunchedEffect(Unit) {
         while (true) {
-            appViewModel.registerHeartBeat(polarViewModel.hrDataState.value ?: 0)
-            heartRateChangeViewModel.registerHeartRate(polarViewModel.hrDataState.value ?: 0)
+            appViewModel.registerHeartBeat(polarViewModel.hrBpm.value ?: 0)
+            heartRateChangeViewModel.registerHeartRate(polarViewModel.hrBpm.value ?: 0)
             delay(1000)
         }
     }
