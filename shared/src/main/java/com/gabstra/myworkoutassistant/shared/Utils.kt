@@ -391,62 +391,30 @@ fun Double.isEqualTo(other: Double, epsilon: Double = 1e-2): Boolean {
 }
 
 object OneRM {
+    // Percent-1RM model parameters (tune if desired)
+    private const val K = 30.0      // scale (≈ Epley)
+    private const val B = 1.0       // curvature
+    private const val REP_CAP = 80.0
 
-    private const val BLEND_LO_START = 12.0   // where low-rep formulas start fading out
-    private const val BLEND_RANGE    = 18.0   // fully high-rep by 30 reps (12 + 18)
-
-    private fun meanOrNull(vararg xs: Double): Double? {
-        val v = xs.filter { it.isFinite() && !it.isNaN() }
-        return if (v.isEmpty()) null else v.sum() / v.size
+    // %1RM in [0,1]; %1RM(1)=1 and %1RM→0 as reps→∞
+    private fun percent1RM(reps: Double): Double {
+        require(reps >= 1.0)
+        return 1.0 / (1.0 + ((reps - 1.0) / K)).pow(B)
     }
 
-    /** Blended 1RM estimator that behaves well from low to high reps. */
+    /** Drop-in for est1RMBlended: 1RM estimate for given load+reps. */
     fun est1RMBlended(weight: Double, reps: Double): Double {
         require(weight > 0 && reps > 0)
-
-        val r = reps
-        // Low-rep trio (guard domains)
-        val epley   = weight * (1.0 + r / 30.0)
-        val brzycki = if (r < 37.0) weight * 36.0 / (37.0 - r) else Double.NaN
-        val landerD = 101.3 - 2.67123 * r
-        val lander  = if (landerD > 0.0) 100.0 * weight / landerD else Double.NaN
-        val lowMean = meanOrNull(epley, brzycki, lander)
-
-        // High-rep trio
-        val mayhew  = weight / (0.522 + 0.419 * kotlin.math.exp(-0.055 * r))
-        val wathen  = weight / (0.488 + 0.538 * kotlin.math.exp(-0.075 * r))
-        val lombardi= weight * r.pow(0.10)
-        val highMean= meanOrNull(mayhew, wathen, lombardi)
-
-        // If one side is invalid, fall back to the other
-        if (highMean == null) return lowMean ?: Double.NaN
-        if (lowMean  == null) return highMean
-
-        // Smooth blend: 0 at 12 reps, 1 at 30+ reps
-        val a = ((r - BLEND_LO_START) / BLEND_RANGE).coerceIn(0.0, 1.0)
-        return (1 - a) * lowMean + a * highMean
+        return weight / percent1RM(reps)
     }
 
-    /** Numerically invert est1RMBlended to get max reps for given load and 1RM. */
-    fun maxRepsForWeight(weight: Double, oneRepMax: Double, tol: Double = 1e-3): Double {
+    /** Closed-form inverse: max reps at given load and 1RM. */
+    fun maxRepsForWeight(weight: Double, oneRepMax: Double, tol: Double = 1e-3): Double { // tol kept for signature compatibility
         require(weight > 0 && oneRepMax > 0)
-        if (oneRepMax <= weight) return 1.0  // heavier than 1RM => at most 1 rep
-
-        var lo = 1.0
-        var hi = 30.0
-        // Adapt hi upward until estimate >= target or cap
-        while (est1RMBlended(weight, hi) < oneRepMax && hi < 80.0) {
-            lo = hi
-            hi *= 1.5
-        }
-
-        repeat(60) { // bisection with tighter tol
-            val mid = 0.5 * (lo + hi)
-            val est = est1RMBlended(weight, mid)
-            if (kotlin.math.abs(hi - lo) < tol) return mid
-            if (est < oneRepMax) lo = mid else hi = mid
-        }
-        return 0.5 * (lo + hi)
+        if (oneRepMax <= weight) return 1.0
+        val i = (weight / oneRepMax).coerceIn(1e-6, 0.999999)
+        val reps = 1.0 + K * (i.pow(-1.0 / B) - 1.0)
+        return reps.coerceAtMost(REP_CAP)
     }
 
     fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double): Double =

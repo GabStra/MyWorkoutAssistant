@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
+import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -603,12 +604,7 @@ open class WorkoutViewModel : ViewModel() {
             val setsForProgression = progressionSetsByExerciseId[exercise.id] ?: emptyList()
             if(setsForProgression.isEmpty()) return@forEach
 
-            val totalRelativeVolume = setsForProgression.sumOf { it.relativeVolume }
-            val exerciseWeight = totalRelativeVolume / volumeBaseline
-            val volumeDeltaProgression = volumeSurplus * exerciseWeight
-            val targetRelativeVolume = totalRelativeVolume + volumeDeltaProgression
-
-            val result = processExercise(exercise,setsForProgression,targetRelativeVolume)
+            val result = processExercise(exercise,setsForProgression)
             result?.let { (exerciseId, progression) ->
                 exerciseProgressionByExerciseId[exerciseId] = progression
             }
@@ -619,7 +615,6 @@ open class WorkoutViewModel : ViewModel() {
     private suspend fun processExercise(
         exercise: Exercise,
         setsForProgression: List<ExerciseSet>,
-        targetRelativeVolume: Double
     ): Pair<UUID, Pair<ExerciseProgression?, Boolean>>? {
         val exerciseSets = exercise.sets.filter { it !is RestSet }
 
@@ -706,7 +701,6 @@ open class WorkoutViewModel : ViewModel() {
                 oneRepMax = oneRepMax,
                 availableWeights = availableWeights,
                 repsRange = repsRange,
-                targetVolume = targetRelativeVolume,
                 progressionIncrease = 1 + workoutStore.progressionPercentageAmount/100
             )
         }
@@ -735,7 +729,7 @@ open class WorkoutViewModel : ViewModel() {
             Log.d(
                 "WorkoutViewModel",
                 "Relative Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
-                        + "Avg 1RM %: ${(previousAverageIntensity*100).round(2)}% -> ${(newAverageIntensity*100).round(2)}% (${if(averageIntensityIncrease>0) "+" else ""}${averageIntensityIncrease.round(2)}%)"
+                        + "Δ 1RM % | Rep: ${(previousAverageIntensity*100).round(2)}% -> ${(newAverageIntensity*100).round(2)}% (${if(averageIntensityIncrease>0) "+" else ""}${averageIntensityIncrease.round(2)}%)"
             )
 
 
@@ -1534,13 +1528,14 @@ open class WorkoutViewModel : ViewModel() {
 
             fun buildWarmupSets(
                 workWeight: Double,
+                workReps: Int,
                 oneRepMax: Double,
                 availableWeights: Collection<Double>,
                 numberOfWarmUpSets: Int,
                 maxPositiveDeviationFactor: Double = 1.15
             ): List<Pair<Double, Int>> {
                 val protocols = listOf(
-                    Triple(0.5, 5.0, 10),
+                    Triple(0.5, 5.0, 10), // weightPercentage, targetRIR, maxRepsCap
                     Triple(0.6, 4.0, 8),
                     Triple(0.75, 3.0, 6),
                     Triple(0.9, 2.0, 3)
@@ -1551,74 +1546,69 @@ open class WorkoutViewModel : ViewModel() {
                     availableWeightsToConsider: List<Double>,
                     maxPositiveDeviationFactor: Double
                 ): Double? {
-                    if (availableWeightsToConsider.isEmpty()) {
-                        return null
-                    }
+                    if (availableWeightsToConsider.isEmpty()) return null
 
+                    // Prefer the heaviest weight that is at or below the target
                     val suitableBelowOrAtTarget = availableWeightsToConsider.filter { it <= targetWeight }.maxOrNull()
-                    if (suitableBelowOrAtTarget != null) {
-                        return suitableBelowOrAtTarget
-                    }
+                    if (suitableBelowOrAtTarget != null) return suitableBelowOrAtTarget
 
+                    // If none are below, check if the lightest available option is acceptably close
                     val lightestOverallAvailable = availableWeightsToConsider.first()
                     if (lightestOverallAvailable > targetWeight && lightestOverallAvailable <= targetWeight * maxPositiveDeviationFactor) {
                         return lightestOverallAvailable
                     }
-
                     return null
                 }
 
                 val sortedUniqueAvailableWeights = availableWeights.toSortedSet().toList()
+                if (sortedUniqueAvailableWeights.isEmpty()) return emptyList()
+
                 val chosenWeights = mutableSetOf<Double>()
                 val warmUpSets = mutableListOf<Pair<Double, Int>>()
 
                 for ((weightPercentage, targetRIR, maxReps) in protocols) {
                     if (warmUpSets.size >= numberOfWarmUpSets) break
 
-                    val target = workWeight * weightPercentage
+                    val targetWeight = workWeight * weightPercentage
                     val potentialWeights = sortedUniqueAvailableWeights.filter { it !in chosenWeights }
 
-                    val selectedWeight = findBestWarmupWeight(
-                        targetWeight = target,
+                    var selectedWeight = findBestWarmupWeight(
+                        targetWeight = targetWeight,
                         availableWeightsToConsider = potentialWeights,
                         maxPositiveDeviationFactor = maxPositiveDeviationFactor
                     )
 
-                    if (selectedWeight != null) {
-                        var reps = repsForTargetRIR(selectedWeight, oneRepMax, targetRIR)
-                        reps = minOf(reps, maxReps.toDouble())
-
-                        warmUpSets.add(selectedWeight to floor(reps).toInt().coerceAtLeast(2))
-                        chosenWeights.add(selectedWeight)
+                    // --- NEW LOGIC TO HANDLE MISSING WEIGHTS ---
+                    if (selectedWeight == null) {
+                        selectedWeight = if (warmUpSets.isEmpty()) {
+                            sortedUniqueAvailableWeights.first()
+                        } else {
+                            warmUpSets.last().first
+                        }
                     }
+
+                    var reps = repsForTargetRIR(selectedWeight, oneRepMax, targetRIR)
+                    reps = minOf(reps, maxReps.toDouble())
+
+                    val lastSetWithSameWeight = warmUpSets.lastOrNull { it.first.isEqualTo(selectedWeight) }
+                    if (lastSetWithSameWeight != null && reps <= lastSetWithSameWeight.second) {
+                        reps = (lastSetWithSameWeight.second + 2).toDouble() // Increase by at least 2 reps
+                    }
+
+                    if (selectedWeight.isEqualTo(workWeight) && reps >= workReps) {
+                        continue
+                    }
+
+                    warmUpSets.add(selectedWeight to floor(reps).toInt().coerceAtLeast(2))
+                    chosenWeights.add(selectedWeight)
                 }
-
-/*                if(warmUpSets.size < numberOfWarmUpSets && warmUpSets.isNotEmpty()){
-                    fun lerp(start: Double, end: Double, fraction: Double): Double {
-                        return start + fraction * (end - start)
-                    }
-
-                    val remainingSets = numberOfWarmUpSets - warmUpSets.size
-                    val lastWarmUpSet = warmUpSets.last()
-                    val lastWarmupWeight = lastWarmUpSet.first
-                    val lastRIR = calculateRIR(lastWarmUpSet.first, lastWarmUpSet.second, oneRepMax)
-
-                    for (i in 1..remainingSets) {
-                        val fraction = i.toDouble() / (remainingSets + 1)
-                        val weight = lerp(lastWarmupWeight, workWeight, fraction)
-
-                        val rir = (lastRIR - i).coerceAtLeast(2).toDouble()
-                        val reps = repsForTargetRIR(weight, oneRepMax, rir)
-
-                        warmUpSets.add(weight to floor(reps).toInt().coerceAtLeast(2))
-                    }
-                }*/
 
                 return warmUpSets
             }
 
             val actualWarmupSets = buildWarmupSets(
                 workWeight,
+                workReps,
                 oneRepMax,
                 availableWeights,
                 numberOfWarmUpSets
@@ -1629,7 +1619,7 @@ open class WorkoutViewModel : ViewModel() {
                 val setWeight = getSetWeight(weight)
                 val newSet = getNewSet(UUID.randomUUID(), setWeight, reps)
                 exerciseAllSets.add(newSet)
-                var newRestSet = RestSet(UUID.randomUUID(), 60, false)
+                val newRestSet = RestSet(UUID.randomUUID(), 60, false)
                 exerciseAllSets.add(newRestSet)
             }
 

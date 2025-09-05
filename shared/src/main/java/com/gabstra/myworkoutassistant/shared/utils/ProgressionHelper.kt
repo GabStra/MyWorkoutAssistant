@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.utils
 import com.gabstra.myworkoutassistant.shared.OneRM.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
+import com.gabstra.myworkoutassistant.shared.standardDeviation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -32,8 +33,6 @@ object VolumeDistributionHelper {
         val oneRepMax: Double,
         val availableWeights: Set<Double>,
         val repsRange: IntRange,
-        val targetVolume: Double,
-        val nextWeight: Double,
         val progressionIncrease: Double
     )
 
@@ -45,74 +44,36 @@ object VolumeDistributionHelper {
             return emptyList()
         }
 
-        val needsRebalance = params.previousSets.any { it.rir < 1 }
-
-        if(needsRebalance){
-            val nearAverageWeights = possibleSets.minOf { it.weight } * 0.75   ..  possibleSets.maxOf { it.weight }
-            val usableSets = possibleSets.filter { set -> set.weight in nearAverageWeights && set.rir in 1.0..3.0 }
-
-            val previousTotalVolume = params.previousSets.sumOf { it.relativeVolume }
-
-            fun calculateScore (combo: List<ExerciseSet>): Double {
-                val currentTotalVolume = combo.sumOf { it.relativeVolume }
-                val targetVolumeDifference = 1 + abs((currentTotalVolume - previousTotalVolume) / previousTotalVolume)
-
-                val currentAvgRir = combo.map { it.rir }.average()
-
-                val avgRirDifference = 1 + abs((currentAvgRir - 1))
-
-                val currentMinRir = combo.minOf { it.rir}
-                val currentMaxRir = combo.maxOf { it.rir }
-
-                val rirSpread = 1 + currentMaxRir - currentMinRir
-                val relativeVolumeSpread = 1 + combo.maxOf { it.relativeVolume } - combo.minOf { it.relativeVolume }
-
-                val differences = listOf(
-                    targetVolumeDifference,
-                    avgRirDifference,
-                    rirSpread,
-                    relativeVolumeSpread
-                )
-
-                val geometricMean = differences.reduce { acc, d -> acc * d }.pow(1.0 / differences.size)
-
-                return geometricMean
-            }
-
-            params.previousSets = findBestProgressions(
-                usableSets,
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                calculateScore = { combo -> calculateScore(combo) },
-                isComboValid = { combo ->
-                    val currentTotalVolume = combo.sumOf { it.relativeVolume }
-                    val isVolumeLowerOrEqualToTarget = currentTotalVolume < previousTotalVolume || currentTotalVolume.isEqualTo(previousTotalVolume)
-
-                    isVolumeLowerOrEqualToTarget
-                }
-            )
-        }
-
         val previousTotalVolume = params.previousSets.sumOf { it.relativeVolume }
+        val targetVolume = previousTotalVolume * params.progressionIncrease
+
+        val minAvailableRir = possibleSets.minOf { it.rir }
+        val maxAvailableRir = possibleSets.maxOf { it.rir }
+
+        val desiredAverageRir = 1 //params.previousSets.map { it.rir }.average()
+
+        val previousMinWeight = params.previousSets.minOf { it.weight }
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
 
         val previousMinRir = params.previousSets.minOf { it.rir }
         val previousMaxRir = params.previousSets.maxOf { it.rir }
 
-        val previousAverageRir = params.previousSets.map { it.rir }.average()
+        val minRir = maxOf(minAvailableRir, 0.0)
+        val maxRir = minOf(maxAvailableRir, 2.0)
 
-        val nearAverageWeights = possibleSets.minOf { it.weight }    .. params.nextWeight
+        val previousAverageIntensity = previousTotalVolume / params.previousSets.sumOf { it.reps }
 
-        val usableSets = possibleSets.filter { set -> set.weight in nearAverageWeights && set.rir in 1.0..3.0 }
+        val nextWeight = params.availableWeights.filter { it > previousMaxWeight }.minOrNull() ?: previousMaxWeight
+        val usableSets = possibleSets.filter { set -> set.weight <= nextWeight && set.rir in minRir..maxRir }
 
         fun calculateScore (combo: List<ExerciseSet>): Double {
             val currentTotalVolume = combo.sumOf { it.relativeVolume }
-            val targetVolumeDifference = 1 + abs((currentTotalVolume - params.targetVolume)/params.targetVolume)
-
             val currentAvgRir = combo.map { it.rir }.average()
+            val currentAvgIntensity = currentTotalVolume / combo.sumOf { it.reps }
 
-            val avgRirDifference = 1 + abs((currentAvgRir - previousAverageRir))
+            val targetVolumeDifference = 1 + abs((currentTotalVolume - targetVolume)/targetVolume)
+            val avgRirDifference = 1 + abs((currentAvgRir - desiredAverageRir))
+            val avgIntensityDifference =  1 + abs((currentAvgIntensity - previousAverageIntensity))
 
             val currentMinRir = combo.minOf { it.rir}
             val currentMaxRir = combo.maxOf { it.rir }
@@ -120,15 +81,16 @@ object VolumeDistributionHelper {
             val underMinPenalty = 1 + abs(currentMinRir - previousMinRir)
             val overMaxPenalty = 1 + abs(currentMaxRir - previousMaxRir)
 
-            val rirSpread = 1 + currentMaxRir - currentMinRir
+            val rirStdDev = 1 + combo.map { it.rir }.standardDeviation()
             val relativeVolumeSpread = 1 + combo.maxOf { it.relativeVolume } - combo.minOf { it.relativeVolume }
 
             val differences = listOf(
                 targetVolumeDifference,
                 avgRirDifference,
+                avgIntensityDifference,
                 underMinPenalty,
                 overMaxPenalty,
-                rirSpread,
+                rirStdDev,
                 relativeVolumeSpread
             )
 
@@ -152,44 +114,48 @@ object VolumeDistributionHelper {
         }
 
         var result = findBestProgressions(
-            usableSets.filter { it.weight <= previousMaxWeight },
+            usableSets.filter { it.weight in previousMinWeight..previousMaxWeight },
             params.previousSets.size,
             params.previousSets.size,
             params,
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
                 val currentTotalVolume = combo.sumOf { it.relativeVolume }
+                val currentAvgIntensity = currentTotalVolume / combo.sumOf { it.reps }
 
                 val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
-                val isVolumeHigherThanPrevious = currentTotalVolume.round(1) > previousTotalVolume.round(1)
-                val isVolumeLowerOrEqualToTarget = currentTotalVolume < params.targetVolume || currentTotalVolume.isEqualTo(params.targetVolume)
+                val isVolumeHigherThanPrevious = currentTotalVolume > previousTotalVolume
+                val isIntensityHigherOrEqual = currentAvgIntensity >= previousAverageIntensity
+                val isVolumeLowerOrEqualToTarget = currentTotalVolume < targetVolume || currentTotalVolume.isEqualTo(targetVolume)
 
-                isNotPrevious  && isVolumeLowerOrEqualToTarget && isVolumeProportionallyIncreased(combo)
+                isNotPrevious && isVolumeHigherThanPrevious && isVolumeLowerOrEqualToTarget && isVolumeProportionallyIncreased(combo) && isIntensityHigherOrEqual
             }
         )
 
         if(result.isNotEmpty()) return result
 
         result = findBestProgressions(
-            usableSets. filter { it.rir >= previousMinRir },
+            usableSets.filter { it.weight >= previousMinWeight },
             params.previousSets.size,
             params.previousSets.size,
             params,
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
                 val currentTotalVolume = combo.sumOf { it.relativeVolume }
+                val currentAvgIntensity = currentTotalVolume / combo.sumOf { it.reps }
 
                 val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
-                val isVolumeHigherThanPrevious = currentTotalVolume.round(1) > previousTotalVolume.round(1)
-                val isVolumeLowerOrEqualToTarget = currentTotalVolume < params.targetVolume || currentTotalVolume.isEqualTo(params.targetVolume)
+                val isVolumeHigherThanPrevious = currentTotalVolume > previousTotalVolume
+                val isIntensityHigherOrEqual = currentAvgIntensity >= previousAverageIntensity
+                val isVolumeLowerOrEqualToTarget = currentTotalVolume < targetVolume || currentTotalVolume.isEqualTo(targetVolume)
 
-                isNotPrevious && isVolumeHigherThanPrevious && isVolumeLowerOrEqualToTarget && isVolumeProportionallyIncreased(combo)
+                isNotPrevious && isVolumeHigherThanPrevious && isVolumeLowerOrEqualToTarget && isVolumeProportionallyIncreased(combo) && isIntensityHigherOrEqual
             }
         )
 
         if(result.isNotEmpty()) return result
 
-        if(params.nextWeight != previousMaxWeight) {
+        if(nextWeight != previousMaxWeight) {
             result = findBestProgressions(
                 usableSets.filter { it.weight >= previousMaxWeight },
                 params.previousSets.size,
@@ -203,26 +169,31 @@ object VolumeDistributionHelper {
                     val currentTotalVolume = combo.sumOf { it.relativeVolume }
                     val currentAverageRir = combo.map { it.rir }.average()
 
-                    atLeastOneSetWithHigherWeight && repsSpread <= 1 && currentTotalVolume < previousTotalVolume && currentAverageRir <= previousAverageRir
+                    atLeastOneSetWithHigherWeight && repsSpread <= 1 && currentTotalVolume < previousTotalVolume && currentAverageRir <= desiredAverageRir
                 }
             )
 
-            if(result.isNotEmpty()) return result
+            if(result.isNotEmpty()){
+                //Log.d("WorkoutViewModel", "Fallback load increase")
+                return result
+            }
         }
 
         result = findBestProgressions(
-            usableSets,
+            possibleSets.filter { set -> set.weight <= nextWeight && set.rir <= maxRir },
             params.previousSets.size,
             params.previousSets.size,
             params,
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
                 val currentTotalVolume = combo.sumOf { it.relativeVolume }
+                val currentAvgIntensity = currentTotalVolume / combo.sumOf { it.reps }
 
                 val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
-                val isVolumeHigherThanPrevious = currentTotalVolume.round(1) > previousTotalVolume.round(1)
+                val isVolumeHigherThanPrevious = currentTotalVolume > previousTotalVolume
+                val isIntensityHigherOrEqual = currentAvgIntensity >= previousAverageIntensity
 
-                isNotPrevious && isVolumeHigherThanPrevious && isVolumeProportionallyIncreased(combo)
+                isNotPrevious && isVolumeHigherThanPrevious && isVolumeProportionallyIncreased(combo) && isIntensityHigherOrEqual
             }
         )
 
@@ -233,6 +204,9 @@ object VolumeDistributionHelper {
         params: WeightExerciseParameters,
     ): ExerciseProgression? {
         val possibleSets = generatePossibleSets(params)
+
+        val previousSets = params.previousSets
+
         val validSetCombination = findValidProgression(params, possibleSets)
 
         if (validSetCombination.isEmpty()) {
@@ -243,7 +217,7 @@ object VolumeDistributionHelper {
             sets = validSetCombination,
             newVolume = validSetCombination.sumOf { it.relativeVolume },
             usedOneRepMax = params.oneRepMax,
-            previousVolume = params.previousSets.sumOf { it.relativeVolume }
+            previousVolume = previousSets.sumOf { it.relativeVolume }
         )
     }
 
@@ -354,19 +328,13 @@ object VolumeDistributionHelper {
         oneRepMax: Double,
         availableWeights: Set<Double>,
         repsRange: IntRange,
-        targetVolume: Double,
         progressionIncrease: Double
     ): ExerciseProgression? {
-        val previousMaxWeight = previousSets.maxOf { it.weight }
-        val nextWeight = availableWeights.filter { it > previousMaxWeight }.minOrNull() ?: previousMaxWeight
-
         val baseParams = WeightExerciseParameters(
             previousSets = previousSets,
             oneRepMax = oneRepMax,
             availableWeights = availableWeights,
             repsRange = repsRange,
-            targetVolume = targetVolume,
-            nextWeight = nextWeight,
             progressionIncrease = progressionIncrease
         )
 
