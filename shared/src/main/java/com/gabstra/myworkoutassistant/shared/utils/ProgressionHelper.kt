@@ -8,7 +8,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlin.math.pow
 
 
 object VolumeDistributionHelper {
@@ -71,19 +70,39 @@ object VolumeDistributionHelper {
             val eps = 1e-9
             val totalVol = combo.sumOf { it.relativeVolume }
             val avgRir = combo.map { it.rir }.average()
-            val avgInt = totalVol / combo.sumOf { it.reps }
+            val avgInt = totalVol / combo.sumOf { it.reps }.coerceAtLeast(1)
 
-            val volFit = 1 + kotlin.math.abs((totalVol - targetVolume) / maxOf(targetVolume, eps))
-            val rirFit = 1 + kotlin.math.abs(avgRir - desiredAverageRir)
-            val intFit = 1 + kotlin.math.abs(avgInt - previousAvgIntensity) / maxOf(previousAvgIntensity, eps)
+            // Normalized deviations (0 = perfect, ~1 = poor fit)
+            val volDiff = kotlin.math.abs((totalVol - targetVolume) / targetVolume.coerceAtLeast(eps))
+            val rirDiff = kotlin.math.abs(avgRir - desiredAverageRir) / 2.0            // 2 RIR ~ "large miss"
+            val intDiff = kotlin.math.abs(avgInt - previousAvgIntensity) / previousAvgIntensity.coerceAtLeast(eps)
 
-            val rirVar = 1 + combo.map { it.rir }.standardDeviation()
-            val meanRelVol = totalVol / combo.size
-            val volSpread = 1 + (combo.maxOf { it.relativeVolume } - combo.minOf { it.relativeVolume }) / maxOf(meanRelVol, eps)
+            val rirVar = combo.map { it.rir }.standardDeviation() / 1.0                 // 1 RIR stdev ~ big spread
+            val relVols = combo.map { it.relativeVolume }
+            val meanRelVol = relVols.average().coerceAtLeast(eps)
+            val volSpread = (relVols.maxOrNull()!! - relVols.minOrNull()!!) / meanRelVol
 
-            val terms = listOf(volFit, rirFit, intFit, rirVar,volSpread)
-            val product = terms.reduce { acc, t -> acc * t }
-            return product.pow(1.0 / terms.size)
+            // Convert to "fit scores" ≥1
+            val volFit = 1 + volDiff.coerceAtMost(1.0)
+            val rirFit = 1 + rirDiff.coerceAtMost(1.0)
+            val intFit = 1 + intDiff.coerceAtMost(1.0)
+            val rirVarFit = 1 + rirVar.coerceAtMost(1.0)
+            val volSpreadFit = 1 + volSpread.coerceAtMost(1.0)
+
+            val weights = listOf(
+                0.35, // RIR fit
+                0.30, // Volume fit
+                0.20, // Intensity fit
+                0.10, // RIR variability
+                0.05  // Volume spread
+            )
+
+            val fits = listOf(rirFit, volFit, intFit, rirVarFit, volSpreadFit)
+
+            // Weighted geometric mean
+            val logSum = weights.zip(fits).sumOf { (w, f) -> w * kotlin.math.ln(f) }
+            val score = kotlin.math.exp(logSum)
+            return score
         }
 
         var result = findBestProgressions(
@@ -94,7 +113,6 @@ object VolumeDistributionHelper {
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
                 val currentTotalVolume = combo.sumOf { it.relativeVolume }
-                val currentAvgIntensity = currentTotalVolume / combo.sumOf { it.reps }
                 val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
                 val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
 
