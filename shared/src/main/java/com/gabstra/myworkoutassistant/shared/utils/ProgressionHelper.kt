@@ -89,15 +89,24 @@ object VolumeDistributionHelper {
             val rirVarFit = 1 + rirVar.coerceAtMost(1.0)
             val volSpreadFit = 1 + volSpread.coerceAtMost(1.0)
 
-            val weights = listOf(
-                0.35, // RIR fit
-                0.30, // Volume fit
-                0.20, // Intensity fit
-                0.10, // RIR variability
-                0.05  // Volume spread
-            )
+
 
             val fits = listOf(rirFit, volFit, intFit, rirVarFit, volSpreadFit)
+
+            val numberOfScores = fits.size
+            val equalWeight = 1.0 / numberOfScores // This will be 0.2
+
+            val weights = List(numberOfScores) { equalWeight }
+
+            /*
+            val weights = listOf(
+                0.1, // RIR fit
+                0.35, // Volume fit
+                0.35, // Intensity fit
+                0.10, // RIR variability
+                0.1  // Volume spread
+            )
+            */
 
             // Weighted geometric mean
             val logSum = weights.zip(fits).sumOf { (w, f) -> w * kotlin.math.ln(f) }
@@ -106,6 +115,26 @@ object VolumeDistributionHelper {
         }
 
         var result = findBestProgressions(
+            usableSets.filter { it.weight <= previousMaxWeight },
+            params.previousSets.size,
+            params.previousSets.size,
+            params,
+            calculateScore = { combo -> calculateScore(combo) },
+            isComboValid = { combo ->
+                val currentTotalVolume = combo.sumOf { it.relativeVolume }
+                val currentAvgIntensity = currentTotalVolume / combo.sumOf { it.reps }
+
+                val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
+                val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
+                val isVolumeLowerOrEqualToTarget = currentTotalVolume.round(2) <= targetVolume.round(2)
+
+                isNotPrevious && isVolumeHigherThanPrevious && isVolumeLowerOrEqualToTarget
+            }
+        )
+
+        if(result.isNotEmpty()) return result
+
+        result = findBestProgressions(
             usableSets.filter { it.weight <= previousMaxWeight },
             params.previousSets.size,
             params.previousSets.size,
@@ -144,7 +173,7 @@ object VolumeDistributionHelper {
             }
         }
 
-         return emptyList()
+        return emptyList()
     }
 
     private suspend fun getProgression(
