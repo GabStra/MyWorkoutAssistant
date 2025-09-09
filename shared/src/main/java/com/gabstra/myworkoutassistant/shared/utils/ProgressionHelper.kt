@@ -1,14 +1,11 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import com.gabstra.myworkoutassistant.shared.OneRM.calculateRIR
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
-import com.gabstra.myworkoutassistant.shared.standardDeviation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlin.math.pow
 
 
 object VolumeDistributionHelper {
@@ -16,8 +13,7 @@ object VolumeDistributionHelper {
         val weight: Double,
         val intensity: Double,
         val reps: Int,
-        val relativeVolume: Double,
-        val rir: Double
+        val volume: Double
     )
 
     data class ExerciseProgression(
@@ -43,79 +39,51 @@ object VolumeDistributionHelper {
             return emptyList()
         }
 
-        val previousTotalVolume = params.previousSets.sumOf { it.relativeVolume }
+        val previousTotalVolume = params.previousSets.sumOf { it.volume }
         val targetVolume = previousTotalVolume * params.progressionIncrease
-
-        val minAvailableRir = possibleSets.minOf { it.rir }
-        val maxAvailableRir = possibleSets.maxOf { it.rir }
-
-        val desiredAverageRir = 1 //params.previousSets.map { it.rir }.average()
 
         val previousMinWeight = params.previousSets.minOf { it.weight }
         val previousMaxWeight = params.previousSets.maxOf { it.weight }
 
-        val previousMinRir = params.previousSets.minOf { it.rir }
-        val previousMaxRir = params.previousSets.maxOf { it.rir }
+        val previousMaxSetVolume = params.previousSets.maxOf { it.volume }
 
-        val minRir = maxOf(minAvailableRir, 0.0)
-        val maxRir = minOf(maxAvailableRir, 3.0)
+        val setVolumeLimit = possibleSets.filter { it.volume > previousMaxSetVolume && it.weight == previousMaxWeight }.minOfOrNull { it.volume } ?: Double.MAX_VALUE
 
         val previousAvgIntensity = previousTotalVolume / params.previousSets.sumOf { it.reps }
 
-        val nextWeight = params.availableWeights.filter { it > previousMaxWeight }.minOrNull() ?: previousMaxWeight
-        val usableSets = possibleSets.filter { set ->  set.rir in minRir..maxRir }
-
-        //Log.d("WorkoutViewModel","Usable sets: ${usableSets.filter { it.weight <= previousMaxWeight }.joinToString { "${it.weight} x ${it.reps} ${it.rir}" }}")
+        val weightLowerThanPrevious = params.availableWeights.filter { it < previousMinWeight * 0.95 }.maxOrNull() ?: Double.NEGATIVE_INFINITY
+        val weightHigherThanPrevious = params.availableWeights.filter { it > previousMaxWeight }.minOrNull() ?: Double.MAX_VALUE
+        val usableSets = possibleSets.filter { it.weight in weightLowerThanPrevious..weightHigherThanPrevious && it.volume <= setVolumeLimit }
 
         fun calculateScore(combo: List<ExerciseSet>): Double {
             val eps = 1e-9
-            val totalVol = combo.sumOf { it.relativeVolume }
-            val avgRir = combo.map { it.rir }.average()
-            val avgInt = totalVol / combo.sumOf { it.reps }.coerceAtLeast(1)
+            val totalVol = combo.sumOf { it.volume }
+            val totalReps = combo.sumOf { it.reps }
+            val avgInt = totalVol / totalReps.coerceAtLeast(1)
 
             // Normalized deviations (0 = perfect, ~1 = poor fit)
             val volDiff = kotlin.math.abs((totalVol - targetVolume) / targetVolume.coerceAtLeast(eps))
-            val rirDiff = kotlin.math.abs(avgRir - desiredAverageRir) / 2.0            // 2 RIR ~ "large miss"
             val intDiff = kotlin.math.abs(avgInt - previousAvgIntensity) / previousAvgIntensity.coerceAtLeast(eps)
 
-            val rirVar = combo.map { it.rir }.standardDeviation() / 1.0                 // 1 RIR stdev ~ big spread
+            // Volume variance across sets (lower is better)
+            val setCount = combo.size.coerceAtLeast(1)
+            val meanVolPerSet = totalVol / setCount
+            val variance = if (combo.isEmpty()) 0.0
+            else combo.sumOf { val d = it.volume - meanVolPerSet; d * d } / setCount
+            val stdDev = kotlin.math.sqrt(variance)
+            val cv = stdDev / meanVolPerSet.coerceAtLeast(eps) // 0 = perfectly even volumes
 
-            // Convert to "fit scores" ≥1
+            // Convert to "fit scores" ≥ 1 (1 is best)
             val volFit = 1 + volDiff.coerceAtMost(1.0)
-            val rirFit = 1 + rirDiff.coerceAtMost(1.0)
             val intFit = 1 + intDiff.coerceAtMost(1.0)
-            val rirVarFit = 1 + rirVar.coerceAtMost(1.0)
+            val varFit = 1 + cv.coerceAtMost(1.0)
 
-            val perSetFloorFits = combo.map { set ->
-                val shortfall = (1.0 - set.rir).coerceAtLeast(0.0)           // 0 if RIR ≥ 1
-                1 + shortfall.coerceAtMost(1.0)                                // ∈ [1, 2]
-            }
-
-            var setRirFloorFit = if (perSetFloorFits.isEmpty()) 1.0 else perSetFloorFits.reduce { a, b -> a * b }.pow(1.0 / perSetFloorFits.size)
-            val alpha = 1.2 // >1 ⇒ stronger penalty
-            setRirFloorFit = setRirFloorFit.pow(alpha)
-
-            val fits = listOf(rirFit, rirVarFit, volFit, intFit, setRirFloorFit) //listOf(rirFit, volFit, intFit, rirVarFit, volSpreadFit,rirFloorFit)
-
-            val numberOfScores = fits.size
-            val equalWeight = 1.0 / numberOfScores // This will be 0.2
-
-            val weights = List(numberOfScores) { equalWeight }
-
-            /*
-            val weights = listOf(
-                0.1, // RIR fit
-                0.35, // Volume fit
-                0.35, // Intensity fit
-                0.10, // RIR variability
-                0.1  // Volume spread
-            )
-            */
+            val fits = listOf(volFit, intFit, varFit)
 
             // Weighted geometric mean
+            val weights = List(fits.size) { 1.0 / fits.size }
             val logSum = weights.zip(fits).sumOf { (w, f) -> w * kotlin.math.ln(f) }
-            val score = kotlin.math.exp(logSum)
-            return score
+            return kotlin.math.exp(logSum)
         }
 
         var result = findBestProgressions(
@@ -125,7 +93,7 @@ object VolumeDistributionHelper {
             params,
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
-                val currentTotalVolume = combo.sumOf { it.relativeVolume }
+                val currentTotalVolume = combo.sumOf { it.volume }
 
                 val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
                 val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
@@ -144,7 +112,8 @@ object VolumeDistributionHelper {
             params,
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
-                val currentTotalVolume = combo.sumOf { it.relativeVolume }
+                val currentTotalVolume = combo.sumOf { it.volume }
+
                 val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
                 val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
 
@@ -154,19 +123,17 @@ object VolumeDistributionHelper {
 
         if(result.isNotEmpty()) return result
 
-        if(nextWeight != previousMaxWeight) {
-            //Log.d("WorkoutViewModel","Fallback sets: ${possibleSets.filter { it.weight == nextWeight }.joinToString { "${it.weight} x ${it.reps} ${it.rir}" }}")
-
+        if(weightHigherThanPrevious != Double.MAX_VALUE) {
             result = findBestProgressions(
-                possibleSets.filter { it.weight == nextWeight },
+                possibleSets.filter { it.weight == weightHigherThanPrevious },
                 params.previousSets.size,
                 params.previousSets.size,
                 params,
-                calculateScore = { combo -> calculateScore(combo) },
+                calculateScore = { combo -> combo.sumOf { it.volume } },
                 isComboValid = { combo ->
                     val repsSpread = combo.maxOf { it.reps } - combo.minOf { it.reps }
-                    val currentTotalVolume = combo.sumOf { it.relativeVolume }
-                    repsSpread <= 1 && currentTotalVolume < previousTotalVolume
+                    val currentTotalVolume = combo.sumOf { it.volume }
+                    repsSpread == 0 && currentTotalVolume.round(2) >= (previousTotalVolume * 0.8).round(2) && currentTotalVolume.round(2) <= previousTotalVolume.round(2)
                 }
             )
 
@@ -194,9 +161,9 @@ object VolumeDistributionHelper {
 
         return ExerciseProgression(
             sets = validSetCombination,
-            newVolume = validSetCombination.sumOf { it.relativeVolume },
+            newVolume = validSetCombination.sumOf { it.volume },
             usedOneRepMax = params.oneRepMax,
-            previousVolume = previousSets.sumOf { it.relativeVolume }
+            previousVolume = previousSets.sumOf { it.volume }
         )
     }
 
@@ -239,7 +206,7 @@ object VolumeDistributionHelper {
                         if (depth >= maxSets) return
 
                         val lastSet = currentCombo.last()
-                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.rir <= candidate.rir && lastSet.relativeVolume >= candidate.relativeVolume }
+                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.volume >= candidate.volume }
 
                         for (nextSet in validSets) {
                             exploreCombinations(currentCombo + nextSet, depth + 1)
@@ -291,14 +258,12 @@ object VolumeDistributionHelper {
         oneRepMax: Double,
     ): ExerciseSet {
         val intensity = weight / oneRepMax
-        val rir = calculateRIR(weight,reps,oneRepMax)
 
         return ExerciseSet(
             weight = weight,
             reps = reps,
-            relativeVolume = intensity * reps,
-            intensity = intensity,
-            rir = rir.round(2)
+            volume = weight * reps,
+            intensity = intensity
         )
     }
 

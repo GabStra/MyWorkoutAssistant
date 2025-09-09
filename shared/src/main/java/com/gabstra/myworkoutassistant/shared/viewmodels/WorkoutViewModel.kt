@@ -589,15 +589,7 @@ open class WorkoutViewModel : ViewModel() {
 
         val progressionSetsByExerciseId = getProgressionSetsByExerciseId(validExercises, bodyWeight.value)
 
-        val volumeBaseline = progressionSetsByExerciseId
-            .values
-            .flatten()
-            .sumOf { it.relativeVolume }
 
-        val volumeBudget = volumeBaseline * (1 + workoutStore.progressionPercentageAmount/100)
-        val volumeSurplus = volumeBudget - volumeBaseline
-        
-        Log.d("WorkoutViewModel", "Relative Volume Baseline: ${volumeBaseline.round(2)} - Relative Volume Budget: ${volumeBudget.round(2)} - Progression: ${workoutStore.progressionPercentageAmount.round(2)}%")
         // Process exercises sequentially
         validExercises.forEach { exercise ->
 
@@ -682,9 +674,9 @@ open class WorkoutViewModel : ViewModel() {
             if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                 val relativeBodyWeight =
                     bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps} (RIR: ${set.rir})"
+                "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight})"
             } else {
-                "${set.weight} kg x ${set.reps} (RIR: ${set.rir})"
+                "${set.weight} kg x ${set.reps}"
             }
         }
 
@@ -710,9 +702,9 @@ open class WorkoutViewModel : ViewModel() {
                 if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight =
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps} (RIR: ${set.rir})"
+                    "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps}"
                 } else {
-                    "${set.weight} kg x ${set.reps} (RIR: ${set.rir})"
+                    "${set.weight} kg x ${set.reps}"
                 }
             }
 
@@ -720,16 +712,14 @@ open class WorkoutViewModel : ViewModel() {
             
             val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
 
-
-            val previousAverageIntensity = setsForProgression.sumOf { it.relativeVolume } / setsForProgression.sumOf { it.reps }
+            val previousAverageIntensity = setsForProgression.sumOf { it.volume } / setsForProgression.sumOf { it.reps }
             val newAverageIntensity = exerciseProgression.newVolume / exerciseProgression.sets.sumOf { it.reps }
-
             val averageIntensityIncrease = ((newAverageIntensity - previousAverageIntensity) / previousAverageIntensity) * 100
 
             Log.d(
                 "WorkoutViewModel",
                 "Relative Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
-                        + "Δ 1RM % | Rep: ${(previousAverageIntensity*100).round(2)}% -> ${(newAverageIntensity*100).round(2)}% (${if(averageIntensityIncrease>0) "+" else ""}${averageIntensityIncrease.round(2)}%)"
+                        + "Weight|Rep: ${previousAverageIntensity.round(2)} kg -> ${newAverageIntensity.round(2)} kg (${if(averageIntensityIncrease>0) "+" else ""}${averageIntensityIncrease.round(2)}%)"
             )
 
 

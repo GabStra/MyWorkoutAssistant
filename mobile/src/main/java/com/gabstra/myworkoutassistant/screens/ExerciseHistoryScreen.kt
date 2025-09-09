@@ -206,12 +206,12 @@ fun ExerciseHistoryScreen(
                 for (setHistory in setHistories) {
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
-                        volume += setData.calculateRelativeVolume(oneRepMax)
+                        volume += setData.calculateVolume()
                     }
 
                     if (setHistory.setData is BodyWeightSetData) {
                         val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.calculateRelativeVolume(oneRepMax)
+                        volume += setData.calculateVolume()
                     }
 
                     if (setHistory.setData is TimedDurationSetData) {
@@ -522,7 +522,7 @@ fun ExerciseHistoryScreen(
                                     if (volumeEntryModel != null) {
                                         StandardChart(
                                             cartesianChartModel = volumeEntryModel!!,
-                                            title = "Relative Volume",
+                                            title = "Volume",
                                             markerTextFormatter = { formatNumber(it) },
                                             startAxisValueFormatter = volumeAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -532,7 +532,7 @@ fun ExerciseHistoryScreen(
                                     if (oneRepMaxEntryModel != null) {
                                         StandardChart(
                                             cartesianChartModel = oneRepMaxEntryModel!!,
-                                            title = "One Rep Max",
+                                            title = "Estimated 1RM/Session",
                                             startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
                                                 value.round(2).toString()
                                             },

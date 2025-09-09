@@ -87,7 +87,6 @@ import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.OneRM.calculateOneRepMax
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -260,21 +259,6 @@ fun WorkoutHistoryScreen(
             var volume = 0.0
             var duration = 0f
 
-            val oneRepMax = setHistories.maxOf {
-                when (it.setData) {
-                    is BodyWeightSetData -> {
-                        val setData = it.setData as BodyWeightSetData
-                        calculateOneRepMax(setData.getWeight(), setData.actualReps)
-                    }
-
-                    is WeightSetData ->{
-                        val setData = it.setData as WeightSetData
-                        calculateOneRepMax(setData.getWeight(), setData.actualReps)
-                    }
-                    else -> 0.0
-                }
-            }
-
             for (setHistory in validSetHistories) {
                 if(!exerciseById.containsKey( setHistory.exerciseId!!)) {
                     continue
@@ -285,12 +269,12 @@ fun WorkoutHistoryScreen(
 
                 if (setHistory.setData is WeightSetData) {
                     val setData = setHistory.setData as WeightSetData
-                    volume += setData.calculateRelativeVolume(oneRepMax)
+                    volume += setData.calculateVolume()
                 }
 
                 if (setHistory.setData is BodyWeightSetData) {
                     val setData = setHistory.setData as BodyWeightSetData
-                    volume += setData.calculateRelativeVolume(oneRepMax)
+                    volume += setData.calculateVolume()
                 }
 
                 if (setHistory.setData is TimedDurationSetData) {
@@ -460,7 +444,7 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
-                    title = "Total relative volume over time",
+                    title = "Total volume over time",
                     markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
