@@ -65,11 +65,11 @@ import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.formatTime
-import com.gabstra.myworkoutassistant.getOneRepMax
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.OneRM.calculateOneRepMax
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -185,32 +185,33 @@ fun ExerciseHistoryScreen(
 
                 var volume = 0.0
                 var duration = 0f
-                var oneRepMax = 0.0
 
+                val oneRepMax = setHistories.maxOf {
+                    when (it.setData) {
+                        is BodyWeightSetData -> {
+                            val setData = it.setData as BodyWeightSetData
+                            calculateOneRepMax(setData.getWeight(), setData.actualReps)
+                        }
+
+                        is WeightSetData ->{
+                            val setData = it.setData as WeightSetData
+                            calculateOneRepMax(setData.getWeight(), setData.actualReps)
+                        }
+                        else -> 0.0
+                    }
+                }
 
                 mutableMap.put(workoutHistory.id, setHistories)
 
                 for (setHistory in setHistories) {
-
-
                     if (setHistory.setData is WeightSetData) {
                         val setData = setHistory.setData as WeightSetData
-                        volume += setData.calculateVolume()
-                        val currentOneRepMax = getOneRepMax(setData.getWeight(), setData.actualReps)
-                        if(currentOneRepMax> oneRepMax){
-                            oneRepMax = currentOneRepMax
-                        }
+                        volume += setData.calculateRelativeVolume(oneRepMax)
                     }
 
                     if (setHistory.setData is BodyWeightSetData) {
-
                         val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.calculateVolume()
-
-                        val currentOneRepMax = getOneRepMax(setData.getWeight(), setData.actualReps)
-                        if(currentOneRepMax> oneRepMax){
-                            oneRepMax = currentOneRepMax
-                        }
+                        volume += setData.calculateRelativeVolume(oneRepMax)
                     }
 
                     if (setHistory.setData is TimedDurationSetData) {
@@ -521,7 +522,7 @@ fun ExerciseHistoryScreen(
                                     if (volumeEntryModel != null) {
                                         StandardChart(
                                             cartesianChartModel = volumeEntryModel!!,
-                                            title = "Volume",
+                                            title = "Relative Volume",
                                             markerTextFormatter = { formatNumber(it) },
                                             startAxisValueFormatter = volumeAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,

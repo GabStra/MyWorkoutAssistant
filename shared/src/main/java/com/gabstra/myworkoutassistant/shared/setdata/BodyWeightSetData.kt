@@ -14,4 +14,10 @@ data class BodyWeightSetData(
         val weight = getWeight()
         return weight * actualReps
     }
+
+    fun calculateRelativeVolume(oneRepMax:Double): Double {
+        val weight = getWeight()
+        val intensity = weight / oneRepMax
+        return intensity * actualReps
+    }
 }

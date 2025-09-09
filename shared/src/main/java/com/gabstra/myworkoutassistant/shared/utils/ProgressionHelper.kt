@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlin.math.pow
 
 
 object VolumeDistributionHelper {
@@ -78,20 +79,23 @@ object VolumeDistributionHelper {
             val intDiff = kotlin.math.abs(avgInt - previousAvgIntensity) / previousAvgIntensity.coerceAtLeast(eps)
 
             val rirVar = combo.map { it.rir }.standardDeviation() / 1.0                 // 1 RIR stdev ~ big spread
-            val relVols = combo.map { it.relativeVolume }
-            val meanRelVol = relVols.average().coerceAtLeast(eps)
-            val volSpread = (relVols.maxOrNull()!! - relVols.minOrNull()!!) / meanRelVol
 
             // Convert to "fit scores" ≥1
             val volFit = 1 + volDiff.coerceAtMost(1.0)
             val rirFit = 1 + rirDiff.coerceAtMost(1.0)
             val intFit = 1 + intDiff.coerceAtMost(1.0)
             val rirVarFit = 1 + rirVar.coerceAtMost(1.0)
-            val volSpreadFit = 1 + volSpread.coerceAtMost(1.0)
 
+            val perSetFloorFits = combo.map { set ->
+                val shortfall = (1.0 - set.rir).coerceAtLeast(0.0)           // 0 if RIR ≥ 1
+                1 + shortfall.coerceAtMost(1.0)                                // ∈ [1, 2]
+            }
 
+            var setRirFloorFit = if (perSetFloorFits.isEmpty()) 1.0 else perSetFloorFits.reduce { a, b -> a * b }.pow(1.0 / perSetFloorFits.size)
+            val alpha = 1.2 // >1 ⇒ stronger penalty
+            setRirFloorFit = setRirFloorFit.pow(alpha)
 
-            val fits = listOf(rirFit, volFit, intFit, rirVarFit, volSpreadFit)
+            val fits = listOf(rirFit, rirVarFit, volFit, intFit, setRirFloorFit) //listOf(rirFit, volFit, intFit, rirVarFit, volSpreadFit,rirFloorFit)
 
             val numberOfScores = fits.size
             val equalWeight = 1.0 / numberOfScores // This will be 0.2
@@ -122,7 +126,6 @@ object VolumeDistributionHelper {
             calculateScore = { combo -> calculateScore(combo) },
             isComboValid = { combo ->
                 val currentTotalVolume = combo.sumOf { it.relativeVolume }
-                val currentAvgIntensity = currentTotalVolume / combo.sumOf { it.reps }
 
                 val isNotPrevious = combo != params.previousSets && !currentTotalVolume.isEqualTo(previousTotalVolume)
                 val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
@@ -236,7 +239,7 @@ object VolumeDistributionHelper {
                         if (depth >= maxSets) return
 
                         val lastSet = currentCombo.last()
-                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.rir <= candidate.rir }
+                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && lastSet.rir <= candidate.rir && lastSet.relativeVolume >= candidate.relativeVolume }
 
                         for (nextSet in validSets) {
                             exploreCombinations(currentCombo + nextSet, depth + 1)

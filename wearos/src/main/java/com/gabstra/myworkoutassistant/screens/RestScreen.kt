@@ -370,7 +370,6 @@ fun RestScreen(
         contentAlignment = Alignment.Center
     ) {
         ExerciseIndicator(
-            modifier = Modifier.fillMaxSize(),
             viewModel,
             state.nextStateSets.first()
         )

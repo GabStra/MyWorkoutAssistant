@@ -19,7 +19,6 @@ import com.google.android.horologist.composables.SegmentedProgressIndicator
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
 fun ExerciseIndicator(
-    modifier: Modifier = Modifier,
     viewModel: AppViewModel,
     set: WorkoutState.Set,
 ){
@@ -35,7 +34,7 @@ fun ExerciseIndicator(
     val totalArcAngle = 100f
     val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize()) {
         exerciseOrSupersetIds.forEachIndexed { index, exerciseOrSupersetId ->
             val isSuperset = remember(exerciseOrSupersetId) { viewModel.supersetIdByExerciseId.containsValue(exerciseOrSupersetId)  }
 
