@@ -332,7 +332,6 @@ fun ExerciseScreen(
         contentAlignment = Alignment.Center
     ) {
         ExerciseIndicator(
-            modifier = Modifier.fillMaxSize(),
             viewModel,
             state
         )
