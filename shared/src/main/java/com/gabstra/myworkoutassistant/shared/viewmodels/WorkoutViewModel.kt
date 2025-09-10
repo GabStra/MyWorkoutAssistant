@@ -674,7 +674,7 @@ open class WorkoutViewModel : ViewModel() {
             if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                 val relativeBodyWeight =
                     bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight})"
+                "${set.weight - relativeBodyWeight} kg x ${set.reps} (TOT: ${set.weight})"
             } else {
                 "${set.weight} kg x ${set.reps}"
             }
