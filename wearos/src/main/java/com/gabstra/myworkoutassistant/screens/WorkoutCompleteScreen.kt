@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -18,18 +21,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.composables.ProgressionSection
 import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
 import java.time.Duration
@@ -57,7 +61,10 @@ fun WorkoutCompleteScreen(
     val seconds = remember { duration.seconds % 60 }
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
-    val countDownTimer = remember { mutableIntStateOf(5) }
+    val countDownTimer = remember { mutableIntStateOf(30) }
+
+    val typography = MaterialTheme.typography
+    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
     LaunchedEffect(Unit){
         delay(500)
@@ -68,6 +75,7 @@ fun WorkoutCompleteScreen(
             polarViewModel.disconnectFromDevice()
         }
         cancelWorkoutInProgressNotification(context)
+
         viewModel.pushAndStoreWorkoutData(true,context){
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
 
@@ -81,53 +89,51 @@ fun WorkoutCompleteScreen(
         }
     }
 
-    val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f, fontWeight = FontWeight.Bold) }
+    val scrollState = rememberScrollState()
 
     Column(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxSize()
+            .padding(30.dp)
+            .verticalColumnScrollbar(scrollState)
+            .verticalScroll(scrollState)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().weight(1f),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Text(
                 text = "COMPLETED",
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
+            Spacer(modifier = Modifier.height(2.5.dp))
             ScalableText(
                 text = workout.name,
-                style = itemStyle
+                style = MaterialTheme.typography.title3
             )
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
+            Spacer(modifier = Modifier.height(5.dp))
             Text(
                 text = "TIME SPENT",
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
+            Spacer(modifier = Modifier.height(2.5.dp))
             ScalableText(
                 text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
                 textAlign = TextAlign.Center,
-                style =  itemStyle
+                style =  MaterialTheme.typography.title3
+            )
+            Spacer(modifier = Modifier.height(5.dp))
+            ProgressionSection(modifier = Modifier.weight(1f),viewModel = viewModel)
+            Spacer(modifier = Modifier.height(5.dp))
+            Text(
+                text = "CLOSING IN: ${countDownTimer.intValue}",
+                style = headerStyle,
+                textAlign = TextAlign.Center,
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = "CLOSING IN: ${countDownTimer.intValue}",
-            style = headerStyle,
-            textAlign = TextAlign.Center,
-        )
     }
 }

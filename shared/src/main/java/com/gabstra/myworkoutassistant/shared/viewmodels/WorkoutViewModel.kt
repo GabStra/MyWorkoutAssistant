@@ -98,6 +98,8 @@ open class WorkoutViewModel : ViewModel() {
         )
     )
 
+    var originalWorkoutPlan by mutableStateOf<Workout?>(null)
+
     fun getEquipmentById(id: UUID): WeightLoadedEquipment? {
         return workoutStore.equipments.find { it.id == id }
     }
@@ -396,6 +398,7 @@ open class WorkoutViewModel : ViewModel() {
                 _enableWorkoutNotificationFlow.value = null
 
                 val preparingState = WorkoutState.Preparing(dataLoaded = false)
+
                 _workoutState.value = preparingState
                 workoutStateQueue.clear()
                 workoutStateHistory.clear()
@@ -403,6 +406,7 @@ open class WorkoutViewModel : ViewModel() {
                 setStates.clear()
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
+                originalWorkoutPlan = _selectedWorkout.value.copy()
 
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
@@ -516,6 +520,8 @@ open class WorkoutViewModel : ViewModel() {
                 updateWorkout(exercise, newExercise)
             }
         }
+
+        initializeExercisesMaps(selectedWorkout.value)
     }
 
     protected suspend fun generateProgressions() {
@@ -780,6 +786,8 @@ open class WorkoutViewModel : ViewModel() {
                 startWorkoutTime = null
                 currentWorkoutHistory = null
 
+                originalWorkoutPlan = _selectedWorkout.value.copy()
+
                 loadWorkoutHistory()
                 generateProgressions()
                 applyProgressions()
@@ -821,7 +829,7 @@ open class WorkoutViewModel : ViewModel() {
         val workoutHistories = workoutHistoryDao
             .getAllWorkoutHistories()
             .filter { it.globalId == selectedWorkout.value.globalId && it.isDone }
-            .sortedByDescending { it.date }
+            .sortedWith(compareByDescending<WorkoutHistory> { it.date }.thenByDescending { it.time })
 
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
