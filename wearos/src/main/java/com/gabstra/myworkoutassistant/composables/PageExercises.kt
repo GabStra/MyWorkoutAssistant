@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,9 +38,8 @@ fun PageExercises(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
+    onSelectionChange: (Int) -> Unit
 ) {
-    val context = LocalContext.current
-
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
     val exerciseOrSupersetIds = remember {
         viewModel.setsByExerciseId.keys.toList()
@@ -72,7 +70,7 @@ fun PageExercises(
         } else null
     }
 
-    Box(modifier = Modifier.fillMaxSize()) { 
+    Box(modifier = Modifier.fillMaxSize()) {
         val selectedExerciseOrSupersetId = remember(selectedExercise) {
             if (viewModel.supersetIdByExerciseId.containsKey(selectedExercise.id)) viewModel.supersetIdByExerciseId[selectedExercise.id] else selectedExercise.id
         }
@@ -80,29 +78,15 @@ fun PageExercises(
             exerciseOrSupersetIds.indexOf(selectedExerciseOrSupersetId)
         }
 
+        LaunchedEffect(selectedExerciseOrSupersetIndex) {
+            onSelectionChange(selectedExerciseOrSupersetIndex)
+        }
+
         val isSuperset = remember(selectedExerciseOrSupersetId) {
             viewModel.exercisesBySupersetId.containsKey(selectedExerciseOrSupersetId)
         }
 
         val currentIndex = remember(selectedExercise) { exerciseIds.indexOf(selectedExercise.id) }
-
-        val backArrowModifier = remember(currentIndex) {
-            if (currentIndex > 0)
-                Modifier.padding(2.dp)
-            else
-                Modifier
-                    .padding(2.dp)
-                    .alpha(0f)
-        }
-
-        val forwardArrowModifier = remember(currentIndex, exerciseIds.size) {
-            if (currentIndex < exerciseIds.size - 1)
-                Modifier.padding(2.dp)
-            else
-                Modifier
-                    .padding(2.dp)
-                    .alpha(0f)
-        }
 
         Row(
             modifier = Modifier.fillMaxSize(),
@@ -147,45 +131,18 @@ fun PageExercises(
                         )
                         if (isSuperset) {
                             val supersetExercises =
-                                remember { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
+                                remember(selectedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
                             val supersetIndex =
-                                remember { supersetExercises.indexOf(selectedExercise) }
+                                remember(
+                                    supersetExercises,
+                                    selectedExercise
+                                ) { supersetExercises.indexOf(selectedExercise) }
 
                             Text(
                                 textAlign = TextAlign.Center,
                                 text = "${supersetIndex + 1}/${supersetExercises.size}",
                                 style = captionStyle
                             )
-                        }
-
-                        if (selectedExercise.id == currentExercise.id) {
-                            val exerciseSetIds =
-                                remember { viewModel.setsByExerciseId[selectedExercise.id]!!.map { it.set.id } }
-                            val setIndex =
-                                remember { exerciseSetIds.indexOf(currentStateSet.set.id) }
-
-                            Text(
-                                textAlign = TextAlign.Center,
-                                text = "${setIndex + 1}/${exerciseSetIds.size}",
-                                style = captionStyle
-                            )
-
-                            if(currentStateSet.isWarmupSet){
-                                Text(
-                                    text = "WARM-UP",
-                                    style = captionStyle,
-                                    color = Orange
-                                )
-                            }
-
-                            if(currentStateSet.intraSetTotal != null){
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text =  "${currentStateSet.intraSetCounter}/${currentStateSet.intraSetTotal}",
-                                    style = captionStyle
-                                )
-                            }
-
                         }
                     }
                 }
@@ -237,9 +194,11 @@ fun PageExercises(
                         tint = LightGray
                     )*/
                 }
-                Spacer(modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(2f))
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(1f)
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxHeight()

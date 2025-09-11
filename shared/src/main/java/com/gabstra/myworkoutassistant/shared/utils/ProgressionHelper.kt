@@ -67,7 +67,9 @@ object VolumeDistributionHelper {
             .filter { it < previousMaxWeight }
             .minByOrNull { abs(it - previousMaxWeight * 0.95) }
             ?: Double.NEGATIVE_INFINITY
-        val nextWeightUp = params.availableWeights.filter { it > previousMaxWeight }.minOrNull() ?: Double.MAX_VALUE
+
+        val nextWeightUp = possibleSets.first { it.weight > previousMaxWeight }.weight
+
         val usableSets = possibleSets.filter { it.weight in weightLowerThanPrevious..nextWeightUp }
 
         fun calculateScore(combo: List<ExerciseSet>): Double {
@@ -93,22 +95,34 @@ object VolumeDistributionHelper {
             val intFit = 1 + intDiff.coerceAtMost(1.0)
             val varFit = 1 + cv.coerceAtMost(1.0)
 
-            val fits = listOf(volFit, intFit, varFit)
+            val fits = listOf(volFit, varFit)
 
             // Weighted geometric mean
-            val weights = listOf(0.5, 0.25, 0.25) //val weights = List(fits.size) { 1.0 / fits.size }
+            val weights = listOf(0.5, 0.25, 0.25)
             val logSum = weights.zip(fits).sumOf { (w, f) -> w * kotlin.math.ln(f) }
             val baseScore = kotlin.math.exp(logSum)
 
-            // Add penalty for sets exceeding previous max volume
-            val penaltyFactor = 100.0 // A multiplier to make the penalty significant
-            val totalExcessVolume = combo.filter { it.volume >= previousMaxSetVolume }
-                .sumOf { (it.volume - previousMaxSetVolume).coerceAtLeast(1.0) }
-            val penalty = totalExcessVolume * penaltyFactor
+            // Penalties
+            val penaltyFactor = 100.0
 
-            return baseScore + penalty
+            val totalExcessVolume = combo.filter { it.volume >= previousMaxSetVolume }
+                .sumOf {  1.0 + (it.volume - previousMaxSetVolume) }
+            val volumePenalty = totalExcessVolume * penaltyFactor
+
+            val weightPenaltyUnits = combo
+                .filter { it.weight > previousMaxWeight }
+                .sumOf { 1.0 + (it.weight - previousMaxWeight)}
+            val weightPenalty = weightPenaltyUnits * penaltyFactor
+
+           /* val lowerWeightPenalty = combo
+                .filter { it.weight < previousMaxWeight }
+                .sumOf { 1.0 + (previousMaxWeight - it.weight) }
+            val lowerWeightPenaltyWeight = lowerWeightPenalty * penaltyFactor*/
+
+            return baseScore + volumePenalty + weightPenalty // + lowerWeightPenaltyWeight
         }
 
+        /*
         val allSetsAtMaxReps = params.previousSets.isNotEmpty() && params.previousSets.all { it.reps == params.repsRange.last }
 
         if(allSetsAtMaxReps && nextWeightUp != Double.MAX_VALUE){
@@ -130,6 +144,7 @@ object VolumeDistributionHelper {
 
             if (result.isNotEmpty()) return result
         }
+        */
 
         var result = findBestProgressions(
             usableSets.filter { it.weight <= previousMaxWeight },
@@ -168,24 +183,23 @@ object VolumeDistributionHelper {
 
         if(result.isNotEmpty()) return result
 
-        if(nextWeightUp != Double.MAX_VALUE) {
-            result = findBestProgressions(
-                possibleSets.filter { it.weight == nextWeightUp },
-                params.previousSets.size,
-                params.previousSets.size,
-                params,
-                calculateScore = { combo -> combo.sumOf { it.volume } },
-                isComboValid = { combo ->
-                    val repsSpread = combo.maxOf { it.reps } - combo.minOf { it.reps }
-                    val currentTotalVolume = combo.sumOf { it.volume }
-                    repsSpread == 0 && currentTotalVolume.round(2) >= (previousTotalVolume * 0.9).round(2) && currentTotalVolume.round(2) < previousTotalVolume.round(2)
-                }
-            )
+        result = findBestProgressions(
+            usableSets,
+            params.previousSets.size,
+            params.previousSets.size,
+            params,
+            calculateScore = { combo -> calculateScore(combo) },
+            isComboValid = { combo ->
+                val currentTotalVolume = combo.sumOf { it.volume }
 
-            if(result.isNotEmpty()) return result
-        }
+                val isNotPrevious = !sameMultisetByWeightReps(combo, params.previousSets) && !currentTotalVolume.isEqualTo(previousTotalVolume)
+                val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
 
-        return emptyList()
+                isNotPrevious && isVolumeHigherThanPrevious
+            }
+        )
+
+        return result
     }
 
     private suspend fun getProgression(
@@ -247,8 +261,10 @@ object VolumeDistributionHelper {
 
                         if (depth >= maxSets) return
 
+                        val maxVolume = currentCombo[0].volume
+
                         val lastSet = currentCombo.last()
-                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight }
+                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && candidate.volume.round(2) <= (maxVolume * 1.2).round(2) }
 
                         for (nextSet in validSets) {
                             exploreCombinations(currentCombo + nextSet, depth + 1)

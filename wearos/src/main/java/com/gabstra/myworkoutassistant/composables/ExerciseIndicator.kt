@@ -21,6 +21,7 @@ import com.google.android.horologist.composables.SegmentedProgressIndicator
 fun ExerciseIndicator(
     viewModel: AppViewModel,
     set: WorkoutState.Set,
+    customExerciseOrSupersetIndex : Int? = null
 ){
 
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
@@ -118,10 +119,17 @@ fun ExerciseIndicator(
         }
     }
 
-    val startAngle = startingAngle + currentExerciseOrSupersetIndex * (segmentArcAngle + 2f)
-    val middleAngle = startAngle + (segmentArcAngle / 2f)
+    if(customExerciseOrSupersetIndex != null && customExerciseOrSupersetIndex >=0 && customExerciseOrSupersetIndex <= exerciseCount - 1){
+        val startAngle = startingAngle + customExerciseOrSupersetIndex * (segmentArcAngle + 2f)
+        val middleAngle = startAngle + (segmentArcAngle / 2f)
 
-    RotatingIndicator(middleAngle, LightGray)
+        RotatingIndicator(middleAngle, LightGray)
+    }else{
+        val startAngle = startingAngle + currentExerciseOrSupersetIndex * (segmentArcAngle + 2f)
+        val middleAngle = startAngle + (segmentArcAngle / 2f)
+
+        RotatingIndicator(middleAngle, LightGray)
+    }
 }
 
 @OptIn(ExperimentalHorologistApi::class)

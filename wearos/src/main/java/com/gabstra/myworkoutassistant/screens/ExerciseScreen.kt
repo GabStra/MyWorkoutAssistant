@@ -101,6 +101,10 @@ fun ExerciseScreen(
         }
     }
 
+    val exercisesPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.EXERCISES)
+    }
+
     val exerciseDetailPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.EXERCISE_DETAIL)
     }
@@ -149,6 +153,8 @@ fun ExerciseScreen(
     val currentExerciseOrSupersetIndex = remember(exerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
     val isSuperset =  remember(exerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId) }
 
+    var selectedExerciseOrSupersetIndex by remember { mutableStateOf<Int?>(null) }
+
     val context = LocalContext.current
 
     LaunchedEffect(pagerState.currentPage) {
@@ -158,6 +164,10 @@ fun ExerciseScreen(
             viewModel.setDimming(false)
         } else {
             viewModel.reEvaluateDimmingForCurrentState()
+        }
+
+        if(pagerState.currentPage != exercisesPageIndex){
+            selectedExerciseOrSupersetIndex = null
         }
     }
 
@@ -276,10 +286,17 @@ fun ExerciseScreen(
                         // Get the page type for the current index
                         val pageType = pageTypes[pageIndex]
 
+
                         when (pageType) {
                             PageType.PLATES -> PagePlates(updatedState, equipment)
                             PageType.EXERCISE_DETAIL -> content()
-                            PageType.EXERCISES -> PageExercises(updatedState, viewModel, hapticsViewModel, exercise)
+                            PageType.EXERCISES -> PageExercises(
+                                updatedState,
+                                viewModel, hapticsViewModel,
+                                exercise,
+                                onSelectionChange = {
+                                selectedExerciseOrSupersetIndex = it
+                            })
                             PageType.NOTES -> PageNotes(exercise.notes)
                             PageType.BUTTONS -> PageButtons(updatedState, viewModel,hapticsViewModel)
                         }
@@ -333,7 +350,8 @@ fun ExerciseScreen(
     ) {
         ExerciseIndicator(
             viewModel,
-            state
+            state,
+            selectedExerciseOrSupersetIndex
         )
 
         hearthRateChart()

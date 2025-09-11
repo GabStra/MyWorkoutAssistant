@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.util.Log
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -24,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -219,8 +223,6 @@ fun ExerciseSetsViewer(
     customColor: Color? = null,
     overrideSetIndex: Int? = null
 ){
-    var selectedExercise by remember { mutableStateOf<Exercise?>(null) }
-
     val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
 
@@ -234,30 +236,26 @@ fun ExerciseSetsViewer(
     val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
     val scrollState = rememberScrollState()
-    val itemHeights = remember { mutableStateMapOf<Int, Int>() }
 
-    val allItemsMeasured = remember(exerciseSetStates.size) { mutableStateOf(false) }
-    val measuredItems = remember(exerciseSetStates.size) { mutableIntStateOf(0) }
+    val itemHeights = remember(exercise.id)  { mutableStateMapOf<Int, Int>() }
+    var allItemsMeasured by remember(exercise.id) { mutableStateOf(false) }
+    var measuredItems by remember(exercise.id) { mutableIntStateOf(0) }
 
-    LaunchedEffect(allItemsMeasured.value, setIndex,exercise) {
-        if(selectedExercise == null){
-            selectedExercise = exercise
-        }else if (selectedExercise != exercise){
-            scrollState.scrollTo(0)
-            itemHeights.clear()
-            measuredItems.intValue = 0
-            allItemsMeasured.value = false
+    var readyToBeShown by remember(exercise.id) { mutableStateOf(false) }
+
+    LaunchedEffect(allItemsMeasured, setIndex) {
+        if (!allItemsMeasured) {
             return@LaunchedEffect
         }
 
-        if (!allItemsMeasured.value || setIndex == -1) {
-            return@LaunchedEffect
+        if(setIndex != -1) {
+            val position = (0 until setIndex).sumOf { index ->
+                (itemHeights[index] ?: 0) // + spacingHeight
+            }
+            scrollState.scrollTo(position)
         }
 
-        val position = (0 until setIndex).sumOf { index ->
-            (itemHeights[index] ?: 0) // + spacingHeight
-        }
-        scrollState.scrollTo(position)
+        readyToBeShown = true
     }
 
     @Composable
@@ -274,10 +272,10 @@ fun ExerciseSetsViewer(
                     val height = coordinates.size.height
                     if (itemHeights[rowIndex] != height) {
                         itemHeights[rowIndex] = height
-                        measuredItems.value++
+                        measuredItems++
 
-                        if (measuredItems.value == exerciseSetStates.size) {
-                            allItemsMeasured.value = true
+                        if (measuredItems == exerciseSetStates.size) {
+                            allItemsMeasured = true
                         }
                     }
                 },
@@ -296,11 +294,17 @@ fun ExerciseSetsViewer(
     }
 
     val prototypeItem = @Composable {
-        MeasuredSetTableRow(exerciseSetStates[0], 0, Color.Transparent)
+        MeasuredSetTableRow(setStateForThisRow = exerciseSetStates[0], rowIndex = 0, rowBackgroundColor = Color.Transparent)
     }
 
+    val alpha: Float by animateFloatAsState(
+        targetValue = if (readyToBeShown) 1f else 0f,
+        animationSpec = tween(durationMillis = 500),
+        label = "alphaAnimation"
+    )
+
     Column(
-        modifier = modifier,
+        modifier = modifier.alpha(alpha),
         verticalArrangement = Arrangement.spacedBy(2.5.dp),
     ) {
         if (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
@@ -347,12 +351,10 @@ fun ExerciseSetsViewer(
                             Color.Transparent
                         }
 
-                        MeasuredSetTableRow(nextSetState,index,backgroundColor)
+                        MeasuredSetTableRow(nextSetState, index, backgroundColor)
                     }
                 }
             }
-
-            return
         }
 
         if (exercise.exerciseType == ExerciseType.COUNTUP || exercise.exerciseType == ExerciseType.COUNTDOWN) {
@@ -393,11 +395,10 @@ fun ExerciseSetsViewer(
                             Color.Transparent
                         }
 
-                        MeasuredSetTableRow(nextSetState,index,backgroundColor)
+                        MeasuredSetTableRow(nextSetState, index, backgroundColor)
                     }
                 }
             }
-            return
         }
     }
 }

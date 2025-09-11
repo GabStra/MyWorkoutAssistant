@@ -10,7 +10,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,16 +45,21 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.google.android.horologist.annotations.ExperimentalHorologistApi
+import com.google.android.horologist.composables.ProgressIndicatorSegment
+import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
 @Composable
 fun RestScreen(
     viewModel: AppViewModel,
@@ -79,6 +83,10 @@ fun RestScreen(
 
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
+
+    var amountToWait by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
+
+    val indicatorProgress = remember(currentSeconds,amountToWait) { currentSeconds.toFloat() / amountToWait.toFloat() }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -108,6 +116,10 @@ fun RestScreen(
         }
     }
 
+    val exercisesPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.EXERCISES)
+    }
+
     val exerciseDetailPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.EXERCISES)
     }
@@ -122,6 +134,8 @@ fun RestScreen(
             pageTypes.size
         }
     )
+
+    var selectedExerciseOrSupersetIndex by remember { mutableStateOf<Int?>(null) }
 
     fun restartGoBack() {
         goBackJob?.cancel()
@@ -152,23 +166,6 @@ fun RestScreen(
         state.currentSetData = currentSetData
     }
 
-    var userScrollEnabled by remember { mutableStateOf(true) }
-
-    var isWaitingForRestToEnd by remember { mutableStateOf(false) }
-
-    LaunchedEffect(pagerState.currentPage,currentSeconds){
-        if(isWaitingForRestToEnd) return@LaunchedEffect
-
-        val isOnExerciseDetailPage = pagerState.currentPage == exerciseDetailPageIndex
-        if (!isOnExerciseDetailPage && currentSeconds <= 5){
-            isWaitingForRestToEnd = true
-
-            pagerState.scrollToPage(exerciseDetailPageIndex)
-            userScrollEnabled = false
-            viewModel.lightScreenUp()
-        }
-    }
-
     LaunchedEffect(pagerState.currentPage) {
         val isOnPlatesPage = pagerState.currentPage == platesPageIndex
 
@@ -177,11 +174,17 @@ fun RestScreen(
         } else {
             viewModel.reEvaluateDimmingForCurrentState()
         }
+
+        if(pagerState.currentPage != exercisesPageIndex){
+            selectedExerciseOrSupersetIndex = null
+        }
     }
 
     fun onMinusClick() {
         if (currentSeconds > 5) {
             val newTimerValue = currentSeconds - 5
+            amountToWait = amountToWait - 5
+
             //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
             currentSeconds = newTimerValue
             hapticsViewModel.doGentleVibration()
@@ -191,6 +194,7 @@ fun RestScreen(
 
     fun onPlusClick() {
         val newTimerValue = currentSeconds + 5
+        amountToWait = amountToWait + 5
         //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
         currentSeconds = newTimerValue
         hapticsViewModel.doGentleVibration()
@@ -258,9 +262,9 @@ fun RestScreen(
     }
 
     @Composable
-    fun textComposable(style: TextStyle =  MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold)){
+    fun textComposable(modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold)){
         Row(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
@@ -310,7 +314,7 @@ fun RestScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     content = {
-                        textComposable(MaterialTheme.typography.title1.copy(fontWeight = FontWeight.Bold))
+                        textComposable(style = MaterialTheme.typography.title1.copy(fontWeight = FontWeight.Bold))
                     }
                 )
             }
@@ -322,7 +326,6 @@ fun RestScreen(
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(
-                    userScrollEnabled = userScrollEnabled,
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
@@ -338,22 +341,20 @@ fun RestScreen(
                     pagerState = pagerState,
                 ) { pageIndex ->
                     val pageType = pageTypes[pageIndex]
+
                     when (pageType) {
                         PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
                         PageType.EXERCISE_DETAIL -> {}
                         PageType.EXERCISES -> {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(5.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                textComposable()
-                                PageExercises(
-                                    state.nextStateSets.first(),
-                                    viewModel,
-                                    hapticsViewModel,
-                                    exercise
-                                )
-                            }
+                            PageExercises(
+                                state.nextStateSets.first(),
+                                viewModel,
+                                hapticsViewModel,
+                                exercise,
+                                onSelectionChange = {
+                                    selectedExerciseOrSupersetIndex = it
+                                }
+                            )
                         }
                         PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel,hapticsViewModel)
                         PageType.NOTES -> TODO()
@@ -371,10 +372,30 @@ fun RestScreen(
     ) {
         ExerciseIndicator(
             viewModel,
-            state.nextStateSets.first()
+            state.nextStateSets.first(),
+            selectedExerciseOrSupersetIndex
         )
 
-        hearthRateChart()
+        SegmentedProgressIndicator(
+            trackSegments = listOf(ProgressIndicatorSegment(
+                weight = 1f,
+                indicatorColor = Orange
+            )),
+            progress = indicatorProgress,
+            modifier = Modifier.fillMaxSize(),
+            strokeWidth = 4.dp,
+            paddingAngle = 0f,
+            startAngle = 130f,
+            endAngle = 230f,
+            trackColor = MediumDarkGray,
+        )
+
+        textComposable(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 5.dp),
+            style = MaterialTheme.typography.caption1.copy(fontWeight = FontWeight.Bold)
+        )
     }
 
     CustomDialogYesOnLongPress(
