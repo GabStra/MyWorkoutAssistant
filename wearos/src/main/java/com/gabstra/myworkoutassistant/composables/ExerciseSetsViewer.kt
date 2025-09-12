@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.util.Log
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -32,7 +31,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,9 +72,6 @@ fun SetTableRow(
     val typography = MaterialTheme.typography
     val captionStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f, fontWeight = FontWeight.Bold) }
     val itemStyle = remember(typography) { typography.body1.copy(fontWeight = FontWeight.Bold) }
-    val context = LocalContext.current
-
-
 
     val equipment = setState.equipment
 

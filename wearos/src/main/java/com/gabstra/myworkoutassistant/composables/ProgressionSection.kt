@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composables
 import android.annotation.SuppressLint
 import android.util.Log
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -77,8 +76,8 @@ private fun ProgressionRow(
         modifier = modifier.height(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            modifier = Modifier.weight(1f).basicMarquee(iterations = Int.MAX_VALUE),
+        ScalableText(
+            modifier = Modifier.weight(2f),
             text = info.exerciseName,
             style = itemStyle,
             textAlign = TextAlign.Center,
@@ -190,7 +189,7 @@ fun ProgressionSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(2f),
                     text = "EXERCISE",
                     style = headerStyle,
                     textAlign = TextAlign.Center
@@ -204,7 +203,8 @@ fun ProgressionSection(
             }
 
             DynamicHeightColumn(
-                modifier = Modifier.weight(1f) // Fills remaining vertical space
+                modifier = Modifier
+                    .weight(1f) // Fills remaining vertical space
                     .fillMaxWidth(), // Still need to fill width
                 prototypeItem = { prototypeItem() }
             ) {

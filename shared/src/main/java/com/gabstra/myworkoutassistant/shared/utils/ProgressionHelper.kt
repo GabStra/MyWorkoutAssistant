@@ -122,7 +122,7 @@ object VolumeDistributionHelper {
                 .sumOf { 1.0 + (previousMaxWeight - it.weight) }
             val lowerWeightPenaltyWeight = lowerWeightPenalty * penaltyFactor*/
 
-            return baseScore + volumePenalty + weightPenalty // + lowerWeightPenaltyWeight
+            return baseScore + volumePenalty + weightPenalty
         }
 
         /*
@@ -270,7 +270,7 @@ object VolumeDistributionHelper {
                         val maxVolume = currentCombo[0].volume
 
                         val lastSet = currentCombo.last()
-                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && candidate.volume.round(2) <= (maxVolume * 1.2).round(2) }
+                        val validSets = sortedSets.filter { candidate -> lastSet.weight >= candidate.weight && candidate.volume.round(2) in (maxVolume * 0.8).round(2)..(maxVolume * 1.2).round(2) }
 
                         for (nextSet in validSets) {
                             exploreCombinations(currentCombo + nextSet, depth + 1)
