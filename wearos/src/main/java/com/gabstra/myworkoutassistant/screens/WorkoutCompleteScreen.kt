@@ -26,11 +26,13 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.ProgressionSection
 import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
+import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
@@ -49,6 +51,7 @@ fun WorkoutCompleteScreen(
     hapticsViewModel: HapticsViewModel,
     polarViewModel: PolarViewModel
 ){
+    val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
     val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 
@@ -68,6 +71,7 @@ fun WorkoutCompleteScreen(
 
     LaunchedEffect(Unit){
         delay(500)
+        viewModel.setDimming(false)
         hapticsViewModel.doShortImpulse()
         if(!workout.usePolarDevice){
             hrViewModel.stopMeasuringHeartRate()
@@ -101,39 +105,68 @@ fun WorkoutCompleteScreen(
             .verticalScroll(scrollState)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
             Text(
                 text = "COMPLETED",
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
-            Spacer(modifier = Modifier.height(2.5.dp))
             ScalableText(
                 text = workout.name,
                 style = MaterialTheme.typography.title3
             )
-            Spacer(modifier = Modifier.height(5.dp))
+            Spacer(modifier = Modifier.height(0.dp))
             Text(
                 text = "TIME SPENT",
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
-            Spacer(modifier = Modifier.height(2.5.dp))
             ScalableText(
                 text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
                 textAlign = TextAlign.Center,
                 style =  MaterialTheme.typography.title3
             )
-            Spacer(modifier = Modifier.height(5.dp))
-            ProgressionSection(modifier = Modifier.weight(1f),viewModel = viewModel)
-            Spacer(modifier = Modifier.height(5.dp))
-            Text(
-                text = "CLOSING IN: ${countDownTimer.intValue}",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
-            )
         }
+        ProgressionSection(modifier = Modifier.weight(1f).padding(top = 5.dp),viewModel = viewModel)
+        Text(
+            modifier = Modifier.padding(top = 5.dp),
+            text = "CLOSING IN: ${countDownTimer.intValue}",
+            style = headerStyle,
+            textAlign = TextAlign.Center,
+        )
     }
+
+    CustomDialogYesOnLongPress(
+        show = showNextDialog,
+        title =  "Finish workout",
+        message = "Do you want to go back to the main menu?",
+        handleYesClick = {
+            hapticsViewModel.doGentleVibration()
+            navController.navigate(Screen.WorkoutSelection.route){
+                popUpTo(0) {
+                    inclusive = true
+                }
+            }
+            viewModel.closeCustomDialog()
+        },
+        handleNoClick = {
+            viewModel.closeCustomDialog()
+            hapticsViewModel.doGentleVibration()
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            viewModel.closeCustomDialog()
+        },
+        holdTimeInMillis = 1000,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
+    )
 }

@@ -612,17 +612,40 @@ fun WorkoutDetailScreen(
                         .padding(horizontal = 15.dp),
                 ) {
                     if (workout.workoutComponents.isEmpty()) {
-                        StyledCard(
+                        Row(
                             modifier = Modifier
-                                .padding(15.dp),
-                            
+                                .fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                         ) {
-                            Text(
-                                text = "Add a new workout component",
-                                textAlign = TextAlign.Center,
-                                color = LightGray,
-                                modifier = Modifier
-                                    .padding(15.dp)
+                            GenericButtonWithMenu(
+                                menuItems = listOf(
+                                    MenuItem("Add Exercise") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewExercise(
+                                                workout.id
+                                            )
+                                        );
+                                    },
+                                    MenuItem("Add Rests Between Exercises") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewRest(
+                                                workout.id,
+                                                null
+                                            )
+                                        );
+                                    },
+                                    MenuItem("Add Superset") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewSuperset(
+                                                workout.id
+                                            )
+                                        );
+                                    }
+                                ),
+                                content = {
+                                    Text("Add Workout Component")
+                                }
                             )
                         }
                     }else{

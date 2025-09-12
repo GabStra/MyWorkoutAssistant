@@ -163,7 +163,7 @@ fun HeartRateCircularChart(
             .drop(1)
             .collect { isDialogShown ->
                 if (isDialogShown) {
-                    appViewModel.setDimming(true)
+                    appViewModel.setDimming(false)
                 } else {
                     appViewModel.reEvaluateDimmingForCurrentState()
                 }
@@ -210,7 +210,6 @@ fun HeartRateCircularChart(
 
                 alarmJob = scope.launch {
                     delay(5000)
-                    appViewModel.setDimming(true)
 
                     if(mhrPercentage < lowerBoundMaxHRPercent) {
                         hrStatus = HeartRateStatus.LOWER_THAN_TARGET
@@ -244,6 +243,7 @@ fun HeartRateCircularChart(
             alarmJob?.cancel()
         }else if(alertJob?.isActive == true){
             showHrStatusDialog = false
+            appViewModel.lightScreenUp()
             alertJob?.cancel()
         }
     }

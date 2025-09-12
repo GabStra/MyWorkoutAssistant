@@ -137,7 +137,7 @@ fun WorkoutScreen(
 
     CustomBackHandler(
         onSinglePress = {
-            if(workoutState is WorkoutState.Completed || showWorkoutInProgressDialog) return@CustomBackHandler
+            if(showWorkoutInProgressDialog) return@CustomBackHandler
             hapticsViewModel.doGentleVibration()
             viewModel.openCustomDialog()
             viewModel.lightScreenUp()

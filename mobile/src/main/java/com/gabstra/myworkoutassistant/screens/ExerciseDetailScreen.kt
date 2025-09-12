@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -515,18 +517,21 @@ fun ExerciseDetailScreen(
                         .padding(horizontal = 15.dp),
                 ) {
                     if (sets.isEmpty()) {
-                        StyledCard(
-                            modifier = Modifier
-                                .padding(15.dp),
-                            
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Add a new set",
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier
-                                    .padding(15.dp),
-                                 color = LightGray,
-                            )
+                            Button(
+                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                onClick = {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewSet(workout.id, exercise.id)
+                                    );
+                                },
+                            ) {
+                                Text("Add Set")
+                            }
                         }
                     }else{
                         Row(

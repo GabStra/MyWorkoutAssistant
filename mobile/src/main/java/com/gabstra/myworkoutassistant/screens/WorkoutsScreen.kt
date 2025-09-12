@@ -30,7 +30,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -210,9 +209,7 @@ fun Menu(
 fun WorkoutTitle(
     modifier: Modifier,
     workout: Workout,
-    isDone: Boolean,
     content: @Composable () -> Unit = {},
-    enabled: Boolean = true,
     style: TextStyle = MaterialTheme.typography.bodyLarge
 ) {
     Row(
@@ -220,19 +217,12 @@ fun WorkoutTitle(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (!isDone) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Incomplete",
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-        }
         Text(
             modifier = Modifier
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name,
-            color = LightGray,
+            color = if (workout.enabled) LightGray else MediumLightGray,
             style = style,
         )
         content()
@@ -349,45 +339,65 @@ fun WorkoutsScreen(
                     ?: emptyList()  // Default to empty list if no workouts for the day
             }
 
+        // Consider only completed workouts
         workoutHistoriesInAWeek = workoutHistoriesInAWeek.filter { it.isDone }
 
-        val weeklyWorkouts = if (workoutHistoriesInAWeek.isEmpty()) emptyList() else workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
-            enabledWorkouts.find { it.id == workoutHistory.workoutId && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
-        }
+        // Enabled workouts that appear in the histories this week
+        val weeklyWorkouts =
+            if (workoutHistoriesInAWeek.isEmpty()) emptyList() else workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
+                enabledWorkouts.find { it.id == workoutHistory.workoutId && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
+            }
 
         val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.distinct()
 
+        // Ensure families with no completions still show with their targets
         val totalWeeklyWorkouts = weeklyWorkouts +
                 activeAndEnabledWorkouts.filter {
                     !uniqueGlobalIds.contains(it.globalId) && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
                 }
 
         val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
-        val workoutCountsByGlobalId = weeklyWorkouts.groupingBy { it.globalId }.eachCount()
 
-        // Calculate progress list
-        val progressList = workoutsByGlobalId.map { (globalId, workouts) ->
-            val totalTarget = workouts.sumOf { timesCompletedInAWeekObjective[it.id] ?: 0 }
-            val averageTarget = totalTarget / workouts.size
-            val actual = workoutCountsByGlobalId[globalId] ?: 0
-            if (averageTarget > 0) (actual.toDouble() / averageTarget) else 0.0
+        // Per-workout actual counts for the week
+        val actualCountsByWorkoutId: Map<UUID, Int> =
+            workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
+
+        // Family-level computation with per-workout caps:
+        // - If not all workouts in the family reached target: cap each actual at its target.
+        // - If all reached target: allow surplus.
+        data class Fam(val active: Workout, val countedActual: Int, val totalTarget: Int, val progress: Double)
+
+        val families: List<Fam> = workoutsByGlobalId.map { (_, workouts) ->
+            val targets = workouts.associate { w -> w.id to (timesCompletedInAWeekObjective[w.id] ?: 0) }
+            val actuals = workouts.associate { w -> w.id to (actualCountsByWorkoutId[w.id] ?: 0) }
+
+            val totalTarget = targets.values.sum()
+
+            val allReached = workouts.all { w ->
+                val t = targets[w.id] ?: 0
+                val a = actuals[w.id] ?: 0
+                t <= 0 || a >= t
+            }
+
+            val countedActual = if (allReached) {
+                actuals.values.sum()
+            } else {
+                workouts.sumOf { w -> kotlin.math.min(actuals[w.id] ?: 0, targets[w.id] ?: 0) }
+            }
+
+            val activeWorkout = workouts.firstOrNull { it.isActive } ?: workouts.first()
+            val progress = if (totalTarget > 0) countedActual.toDouble() / totalTarget.toDouble() else 0.0
+
+            Fam(activeWorkout, countedActual, totalTarget, progress)
         }
 
-        weeklyWorkoutsByActualTarget = workoutsByGlobalId.map { (globalId, workouts) ->
-            val totalTarget = workouts.sumOf { timesCompletedInAWeekObjective[it.id] ?: 0 }
-            val averageTarget = totalTarget / workouts.size
-            val actual = workoutCountsByGlobalId[globalId] ?: 0
+        weeklyWorkoutsByActualTarget = families
+            .associate { it.active to (it.countedActual to it.totalTarget) }
+            .toSortedMap(compareBy { it.order })
 
-            //get the active workout in workouts
-            var activeWorkout = workouts.firstOrNull { it.isActive }
-            if (activeWorkout == null) activeWorkout = workouts.first()
-            activeWorkout to Pair(actual, averageTarget)
-        }.toMap().toSortedMap(compareBy { it.order })
-
-
-        // Calculate average objective progress
-        objectiveProgress = progressList.average()
+        objectiveProgress = if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
     }
+
 
     LaunchedEffect(enabledWorkouts, updateMessage) {
         isLoading = true
@@ -1022,15 +1032,20 @@ fun WorkoutsScreen(
                                         .padding(horizontal = 15.dp),
                                 ) {
                                     if (activeAndEnabledWorkouts.isEmpty()) {
-                                        Text(
-                                            text = "Add a new workout",
-                                            textAlign = TextAlign.Center,
-                                            color = LightGray,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(15.dp),
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Button(
+                                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                                onClick = {
+                                                    appViewModel.setScreenData(ScreenData.NewWorkout());
+                                                },
+                                            ) {
+                                                Text("Add Workout")
+                                            }
+                                        }
                                     } else {
                                         GenericSelectableList(
                                             PaddingValues(0.dp, 10.dp),
@@ -1067,9 +1082,7 @@ fun WorkoutsScreen(
                                                 StyledCard {
                                                     WorkoutTitle(
                                                         Modifier.padding(15.dp),
-                                                        it,
-                                                        true,
-                                                        enabled = it.enabled
+                                                        it
                                                     )
                                                 }
                                             },
@@ -1082,7 +1095,6 @@ fun WorkoutsScreen(
                                         horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
                                         verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                                     ) {
-
                                         Button(
                                             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
                                             onClick = {

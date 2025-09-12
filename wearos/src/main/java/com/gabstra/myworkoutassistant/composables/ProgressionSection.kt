@@ -170,6 +170,7 @@ fun ProgressionSection(
 
     val typography = MaterialTheme.typography
     val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+
     val scrollState = rememberScrollState()
 
     // A sample item for DynamicHeightColumn to measure.

@@ -28,7 +28,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -72,12 +71,10 @@ fun RestScreen(
 
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
-    var goBackJob by remember { mutableStateOf<Job?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
             timerJob?.cancel()
-            goBackJob?.cancel()
         }
     }
 
@@ -136,18 +133,6 @@ fun RestScreen(
     )
 
     var selectedExerciseOrSupersetIndex by remember { mutableStateOf<Int?>(null) }
-
-    fun restartGoBack() {
-        goBackJob?.cancel()
-        goBackJob = scope.launch {
-            delay(10000)
-            val isOnExerciseDetailPage = pagerState.currentPage == exerciseDetailPageIndex
-            val isOnPlatesPage = pagerState.currentPage == platesPageIndex
-            if (!isOnExerciseDetailPage && !isOnPlatesPage) {
-                pagerState.scrollToPage(exerciseDetailPageIndex)
-            }
-        }
-    }
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
@@ -226,7 +211,6 @@ fun RestScreen(
             state.currentSetData = currentSetData.copy(
                 endTimer = 0
             )
-            goBackJob?.cancel()
             hapticsViewModel.doHardVibrationWithBeep()
             onTimerEnd()
         }
@@ -327,17 +311,7 @@ fun RestScreen(
             ) {
                 CustomHorizontalPager(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    if (event.changes.any { it.pressed }) {
-                                        restartGoBack()
-                                    }
-                                }
-                            }
-                        },
+                        .fillMaxSize(),
                     pagerState = pagerState,
                 ) { pageIndex ->
                     val pageType = pageTypes[pageIndex]

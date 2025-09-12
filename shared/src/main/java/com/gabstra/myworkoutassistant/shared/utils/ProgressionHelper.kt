@@ -65,10 +65,13 @@ object VolumeDistributionHelper {
 
         val weightLowerThanPrevious = params.availableWeights
             .filter { it < previousMaxWeight }
-            .minByOrNull { abs(it - previousMaxWeight * 0.95) }
+            .minByOrNull { abs(it - (previousMaxWeight * 0.95)) }
             ?: Double.NEGATIVE_INFINITY
 
-        val nextWeightUp = possibleSets.first { it.weight > previousMaxWeight }.weight
+        val nextWeightUp =  params.availableWeights
+            .filter { it > previousMaxWeight }
+            .minByOrNull { abs( it - (previousMaxWeight * 1.05)) }
+            ?: Double.MAX_VALUE
 
         val usableSets = possibleSets.filter { it.weight in weightLowerThanPrevious..nextWeightUp }
 
@@ -79,8 +82,8 @@ object VolumeDistributionHelper {
             val avgInt = totalVol / totalReps.coerceAtLeast(1)
 
             // Normalized deviations (0 = perfect, ~1 = poor fit)
-            val volDiff = kotlin.math.abs((totalVol - targetVolume) / targetVolume.coerceAtLeast(eps))
-            val intDiff = kotlin.math.abs(avgInt - previousAvgIntensity) / previousAvgIntensity.coerceAtLeast(eps)
+            val volDiff = abs((totalVol - targetVolume) / targetVolume.coerceAtLeast(eps))
+            val intDiff = abs(avgInt - previousAvgIntensity) / previousAvgIntensity.coerceAtLeast(eps)
 
             // Volume variance across sets (lower is better)
             val setCount = combo.size.coerceAtLeast(1)
@@ -95,7 +98,7 @@ object VolumeDistributionHelper {
             val intFit = 1 + intDiff.coerceAtMost(1.0)
             val varFit = 1 + cv.coerceAtMost(1.0)
 
-            val fits = listOf(volFit, varFit)
+            val fits = listOf(volFit, intFit, varFit)
 
             // Weighted geometric mean
             val weights = listOf(0.5, 0.25, 0.25)

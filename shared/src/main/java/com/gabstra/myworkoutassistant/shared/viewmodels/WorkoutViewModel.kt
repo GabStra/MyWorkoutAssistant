@@ -305,9 +305,9 @@ open class WorkoutViewModel : ViewModel() {
     private val _hasExercises = MutableStateFlow<Boolean>(false)
     val hasExercises = _hasExercises.asStateFlow()
 
-    private val _isSkipDialogOpen = MutableStateFlow<Boolean>(false)
+    private val _isCustomDialogOpen = MutableStateFlow<Boolean>(false)
 
-    open val isCustomDialogOpen = _isSkipDialogOpen.asStateFlow()
+    open val isCustomDialogOpen = _isCustomDialogOpen.asStateFlow()
 
     private val _enableWorkoutNotificationFlow = MutableStateFlow<String?>(null)
     val enableWorkoutNotificationFlow = _enableWorkoutNotificationFlow.asStateFlow()
@@ -318,12 +318,12 @@ open class WorkoutViewModel : ViewModel() {
 
     // Setter method to open dialog
     fun openCustomDialog() {
-        _isSkipDialogOpen.value = true
+        _isCustomDialogOpen.value = true
     }
 
     // Setter method to close dialog
     fun closeCustomDialog() {
-        _isSkipDialogOpen.value = false
+        _isCustomDialogOpen.value = false
     }
 
 
