@@ -161,8 +161,9 @@ object VolumeDistributionHelper {
                 val isNotPrevious = !sameMultisetByWeightReps(combo, params.previousSets) && !currentTotalVolume.isEqualTo(previousTotalVolume)
                 val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
                 val isVolumeLowerOrEqualToTarget = currentTotalVolume.round(2) <= targetVolume.round(2)
+                val oneSetUsesPreviousMaxWeightOrHigher = combo.any { it.weight >= previousMaxWeight }
 
-                isNotPrevious && isVolumeHigherThanPrevious && isVolumeLowerOrEqualToTarget
+                isNotPrevious && isVolumeHigherThanPrevious && isVolumeLowerOrEqualToTarget && oneSetUsesPreviousMaxWeightOrHigher
             }
         )
 
@@ -179,8 +180,9 @@ object VolumeDistributionHelper {
 
                 val isNotPrevious = !sameMultisetByWeightReps(combo, params.previousSets) && !currentTotalVolume.isEqualTo(previousTotalVolume)
                 val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
+                val oneSetUsesPreviousMaxWeightOrHigher = combo.any { it.weight >= previousMaxWeight }
 
-                isNotPrevious && isVolumeHigherThanPrevious
+                isNotPrevious && isVolumeHigherThanPrevious && oneSetUsesPreviousMaxWeightOrHigher
             }
         )
 
@@ -197,8 +199,9 @@ object VolumeDistributionHelper {
 
                 val isNotPrevious = !sameMultisetByWeightReps(combo, params.previousSets) && !currentTotalVolume.isEqualTo(previousTotalVolume)
                 val isVolumeHigherThanPrevious = currentTotalVolume.round(2) > previousTotalVolume.round(2)
+                val oneSetUsesPreviousMaxWeightOrHigher = combo.any { it.weight >= previousMaxWeight }
 
-                isNotPrevious && isVolumeHigherThanPrevious
+                isNotPrevious && isVolumeHigherThanPrevious && oneSetUsesPreviousMaxWeightOrHigher
             }
         )
 
