@@ -614,7 +614,8 @@ fun WorkoutDetailScreen(
                     if (workout.workoutComponents.isEmpty()) {
                         Row(
                             modifier = Modifier
-                                .fillMaxSize(),
+                                .fillMaxSize()
+                                .padding(5.dp),
                             horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
                             verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                         ) {
@@ -624,14 +625,6 @@ fun WorkoutDetailScreen(
                                         appViewModel.setScreenData(
                                             ScreenData.NewExercise(
                                                 workout.id
-                                            )
-                                        );
-                                    },
-                                    MenuItem("Add Rests Between Exercises") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewRest(
-                                                workout.id,
-                                                null
                                             )
                                         );
                                     },
@@ -735,47 +728,46 @@ fun WorkoutDetailScreen(
                             },
                             isDragDisabled = true
                         )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                    ) {
-                        GenericButtonWithMenu(
-                            menuItems = listOf(
-                                MenuItem("Add Exercise") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewExercise(
-                                            workout.id
-                                        )
-                                    );
-                                },
-                                MenuItem("Add Rests Between Exercises") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewRest(
-                                            workout.id,
-                                            null
-                                        )
-                                    );
-                                },
-                                MenuItem("Add Superset") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewSuperset(
-                                            workout.id
-                                        )
-                                    );
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                        ) {
+                            GenericButtonWithMenu(
+                                menuItems = listOf(
+                                    MenuItem("Add Exercise") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewExercise(
+                                                workout.id
+                                            )
+                                        );
+                                    },
+                                    MenuItem("Add Rests Between Exercises") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewRest(
+                                                workout.id,
+                                                null
+                                            )
+                                        );
+                                    },
+                                    MenuItem("Add Superset") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewSuperset(
+                                                workout.id
+                                            )
+                                        );
+                                    }
+                                ),
+                                content = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Add,
+                                        contentDescription = "Add",
+                                        tint = MaterialTheme.colorScheme.background,
+                                    )
                                 }
-                            ),
-                            content = {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = "Add",
-                                    tint = MaterialTheme.colorScheme.background,
-                                )
-                            }
-                        )
+                            )
+                        }
                     }
                 }
 

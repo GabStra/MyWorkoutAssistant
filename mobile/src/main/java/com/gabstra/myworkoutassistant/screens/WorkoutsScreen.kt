@@ -1033,7 +1033,7 @@ fun WorkoutsScreen(
                                 ) {
                                     if (activeAndEnabledWorkouts.isEmpty()) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier.fillMaxWidth().padding(5.dp),
                                             horizontalArrangement = Arrangement.Center,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -1088,26 +1088,26 @@ fun WorkoutsScreen(
                                             },
                                             isDragDisabled = true
                                         )
-
-                                    }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                                    ) {
-                                        Button(
-                                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                                            onClick = {
-                                                appViewModel.setScreenData(ScreenData.NewWorkout());
-                                            },
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Add,
-                                                contentDescription = "Add",
-                                                tint = MaterialTheme.colorScheme.background,
-                                            )
+                                            Button(
+                                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                                onClick = {
+                                                    appViewModel.setScreenData(ScreenData.NewWorkout());
+                                                },
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Add,
+                                                    contentDescription = "Add",
+                                                    tint = MaterialTheme.colorScheme.background,
+                                                )
+                                            }
                                         }
                                     }
+
                                 }
                             }
 
@@ -1123,15 +1123,24 @@ fun WorkoutsScreen(
                                         .padding(horizontal = 15.dp)
                                 ) {
                                     if (equipments.isEmpty()) {
-                                        Text(
-                                            text = "Add new equipment",
-                                            textAlign = TextAlign.Center,
-                                            color = LightGray,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(15.dp),
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(5.dp),
+                                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                                        ) {
+                                            GenericButtonWithMenu(
+                                                menuItems = EquipmentType.entries.map { equipmentType ->
+                                                    MenuItem("Add ${equipmentType.toDisplayText()}") {
+                                                        appViewModel.setScreenData(
+                                                            ScreenData.NewEquipment(equipmentType)
+                                                        )
+                                                    }
+                                                }.toList(),
+                                                content = {
+                                                    Text("Add Equipment")
+                                                }
+                                            )
+                                        }
                                     } else {
                                         GenericSelectableList(
                                             PaddingValues(0.dp, 10.dp),
@@ -1171,28 +1180,28 @@ fun WorkoutsScreen(
                                             },
                                             isDragDisabled = true
                                         )
-                                    }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                                    ) {
-                                        GenericButtonWithMenu(
-                                            menuItems = EquipmentType.entries.map { equipmentType ->
-                                                MenuItem("Add ${equipmentType.toDisplayText()}") {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.NewEquipment(equipmentType)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                                        ) {
+                                            GenericButtonWithMenu(
+                                                menuItems = EquipmentType.entries.map { equipmentType ->
+                                                    MenuItem("Add ${equipmentType.toDisplayText()}") {
+                                                        appViewModel.setScreenData(
+                                                            ScreenData.NewEquipment(equipmentType)
+                                                        )
+                                                    }
+                                                }.toList(),
+                                                content = {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Add,
+                                                        contentDescription = "Add",
+                                                        tint = MaterialTheme.colorScheme.background,
                                                     )
                                                 }
-                                            }.toList(),
-                                            content = {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Add,
-                                                    contentDescription = "Add",
-                                                    tint = MaterialTheme.colorScheme.background,
-                                                )
-                                            }
-                                        )
+                                            )
+                                        }
                                     }
                                 }
                             }

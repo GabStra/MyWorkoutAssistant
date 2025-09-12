@@ -518,7 +518,7 @@ fun ExerciseDetailScreen(
                 ) {
                     if (sets.isEmpty()) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().padding(5.dp),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -551,7 +551,7 @@ fun ExerciseDetailScreen(
                                 )
                             ) {
                                 Text(text = "Equipment:", style = MaterialTheme.typography.bodyMedium)
-                                val selectedEquipment = equipments.find { it.id == selectedEquipmentId }
+                                val selectedEquipment = if(selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
                                 Text(
                                     text = selectedEquipment?.name ?: "None",
                                     style = MaterialTheme.typography.bodyMedium
@@ -615,35 +615,34 @@ fun ExerciseDetailScreen(
                                 ComponentRenderer(it, appViewModel, exercise)
                             }
                         )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                        verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                    ) {
-                        GenericButtonWithMenu(
-                            menuItems = listOf(
-                                MenuItem("Add Set") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewSet(workout.id, exercise.id)
-                                    );
-                                },
-                                MenuItem("Add Rests between sets") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewRestSet(workout.id, exercise.id)
-                                    );
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
+                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+                        ) {
+                            GenericButtonWithMenu(
+                                menuItems = listOf(
+                                    MenuItem("Add Set") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewSet(workout.id, exercise.id)
+                                        );
+                                    },
+                                    MenuItem("Add Rests between sets") {
+                                        appViewModel.setScreenData(
+                                            ScreenData.NewRestSet(workout.id, exercise.id)
+                                        );
+                                    }
+                                ),
+                                content = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Add,
+                                        contentDescription = "Add",
+                                        tint = MaterialTheme.colorScheme.background,
+                                    )
                                 }
-                            ),
-                            content = {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = "Add",
-                                    tint = MaterialTheme.colorScheme.background,
-                                )
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }

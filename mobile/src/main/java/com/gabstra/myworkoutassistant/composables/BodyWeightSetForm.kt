@@ -65,8 +65,16 @@ fun BodyWeightSetForm(
 
             LaunchedEffect(Unit) {
                 withContext(Dispatchers.IO) {
-                    possibleCombinations = equipment.getWeightsCombinationsWithLabels()
+                    val combinationsFromEquipment = equipment.getWeightsCombinationsWithLabels().toSet()
+                    val hasZeroWeightCombination = combinationsFromEquipment.any { it.first == 0.0 }
+
+                    possibleCombinations = if (hasZeroWeightCombination) {
+                        combinationsFromEquipment
+                    } else {
+                        combinationsFromEquipment + Pair(0.0, "None")
+                    }
                 }
+
             }
 
             val filterState = remember { mutableStateOf("") }
@@ -93,8 +101,8 @@ fun BodyWeightSetForm(
             }
 
             if(possibleCombinations.isNotEmpty()){
-                Box(){
-                    Box(){
+                Box{
+                    Box{
                         OutlinedTextField(
                             value = equipment.formatWeight(additionalWeightState.value.toDouble()),
                             readOnly = true,
@@ -210,7 +218,11 @@ fun BodyWeightSetForm(
             colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
             onClick = {
                 val reps = repsState.value.toIntOrNull() ?: 0
-                val additionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
+                var additionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
+                if(equipment == null){
+                    additionalWeight = 0.0
+                }
+
                 val newBodyWeightSet = BodyWeightSet(
                     id = UUID.randomUUID(),
                     reps = if (reps >= 0) reps else 0,

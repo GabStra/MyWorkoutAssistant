@@ -152,9 +152,10 @@ fun WeightSetForm(
                             filteredCombinations.forEach { (combo,label) ->
                                 StyledCard(
                                     modifier = Modifier.clickable{
-                                    expandedWeights.value = false
-                                    weightState.value = combo.toString()
-                                }) {
+                                        expandedWeights.value = false
+                                        weightState.value = combo.toString()
+                                    }
+                                ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(5.dp),
                                         horizontalArrangement = Arrangement.Center,

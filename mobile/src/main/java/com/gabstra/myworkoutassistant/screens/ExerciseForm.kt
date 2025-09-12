@@ -405,7 +405,7 @@ fun ExerciseForm(
                         ) {
                             DropdownMenuItem(
                                 onClick = {
-                                    selectedEquipmentId.value =null
+                                    selectedEquipmentId.value = null
                                     expandedEquipment.value = false
                                 },
                                 text = {
@@ -542,6 +542,7 @@ fun ExerciseForm(
                 )
             }
 
+            val canBeSaved = nameState.value.isNotBlank() && if(selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true
             // Submit button
             Button(
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
@@ -574,9 +575,9 @@ fun ExerciseForm(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp),
-                enabled = nameState.value.isNotBlank()
+                enabled = canBeSaved
             ) {
-                if (exercise == null) Text("Insert Exercise", color = DarkGray) else Text("Edit Exercise", color = DarkGray)
+                if (exercise == null) Text("Insert Exercise", color = if(canBeSaved) DarkGray else Color.Unspecified) else Text("Edit Exercise", color = if(canBeSaved) DarkGray else Color.Unspecified)
             }
 
             CustomButton(
