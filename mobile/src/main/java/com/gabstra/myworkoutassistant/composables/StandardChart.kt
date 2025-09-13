@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
@@ -53,7 +52,7 @@ fun StandardChart(
     isZoomEnabled: Boolean = true,
     minValue: Double? = null,
     maxValue: Double? = null,
-    markerPosition: Float? = null,
+    markerPosition: Double? = null,
     markerTextFormatter: ((Double) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
@@ -64,9 +63,9 @@ fun StandardChart(
         label = rememberTextComponent(
             color = LightGray,
             padding = Insets(8f),
-            textAlignment = Layout.Alignment.ALIGN_CENTER
+            textAlignment = Layout.Alignment.ALIGN_CENTER,
         ),
-        guideline =  rememberAxisGuidelineComponent(fill(DarkGray)),
+        guideline =  rememberAxisGuidelineComponent(fill(LightGray)),
         indicatorSize = 10.dp,
         valueFormatter = { _, targets ->
             val target = targets.first() as LineCartesianLayerMarkerTarget
@@ -84,11 +83,13 @@ fun StandardChart(
 
     val firstModel = cartesianChartModel.models.firstOrNull()
 
-    val minY = minValue ?: firstModel?.minY ?: 0.0
+    var minY = minValue ?: firstModel?.minY ?: 0.0
     var maxY = maxValue ?: firstModel?.maxY ?: 1.0
 
-    if (minY == maxY) {
-        maxY = minY + 1.0
+    if(minY == maxY){
+        val value = minY
+        minY = value.times(0.99)
+        maxY = value.times(1.01)
     }
 
     StyledCard{
@@ -157,7 +158,7 @@ fun StandardChart(
 
                             ),
                         persistentMarkers = if (markerPosition != null)  { _ ->
-                            marker at markerPosition.toFloat()
+                            marker at markerPosition
                         } else null,
                         marker = marker,
                         fadingEdges = rememberFadingEdges()

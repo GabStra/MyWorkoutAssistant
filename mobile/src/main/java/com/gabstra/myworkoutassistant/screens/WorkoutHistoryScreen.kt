@@ -76,12 +76,16 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
+import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
+import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
+import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.formatTimeHourMinutes
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -185,7 +189,13 @@ fun WorkoutHistoryScreen(
         DateTimeFormatter.ofPattern("HH:mm", currentLocale)
     }
 
+    var selectedRange by remember { mutableStateOf(FilterRange.LAST_30_DAYS) }
+
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
+
+    val historiesToShow = remember(workoutHistories, selectedRange) {
+        workoutHistories.filterBy(selectedRange)
+    }
 
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
 
@@ -202,10 +212,10 @@ fun WorkoutHistoryScreen(
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
 
-    val horizontalAxisValueFormatter = remember(workoutHistories) {
+    val horizontalAxisValueFormatter = remember(historiesToShow) {
         CartesianValueFormatter { _, value, _->
-            if(value.toInt() < 0 || value.toInt() >= workoutHistories.size) return@CartesianValueFormatter "-"
-            val currentWorkoutHistory = workoutHistories[value.toInt()]
+            if(value.toInt() < 0 || value.toInt() >= historiesToShow.size) return@CartesianValueFormatter "-"
+            val currentWorkoutHistory = historiesToShow[value.toInt()]
             currentWorkoutHistory.date.format(dateFormatter)
         }
     }
@@ -219,7 +229,7 @@ fun WorkoutHistoryScreen(
     }
 
     val workoutDurationAxisValueFormatter = CartesianValueFormatter { _, value, _->
-        formatTime(value.toInt())
+        formatTimeHourMinutes(value.toInt())
     }
 
     var isLoading by remember { mutableStateOf(true) }
@@ -244,11 +254,16 @@ fun WorkoutHistoryScreen(
     val durations = remember { mutableListOf<Pair<Int, Float>>() }
     val workoutDurations = remember { mutableListOf<Pair<Int, Float>>() }
 
-
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
         volumes.clear()
         durations.clear()
         workoutDurations.clear()
+
+        volumeMarkerTarget = null
+        durationMarkerTarget = null
+        workoutDurationMarkerTarget = null
+
+        if(workoutHistories.isEmpty()) return
 
         for (workoutHistory in workoutHistories) {
             val setHistories =
@@ -301,9 +316,9 @@ fun WorkoutHistoryScreen(
         if (volumes.any { it.second != 0.0 }) {
             if (volumes.count() == 1) {
                 volumeMarkerTarget = volumes.last()
-            } else if (volumes.count() > 1) {
+            } /*else if (volumes.count() > 1) {
                 volumeMarkerTarget = volumes.maxBy { it.second }
-            }
+            }*/
 
             volumeEntryModel =
                 CartesianChartModel(LineCartesianLayerModel.build {
@@ -314,9 +329,9 @@ fun WorkoutHistoryScreen(
         if (durations.any { it.second != 0f }) {
             if (durations.count() == 1) {
                 durationMarkerTarget = durations.last()
-            } else if (volumes.count() > 1) {
+            } /*else if (volumes.count() > 1) {
                 durationMarkerTarget = durations.maxBy { it.second }
-            }
+            }*/
 
             durationEntryModel =
                 CartesianChartModel(LineCartesianLayerModel.build {
@@ -326,9 +341,9 @@ fun WorkoutHistoryScreen(
 
         if (workoutDurations.count() == 1) {
             workoutDurationMarkerTarget = workoutDurations.last()
-        } else if (workoutDurations.count() > 1) {
+        } /*else if (workoutDurations.count() > 1) {
             workoutDurationMarkerTarget = workoutDurations.maxBy { it.second }
-        }
+        }*/
 
 
         workoutDurationEntryModel =
@@ -353,8 +368,6 @@ fun WorkoutHistoryScreen(
                 return@withContext
             }
 
-            setCharts(workoutHistories)
-
             selectedWorkoutHistory =
                 if (workoutHistoryId != null) workoutHistories.find { it.id == workoutHistoryId } else workoutHistories.lastOrNull()
 
@@ -366,7 +379,6 @@ fun WorkoutHistoryScreen(
             if (selectedWorkoutHistory == null) {
                 isLoading = false
             }
-
         }
     }
 
@@ -433,31 +445,40 @@ fun WorkoutHistoryScreen(
         }
     }
 
+    LaunchedEffect(historiesToShow) {
+        if (historiesToShow.isEmpty()) return@LaunchedEffect
+        setCharts(historiesToShow)
+    }
+
     val graphsTabContent = @Composable {
         Column(
             modifier = Modifier
                 .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            RangeDropdown(selectedRange) { selectedRange = it }
+
             if (volumeEntryModel != null) {
                 StandardChart(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
-                    title = "Total volume over time",
+                    title = "Total volume (KG)",
                     markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    markerPosition = volumeMarkerTarget?.first?.toDouble()
                 )
             }
             if (durationEntryModel != null) {
                 StandardChart(
                     modifier = Modifier,
                     cartesianChartModel = durationEntryModel!!,
-                    title = "Total duration over time",
+                    title = "Total duration",
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    markerPosition = durationMarkerTarget?.first?.toDouble()
                 )
             }
             if (workoutDurationEntryModel != null) {
@@ -465,10 +486,11 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = workoutDurationEntryModel!!,
-                    title = "Workout duration over time",
-                    markerTextFormatter = { formatTime(it.toInt()) },
+                    title = "Workout duration (hh:mm)",
+                    markerTextFormatter = { formatTimeHourMinutes(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    markerPosition = workoutDurationMarkerTarget?.first?.toDouble()
                 )
             }
         }
@@ -1021,7 +1043,7 @@ fun WorkoutHistoryScreen(
                 )
             }
 
-            if (workoutHistories.isEmpty()) {
+            if (historiesToShow.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize(),
@@ -1081,7 +1103,7 @@ fun WorkoutHistoryScreen(
                     }
                 }
             }
-            if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
+            if (!(historiesToShow.isEmpty() || selectedWorkoutHistory == null)) {
                 customBottomBar()
             }
         }

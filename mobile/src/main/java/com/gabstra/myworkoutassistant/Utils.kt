@@ -30,6 +30,7 @@ import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
+import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
@@ -53,6 +54,7 @@ import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.temporal.TemporalAdjusters
@@ -216,6 +218,13 @@ fun formatTime(seconds: Int): String {
     } else {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
+}
+
+fun formatTimeHourMinutes(seconds: Int): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+
+    return String.format("%02d:%02d", hours, minutes)
 }
 
 fun getEnabledStatusOfWorkoutComponent(workoutComponent: WorkoutComponent): Boolean {
@@ -671,4 +680,39 @@ fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<Wor
         }
     }
     return adjustedComponents
+}
+
+fun dateRangeFor(range: FilterRange): Pair<LocalDate, LocalDate> {
+    val today = LocalDate.now()
+
+    return when (range) {
+        FilterRange.LAST_WEEK -> {
+            val thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            val lastMonday = thisMonday.minusWeeks(1)
+            val lastSunday = lastMonday.plusDays(6)
+            lastMonday to lastSunday
+        }
+        FilterRange.LAST_7_DAYS -> {
+            val start = today.minusDays(6)
+            start to today
+        }
+        FilterRange.LAST_30_DAYS -> {
+            val start = today.minusDays(29)
+            start to today
+        }
+        FilterRange.THIS_MONTH -> {
+            val ym = YearMonth.now()
+            ym.atDay(1) to ym.atEndOfMonth()
+        }
+        FilterRange.LAST_3_MONTHS -> {
+            val start = today.minusMonths(3)
+            start to today
+        }
+        FilterRange.ALL -> LocalDate.MIN to LocalDate.MAX
+    }
+}
+
+fun List<WorkoutHistory>.filterBy(range: FilterRange): List<WorkoutHistory> {
+    val (start, end) = dateRangeFor(range)
+    return this.filter { it.date >= start && it.date <= end }
 }

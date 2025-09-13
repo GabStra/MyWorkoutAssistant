@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -60,9 +61,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.FilterRange
+import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DarkGray
@@ -116,6 +120,11 @@ fun ExerciseHistoryScreen(
     var oneRepMaxEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
 
+    var selectedRange by remember { mutableStateOf(FilterRange.LAST_30_DAYS) }
+    val historiesToShow = remember(workoutHistories, selectedRange) {
+        workoutHistories.filterBy(selectedRange)
+    }
+
     var selectedMode by remember { mutableIntStateOf(0) }
 
     val userAge by appViewModel.userAge
@@ -138,9 +147,12 @@ fun ExerciseHistoryScreen(
         formatTime(value.toInt()/1000)
     }
 
-    val horizontalAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
-        val currentWorkoutHistory = workoutHistories[value.toInt()]
-        currentWorkoutHistory.date.format(dateFormatter)//+" "+currentWorkoutHistory.time.format(timeFormatter)
+    val horizontalAxisValueFormatter = remember(historiesToShow) {
+        CartesianValueFormatter { _, value, _->
+            if(value.toInt() < 0 || value.toInt() >= historiesToShow.size) return@CartesianValueFormatter "-"
+            val currentWorkoutHistory = historiesToShow[value.toInt()]
+            currentWorkoutHistory.date.format(dateFormatter)
+        }
     }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
@@ -149,9 +161,127 @@ fun ExerciseHistoryScreen(
     val durations = remember { mutableListOf<Pair<Int, Float>>() }
     val oneRepMaxes = remember { mutableListOf<Pair<Int, Double>>() }
 
-
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
     var setHistoriesByWorkoutHistoryId by remember { mutableStateOf<Map<UUID, List<SetHistory>>>(emptyMap()) }
+
+    suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
+        volumes.clear()
+        durations.clear()
+        oneRepMaxes.clear()
+
+        volumeMarkerTarget = null
+        durationMarkerTarget = null
+        oneRepMaxMarkerTarget = null
+
+        if(workoutHistories.isEmpty()) return
+
+        val mutableMap = mutableMapOf<UUID, List<SetHistory>>()
+
+        for (workoutHistory in workoutHistories) {
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+                workoutHistory.id,
+                exercise.id
+            )
+
+            if (setHistories.isEmpty()) {
+                continue
+            }
+
+            var volume = 0.0
+            var duration = 0f
+
+            val oneRepMax = setHistories.maxOf {
+                when (it.setData) {
+                    is BodyWeightSetData -> {
+                        val setData = it.setData as BodyWeightSetData
+                        calculateOneRepMax(setData.getWeight(), setData.actualReps)
+                    }
+
+                    is WeightSetData ->{
+                        val setData = it.setData as WeightSetData
+                        calculateOneRepMax(setData.getWeight(), setData.actualReps)
+                    }
+                    else -> 0.0
+                }
+            }
+
+            mutableMap.put(workoutHistory.id, setHistories)
+
+            for (setHistory in setHistories) {
+                if (setHistory.setData is WeightSetData) {
+                    val setData = setHistory.setData as WeightSetData
+                    volume += setData.calculateVolume()
+                }
+
+                if (setHistory.setData is BodyWeightSetData) {
+                    val setData = setHistory.setData as BodyWeightSetData
+                    volume += setData.calculateVolume()
+                }
+
+                if (setHistory.setData is TimedDurationSetData) {
+                    val setData = setHistory.setData as TimedDurationSetData
+                    duration += setData.startTimer - setData.endTimer
+                }
+
+                if (setHistory.setData is EnduranceSetData) {
+                    val setData = setHistory.setData as EnduranceSetData
+                    duration += setData.endTimer
+                }
+            }
+
+            volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
+            durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
+
+            oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), oneRepMax.round(2)))
+        }
+
+        setHistoriesByWorkoutHistoryId = mutableMap
+
+        Log.d("WorkoutHistories", "1 - ${setHistoriesByWorkoutHistoryId.keys}")
+        Log.d("WorkoutHistories", "2 - ${workoutHistories.map { it.id }}")
+
+
+        selectedWorkoutHistory = workoutHistories.first { it.id == setHistoriesByWorkoutHistoryId.keys.last() }
+
+        if (volumes.any { it.second != 0.0 }) {
+            if (volumes.count() == 1) {
+                volumeMarkerTarget = volumes.last()
+            } /*else if (volumes.count() > 1) {
+                volumeMarkerTarget = volumes.maxBy { it.second }
+            }*/
+
+            volumeEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build {
+                    series(volumes.map { it.first },volumes.map { it.second })
+                })
+        }
+
+        if (durations.any { it.second != 0f }) {
+            if (durations.count() == 1) {
+                durationMarkerTarget = durations.last()
+            } /*else if (durations.count() > 1) {
+                durationMarkerTarget = durations.maxBy { it.second }
+            }*/
+
+            durationEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build {
+                    series(durations.map { it.first },durations.map { it.second })
+                })
+        }
+
+        if (oneRepMaxes.any { it.second != 0.0 }) {
+            if (oneRepMaxes.count() == 1) {
+                oneRepMaxMarkerTarget = oneRepMaxes.last()
+            } /*else if (oneRepMaxes.count() > 1) {
+                oneRepMaxMarkerTarget = oneRepMaxes.maxBy { it.second }
+            }*/
+
+            oneRepMaxEntryModel =
+                CartesianChartModel(LineCartesianLayerModel.build {
+                    series(oneRepMaxes.map { it.first },oneRepMaxes.map { it.second })
+                })
+        }
+    }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -165,123 +295,20 @@ fun ExerciseHistoryScreen(
                 return@withContext
             }
 
-            volumes.clear()
-            durations.clear()
-            oneRepMaxes.clear()
-            val equipment = exercise?.equipmentId?.let { appViewModel.getEquipmentById(it) }
-
-            val mutableMap = setHistoriesByWorkoutHistoryId.toMutableMap()
-
-            for (workoutHistory in workoutHistories) {
-                val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-                    workoutHistory.id,
-                    exercise.id
-                )
-
-                if (setHistories.isEmpty()) {
-                    continue
-                }
-
-                var volume = 0.0
-                var duration = 0f
-
-                val oneRepMax = setHistories.maxOf {
-                    when (it.setData) {
-                        is BodyWeightSetData -> {
-                            val setData = it.setData as BodyWeightSetData
-                            calculateOneRepMax(setData.getWeight(), setData.actualReps)
-                        }
-
-                        is WeightSetData ->{
-                            val setData = it.setData as WeightSetData
-                            calculateOneRepMax(setData.getWeight(), setData.actualReps)
-                        }
-                        else -> 0.0
-                    }
-                }
-
-                mutableMap.put(workoutHistory.id, setHistories)
-
-                for (setHistory in setHistories) {
-                    if (setHistory.setData is WeightSetData) {
-                        val setData = setHistory.setData as WeightSetData
-                        volume += setData.calculateVolume()
-                    }
-
-                    if (setHistory.setData is BodyWeightSetData) {
-                        val setData = setHistory.setData as BodyWeightSetData
-                        volume += setData.calculateVolume()
-                    }
-
-                    if (setHistory.setData is TimedDurationSetData) {
-                        val setData = setHistory.setData as TimedDurationSetData
-                        duration += setData.startTimer - setData.endTimer
-                    }
-
-                    if (setHistory.setData is EnduranceSetData) {
-                        val setData = setHistory.setData as EnduranceSetData
-                        duration += setData.endTimer
-                    }
-                }
-
-                volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
-                durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
-
-                oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), oneRepMax.round(2)))
-            }
-
-            setHistoriesByWorkoutHistoryId = mutableMap
-
-            selectedWorkoutHistory = workoutHistories.first { it.id == setHistoriesByWorkoutHistoryId.keys.last() }
-
-            if (volumes.any { it.second != 0.0 }) {
-                if (volumes.count() == 1) {
-                    volumeMarkerTarget = volumes.last()
-                } else if (volumes.count() > 1) {
-                    volumeMarkerTarget = volumes.maxBy { it.second }
-                }
-
-                volumeEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build {
-                        series(volumes.map { it.first },volumes.map { it.second })
-                    })
-            }
-
-            if (durations.any { it.second != 0f }) {
-                if (durations.count() == 1) {
-                    durationMarkerTarget = durations.last()
-                } else if (durations.count() > 1) {
-                    durationMarkerTarget = durations.maxBy { it.second }
-                }
-
-                durationEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build {
-                        series(durations.map { it.first },durations.map { it.second })
-                    })
-            }
-
-            if (oneRepMaxes.any { it.second != 0.0 }) {
-                if (oneRepMaxes.count() == 1) {
-                    oneRepMaxMarkerTarget = oneRepMaxes.last()
-                } else if (oneRepMaxes.count() > 1) {
-                    oneRepMaxMarkerTarget = oneRepMaxes.maxBy { it.second }
-                }
-
-                oneRepMaxEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build {
-                        series(oneRepMaxes.map { it.first },oneRepMaxes.map { it.second })
-                    })
-            }
-
 
             delay(500)
             isLoading = false
         }
     }
 
+    LaunchedEffect(historiesToShow) {
+        if (historiesToShow.isEmpty()) return@LaunchedEffect
+        setCharts(historiesToShow)
+    }
+
     val workoutSelector = @Composable {
-        val selectableWorkoutHistories = remember(setHistoriesByWorkoutHistoryId,workoutHistories) {
-            workoutHistories.filter{setHistoriesByWorkoutHistoryId.containsKey(it.id)}
+        val selectableWorkoutHistories = remember(setHistoriesByWorkoutHistoryId,historiesToShow) {
+            historiesToShow.filter{setHistoriesByWorkoutHistoryId.containsKey(it.id)}
         }
 
         Row(
@@ -478,7 +505,7 @@ fun ExerciseHistoryScreen(
                     )
                 }
             } else {
-                if (workoutHistories.isEmpty()) {
+                if (historiesToShow.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize(),
@@ -518,34 +545,38 @@ fun ExerciseHistoryScreen(
                         ) {
                             when (updatedSelectedMode) {
                                 0 -> {
+                                    RangeDropdown(selectedRange) { selectedRange = it }
                                     if (volumeEntryModel != null) {
                                         StandardChart(
                                             cartesianChartModel = volumeEntryModel!!,
-                                            title = "Volume",
+                                            title = "Volume (KG)",
                                             markerTextFormatter = { formatNumber(it) },
                                             startAxisValueFormatter = volumeAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                            markerPosition = volumeMarkerTarget?.first?.toDouble()
                                         )
                                     }
 
                                     if (oneRepMaxEntryModel != null) {
                                         StandardChart(
                                             cartesianChartModel = oneRepMaxEntryModel!!,
-                                            title = "Estimated 1RM/Session",
+                                            title = "Estimated 1RM/Session (KG)",
                                             startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
                                                 value.round(2).toString()
                                             },
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                            markerPosition = oneRepMaxMarkerTarget?.first?.toDouble()
                                         )
                                     }
 
                                     if (durationEntryModel != null) {
                                         StandardChart(
                                             cartesianChartModel = durationEntryModel!!,
-                                            title = "Total duration over time",
+                                            title = "Total duration",
                                             markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
                                             startAxisValueFormatter = durationAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                            markerPosition = durationMarkerTarget?.first?.toDouble()
                                         )
                                     }
                                 }
@@ -671,7 +702,7 @@ fun ExerciseHistoryScreen(
                         }
                     }
 
-                    if (!(workoutHistories.isEmpty() || selectedWorkoutHistory == null)) {
+                    if (!(historiesToShow.isEmpty() || selectedWorkoutHistory == null)) {
                         customBottomBar()
                     }
                 }
