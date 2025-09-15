@@ -9,6 +9,10 @@ import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import java.time.LocalDateTime
 import java.util.UUID
 
+enum class ProgressionState {
+    DELOADING, RETRYING, PROGRESSING
+}
+
 sealed class WorkoutState {
     class Preparing(
         dataLoaded: Boolean
@@ -30,7 +34,7 @@ sealed class WorkoutState {
         val currentBodyWeight: Double,
         val plateChangeResult: PlateCalculator.Companion.PlateChangeResult? = null,
         val streak: Int,
-        val isDeloading: Boolean,
+        val progressionState: ProgressionState?,
         val isWarmupSet: Boolean,
         val equipment: WeightLoadedEquipment?,
         val oneRepMax: Double,

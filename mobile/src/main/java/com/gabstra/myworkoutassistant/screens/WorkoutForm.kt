@@ -68,9 +68,7 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -190,11 +188,10 @@ fun WorkoutForm(
                     .padding(8.dp)
             ) {
                 Text(text = "Type:")
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Box {
                     Text(
                         text = WorkoutTypes.GetNameFromInt(selectedWorkoutType.value),
                         modifier = Modifier
-                            .fillMaxWidth()
                             .clickable { expanded.value = true }
                             .padding(8.dp)
                     )
@@ -231,7 +228,7 @@ fun WorkoutForm(
                             timesCompletedInAWeekState.value = input
                         }
                     },
-                    label = { Text("Objective per week") },
+                    label = { Text("Target sessions per week") },
                     keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                     modifier = Modifier
                         .fillMaxWidth()

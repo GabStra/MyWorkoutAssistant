@@ -17,7 +17,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -37,7 +40,9 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.Duration
 
 @SuppressLint("DefaultLocale")
@@ -69,6 +74,9 @@ fun WorkoutCompleteScreen(
     val typography = MaterialTheme.typography
     val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
+    val scope = rememberCoroutineScope()
+    var closeJob by remember { mutableStateOf<Job?>(null) }
+
     LaunchedEffect(Unit){
         delay(500)
         viewModel.setDimming(false)
@@ -83,13 +91,15 @@ fun WorkoutCompleteScreen(
         viewModel.pushAndStoreWorkoutData(true,context){
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
 
-            while(countDownTimer.intValue > 0){
-                countDownTimer.intValue--
-                delay(1000)
-            }
+            closeJob = scope.launch {
+                while(countDownTimer.intValue > 0){
+                    countDownTimer.intValue--
+                    delay(1000)
+                }
 
-            val activity = (context as? Activity)
-            activity?.finishAndRemoveTask()
+                val activity = (context as? Activity)
+                activity?.finishAndRemoveTask()
+            }
         }
     }
 
@@ -144,6 +154,7 @@ fun WorkoutCompleteScreen(
         title =  "Finish workout",
         message = "Do you want to go back to the main menu?",
         handleYesClick = {
+            closeJob?.cancel()
             hapticsViewModel.doGentleVibration()
             navController.navigate(Screen.WorkoutSelection.route){
                 popUpTo(0) {

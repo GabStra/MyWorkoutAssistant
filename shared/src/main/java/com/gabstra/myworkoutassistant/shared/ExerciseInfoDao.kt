@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import java.util.UUID
 
 @Dao
@@ -24,26 +25,14 @@ interface ExerciseInfoDao {
     @Query("DELETE FROM exercise_info")
     suspend fun deleteAll()
 
-    @Query("UPDATE exercise_info SET bestVolume = :bestVolume, version = version + 1 WHERE id = :id")
-    suspend fun updateBestVolume(id: UUID, bestVolume: Double)
+    @Query("UPDATE exercise_info SET bestSession = :bestSession, version = version + 1 WHERE id = :id")
+    suspend fun updateBestSession(id: UUID, bestSession: List<SetData>)
 
-    @Query("UPDATE exercise_info SET bestAverageLoad = :bestAverageLoad, version = version + 1 WHERE id = :id")
-    suspend fun updateBestAverageLoad(id: UUID, bestAverageLoad: Double)
-
-    @Query("UPDATE exercise_info SET bestOneRepMax = :bestOneRepMax, version = version + 1 WHERE id = :id")
-    suspend fun updateBestOneRepMax(id: UUID, bestOneRepMax: Double)
+    @Query("UPDATE exercise_info SET lastSuccessfulSession = :lastSuccessfulSession, version = version + 1 WHERE id = :id")
+    suspend fun updateLastSuccessfulSession(id: UUID, lastSuccessfulSession: List<SetData>)
 
     @Query("UPDATE exercise_info SET successfulSessionCounter = :successfulSessionCounter, version = version + 1 WHERE id = :id")
     suspend fun updateSuccessfulSessionCounter(id: UUID, successfulSessionCounter: UInt)
-
-    @Query("UPDATE exercise_info SET lastSessionVolume = :lastSessionVolume, version = version + 1 WHERE id = :id")
-    suspend fun updateLastSessionVolume(id: UUID, lastSessionVolume: Double)
-
-    @Query("UPDATE exercise_info SET lastSessionAverageLoad = :lastSessionAverageLoad, version = version + 1 WHERE id = :id")
-    suspend fun updateLastSessionAverageLoad(id: UUID, lastSessionAverageLoad: Double)
-
-    @Query("UPDATE exercise_info SET lastSessionOneRepMax = :lastSessionOneRepMax, version = version + 1 WHERE id = :id")
-    suspend fun updateLastSessionOneRepMax(id: UUID, lastSessionOneRepMax: Double)
 
     @Query("UPDATE exercise_info SET sessionFailedCounter = :sessionFailedCounter, version = version + 1 WHERE id = :id")
     suspend fun updateSessionFailedCounter(id: UUID, sessionFailedCounter: UInt)

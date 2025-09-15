@@ -108,7 +108,6 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
 
@@ -325,79 +324,66 @@ fun WorkoutsScreen(
     fun calculateObjectiveProgress(currentDate: LocalDate) {
         weeklyWorkoutsByActualTarget = null
         objectiveProgress = 0.0
-
         if (enabledWorkouts.isEmpty()) return
 
         val startOfWeek = getStartOfWeek(currentDate)
         val endOfWeek = getEndOfWeek(currentDate)
 
-        // Collect workouts for each day in the week range
-        var workoutHistoriesInAWeek =
-            (0..ChronoUnit.DAYS.between(startOfWeek, endOfWeek)).flatMap { offset ->
-                val date = startOfWeek.plusDays(offset)
-                groupedWorkoutsHistories?.get(date)
-                    ?: emptyList()  // Default to empty list if no workouts for the day
-            }
+        // Inclusive date iteration without Int/Long range pitfalls
+        val workoutHistoriesInAWeek =
+            generateSequence(startOfWeek) { it.plusDays(1) }
+                .takeWhile { !it.isAfter(endOfWeek) }
+                .flatMap { d -> groupedWorkoutsHistories?.get(d)?.asSequence() ?: emptySequence() }
+                .filter { it.isDone }
+                .toList()
 
-        // Consider only completed workouts
-        workoutHistoriesInAWeek = workoutHistoriesInAWeek.filter { it.isDone }
+        // Fast lookup of eligible workouts and DE-DUPE by workout id
+        val eligibleById = enabledWorkouts
+            .filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
+            .associateBy { it.id }
 
-        // Enabled workouts that appear in the histories this week
-        val weeklyWorkouts =
-            if (workoutHistoriesInAWeek.isEmpty()) emptyList() else workoutHistoriesInAWeek.mapNotNull { workoutHistory ->
-                enabledWorkouts.find { it.id == workoutHistory.workoutId && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
-            }
+        val weeklyWorkouts = workoutHistoriesInAWeek
+            .mapNotNull { eligibleById[it.workoutId] }
+            .distinctBy { it.id }   // <<< FIX 1
 
-        val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.distinct()
+        val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.toSet()
 
-        // Ensure families with no completions still show with their targets
         val totalWeeklyWorkouts = weeklyWorkouts +
                 activeAndEnabledWorkouts.filter {
-                    !uniqueGlobalIds.contains(it.globalId) && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
+                    it.globalId !in uniqueGlobalIds && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
                 }
 
         val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
+        val actualCountsByWorkoutId = workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
 
-        // Per-workout actual counts for the week
-        val actualCountsByWorkoutId: Map<UUID, Int> =
-            workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
-
-        // Family-level computation with per-workout caps:
-        // - If not all workouts in the family reached target: cap each actual at its target.
-        // - If all reached target: allow surplus.
         data class Fam(val active: Workout, val countedActual: Int, val totalTarget: Int, val progress: Double)
 
-        val families: List<Fam> = workoutsByGlobalId.map { (_, workouts) ->
-            val targets = workouts.associate { w -> w.id to (timesCompletedInAWeekObjective[w.id] ?: 0) }
-            val actuals = workouts.associate { w -> w.id to (actualCountsByWorkoutId[w.id] ?: 0) }
+        val families: List<Fam> = workoutsByGlobalId.map { (_, wsRaw) ->
+            val ws = wsRaw.distinctBy { it.id } // <<< Safety de-dupe
+            val targets = ws.associate { w -> w.id to (timesCompletedInAWeekObjective[w.id] ?: 0) }
+            val actuals = ws.associate { w -> w.id to (actualCountsByWorkoutId[w.id] ?: 0) }
 
             val totalTarget = targets.values.sum()
-
-            val allReached = workouts.all { w ->
-                val t = targets[w.id] ?: 0
-                val a = actuals[w.id] ?: 0
-                t <= 0 || a >= t
-            }
+            val allReached = ws.all { w -> (targets[w.id] ?: 0) <= 0 || (actuals[w.id] ?: 0) >= (targets[w.id] ?: 0) }
 
             val countedActual = if (allReached) {
                 actuals.values.sum()
             } else {
-                workouts.sumOf { w -> kotlin.math.min(actuals[w.id] ?: 0, targets[w.id] ?: 0) }
+                ws.sumOf { w -> minOf(actuals[w.id] ?: 0, targets[w.id] ?: 0) }
             }
 
-            val activeWorkout = workouts.firstOrNull { it.isActive } ?: workouts.first()
-            val progress = if (totalTarget > 0) countedActual.toDouble() / totalTarget.toDouble() else 0.0
-
+            val activeWorkout = ws.firstOrNull { it.isActive } ?: ws.first()
+            val progress = if (totalTarget > 0) countedActual.toDouble() / totalTarget else 0.0
             Fam(activeWorkout, countedActual, totalTarget, progress)
         }
 
+        // <<< FIX 2: add tiebreaker so different keys don't collide when 'order' is equal
         weeklyWorkoutsByActualTarget = families
             .associate { it.active to (it.countedActual to it.totalTarget) }
-            .toSortedMap(compareBy { it.order })
+            .toSortedMap(compareBy<Workout> { it.order }.thenBy { it.id })
 
         objectiveProgress = if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
     }
-
 
     LaunchedEffect(enabledWorkouts, updateMessage) {
         isLoading = true
