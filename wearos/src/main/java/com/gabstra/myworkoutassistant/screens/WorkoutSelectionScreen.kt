@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.getVersionName
 import com.google.android.gms.wearable.DataClient
@@ -220,15 +221,19 @@ fun WorkoutSelectionScreen(
 
                 item{
                     ButtonWithText(
-                        text = "Request Alarms Permission",
+                        text = "Open Alarms Settings",
                         onClick = {
+                            hapticsViewModel.doGentleVibration()
                             val intent = Intent(
                                 Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
                                 "package:${context.packageName}".toUri()
                             )
 
                             context.startActivity(intent)
-                        })
+                        },
+                        backgroundColor = Orange,
+                        textColor = MaterialTheme.colors.background,
+                    )
                 }
             }
 

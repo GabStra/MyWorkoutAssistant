@@ -176,9 +176,10 @@ class MainActivity : ComponentActivity() {
         val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
 
         if(isWorkoutInProgress){
-            cancelWorkoutInProgressNotification(this)
             prefs.edit { putBoolean("isWorkoutInProgress", false) }
         }
+
+        cancelWorkoutInProgressNotification(this)
 
         if(::myReceiver.isInitialized) {
             unregisterReceiver(myReceiver)

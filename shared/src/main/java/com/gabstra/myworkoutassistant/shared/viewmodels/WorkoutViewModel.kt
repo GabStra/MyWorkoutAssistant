@@ -526,7 +526,6 @@ open class WorkoutViewModel : ViewModel() {
     protected suspend fun generateProgressions() {
         exerciseProgressionByExerciseId.clear()
 
-
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
         val exercisesWithEquipments = exercises.filter { it.enabled && it.equipmentId != null }
@@ -605,8 +604,19 @@ open class WorkoutViewModel : ViewModel() {
         val previousSets = when(shouldLoadLastSuccessfulSession){
             true -> {
                 Log.d("WorkoutViewModel", "Loading last successful session")
-                exerciseInfo!!.lastSuccessfulSession.map { it ->
+
+                val lastSuccessfulSession = exerciseInfo!!.lastSuccessfulSession.ifEmpty { exercise.sets.filter { it !is RestSet } }
+
+                lastSuccessfulSession.map { it ->
                     when (it) {
+                        is BodyWeightSet -> {
+                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                            val weight = it.getWeight(relativeBodyWeight)
+                            createSet(weight, it.reps)
+                        }
+                        is WeightSet -> {
+                            createSet(it.weight, it.reps)
+                        }
                         is BodyWeightSetData -> {
                             createSet(it.getWeight(), it.actualReps)
                         }
@@ -1057,6 +1067,8 @@ open class WorkoutViewModel : ViewModel() {
                             exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
                             exerciseInfoDao.updateLastSessionWasDeload(it.key!!, true)
                         }else{
+                            exerciseInfoDao.updateLastSessionWasDeload(it.key!!, false)
+
                             val lastVolume = exerciseInfo.lastSuccessfulSession.sumOf {
                                 when (it) {
                                     is BodyWeightSetData -> it.volume
@@ -1085,10 +1097,6 @@ open class WorkoutViewModel : ViewModel() {
                                 exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
                                 exerciseInfoDao.updateSessionFailedCounter(it.key!!, exerciseInfo.sessionFailedCounter.inc())
                             }
-                        }
-
-                        if (exerciseInfo.lastSessionWasDeload && !isDeloading) {
-                            exerciseInfoDao.updateLastSessionWasDeload(it.key!!, false)
                         }
                     }
                 }

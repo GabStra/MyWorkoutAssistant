@@ -81,10 +81,16 @@ class PlateCalculator {
                             dp[i][j] = cost
                             parent[i][j] = k
                         } else if (cost == dp[i][j]) {
-                            // CORRECT TIE-BREAKER: Prefer path from a previous state with fewer plates.
-                            val oldBestPrevComboSize = if (parent[i][j] != -1) allCombos[i - 1][parent[i][j]].size else Int.MAX_VALUE
-                            if (comboPrev.size < oldBestPrevComboSize) {
+                            val oldParent = parent[i][j]
+                            val newReuse  = reuseScore(comboPrev, comboCurrent)
+                            val oldReuse  = if (oldParent != -1) reuseScore(allCombos[i - 1][oldParent], comboCurrent) else -1
+
+                            if (newReuse > oldReuse) {
                                 parent[i][j] = k
+                            } else if (newReuse == oldReuse) {
+                                // Fallback: fewer plates in the previous state (your existing rule)
+                                val oldBestPrevSize = if (oldParent != -1) allCombos[i - 1][oldParent].size else Int.MAX_VALUE
+                                if (comboPrev.size < oldBestPrevSize) parent[i][j] = k
                             }
                         }
                     }
@@ -128,6 +134,24 @@ class PlateCalculator {
             return results
         }
 
+        private fun reuseScore(from: List<Double>, to: List<Double>): Int {
+            val steps = generatePhysicalSteps(from, to)
+            val removed = mutableMapOf<Double, Int>()
+            val added = mutableMapOf<Double, Int>()
+            for (s in steps) {
+                when (s.action) {
+                    Action.REMOVE -> removed[s.weight] = (removed[s.weight] ?: 0) + 1
+                    Action.ADD    -> added[s.weight]   = (added[s.weight]   ?: 0) + 1
+                }
+            }
+            var score = 0
+            for ((w, a) in added) {
+                val r = removed[w] ?: 0
+                score += minOf(a, r)
+            }
+            return score
+        }
+
         private fun generateValidCombos(
             plateCounts: Map<Double, Int>,
             targetTotalWeight: Double,
@@ -152,13 +176,12 @@ class PlateCalculator {
                 val availableCount = plateCounts.getValue(plateWeight)
 
                 val weightOfOnePair = sidesOnBarbell.toDouble() * plateWeight
-                val maxPairs = availableCount / sidesOnBarbell.toInt() // floor
 
                 // Option 1: Skip this plate weight and move to the next.
                 backtrack(comboIndex + 1, platesForOneSide, currentTotalWeight)
 
                 // Option 2: Use one or more pairs of this plate weight.
-                for (pairsToUse in 1..maxPairs) {
+                for (pairsToUse in 1..availableCount) {
                     val newTotalWeight = currentTotalWeight + pairsToUse * weightOfOnePair
                     if (newTotalWeight > targetTotalWeight + 1e-9) break
 
