@@ -142,6 +142,7 @@ fun rememberCanScheduleExactAlarmsState(context: Context): State<Boolean> {
 }
 
 
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutSelectionScreen(
@@ -163,6 +164,8 @@ fun WorkoutSelectionScreen(
     val versionName = getVersionName(context);
 
     val canScheduleExactAlarms by rememberCanScheduleExactAlarmsState(context)
+
+
 
     var showClearData by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -205,8 +208,17 @@ fun WorkoutSelectionScreen(
                 )
             }
 
-            item{
-                if(!canScheduleExactAlarms){
+            if(!canScheduleExactAlarms){
+                item {
+                    Text(
+                        modifier = Modifier.padding(vertical = 5.dp),
+                        text = "Enable Alarms for scheduled workouts",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption1,
+                    )
+                }
+
+                item{
                     ButtonWithText(
                         text = "Request Alarms Permission",
                         onClick = {
@@ -216,7 +228,7 @@ fun WorkoutSelectionScreen(
                             )
 
                             context.startActivity(intent)
-                    })
+                        })
                 }
             }
 
@@ -225,7 +237,7 @@ fun WorkoutSelectionScreen(
                     item{
                         Text(
                             modifier = Modifier.padding(vertical = 5.dp),
-                            text = "Input your age on the phone",
+                            text = "Input your age on the companion app",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.caption1,
                         )
@@ -245,7 +257,7 @@ fun WorkoutSelectionScreen(
                     item{
                         Text(
                             modifier = Modifier.padding(vertical = 5.dp),
-                            text = "Please install the companion app on your phone",
+                            text = "Install the companion app on your phone",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.caption1,
                         )

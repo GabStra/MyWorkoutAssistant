@@ -173,9 +173,13 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
 
         val prefs = getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-        prefs.edit { putBoolean("isWorkoutInProgress", false) }
+        val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
 
-        cancelWorkoutInProgressNotification(this)
+        if(isWorkoutInProgress){
+            cancelWorkoutInProgressNotification(this)
+            prefs.edit { putBoolean("isWorkoutInProgress", false) }
+        }
+
         if(::myReceiver.isInitialized) {
             unregisterReceiver(myReceiver)
         }
