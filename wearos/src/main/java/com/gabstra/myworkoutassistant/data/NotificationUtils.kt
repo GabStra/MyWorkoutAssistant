@@ -12,6 +12,7 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.gabstra.myworkoutassistant.R
 
+@SuppressLint("MissingPermission")
 fun showWorkoutInProgressNotification(context: Context) {
     val channelId = "workout_progress_channel"
     val notificationId = 1
@@ -53,7 +54,7 @@ fun showWorkoutInProgressNotification(context: Context) {
 
     val ongoingActivity =
         OngoingActivity.Builder(context, notificationId, notificationBuilder)
-            .setAnimatedIcon(R.drawable.ic_workout_icon)
+            .setAnimatedIcon(R.drawable.avd_anim)
             .setStaticIcon(R.drawable.ic_workout_icon) // The icon to show on the watch face
             .setTouchIntent(pendingIntent)       // The intent to fire on tap
             .setStatus(ongoingActivityStatus)    // Optional: Add status text
