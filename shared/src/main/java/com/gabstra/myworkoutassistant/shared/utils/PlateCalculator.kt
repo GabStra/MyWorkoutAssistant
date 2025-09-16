@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
 import kotlin.math.abs
-import kotlin.math.min
 
 class PlateCalculator {
     companion object {
@@ -32,7 +31,7 @@ class PlateCalculator {
          * @param sets The list of target total weights for each set (e.g., [100.0, 120.0, 100.0]).
          * @param barWeight The weight of the barbell itself.
          * @param initialPlates The list of plates already on one side of the bar before the first set.
-         * @param sidesOnBarbell The number of sides to place plates on (typically 2.0).
+         * @param sidesOnBarbell The number of sides to place plates on (typically 2).
          * @return A list of results, each containing the steps to transition from one set to the next.
          * @throws IllegalArgumentException if any target weight is impossible to achieve with the given plates.
          */
@@ -149,14 +148,17 @@ class PlateCalculator {
                 if (currentTotalWeight > targetTotalWeight || comboIndex >= uniqueWeights.size) return
 
                 val plateWeight = uniqueWeights[comboIndex]
+
                 val availableCount = plateCounts.getValue(plateWeight)
+
                 val weightOfOnePair = sidesOnBarbell.toDouble() * plateWeight
+                val maxPairs = availableCount / sidesOnBarbell.toInt() // floor
 
                 // Option 1: Skip this plate weight and move to the next.
                 backtrack(comboIndex + 1, platesForOneSide, currentTotalWeight)
 
                 // Option 2: Use one or more pairs of this plate weight.
-                for (pairsToUse in 1..availableCount) {
+                for (pairsToUse in 1..maxPairs) {
                     val newTotalWeight = currentTotalWeight + pairsToUse * weightOfOnePair
                     if (newTotalWeight > targetTotalWeight + 1e-9) break
 
@@ -205,46 +207,50 @@ class PlateCalculator {
             current: List<Double>,
             target: List<Double>
         ): List<PlateStep> {
-            if (current.groupingBy { it }.eachCount() == target.groupingBy { it }.eachCount()) {
-                return emptyList()
-            }
+            // Work with canonical inner→outer order (largest → smallest)
+            val cur = current.sortedDescending().toMutableList()
+            val tgt = target.sortedDescending()
+            val steps = mutableListOf<PlateStep>()
 
-            // Calculate the net changes (multiset difference).
-            // toAdd: plates in target but not in current.
-            // toRemove: plates in current but not in target.
-            val (toAdd, toRemove) = minimizeChanges(current, target)
+            if (cur == tgt) return emptyList()
 
-            // Calculate the multiset intersection to find plates that are common to both setups.
-            val currentCounts = current.groupingBy { it }.eachCount()
-            val targetCounts = target.groupingBy { it }.eachCount()
-            val commonPlates = buildList {
-                (currentCounts.keys + targetCounts.keys).distinct().forEach { plate ->
-                    val numInCurrent = currentCounts[plate] ?: 0
-                    val numInTarget = targetCounts[plate] ?: 0
-                    repeat(min(numInCurrent, numInTarget)) { add(plate) }
+            while (true) {
+                // Find first index where stacks differ (from inner to outer)
+                var i = 0
+                while (i < cur.size && i < tgt.size && cur[i] == tgt[i]) i++
+                if (i >= cur.size && i >= tgt.size) break // done
+
+                // 1) Expose index i by removing all outer plates beyond it
+                while (cur.size > i + 1) {
+                    val w = cur.removeAt(cur.lastIndex)
+                    steps.add(PlateStep(Action.REMOVE, w))
+                }
+
+                val curHas = i < cur.size
+                val tgtHas = i < tgt.size
+
+                when {
+                    // 2) Target has no plate here → remove the current plate at i
+                    curHas && !tgtHas -> {
+                        val w = cur.removeAt(cur.lastIndex) // i is now the last index
+                        steps.add(PlateStep(Action.REMOVE, w))
+                    }
+                    // 3) Need to add a plate here → add target[i]
+                    !curHas && tgtHas -> {
+                        val w = tgt[i]
+                        cur.add(w)
+                        steps.add(PlateStep(Action.ADD, w))
+                    }
+                    // 4) Both have a plate here but they differ:
+                    //    If current[i] is wrong (larger or smaller), remove it first.
+                    curHas && tgtHas && cur[i] != tgt[i] -> {
+                        val w = cur.removeAt(cur.lastIndex) // remove blocking/mismatched plate
+                        steps.add(PlateStep(Action.REMOVE, w))
+                    }
                 }
             }
 
-            // Find the largest plate we need to add.
-            val maxNewPlate = toAdd.maxOrNull() ?: 0.0
-
-            // Any common plate that is smaller than the largest new plate must be temporarily
-            // removed and then re-added.
-            val platesToReAdd = commonPlates.filter { it < maxNewPlate }
-
-            // The full removal sequence: permanently removed plates + temporarily removed plates.
-            // Sorted ascending: remove smaller, outer plates first.
-            val fullRemovalList = (toRemove + platesToReAdd).sorted()
-
-            // The full addition sequence: new plates + re-added plates.
-            // Sorted descending: add larger, inner plates first.
-            val fullAdditionList = (toAdd + platesToReAdd).sortedDescending()
-
-            // Construct the final list of physical steps.
-            return buildList {
-                fullRemovalList.forEach { add(PlateStep(Action.REMOVE, it)) }
-                fullAdditionList.forEach { add(PlateStep(Action.ADD, it)) }
-            }
+            return steps
         }
     }
 }

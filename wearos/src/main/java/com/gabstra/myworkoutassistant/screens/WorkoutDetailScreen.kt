@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
+import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListState
@@ -66,6 +68,9 @@ fun WorkoutDetailScreen(
         if (result.all { it.value }) {
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
             viewModel.startWorkout()
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+
             navController.navigate(Screen.Workout.route)
             viewModel.consumeStartWorkout()
         }
@@ -76,6 +81,9 @@ fun WorkoutDetailScreen(
     ) { result ->
         if (result.all { it.value }) {
             viewModel.resumeWorkoutFromRecord()
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+
             navController.navigate(Screen.Workout.route)
         }
     }

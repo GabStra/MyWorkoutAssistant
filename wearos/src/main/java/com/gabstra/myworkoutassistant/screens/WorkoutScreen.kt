@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.content.Context
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -17,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.edit
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -99,6 +101,10 @@ fun WorkoutScreen(
         title = "Workout in progress",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
+
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            prefs.edit { putBoolean("isWorkoutInProgress", false) }
+
             //viewModel.pushAndStoreWorkoutData(false,context)
             if(!selectedWorkout.usePolarDevice){
                 hrViewModel.stopMeasuringHeartRate()

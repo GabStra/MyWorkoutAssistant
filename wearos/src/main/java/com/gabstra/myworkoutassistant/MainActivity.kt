@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -68,7 +69,9 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.WearDataLayerRegistry
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 class MyReceiver(
@@ -168,6 +171,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+
+        val prefs = getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", false) }
+
         cancelWorkoutInProgressNotification(this)
         if(::myReceiver.isInitialized) {
             unregisterReceiver(myReceiver)
@@ -190,15 +197,19 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalHorologistApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
 
+        lifecycleScope.launch(Dispatchers.IO) {
+            val prefs = getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            prefs.getBoolean("isWorkoutInProgress", false)
+        }
 
         setShowWhenLocked(true)
         setTurnScreenOn(true)
 
         // Handle intent if app was launched from notification
-
         handleNotificationIntent(intent)
-        super.onCreate(savedInstanceState)
+
         appViewModel.initDataClient(dataClient)
         val wearDataLayerRegistry  = WearDataLayerRegistry.fromContext(this, lifecycleScope)
         appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
@@ -280,7 +291,7 @@ fun WearApp(
 
             appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
-            var now = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
             if(now - startTime < 2000){
                 delay(2000 - (now - startTime))
             }
