@@ -577,21 +577,7 @@ open class WorkoutViewModel : ViewModel() {
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
 
-        if(exercise.exerciseType == ExerciseType.BODY_WEIGHT){
-            val relativeBodyWeight =
-                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
 
-            Log.d(
-                "WorkoutViewModel",
-                "${exercise.name} (${exercise.exerciseType}) Relative BodyWeight: ${relativeBodyWeight}"
-            )
-
-        }else{
-            Log.d(
-                "WorkoutViewModel",
-                "${exercise.name} (${exercise.exerciseType})"
-            )
-        }
 
         val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
         val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
@@ -601,10 +587,52 @@ open class WorkoutViewModel : ViewModel() {
 
         val shouldLoadLastSuccessfulSession = lastWasDeload || shouldRetry
 
+        val est1RM = when(shouldLoadLastSuccessfulSession){
+            true -> {
+                val lastSuccessfulSession = exerciseInfo!!.lastSuccessfulSession.ifEmpty { exercise.sets.filter { it !is RestSet } }
+
+                lastSuccessfulSession.maxOf { it ->
+                    when (it) {
+                        is BodyWeightSet -> {
+                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                            val weight = it.getWeight(relativeBodyWeight)
+                            calculateOneRepMax(weight, it.reps)
+                        }
+                        is WeightSet -> {
+                            calculateOneRepMax(it.weight, it.reps)
+                        }
+                        is BodyWeightSetData -> {
+                            calculateOneRepMax(it.getWeight(), it.actualReps)
+                        }
+
+                        is WeightSetData -> {
+                            calculateOneRepMax(it.getWeight(), it.actualReps)
+                        }
+                        else -> throw IllegalStateException("Unknown set type encountered after filtering.")
+                    }
+                }
+            }
+            false -> {
+                val exerciseSets = exercise.sets.filter { it !is RestSet }
+                exerciseSets.maxOf { it ->
+                    when (it) {
+                        is BodyWeightSet -> {
+                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                            val weight = it.getWeight(relativeBodyWeight)
+                            calculateOneRepMax(weight, it.reps)
+                        }
+
+                        is WeightSet -> {
+                            calculateOneRepMax(it.weight, it.reps)
+                        }
+                        else -> throw IllegalStateException("Unknown set type encountered after filtering.")
+                    }
+                }
+            }
+        }
+
         val previousSets = when(shouldLoadLastSuccessfulSession){
             true -> {
-                Log.d("WorkoutViewModel", "Loading last successful session")
-
                 val lastSuccessfulSession = exerciseInfo!!.lastSuccessfulSession.ifEmpty { exercise.sets.filter { it !is RestSet } }
 
                 lastSuccessfulSession.map { it ->
@@ -612,17 +640,17 @@ open class WorkoutViewModel : ViewModel() {
                         is BodyWeightSet -> {
                             val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                             val weight = it.getWeight(relativeBodyWeight)
-                            createSet(weight, it.reps)
+                            createSet(weight, it.reps, est1RM)
                         }
                         is WeightSet -> {
-                            createSet(it.weight, it.reps)
+                            createSet(it.weight, it.reps, est1RM)
                         }
                         is BodyWeightSetData -> {
-                            createSet(it.getWeight(), it.actualReps)
+                            createSet(it.getWeight(), it.actualReps, est1RM)
                         }
 
                         is WeightSetData -> {
-                            createSet(it.getWeight(), it.actualReps)
+                            createSet(it.getWeight(), it.actualReps, est1RM)
                         }
                         else -> throw IllegalStateException("Unknown set type encountered after filtering.")
                     }
@@ -635,11 +663,11 @@ open class WorkoutViewModel : ViewModel() {
                         is BodyWeightSet -> {
                             val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
                             val weight = it.getWeight(relativeBodyWeight)
-                            createSet(weight, it.reps)
+                            createSet(weight, it.reps, est1RM)
                         }
 
                         is WeightSet -> {
-                            createSet(it.weight, it.reps)
+                            createSet(it.weight, it.reps, est1RM)
                         }
                         else -> throw IllegalStateException("Unknown set type encountered after filtering.")
                     }
@@ -651,15 +679,32 @@ open class WorkoutViewModel : ViewModel() {
             if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                 val relativeBodyWeight =
                     bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                "${set.weight - relativeBodyWeight} kg x ${set.reps} (TOT: ${set.weight})"
+                "${set.weight - relativeBodyWeight} kg x ${set.reps} (TOT: ${set.weight}) (RIR: ${set.rir.round(2)})"
             } else {
-                "${set.weight} kg x ${set.reps}"
+                "${set.weight} kg x ${set.reps} (RIR: ${set.rir.round(2)})"
             }
+        }
+
+        if(exercise.exerciseType == ExerciseType.BODY_WEIGHT){
+            val relativeBodyWeight =
+                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+
+            Log.d(
+                "WorkoutViewModel",
+                "${exercise.name} (${exercise.exerciseType}) Relative BodyWeight: ${relativeBodyWeight} est 1RM ${est1RM.round(2)} kg"
+            )
+
+        }else{
+            Log.d(
+                "WorkoutViewModel",
+                "${exercise.name} (${exercise.exerciseType}) est 1RM ${est1RM.round(2)} kg"
+            )
         }
 
         Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")}")
 
         val previousVolume = previousSets.sumOf { it.volume }
+        val previousRelVolume = previousSets.sumOf { it.relativeVolume }
 
         var exerciseProgression: ExerciseProgression? = null
         val progressionState = if(shouldDeload) ProgressionState.DELOADING else if(shouldRetry) ProgressionState.RETRYING else ProgressionState.PROGRESSING
@@ -672,23 +717,25 @@ open class WorkoutViewModel : ViewModel() {
                     previousSets = previousSets,
                     availableWeights = availableWeights,
                     repsRange = repsRange,
-                    targetVolume = previousVolume * 0.9
+                    targetRelVol = previousRelVolume * 0.9,
+                    est1RM = est1RM
                 )
             }
 
             shouldRetry -> {
                 Log.d("WorkoutViewModel", "Retrying previous successful session")
-                exerciseProgression = ExerciseProgression(previousSets,previousVolume, previousVolume)
+                exerciseProgression = ExerciseProgression(previousSets,previousVolume, previousVolume,previousRelVolume,previousRelVolume)
             }
 
             else -> {
                 val increase = 1 + workoutStore.progressionPercentageAmount / 100.0
-                Log.d("WorkoutViewModel", "Progressing (+${workoutStore.progressionPercentageAmount.round(1)}%)")
+                //Log.d("WorkoutViewModel", "Progressing >= +${workoutStore.progressionPercentageAmount.round(1)}%")
                 exerciseProgression = ProgressionHelper.generateExerciseProgression(
                     previousSets = previousSets,
                     availableWeights = availableWeights,
                     repsRange = repsRange,
-                    progressionIncrease = increase
+                    progressionIncrease = increase,
+                    est1RM = est1RM
                 )
             }
         }
@@ -698,15 +745,15 @@ open class WorkoutViewModel : ViewModel() {
                 if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                     val relativeBodyWeight =
                         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps}"
+                    "${set.weight - relativeBodyWeight} kg (TOT: ${set.weight}) x ${set.reps} (RIR: ${set.rir.round(2)})"
                 } else {
-                    "${set.weight} kg x ${set.reps}"
+                    "${set.weight} kg x ${set.reps} (RIR: ${set.rir.round(2)})"
                 }
             }
 
             Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")}")
 
-            val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
+            val progressIncrease = ((exerciseProgression.newRelVolume - exerciseProgression.previousRelVolume) / exerciseProgression.previousRelVolume) * 100
 
             val previousAverageIntensity = previousSets.sumOf { it.volume } / previousSets.sumOf { it.reps }
             val newAverageIntensity = exerciseProgression.newVolume / exerciseProgression.sets.sumOf { it.reps }
@@ -714,7 +761,7 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
+                "Volume: ${exerciseProgression.previousRelVolume.round(2)} -> ${exerciseProgression.newRelVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%) "
                         + "Weight|Rep: ${previousAverageIntensity.round(2)} kg -> ${newAverageIntensity.round(2)} kg (${if(averageIntensityIncrease>0) "+" else ""}${averageIntensityIncrease.round(2)}%)"
             )
         }else{
