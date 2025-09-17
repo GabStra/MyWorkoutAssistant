@@ -667,13 +667,13 @@ open class WorkoutViewModel : ViewModel() {
 
             Log.d(
                 "WorkoutViewModel",
-                "${exercise.name} (${exercise.exerciseType}) Relative BodyWeight: ${relativeBodyWeight} est 1RM ${est1RM.round(2)} kg"
+                "${exercise.name} (${exercise.exerciseType}) Relative BodyWeight: ${relativeBodyWeight} 1RM: ${est1RM.round(2)} kg"
             )
 
         }else{
             Log.d(
                 "WorkoutViewModel",
-                "${exercise.name} (${exercise.exerciseType}) est 1RM ${est1RM.round(2)} kg"
+                "${exercise.name} (${exercise.exerciseType}) 1RM: ${est1RM.round(2)} kg"
             )
         }
 
