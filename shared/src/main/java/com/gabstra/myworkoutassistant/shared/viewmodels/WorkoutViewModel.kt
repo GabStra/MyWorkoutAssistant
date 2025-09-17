@@ -578,7 +578,6 @@ open class WorkoutViewModel : ViewModel() {
         }
 
 
-
         val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
         val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
 
@@ -587,46 +586,23 @@ open class WorkoutViewModel : ViewModel() {
 
         val shouldLoadLastSuccessfulSession = lastWasDeload || shouldRetry
 
-        val est1RM = when(shouldLoadLastSuccessfulSession){
-            true -> {
-                val lastSuccessfulSession = exerciseInfo!!.lastSuccessfulSession.ifEmpty { exercise.sets.filter { it !is RestSet } }
+        var est1RM = exerciseInfo?.Est1RM
 
-                lastSuccessfulSession.maxOf { it ->
-                    when (it) {
-                        is BodyWeightSet -> {
-                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                            val weight = it.getWeight(relativeBodyWeight)
-                            calculateOneRepMax(weight, it.reps)
-                        }
-                        is WeightSet -> {
-                            calculateOneRepMax(it.weight, it.reps)
-                        }
-                        is BodyWeightSetData -> {
-                            calculateOneRepMax(it.getWeight(), it.actualReps)
-                        }
+        if(est1RM == null || est1RM == 0.0){
+            val exerciseSets = exercise.sets.filter { it !is RestSet }
 
-                        is WeightSetData -> {
-                            calculateOneRepMax(it.getWeight(), it.actualReps)
-                        }
-                        else -> throw IllegalStateException("Unknown set type encountered after filtering.")
+            est1RM = exerciseSets.maxOf { it ->
+                when (it) {
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                        val weight = it.getWeight(relativeBodyWeight)
+                        calculateOneRepMax(weight, it.reps)
                     }
-                }
-            }
-            false -> {
-                val exerciseSets = exercise.sets.filter { it !is RestSet }
-                exerciseSets.maxOf { it ->
-                    when (it) {
-                        is BodyWeightSet -> {
-                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                            val weight = it.getWeight(relativeBodyWeight)
-                            calculateOneRepMax(weight, it.reps)
-                        }
 
-                        is WeightSet -> {
-                            calculateOneRepMax(it.weight, it.reps)
-                        }
-                        else -> throw IllegalStateException("Unknown set type encountered after filtering.")
+                    is WeightSet -> {
+                        calculateOneRepMax(it.weight, it.reps)
                     }
+                    else -> throw IllegalStateException("Unknown set type encountered after filtering.")
                 }
             }
         }
@@ -1080,15 +1056,15 @@ open class WorkoutViewModel : ViewModel() {
                     val progressionData =
                         if (exerciseProgressionByExerciseId.containsKey(it.key)) exerciseProgressionByExerciseId[it.key] else null
 
-                    val isDeloading = progressionData?.second == ProgressionState.DELOADING
+                    val isDeloadSession = progressionData?.second == ProgressionState.DELOADING
 
                     val exerciseHistories = it.value
 
-                    val currentSession =
+                    val currentSessionSets =
                         exerciseHistories.filter { setHistory -> setHistory.setData !is RestSetData }
                             .map { setHistory -> setHistory.setData }
 
-                    val currentVolume = currentSession.sumOf {
+                    val currentVolume = currentSessionSets.sumOf {
                         when (it) {
                             is BodyWeightSetData -> it.volume
                             is WeightSetData -> it.volume
@@ -1096,20 +1072,53 @@ open class WorkoutViewModel : ViewModel() {
                         }
                     }
 
+                    val currentSessionEst1RM = currentSessionSets.maxOfOrNull { setData ->
+                        when (setData) {
+                            is WeightSetData -> calculateOneRepMax(setData.getWeight(), setData.actualReps)
+                            is BodyWeightSetData -> calculateOneRepMax(setData.getWeight(), setData.actualReps)
+                            else -> 0.0
+                        }
+                    } ?: 0.0
+
                     val exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
 
                     if (exerciseInfo == null) {
                         val newExerciseInfo = ExerciseInfo(
                             id = it.key!!,
-                            bestSession = currentSession,
-                            lastSuccessfulSession = currentSession,
+                            bestSession = currentSessionSets,
+                            lastSuccessfulSession = currentSessionSets,
                             successfulSessionCounter = 1u,
                             sessionFailedCounter = 0u,
-                            lastSessionWasDeload = false
+                            lastSessionWasDeload = false,
+                            Est1RM = currentSessionEst1RM,
+                            Est1RMDate = LocalDate.now()
                         )
                         exerciseInfoDao.insert(newExerciseInfo)
                     } else {
-                        if(isDeloading){
+                        val thirtyDaysAgo = LocalDate.now().minusDays(30)
+                        val isStored1RMStale = exerciseInfo.Est1RMDate?.isBefore(thirtyDaysAgo) ?: true
+
+                        // 2. Decide whether to update the stored 1RM.
+                        val shouldUpdate = when {
+                            // If the stored 1RM is stale, the new one automatically becomes the baseline.
+                            isStored1RMStale -> true
+                            // If the stored 1RM is recent, only update if the new one is better.
+                            currentSessionEst1RM > exerciseInfo.Est1RM -> true
+                            // Otherwise, don't update.
+                            else -> false
+                        }
+
+                        if (shouldUpdate && currentSessionEst1RM > 0 && !isDeloadSession) {
+                            exerciseInfoDao.insert(
+                                exerciseInfo.copy(
+                                    Est1RM = currentSessionEst1RM,
+                                    Est1RMDate = LocalDate.now(),
+                                    version = exerciseInfo.version + 1u
+                                )
+                            )
+                        }
+
+                        if(isDeloadSession){
                             exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
                             exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, 0u)
                             exerciseInfoDao.updateLastSessionWasDeload(it.key!!, true)
@@ -1133,11 +1142,11 @@ open class WorkoutViewModel : ViewModel() {
                             }
 
                             if(currentVolume > bestVolume){
-                                exerciseInfoDao.updateBestSession(it.key!!, currentSession)
+                                exerciseInfoDao.updateBestSession(it.key!!, currentSessionSets)
                             }
 
                             if(currentVolume > lastVolume){
-                                exerciseInfoDao.updateLastSuccessfulSession(it.key!!, currentSession)
+                                exerciseInfoDao.updateLastSuccessfulSession(it.key!!, currentSessionSets)
                                 exerciseInfoDao.updateSuccessfulSessionCounter(it.key!!, exerciseInfo.successfulSessionCounter.inc())
                                 exerciseInfoDao.updateSessionFailedCounter(it.key!!, 0u)
                             }else{
