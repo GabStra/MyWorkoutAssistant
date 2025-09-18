@@ -27,13 +27,11 @@ import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.formatWeight
-import com.gabstra.myworkoutassistant.shared.round
 
 @Composable
 fun WeightInfoDialog(
     show: Boolean,
     weight : Double,
-    oneRepMax: Double,
     equipment: WeightLoadedEquipment?,
     onClick: () -> Unit = {}
 ){
@@ -42,7 +40,6 @@ fun WeightInfoDialog(
     val itemStyle = remember(typography)  { typography.body2.copy(fontSize = typography.body2.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
 
     val weightText = if (weight == 0.0) "-" else formatWeight(weight)
-    val oneRepMaxText = if (oneRepMax == 0.0) "-" else "${((weight/oneRepMax) * 100).round(1)}% (1RM: ${formatWeight(oneRepMax)})"
 
     val scrollState = rememberScrollState()
 
@@ -146,25 +143,6 @@ fun WeightInfoDialog(
                                 textAlign = TextAlign.Center
                             )
                         }
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                    ) {
-                        Text(
-                            text = "% OF 1RM",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center
-                        )
-                        ScalableText(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = oneRepMaxText,
-                            style = itemStyle,
-                            color =  LightGray,
-                            textAlign = TextAlign.Center
-                        )
                     }
                 }
             }
