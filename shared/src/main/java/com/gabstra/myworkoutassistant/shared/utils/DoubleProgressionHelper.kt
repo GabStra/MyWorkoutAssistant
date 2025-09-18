@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -16,17 +15,17 @@ object DoubleProgressionHelper {
     /**
      * Policy for deciding load jumps when all sets reach the top of the rep range.
      *
-     * - defaultPct: target jump when options allow (e.g., 0.04 = 4%).
+     * - defaultPct: target jump when options allow (e.g., 0.05 = 5%).
      * - minPct/maxPct: acceptable band; if the smallest heavier available weight exceeds maxPct,
      *   we "ride the weight" (keep load, add reps) until 'overcapUntil' is reached on all sets.
      * - overcapUntil: how many reps above the range top (per set) you’ll allow before taking the
      *   next available heavier weight even if it’s > maxPct.
      */
     data class LoadJumpPolicy(
-        val defaultPct: Double = 0.04,  // ~4% default when unsure (within the 3–5% guidance)
-        val minPct: Double = 0.03,      // ~3%
-        val maxPct: Double = 0.05,      // ~5%
-        val overcapUntil: Int = 1       // allow +1 rep over top across sets before oversized jump
+        val defaultPct: Double = 0.05,  // ~4% default when unsure (within the 3–10% guidance)
+        val minPct: Double = 0.02,      // ~2%
+        val maxPct: Double = 0.1,      // ~10%
+        val overcapUntil: Int = 2       // allow +1 rep over top across sets before oversized jump
     )
 
     /**
@@ -67,30 +66,42 @@ object DoubleProgressionHelper {
 
         var nextWorkingWeight = lastWorkingWeight
         var useOvercap = false
+        var predictedRepsOnJump: Int? = null
 
         if (hitTopEverySet) {
-            val target = lastWorkingWeight * (1.0 + jumpPolicy.defaultPct)
             val heavier = availableWeights.filter { it > lastWorkingWeight }.sorted()
-            val candidates = heavier
-                .map { it to ((it - lastWorkingWeight) / lastWorkingWeight) }
-                .filter { (_, pct) -> pct in jumpPolicy.minPct - 1e-12 .. jumpPolicy.maxPct + 1e-12 }
-                .sortedBy { (w, _) -> abs(w - target) }
+            // Score candidates by: (1) predicted reps >= bottom, (2) closeness to defaultPct
+            data class Cand(val w: Double, val pct: Double, val repsPred: Double, val dist: Double)
 
-            nextWorkingWeight = when {
-                candidates.isNotEmpty() -> candidates.first().first
-                else -> {
-                    useOvercap = true
-                    lastWorkingWeight
-                }
+            val cands = heavier.map { w ->
+                val pct = (w - lastWorkingWeight) / lastWorkingWeight
+                val repsPred = top - (pct / 0.0333)            // ~1 rep per 3.33%
+                val dist = kotlin.math.abs(pct - jumpPolicy.defaultPct)
+                Cand(w, pct, repsPred, dist)
+            }
+
+            val viable = cands
+                .filter { it.pct in jumpPolicy.minPct - 1e-12 .. jumpPolicy.maxPct + 1e-12 }
+                .filter { it.repsPred >= bottom - 1e-9 }
+                .sortedWith(compareBy<Cand> { it.dist }.thenBy { it.w })
+
+            if (viable.isNotEmpty()) {
+                val best = viable.first()
+                nextWorkingWeight = best.w
+                // Round prediction to an executable target (floor tends to be safer than round here)
+                predictedRepsOnJump = best.repsPred.toInt().coerceIn(bottom, top)
+            } else {
+                useOvercap = true
             }
         }
 
         // 4) Decide next reps (+overcap if we couldn't jump)
         val effectiveTop = if (useOvercap) top + jumpPolicy.overcapUntil else top
 
-        var nextReps: MutableList<Int> =
+        val nextReps: MutableList<Int> =
             if (nextWorkingWeight > lastWorkingWeight) {
-                MutableList(setCount) { bottom }
+                val repsTarget = predictedRepsOnJump ?: bottom
+                MutableList(setCount) { repsTarget }
             } else if (wasNormalized) {
                 normalizedPrevReps.toMutableList()
             } else {
@@ -99,7 +110,6 @@ object DoubleProgressionHelper {
 
         // --- Tonnage check (optional) on consolidation only ---
         val previousVolume = previousSets.sumOf { it.weight * it.reps }
-        val baselineMaxSetTonnage = previousSets.maxOf { it.weight * it.reps }
         var nextSets = List(setCount) { i -> SimpleSet(nextWorkingWeight, nextReps[i]) }
         var newVolume = nextSets.sumOf { it.weight * it.reps }
 
@@ -107,6 +117,7 @@ object DoubleProgressionHelper {
             val minAllowed = previousVolume * (1.0 - maxDropPct)
 
             if (newVolume + 1e-9 < minAllowed) {
+                val baselineMaxSetTonnage = previousSets.maxOf { it.weight * it.reps }
                 var needed = ceil((minAllowed - newVolume) / nextWorkingWeight).toInt().coerceAtLeast(0)
 
                 // Per-set rep ceiling from baseline max tonnage + normal caps
