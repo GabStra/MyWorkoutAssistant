@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import kotlin.math.ceil
-import kotlin.math.floor
+import kotlin.math.abs
 
 object DoubleProgressionHelper {
     data class Plan(
@@ -22,43 +21,61 @@ object DoubleProgressionHelper {
      *   next available heavier weight even if it’s > maxPct.
      */
     data class LoadJumpPolicy(
-        val defaultPct: Double = 0.05,  // ~4% default when unsure (within the 3–10% guidance)
-        val minPct: Double = 0.02,      // ~2%
+        val defaultPct: Double = 0.05,  // ~5% default when unsure (within the 3–10% guidance)
         val maxPct: Double = 0.1,      // ~10%
-        val overcapUntil: Int = 2       // allow +1 rep over top across sets before oversized jump
+        val overcapUntil: Int = 2       // allow +2 rep over top across sets before oversized jump
     )
+
+    private const val EPLEY_K = 30.0 // 1RM ≈ w * (1 + r/30)
+    private const val EPS = 1e-9
+
+    private fun predictRepsAtWeight(weight: Double, set: SimpleSet): Int {
+        require(weight > 0 && set.weight > 0)
+        val est1RM = set.weight * (1.0 + set.reps / EPLEY_K)
+        val raw = EPLEY_K * (est1RM / weight - 1.0)
+        return raw.toInt()
+    }
+
+    private fun anchorToAvailable(current: Double, available: Set<Double>): Double =
+        available.filter { it <= current }.maxOrNull() ?: available.minOrNull()!!
 
     /**
      * Curve-free double progression with normalization, configurable rep increment strategy,
      * and percent-based load jumps with an overcap fallback.
-     *
-     * Adds (optional) tonnage check on consolidation to avoid >~10% volume drop.
      */
     fun planNextSession(
         previousSets: List<SimpleSet>,
         availableWeights: Set<Double>,
         repsRange: IntRange,
         strategy: IncrementStrategy = IncrementStrategy.LOWEST_FIRST,
-        jumpPolicy: LoadJumpPolicy = LoadJumpPolicy(),
-        enableTonnageCheck: Boolean = true,
-        maxDropPct: Double = 0.20
+        jumpPolicy: LoadJumpPolicy = LoadJumpPolicy()
     ): Plan {
         require(previousSets.isNotEmpty()) { "previousSets cannot be empty" }
         require(availableWeights.isNotEmpty()) { "availableWeights cannot be empty" }
         require(repsRange.first > 0 && repsRange.last >= repsRange.first) { "Invalid repsRange" }
+        require(previousSets.all { it.weight > 0 && it.reps >= 0 })
 
         val setCount = previousSets.size
         val bottom = repsRange.first
         val top = repsRange.last
-        val eps = 1e-9
 
         // 1) Working anchor = heaviest weight used last time
-        val lastWorkingWeight = previousSets.maxOf { it.weight }
-        val wasNormalized = previousSets.any { it.weight < lastWorkingWeight - eps }
+        val rawAnchor = previousSets.maxOf { it.weight }
+        val lastWorkingWeight = anchorToAvailable(rawAnchor, availableWeights)
+        val wasNormalized = previousSets.any { abs(it.weight - lastWorkingWeight) > EPS }
 
-        // 2) Normalize previous reps to the working weight
-        val normalizedPrevReps: List<Int> = previousSets.map { s ->
-            if (s.weight >= lastWorkingWeight - eps) s.reps.coerceAtMost(top) else bottom
+        // 2) Normalize previous reps to the working weight (Epley-based)
+        val normalizedPrevReps = previousSets.map { s ->
+            if (s.weight < lastWorkingWeight - EPS) {
+                // project up to working weight; don't top-clamp here
+                predictRepsAtWeight(
+                    weight = lastWorkingWeight,
+                    set = s
+                ).coerceIn(repsRange)
+            } else {
+                // keep the actual reps (just bottom-clamp)
+                s.reps
+            }
         }
 
         // 3) Decide next working weight (percent-based band, else overcap fallback)
@@ -68,31 +85,32 @@ object DoubleProgressionHelper {
         var useOvercap = false
         var predictedRepsOnJump: Int? = null
 
-        if (hitTopEverySet) {
-            val heavier = availableWeights.filter { it > lastWorkingWeight }.sorted()
+        val heavier = availableWeights.filter { it > lastWorkingWeight }.sorted()
+        if (hitTopEverySet && heavier.isNotEmpty()) {
             // Score candidates by: (1) predicted reps >= bottom, (2) closeness to defaultPct
-            data class Cand(val w: Double, val pct: Double, val repsPred: Double, val dist: Double)
-
+            data class Cand(val w: Double, val pct: Double, val repsPred: Int, val dist: Double)
+            val worstAtAnchor = normalizedPrevReps.minOrNull()!!
             val cands = heavier.map { w ->
                 val pct = (w - lastWorkingWeight) / lastWorkingWeight
-                val repsPred = top - (pct / 0.0333)            // ~1 rep per 3.33%
-                val dist = kotlin.math.abs(pct - jumpPolicy.defaultPct)
-                Cand(w, pct, repsPred, dist)
+                val repsPred = predictRepsAtWeight(w, SimpleSet(lastWorkingWeight, worstAtAnchor))
+                Cand(w, pct, repsPred, abs(pct - jumpPolicy.defaultPct))
             }
 
             val viable = cands
-                .filter { it.pct in jumpPolicy.minPct - 1e-12 .. jumpPolicy.maxPct + 1e-12 }
-                .filter { it.repsPred >= bottom - 1e-9 }
+                .filter { it.pct > 0.0 && it.pct <= jumpPolicy.maxPct + EPS }
+                .filter { it.repsPred >= bottom }
                 .sortedWith(compareBy<Cand> { it.dist }.thenBy { it.w })
 
             if (viable.isNotEmpty()) {
                 val best = viable.first()
                 nextWorkingWeight = best.w
                 // Round prediction to an executable target (floor tends to be safer than round here)
-                predictedRepsOnJump = best.repsPred.toInt().coerceIn(bottom, top)
+                predictedRepsOnJump = best.repsPred.coerceIn(bottom, top)
             } else {
                 useOvercap = true
             }
+        } else if (hitTopEverySet) {
+            useOvercap = true
         }
 
         // 4) Decide next reps (+overcap if we couldn't jump)
@@ -108,53 +126,9 @@ object DoubleProgressionHelper {
                 nextRepsSameWeight(normalizedPrevReps, effectiveTop, strategy).toMutableList()
             }
 
-        // --- Tonnage check (optional) on consolidation only ---
         val previousVolume = previousSets.sumOf { it.weight * it.reps }
-        var nextSets = List(setCount) { i -> SimpleSet(nextWorkingWeight, nextReps[i]) }
-        var newVolume = nextSets.sumOf { it.weight * it.reps }
-
-        if (enableTonnageCheck && nextWorkingWeight == lastWorkingWeight && wasNormalized) {
-            val minAllowed = previousVolume * (1.0 - maxDropPct)
-
-            if (newVolume + 1e-9 < minAllowed) {
-                val baselineMaxSetTonnage = previousSets.maxOf { it.weight * it.reps }
-                var needed = ceil((minAllowed - newVolume) / nextWorkingWeight).toInt().coerceAtLeast(0)
-
-                // Per-set rep ceiling from baseline max tonnage + normal caps
-                val capByBaseline = floor(baselineMaxSetTonnage / nextWorkingWeight).toInt()
-                val perSetCap = minOf(effectiveTop, capByBaseline)
-
-                // Valid sets = those below perSetCap; compute total headroom
-                val validIdx = (0 until setCount).filter { nextReps[it] < perSetCap }
-                val totalHeadroom = validIdx.sumOf { (perSetCap - nextReps[it]).coerceAtLeast(0) }
-
-                // Can't exceed headroom or we’d raise baseline max set tonnage
-                needed = minOf(needed, totalHeadroom)
-
-                // Round-robin distribution across valid sets (stable, even spread)
-                var i = 0
-                var progressed: Boolean
-                while (needed > 0 && validIdx.isNotEmpty()) {
-                    progressed = false
-                    for (k in validIdx.indices) {
-                        if (needed == 0) break
-                        val idx = validIdx[(i + k) % validIdx.size]
-                        val headroom = (perSetCap - nextReps[idx]).coerceAtLeast(0)
-                        if (headroom > 0) {
-                            nextReps[idx] += 1
-                            needed -= 1
-                            progressed = true
-                        }
-                    }
-                    if (!progressed) break // no more headroom anywhere
-                    i = (i + 1) % (validIdx.size.coerceAtLeast(1))
-                }
-
-                nextSets = List(setCount) { j -> SimpleSet(nextWorkingWeight, nextReps[j]) }
-                newVolume = nextSets.sumOf { it.weight * it.reps }
-            }
-        }
-        // ------------------------------------------------------
+        val nextSets = List(setCount) { i -> SimpleSet(nextWorkingWeight, nextReps[i]) }
+        val newVolume = nextSets.sumOf { it.weight * it.reps }
 
         return Plan(
             sets = nextSets.sortedByDescending { it.weight * it.reps },

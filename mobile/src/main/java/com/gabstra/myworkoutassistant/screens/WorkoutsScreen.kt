@@ -53,9 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -125,6 +123,7 @@ fun Menu(
     onClearAllHistories: () -> Unit,
     onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
+    onClearAllExerciseInfo: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -200,6 +199,13 @@ fun Menu(
                         expanded = false
                     }
                 )
+                DropdownMenuItem(
+                    text = { Text("Clear all exercise info") },
+                    onClick = {
+                        onClearAllExerciseInfo()
+                        expanded = false
+                    }
+                )
             }
         }
     }
@@ -245,6 +251,7 @@ fun WorkoutsScreen(
     onClearAllHistories: () -> Unit,
     onSyncToHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
+    onClearAllExerciseInfo: () -> Unit,
     selectedTabIndex: Int
 ) {
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
@@ -644,7 +651,8 @@ fun WorkoutsScreen(
                         onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
                         onClearAllHistories = onClearAllHistories,
                         onSyncWithHealthConnectClick = onSyncToHealthConnectClick,
-                        onExportWorkouts = onExportWorkouts
+                        onExportWorkouts = onExportWorkouts,
+                        onClearAllExerciseInfo = onClearAllExerciseInfo
                     )
                 }
             )

@@ -533,6 +533,14 @@ fun MyWorkoutAssistantNavHost(
                             }
                         }
                     },
+                    onClearAllExerciseInfo = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                exerciseInfoDao.deleteAll()
+                            }
+                            Toast.makeText(context, "All exercise info cleared", Toast.LENGTH_SHORT).show()
+                        }
+                    },
                     selectedTabIndex = appViewModel.selectedHomeTab
                 )
             }

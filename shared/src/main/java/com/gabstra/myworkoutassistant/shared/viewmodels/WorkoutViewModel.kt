@@ -1486,7 +1486,7 @@ open class WorkoutViewModel : ViewModel() {
                 maxPositiveDeviationFactor: Double = 1.08,
                 maxSetVolumeRatio: Double = 0.50 // each warm-up set < 40% of work-set tonnage
             ): List<Pair<Double, Int>> {
-                val protocol = listOf(0.40 to 8, 0.55 to 5, 0.70 to 3)
+                val protocol = listOf(0.50 to 8, 0.70 to 5, 0.90 to 3)
 
                 val weights = availableWeights.toSortedSet().filter { it > 0.0 && it <= workWeight }
                 if (weights.isEmpty() || workWeight <= 0.0 || protocol.isEmpty()) return emptyList()
