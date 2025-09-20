@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import kotlin.math.abs
-
 object DoubleProgressionHelper {
     data class Plan(
         val sets: List<SimpleSet>,     // next-session targets (one working weight across sets)
@@ -14,34 +12,28 @@ object DoubleProgressionHelper {
     /**
      * Policy for deciding load jumps when all sets reach the top of the rep range.
      *
-     * - defaultPct: target jump when options allow (e.g., 0.05 = 5%).
-     * - minPct/maxPct: acceptable band; if the smallest heavier available weight exceeds maxPct,
-     *   we "ride the weight" (keep load, add reps) until 'overcapUntil' is reached on all sets.
-     * - overcapUntil: how many reps above the range top (per set) you’ll allow before taking the
+     * - defaultPct: preferred jump when multiple options are within maxPct (e.g., 0.05 = 5%).
+     * - maxPct: if the smallest heavier available weight exceeds maxPct, we "ride the weight"
+     *   (keep load, add reps) until 'overcapUntil' is reached on all sets.
+     * - overcapUntil: how many reps above the range top (per set) allowed before taking the
      *   next available heavier weight even if it’s > maxPct.
      */
     data class LoadJumpPolicy(
-        val defaultPct: Double = 0.05,  // ~5% default when unsure (within the 3–10% guidance)
-        val maxPct: Double = 0.1,      // ~10%
-        val overcapUntil: Int = 2       // allow +2 rep over top across sets before oversized jump
+        val defaultPct: Double = 0.05,
+        val maxPct: Double = 0.10,
+        val overcapUntil: Int = 2
     )
 
-    private const val EPLEY_K = 30.0 // 1RM ≈ w * (1 + r/30)
     private const val EPS = 1e-9
-
-    private fun predictRepsAtWeight(weight: Double, set: SimpleSet): Int {
-        require(weight > 0 && set.weight > 0)
-        val est1RM = set.weight * (1.0 + set.reps / EPLEY_K)
-        val raw = EPLEY_K * (est1RM / weight - 1.0)
-        return raw.toInt()
-    }
 
     private fun anchorToAvailable(current: Double, available: Set<Double>): Double =
         available.filter { it <= current }.maxOrNull() ?: available.minOrNull()!!
 
     /**
-     * Curve-free double progression with normalization, configurable rep increment strategy,
-     * and percent-based load jumps with an overcap fallback.
+     * Curve-free double progression with normalization and percent-based load jumps.
+     * Stepping logic is completely removed:
+     * - Normalization: any set below the working weight → reps = bottom.
+     * - On a weight increase: all sets → reps = bottom.
      */
     fun planNextSession(
         previousSets: List<SimpleSet>,
@@ -59,67 +51,51 @@ object DoubleProgressionHelper {
         val bottom = repsRange.first
         val top = repsRange.last
 
-        // 1) Working anchor = heaviest weight used last time
+        // 1) Working anchor = heaviest weight used last time (floored to available)
         val rawAnchor = previousSets.maxOf { it.weight }
         val lastWorkingWeight = anchorToAvailable(rawAnchor, availableWeights)
-        val wasNormalized = previousSets.any { abs(it.weight - lastWorkingWeight) > EPS }
+        val wasNormalized = previousSets.any { kotlin.math.abs(it.weight - lastWorkingWeight) > EPS }
 
-        // 2) Normalize previous reps to the working weight (Epley-based)
+        // 2) Normalize previous reps to the working weight (no stepping: below → bottom)
         val normalizedPrevReps = previousSets.map { s ->
-            if (s.weight < lastWorkingWeight - EPS) {
-                // project up to working weight; don't top-clamp here
-                predictRepsAtWeight(
-                    weight = lastWorkingWeight,
-                    set = s
-                ).coerceIn(repsRange)
-            } else {
-                // keep the actual reps (just bottom-clamp)
-                s.reps
-            }
+            if (s.weight < lastWorkingWeight - EPS) bottom
+            else s.reps.coerceAtLeast(bottom)
         }
 
-        // 3) Decide next working weight (percent-based band, else overcap fallback)
         val hitTopEverySet = normalizedPrevReps.all { it >= top }
+        val hitOvercapEverySet = normalizedPrevReps.all { it >= top + jumpPolicy.overcapUntil }
 
+        // 3) Decide next working weight (percent band; fallback to overcap)
         var nextWorkingWeight = lastWorkingWeight
         var useOvercap = false
-        var predictedRepsOnJump: Int? = null
 
         val heavier = availableWeights.filter { it > lastWorkingWeight }.sorted()
         if (hitTopEverySet && heavier.isNotEmpty()) {
-            // Score candidates by: (1) predicted reps >= bottom, (2) closeness to defaultPct
-            data class Cand(val w: Double, val pct: Double, val repsPred: Int, val dist: Double)
-            val worstAtAnchor = normalizedPrevReps.minOrNull()!!
+            data class Cand(val w: Double, val pct: Double, val dist: Double)
             val cands = heavier.map { w ->
                 val pct = (w - lastWorkingWeight) / lastWorkingWeight
-                val repsPred = predictRepsAtWeight(w, SimpleSet(lastWorkingWeight, worstAtAnchor))
-                Cand(w, pct, repsPred, abs(pct - jumpPolicy.defaultPct))
+                Cand(w, pct, kotlin.math.abs(pct - jumpPolicy.defaultPct))
             }
 
             val viable = cands
                 .filter { it.pct > 0.0 && it.pct <= jumpPolicy.maxPct + EPS }
-                .filter { it.repsPred >= bottom }
                 .sortedWith(compareBy<Cand> { it.dist }.thenBy { it.w })
 
-            if (viable.isNotEmpty()) {
-                val best = viable.first()
-                nextWorkingWeight = best.w
-                // Round prediction to an executable target (floor tends to be safer than round here)
-                predictedRepsOnJump = best.repsPred.coerceIn(bottom, top)
-            } else {
-                useOvercap = true
+            nextWorkingWeight = when {
+                viable.isNotEmpty() -> viable.first().w                   // pick closest to defaultPct within band
+                hitOvercapEverySet   -> heavier.first()                   // force next heavier even if > maxPct
+                else                 -> { useOvercap = true; lastWorkingWeight } // ride the weight
             }
         } else if (hitTopEverySet) {
             useOvercap = true
         }
 
-        // 4) Decide next reps (+overcap if we couldn't jump)
+        // 4) Decide next reps
         val effectiveTop = if (useOvercap) top + jumpPolicy.overcapUntil else top
 
         val nextReps: MutableList<Int> =
             if (nextWorkingWeight > lastWorkingWeight) {
-                val repsTarget = predictedRepsOnJump ?: bottom
-                MutableList(setCount) { repsTarget }
+                MutableList(setCount) { bottom }                          // on jump → all sets at bottom
             } else if (wasNormalized) {
                 normalizedPrevReps.toMutableList()
             } else {

@@ -1483,13 +1483,13 @@ open class WorkoutViewModel : ViewModel() {
                 workWeight: Double,
                 workReps: Int,
                 availableWeights: Collection<Double>,
-                maxPositiveDeviationFactor: Double = 1.08,
+                maxPositiveDeviationFactor: Double = 1.1,
                 maxSetVolumeRatio: Double = 0.50 // each warm-up set < 40% of work-set tonnage
             ): List<Pair<Double, Int>> {
                 val protocol = listOf(0.50 to 8, 0.70 to 5, 0.90 to 3)
 
                 val weights = availableWeights.toSortedSet().filter { it > 0.0 && it <= workWeight }
-                if (weights.isEmpty() || workWeight <= 0.0 || protocol.isEmpty()) return emptyList()
+                if (weights.isEmpty() || workWeight <= 0.0) return emptyList()
 
                 fun pickWeight(target: Double, last: Double?): Double {
                     val below = weights.filter { it <= target }.maxOrNull()
