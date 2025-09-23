@@ -19,8 +19,8 @@ object DoubleProgressionHelper {
      *   next available heavier weight even if it’s > maxPct.
      */
     data class LoadJumpPolicy(
-        val defaultPct: Double = 0.05,
-        val maxPct: Double = 0.10,
+        val defaultPct: Double = 0.025,
+        val maxPct: Double = 0.5,
         val overcapUntil: Int = 2
     )
 
@@ -29,12 +29,6 @@ object DoubleProgressionHelper {
     private fun anchorToAvailable(current: Double, available: Set<Double>): Double =
         available.filter { it <= current }.maxOrNull() ?: available.minOrNull()!!
 
-    /**
-     * Curve-free double progression with normalization and percent-based load jumps.
-     * Stepping logic is completely removed:
-     * - Normalization: any set below the working weight → reps = bottom.
-     * - On a weight increase: all sets → reps = bottom.
-     */
     fun planNextSession(
         previousSets: List<SimpleSet>,
         availableWeights: Set<Double>,

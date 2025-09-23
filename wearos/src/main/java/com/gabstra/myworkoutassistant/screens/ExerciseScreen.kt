@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 enum class PageType {
     PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS
@@ -153,7 +154,7 @@ fun ExerciseScreen(
     val currentExerciseOrSupersetIndex = remember(exerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
     val isSuperset =  remember(exerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId) }
 
-    var selectedExerciseOrSupersetIndex by remember { mutableStateOf<Int?>(null) }
+    var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
 
     val context = LocalContext.current
 
@@ -167,7 +168,7 @@ fun ExerciseScreen(
         }
 
         if(pagerState.currentPage != exercisesPageIndex){
-            selectedExerciseOrSupersetIndex = null
+            selectedExerciseId = null
         }
     }
 
@@ -294,8 +295,8 @@ fun ExerciseScreen(
                                 updatedState,
                                 viewModel, hapticsViewModel,
                                 exercise,
-                                onSelectionChange = {
-                                selectedExerciseOrSupersetIndex = it
+                                onExerciseSelected = {
+                                selectedExerciseId = it
                             })
                             PageType.NOTES -> PageNotes(exercise.notes)
                             PageType.BUTTONS -> PageButtons(updatedState, viewModel,hapticsViewModel)
@@ -351,7 +352,7 @@ fun ExerciseScreen(
         ExerciseIndicator(
             viewModel,
             state,
-            selectedExerciseOrSupersetIndex
+            selectedExerciseId
         )
 
         hearthRateChart()

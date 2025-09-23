@@ -6,10 +6,8 @@ import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -66,12 +64,9 @@ fun WorkoutCompleteScreen(
         Duration.between(state.startWorkoutTime, state.endWorkoutTime)
     }
 
-    val hours = remember { duration.toHours() }
-    val minutes = remember { duration.toMinutes() % 60 }
-    val seconds = remember { duration.seconds % 60 }
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
-    val countDownTimer = remember { mutableIntStateOf(30) }
+    val countDownTimer = remember { mutableIntStateOf(15) }
 
     val typography = MaterialTheme.typography
     val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
@@ -134,17 +129,6 @@ fun WorkoutCompleteScreen(
                 text = workout.name,
                 style = MaterialTheme.typography.title3
             )
-            Spacer(modifier = Modifier.height(0.dp))
-            Text(
-                text = "TIME SPENT",
-                textAlign = TextAlign.Center,
-                style = headerStyle
-            )
-            ScalableText(
-                text = String.format("%02d:%02d:%02d", hours, minutes, seconds),
-                textAlign = TextAlign.Center,
-                style =  MaterialTheme.typography.title3
-            )
         }
         ProgressionSection(modifier = Modifier.weight(1f).padding(top = 5.dp),viewModel = viewModel)
         Text(
@@ -157,8 +141,8 @@ fun WorkoutCompleteScreen(
 
     CustomDialogYesOnLongPress(
         show = showNextDialog,
-        title =  "Finish workout",
-        message = "Do you want to go back to the main menu?",
+        title =  "Workout completed",
+        message = "Return to the main menu?",
         handleYesClick = {
             closeJob?.cancel()
             hapticsViewModel.doGentleVibration()

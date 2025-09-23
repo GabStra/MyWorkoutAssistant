@@ -31,6 +31,7 @@ import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import java.util.UUID
 
 @Composable
 fun PageExercises(
@@ -38,7 +39,7 @@ fun PageExercises(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
-    onSelectionChange: (Int) -> Unit
+    onExerciseSelected: (UUID) -> Unit
 ) {
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
     val exerciseOrSupersetIds = remember {
@@ -78,8 +79,8 @@ fun PageExercises(
             exerciseOrSupersetIds.indexOf(selectedExerciseOrSupersetId)
         }
 
-        LaunchedEffect(selectedExerciseOrSupersetIndex) {
-            onSelectionChange(selectedExerciseOrSupersetIndex)
+        LaunchedEffect(selectedExercise) {
+            onExerciseSelected(selectedExercise.id)
         }
 
         val isSuperset = remember(selectedExerciseOrSupersetId) {

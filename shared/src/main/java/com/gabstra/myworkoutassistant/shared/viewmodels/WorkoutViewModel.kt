@@ -580,7 +580,7 @@ open class WorkoutViewModel : ViewModel() {
         val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
         val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
 
-        val shouldDeload = (fails >= 2) && !lastWasDeload
+        val shouldDeload = false //temporarily disable deload (fails >= 2) && !lastWasDeload
         val shouldRetry  = (fails == 1) && !lastWasDeload
 
         val shouldLoadLastSuccessfulSession = lastWasDeload || shouldRetry

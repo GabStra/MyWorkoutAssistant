@@ -57,6 +57,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
+import java.util.UUID
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
 @Composable
@@ -132,7 +133,7 @@ fun RestScreen(
         }
     )
 
-    var selectedExerciseOrSupersetIndex by remember { mutableStateOf<Int?>(null) }
+    var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
@@ -161,7 +162,7 @@ fun RestScreen(
         }
 
         if(pagerState.currentPage != exercisesPageIndex){
-            selectedExerciseOrSupersetIndex = null
+            selectedExerciseId = null
         }
     }
 
@@ -325,8 +326,8 @@ fun RestScreen(
                                 viewModel,
                                 hapticsViewModel,
                                 exercise,
-                                onSelectionChange = {
-                                    selectedExerciseOrSupersetIndex = it
+                                onExerciseSelected = {
+                                    selectedExerciseId = it
                                 }
                             )
                         }
@@ -347,7 +348,7 @@ fun RestScreen(
         ExerciseIndicator(
             viewModel,
             state.nextStateSets.first(),
-            selectedExerciseOrSupersetIndex
+            selectedExerciseId
         )
 
         SegmentedProgressIndicator(
