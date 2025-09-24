@@ -68,6 +68,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.addProperty("enableProgression", src.enableProgression)
                 jsonObject.addProperty("keepScreenOn", src.keepScreenOn)
                 jsonObject.addProperty("intraSetRestInSeconds", src.intraSetRestInSeconds)
+                jsonObject.addProperty("showCountDownTimer", src.showCountDownTimer)
             }
 
             is Rest -> {
@@ -197,6 +198,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     null
                 }
 
+                val showCountDownTimer = if (jsonObject.has("showCountDownTimer")) {
+                    jsonObject.get("showCountDownTimer").asBoolean
+                } else {
+                    false
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -216,6 +223,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     generateWarmUpSets,
                     enableProgression,
                     keepScreenOn,
+                    showCountDownTimer,
                     intraSetRestInSeconds
                 )
             }

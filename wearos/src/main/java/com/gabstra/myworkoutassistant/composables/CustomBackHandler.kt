@@ -1,71 +1,64 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+
 @Composable
 fun CustomBackHandler(
     enabled: Boolean = true,
+    onPress: () -> Unit,
     onSinglePress: () -> Unit,
     onDoublePress: () -> Unit,
     doublePressDuration: Long = 300L,
 ) {
-    var lastBackPressTime by remember { mutableLongStateOf(0L) }
-    var isInDoublePressPeriod by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    var pendingJob by remember { mutableStateOf<Job?>(null) }
 
-    val resetState = {
-        lastBackPressTime = 0L
-        isInDoublePressPeriod = false
-        pendingJob?.cancel()
-        pendingJob = null
+    val currentPress by rememberUpdatedState(onPress)
+    val currentSingle by rememberUpdatedState(onSinglePress)
+    val currentDouble by rememberUpdatedState(onDoublePress)
+
+    // Non-UI state holder to avoid recompositions
+    val state = remember { object {
+        var lastPress = 0L
+        var inWindow = false
+        var job: Job? = null
+    }}
+
+    fun reset() {
+        state.lastPress = 0L
+        state.inWindow = false
+        state.job?.cancel()
+        state.job = null
     }
 
-    DisposableEffect(scope) {
-        onDispose {
-            pendingJob?.cancel()
-        }
-    }
+    BackHandler(enabled) {
+        val now = SystemClock.elapsedRealtime()
+        val dt = now - state.lastPress
 
-    BackHandler(enabled = enabled) {
-        val currentTime = System.currentTimeMillis()
-        val timeSinceLastPress = currentTime - lastBackPressTime
+        currentPress()
 
-        when {
-            // Check for double press
-            isInDoublePressPeriod && timeSinceLastPress < doublePressDuration -> {
-                pendingJob?.cancel()
-                resetState()
-                scope.launch {
-                    onDoublePress()
-                }
-            }
-            // Handle first press or press after double press duration
-            else -> {
-                lastBackPressTime = currentTime
-                isInDoublePressPeriod = true
-
-                pendingJob?.cancel()
-                pendingJob = scope.launch {
-                    try {
-                        delay(doublePressDuration)
-                        if (isInDoublePressPeriod) {
-                            onSinglePress()
-                        }
-                    } finally {
-                        resetState()
-                    }
+        if (state.inWindow && dt < doublePressDuration) {
+            reset()
+            currentDouble()
+        } else {
+            state.lastPress = now
+            state.inWindow = true
+            state.job?.cancel()
+            state.job = scope.launch {
+                try {
+                    delay(doublePressDuration)
+                    if (state.inWindow) currentSingle()
+                } finally {
+                    reset()
                 }
             }
         }

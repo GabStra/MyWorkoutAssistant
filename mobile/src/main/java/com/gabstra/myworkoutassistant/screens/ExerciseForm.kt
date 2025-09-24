@@ -113,6 +113,7 @@ fun ExerciseForm(
 
     val enableProgression = remember { mutableStateOf(exercise?.enableProgression ?: false) } // Added state for enableProgression
     val keepScreenOn = remember { mutableStateOf(exercise?.keepScreenOn ?: false) } // Added state for keepScreenOn
+    val showCountDownTimer = remember { mutableStateOf(exercise?.showCountDownTimer ?: false) } // Added state for keepScreenOn
 
     val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
@@ -225,6 +226,25 @@ fun ExerciseForm(
                     )
                 )
                 Text(text = "Keep Screen On")
+            }
+
+            if(selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP){
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                ) {
+                    Checkbox(
+                        checked = showCountDownTimer.value,
+                        onCheckedChange = { showCountDownTimer.value = it },
+                        colors = CheckboxDefaults.colors().copy(
+                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                    Text(text = "Show CountDown Timer")
+                }
             }
 
             if(exercise == null){
@@ -567,6 +587,7 @@ fun ExerciseForm(
                         generateWarmUpSets = generateWarmupSets.value,
                         enableProgression = enableProgression.value,
                         keepScreenOn = keepScreenOn.value,
+                        showCountDownTimer = showCountDownTimer.value,
                         intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)
                     )
 

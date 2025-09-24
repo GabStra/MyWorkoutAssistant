@@ -142,15 +142,17 @@ fun WorkoutScreen(
     val isCustomDialogOpen by viewModel.isCustomDialogOpen.collectAsState()
 
     CustomBackHandler(
+        onPress = {
+            hapticsViewModel.doGentleVibration()
+        },
         onSinglePress = {
             if(showWorkoutInProgressDialog) return@CustomBackHandler
-            hapticsViewModel.doGentleVibration()
             viewModel.openCustomDialog()
             viewModel.lightScreenUp()
-        }, onDoublePress = {
+        },
+        onDoublePress = {
             if(workoutState is WorkoutState.Completed || isCustomDialogOpen) return@CustomBackHandler
             showWorkoutInProgressDialog = true
-            hapticsViewModel.doHardVibrationTwice()
             viewModel.pauseWorkout()
             viewModel.lightScreenUp()
         }

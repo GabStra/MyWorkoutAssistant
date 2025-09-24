@@ -19,15 +19,11 @@ class HapticsHelper(context: Context) {
         ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
 
     fun vibrateHard() {
-        vibrator?.let { v ->
-            v.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-        }
+        vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
     fun vibrateGentle() {
-        vibrator?.let { v ->
-            v.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
-        }
+        vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
     fun vibrateHardAndBeep() {

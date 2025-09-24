@@ -56,10 +56,6 @@ fun BodyWeightSetScreen(
     val previousSetData = state.previousSetData as BodyWeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
-    val exercise = remember(state.exerciseId) {
-        viewModel.exercisesById[state.exerciseId]!!
-    }
-
     val equipment = state.equipment
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 

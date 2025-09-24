@@ -259,12 +259,12 @@ val zoneRanges = arrayOf(
 
 
 fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
-    val mhr = 208 - (0.7f * age)
+    val mhr = 211 - (0.64f * age)
     return (heartRate / mhr) * 100
 }
 
 fun getMaxHeartRate(age: Int): Int {
-    return 208 - (0.7f * age).toInt()
+    return 211 - (0.64f * age).toInt()
 }
 
 fun getHeartRateFromPercentage(percentage: Float, age: Int): Int {

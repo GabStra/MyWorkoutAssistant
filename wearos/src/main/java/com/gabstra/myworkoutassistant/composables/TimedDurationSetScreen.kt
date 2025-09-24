@@ -24,7 +24,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -48,7 +47,6 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
@@ -78,6 +76,10 @@ fun TimedDurationSetScreen(
     }
 
     val set = state.set as TimedDurationSet
+
+    val exercise = remember(state.exerciseId) {
+        viewModel.exercisesById[state.exerciseId]!!
+    }
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
@@ -115,6 +117,23 @@ fun TimedDurationSetScreen(
 
     var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
+
+    suspend fun showCountDownIfEnabled(){
+        if(exercise.showCountDownTimer){
+            displayStartingDialog = true
+            delay(500)
+            hapticsViewModel.doHardVibration()
+            delay(1000)
+            countdownValue = 2
+            hapticsViewModel.doHardVibration()
+            delay(1000)
+            countdownValue = 1
+            hapticsViewModel.doHardVibration()
+            delay(1000)
+            displayStartingDialog = false
+            hapticsViewModel.doHardVibrationTwice()
+        }
+    }
 
     fun onMinusClick(){
         if (currentSet.startTimer > 5000){
@@ -195,18 +214,7 @@ fun TimedDurationSetScreen(
         }
 
         if (set.autoStart) {
-            displayStartingDialog = true
-            delay(500)
-            hapticsViewModel.doHardVibration()
-            delay(1000)
-            countdownValue = 2
-            hapticsViewModel.doHardVibration()
-            delay(1000)
-            countdownValue = 1
-            hapticsViewModel.doHardVibration()
-            delay(1000)
-            displayStartingDialog = false
-            hapticsViewModel.doHardVibrationTwice()
+            showCountDownIfEnabled()
 
             if(state.startTime == null){
                 state.startTime = LocalDateTime.now()
@@ -295,12 +303,17 @@ fun TimedDurationSetScreen(
                     Button(
                         modifier = Modifier.size(35.dp),
                         onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            startTimerJob()
-                            showStartButton = false
+                            scope.launch {
+                                showCountDownIfEnabled()
 
-                            if(state.startTime == null){
-                                state.startTime = LocalDateTime.now()
+                                if(state.startTime == null){
+                                    state.startTime = LocalDateTime.now()
+                                }
+
+                                hapticsViewModel.doHardVibrationTwice()
+                                startTimerJob()
+
+                                showStartButton = false
                             }
                         },
                         colors = ButtonDefaults.buttonColors(backgroundColor = Green)
