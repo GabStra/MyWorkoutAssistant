@@ -138,16 +138,12 @@ fun ExerciseIndicator(
             val startAngle = startingAngle + customExerciseOrSupersetIndex * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)
             val middleAngle = startAngle + (subSegmentArcAngle / 2f)
 
-            Log.d("ExerciseIndicator","Middle angle: $middleAngle")
-
             RotatingIndicator(middleAngle, LightGray)
 
         }else{
             val customExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(selectedExerciseId)
             val startAngle = startingAngle + customExerciseOrSupersetIndex * (segmentArcAngle + 2f)
             val middleAngle = startAngle + (segmentArcAngle / 2f)
-
-            Log.d("ExerciseIndicator","Middle angle: $middleAngle")
 
             RotatingIndicator(middleAngle, LightGray)
         }

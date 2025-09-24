@@ -63,8 +63,6 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.abs
-import kotlin.math.floor
-import kotlin.math.min
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -1482,57 +1480,67 @@ open class WorkoutViewModel : ViewModel() {
             fun buildWarmupSets(
                 workWeight: Double,
                 workReps: Int,
-                availableWeights: Collection<Double>,
-                maxPositiveDeviationFactor: Double = 1.1,
-                maxSetVolumeRatio: Double = 0.50 // each warm-up set < 40% of work-set tonnage
+                availableWeights: Collection<Double>
             ): List<Pair<Double, Int>> {
-                val protocol = listOf(0.50 to 8, 0.70 to 5, 0.90 to 3)
 
+                if (workWeight <= 0.0 || availableWeights.isEmpty()) return emptyList()
+
+                // Only achievable loads that don't exceed the work weight
                 val weights = availableWeights.toSortedSet().filter { it > 0.0 && it <= workWeight }
-                if (weights.isEmpty() || workWeight <= 0.0) return emptyList()
+                if (weights.isEmpty()) return emptyList()
 
-                fun pickWeight(target: Double, last: Double?): Double {
-                    val below = weights.filter { it <= target }.maxOrNull()
-                    if (below != null) return below
-                    val above = weights.firstOrNull { it >= target }
-                    if (above != null && above <= target * maxPositiveDeviationFactor && above <= workWeight) return above
-                    if (last != null) return last
-                    return weights.first()
+                fun Double.eq(other: Double, eps: Double = 1e-6) = kotlin.math.abs(this - other) <= eps
+
+                // 1) Base waypoints by rep range (fractions of W → reps)
+                val baseTargets: List<Pair<Double, Int>> = when {
+                    workReps <= 3  -> listOf(0.40 to 5, 0.60 to 3, 0.75 to 2, 0.85 to 1, 0.92 to 1)
+                    workReps <= 6  -> listOf(0.35 to 6, 0.55 to 4, 0.70 to 2, 0.82 to 1)
+                    workReps <= 12 -> listOf(0.30 to 8, 0.50 to 5, 0.70 to 2)
+                    else           -> listOf(0.25 to 10, 0.45 to 6)
+                }.map { (f, r) -> (f * workWeight) to r }
+
+                // Round to an achievable load WITHOUT overshooting (skip if none ≤ target)
+                fun roundToAvailable(target: Double, lastChosen: Double?): Double? =
+                    weights.lastOrNull { it <= target } ?: lastChosen
+
+                // 2) Round base targets; skip un-loadable waypoints; keep non-decreasing loads
+                val out = mutableListOf<Pair<Double, Int>>()
+                for ((target, reps) in baseTargets) {
+                    val candidateOrPrev = roundToAvailable(target, out.lastOrNull()?.first) ?: continue
+                    var w = candidateOrPrev
+                    val last = out.lastOrNull()?.first
+                    if (last != null && w < last) w = last
+
+                    // Skip if it's effectively the work set at equal-or-higher reps
+                    if (w.eq(workWeight) && reps >= workReps) continue
+
+                    // De-duplicate identical consecutive entries
+                    if (out.isEmpty() || !w.eq(out.last().first) || reps != out.last().second) {
+                        out.add(w to reps)
+                    }
                 }
 
-                val workVolume = workWeight * workReps
-                val maxSetVolume = workVolume * maxSetVolumeRatio
-                val eps = 1e-6
+                if (out.isEmpty()) return emptyList()
 
-                val sets = mutableListOf<Pair<Double, Int>>()
-
-                for ((pct, repsFixed) in protocol) {
-                    val target = workWeight * pct
-                    var chosen = pickWeight(target, sets.lastOrNull()?.first)
-
-                    if (sets.isNotEmpty() && chosen < sets.last().first) chosen = sets.last().first
-                    if (chosen > workWeight) chosen = workWeight
-
-                    if (chosen.eq(workWeight) && repsFixed >= workReps) continue
-
-                    // allowable reps under per-set cap and staying below work-set tonnage
-                    val maxBySet  = floor((maxSetVolume - eps) / chosen).toInt()
-                    val maxByWork = floor((workVolume   - eps) / chosen).toInt()
-                    val allowable = min(maxBySet, maxByWork)
-
-                    //if (allowable < 3) continue // always ≥3 reps
-
-                    val reps = min(repsFixed, allowable.coerceAtLeast(3))
-
-                    /*
-                    val last = sets.lastOrNull()
-                    if (last != null && last.first.eq(chosen) && last.second == reps) continue
-                    */
-
-                    sets.add(chosen to reps)
+                // 3) Optional: cap total warm-up reps (≤ 25), drop earliest light extras first
+                var totalReps = out.sumOf { it.second }
+                if (totalReps > 25) {
+                    var idx = 0
+                    while (idx < out.size && totalReps > 25) {
+                        val (w, r) = out[idx]
+                        if (w < 0.5 * workWeight && r <= 2) {
+                            totalReps -= r
+                            out.removeAt(idx)
+                        } else idx++
+                    }
+                    idx = 0
+                    while (idx < out.size && totalReps > 25) {
+                        totalReps -= out[idx].second
+                        out.removeAt(idx)
+                    }
                 }
 
-                return sets.filterNot { it.first.eq(workWeight) && it.second >= workReps }
+                return out
             }
 
             val actualWarmupSets = buildWarmupSets(
