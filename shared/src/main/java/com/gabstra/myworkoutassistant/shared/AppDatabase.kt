@@ -5,11 +5,10 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
-
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ListIntConverter
-import com.gabstra.myworkoutassistant.shared.typeconverters.ListSetDataTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.ListSetHistoryTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.SetDataTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
@@ -17,17 +16,18 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
 @Database(
     entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class, WorkoutSchedule::class],
-    version = 49,
+    version = 51,
     exportSchema = false
 )
-@TypeConverters(DateTimeTypeConverter::class,
+@TypeConverters(
+    DateTimeTypeConverter::class,
     DateTypeConverter::class,
     TimeTypeConverter::class,
     SetDataTypeConverter::class,
     UUIDConverter::class,
     UIntConverter::class,
     ListIntConverter::class,
-    ListSetDataTypeConverter::class
+    ListSetHistoryTypeConverter::class
 )
 
 abstract class AppDatabase : RoomDatabase() {

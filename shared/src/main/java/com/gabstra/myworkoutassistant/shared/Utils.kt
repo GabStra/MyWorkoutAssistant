@@ -193,13 +193,15 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
     }
 }
 
+
 fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
     when (val setData = setHistory.setData) {
         is WeightSetData -> {
             return WeightSet(
                 id = setHistory.setId,
                 reps = setData.actualReps,
-                weight = setData.actualWeight
+                weight = setData.actualWeight,
+                isRestPause = setData.isRestPause
             )
         }
 
@@ -207,7 +209,8 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
             return BodyWeightSet(
                 id = setHistory.setId,
                 reps = setData.actualReps,
-                additionalWeight = setData.additionalWeight
+                additionalWeight = setData.additionalWeight,
+                isRestPause = setData.isRestPause
             )
         }
 
@@ -237,6 +240,8 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
         }
     }
 }
+
+
 
 val colorsByZone = arrayOf(
     Color(0x80F0F0F0), // Not used, but kept for consistency
@@ -479,4 +484,20 @@ fun formatWeight(weight:Double): String {
     }
 
     return "%.2f".format(weight).replace(",", ".")
+}
+
+fun <T> removeRestAndRestPause(
+    sets: List<T>,
+    isRestPause: (T) -> Boolean,
+    isRestSet: (T) -> Boolean
+): List<T> {
+    val out = ArrayList<T>(sets.size)
+    for (s in sets) {
+        if (isRestPause(s)) {
+            while (out.isNotEmpty() && isRestSet(out.last())) out.removeLast()
+            continue // drop the rest-pause set itself
+        }
+        out += s
+    }
+    return out
 }

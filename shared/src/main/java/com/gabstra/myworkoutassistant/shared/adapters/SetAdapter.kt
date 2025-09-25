@@ -1,10 +1,9 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
-import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.google.gson.JsonDeserializationContext
@@ -36,6 +35,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 jsonObject.addProperty("reps", src.reps)
                 jsonObject.addProperty("weight", src.weight)
                 jsonObject.addProperty("isWarmupSet", src.isWarmupSet)
+                jsonObject.addProperty("isRestPause", src.isRestPause)
             }
             is BodyWeightSet ->{
                 jsonObject.addProperty("reps", src.reps)
@@ -71,13 +71,15 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 val reps = jsonObject.get("reps").asInt
                 val weight = jsonObject.get("weight").asDouble
                 val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
-                WeightSet(id,reps, weight,isWarmupSet)
+                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
+                WeightSet(id,reps, weight,isWarmupSet,isRestPause)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
                 val additionalWeight = if(jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
                 val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
-                BodyWeightSet(id,reps,additionalWeight,isWarmupSet)
+                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
+                BodyWeightSet(id,reps,additionalWeight,isWarmupSet,isRestPause)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt

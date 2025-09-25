@@ -69,6 +69,16 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.addProperty("keepScreenOn", src.keepScreenOn)
                 jsonObject.addProperty("intraSetRestInSeconds", src.intraSetRestInSeconds)
                 jsonObject.addProperty("showCountDownTimer", src.showCountDownTimer)
+
+                if (src.loadJumpDefaultPct != null) {
+                    jsonObject.addProperty("loadJumpDefaultPct", src.loadJumpDefaultPct)
+                }
+                if (src.loadJumpMaxPct != null) {
+                    jsonObject.addProperty("loadJumpMaxPct", src.loadJumpMaxPct)
+                }
+                if (src.loadJumpOvercapUntil != null) {
+                    jsonObject.addProperty("loadJumpOvercapUntil", src.loadJumpOvercapUntil)
+                }
             }
 
             is Rest -> {
@@ -204,6 +214,22 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     false
                 }
 
+                val loadJumpDefaultPct = if (jsonObject.has("loadJumpDefaultPct")) {
+                    jsonObject.get("loadJumpDefaultPct").asDouble
+                } else {
+                    null
+                }
+                val loadJumpMaxPct = if (jsonObject.has("loadJumpMaxPct")) {
+                    jsonObject.get("loadJumpMaxPct").asDouble
+                } else {
+                    null
+                }
+                val loadJumpOvercapUntil = if (jsonObject.has("loadJumpOvercapUntil")) {
+                    jsonObject.get("loadJumpOvercapUntil").asInt
+                } else {
+                    null
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -224,7 +250,10 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     enableProgression,
                     keepScreenOn,
                     showCountDownTimer,
-                    intraSetRestInSeconds
+                    intraSetRestInSeconds,
+                    loadJumpDefaultPct,
+                    loadJumpMaxPct,
+                    loadJumpOvercapUntil
                 )
             }
 

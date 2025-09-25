@@ -26,4 +26,8 @@ data class Exercise (
     val keepScreenOn : Boolean = false,
     val showCountDownTimer: Boolean = false,
     val intraSetRestInSeconds : Int? = null,
+
+    val loadJumpDefaultPct: Double? = null,
+    val loadJumpMaxPct: Double? = null,
+    val loadJumpOvercapUntil: Int? = null,
     ): WorkoutComponent(id,enabled)

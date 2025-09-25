@@ -53,7 +53,9 @@ class WorkoutManager {
                     updatedComponent
                 } else {
                     if(updatedComponent is Exercise && component is Superset){
-                        component.copy(exercises = updateWorkoutComponentsRecursively(component.exercises, oldComponent as Exercise, updatedComponent as Exercise) as List<Exercise>)
+                        component.copy(exercises = updateWorkoutComponentsRecursively(component.exercises, oldComponent as Exercise,
+                            updatedComponent
+                        ) as List<Exercise>)
                     }else{
                         component
                     }

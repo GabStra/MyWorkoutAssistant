@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -52,6 +53,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
@@ -122,6 +124,10 @@ fun ExerciseForm(
     val heartRateZones = listOf("None") + listOf("Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
     val selectedLowerBoundMaxHRPercent = remember { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
     val selectedUpperBoundMaxHRPercent = remember { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
+
+    val loadJumpDefaultPctState = remember { mutableStateOf(exercise?.loadJumpDefaultPct?.toFloat() ?: 0.025f) }
+    val loadJumpMaxPctState = remember { mutableStateOf(exercise?.loadJumpMaxPct?.toFloat() ?: 0.1f) }
+    val loadJumpOvercapUntilState = remember { mutableStateOf(exercise?.loadJumpOvercapUntil?.toFloat() ?: 2f) }
 
     //get the index from zoneRanges that contains both selectedLowerBoundMaxHRPercent and selectedUpperBoundMaxHRPercent
     val selectedTargetZone = remember(selectedLowerBoundMaxHRPercent.value,selectedUpperBoundMaxHRPercent.value) {
@@ -383,6 +389,55 @@ fun ExerciseForm(
                     Text(text = "Enable Progression")
                 }
 
+                if (enableProgression.value) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                        // Default Percentage Slider
+                        Text(
+                            text = "Default Load Jump: ${(loadJumpDefaultPctState.value * 100).round(2)}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 16.dp)
+                        )
+                        Slider(
+                            value = loadJumpDefaultPctState.value,
+                            onValueChange = { loadJumpDefaultPctState.value = it },
+                            valueRange = 0f..0.1f, // 0% to 10%
+                            steps = 39 // Allows for 0.25% increments
+                        )
+
+                        // Max Percentage Slider
+                        Text(
+                            text = "Max Load Jump: ${(loadJumpMaxPctState.value * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                        val maxLoadJumpStartRange = loadJumpDefaultPctState.value
+                        val maxLoadJumpEndRange = 0.25f
+                        // Calculate the number of 1% steps within the dynamic range.
+                        // The number of steps is the number of intervals minus one.
+                        val maxLoadJumpSteps = ((maxLoadJumpEndRange - maxLoadJumpStartRange) / 0.01f).roundToInt() - 1
+
+                        Slider(
+                            value = loadJumpMaxPctState.value,
+                            onValueChange = { loadJumpMaxPctState.value = it },
+                            valueRange = maxLoadJumpStartRange..maxLoadJumpEndRange, // Default + 5% to 25%
+                            steps = if (maxLoadJumpSteps > 0) maxLoadJumpSteps else 0 // Ensure steps is not negative
+                        )
+
+                        // Overcap Reps Slider
+                        Text(
+                            text = "Overcap Reps: ${loadJumpOvercapUntilState.value.toInt()}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                        Slider(
+                            value = loadJumpOvercapUntilState.value,
+                            onValueChange = { loadJumpOvercapUntilState.value = it.roundToInt().toFloat() },
+                            valueRange = 0f..5f,
+                            steps = 4 // Allows for integer increments
+                        )
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -563,6 +618,7 @@ fun ExerciseForm(
             }
 
             val canBeSaved = nameState.value.isNotBlank() && if(selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true
+
             // Submit button
             Button(
                 colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
@@ -588,7 +644,10 @@ fun ExerciseForm(
                         enableProgression = enableProgression.value,
                         keepScreenOn = keepScreenOn.value,
                         showCountDownTimer = showCountDownTimer.value,
-                        intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)
+                        intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
+                        loadJumpDefaultPct = loadJumpDefaultPctState.value.toDouble(),
+                        loadJumpMaxPct = loadJumpMaxPctState.value.toDouble(),
+                        loadJumpOvercapUntil = loadJumpOvercapUntilState.value.toInt()
                     )
 
                     onExerciseUpsert(newExercise)

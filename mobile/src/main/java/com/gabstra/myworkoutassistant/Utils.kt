@@ -489,6 +489,12 @@ fun Double.round(decimals: Int): Double {
     return kotlin.math.round(this * multiplier) / multiplier
 }
 
+fun Float.round(decimals: Int): Float {
+    var multiplier = 1.0f
+    repeat(decimals) { multiplier *= 10 }
+    return kotlin.math.round(this * multiplier) / multiplier
+}
+
 // Default height for the content fade gradient
 private val DEFAULT_CONTENT_FADE_HEIGHT = 10.dp
 

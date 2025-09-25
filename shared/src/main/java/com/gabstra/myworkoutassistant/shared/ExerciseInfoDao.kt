@@ -5,7 +5,6 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
-import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import java.util.UUID
 
 @Dao
@@ -24,12 +23,6 @@ interface ExerciseInfoDao {
 
     @Query("DELETE FROM exercise_info")
     suspend fun deleteAll()
-
-    @Query("UPDATE exercise_info SET bestSession = :bestSession, version = version + 1 WHERE id = :id")
-    suspend fun updateBestSession(id: UUID, bestSession: List<SetData>)
-
-    @Query("UPDATE exercise_info SET lastSuccessfulSession = :lastSuccessfulSession, version = version + 1 WHERE id = :id")
-    suspend fun updateLastSuccessfulSession(id: UUID, lastSuccessfulSession: List<SetData>)
 
     @Query("UPDATE exercise_info SET successfulSessionCounter = :successfulSessionCounter, version = version + 1 WHERE id = :id")
     suspend fun updateSuccessfulSessionCounter(id: UUID, successfulSessionCounter: UInt)
