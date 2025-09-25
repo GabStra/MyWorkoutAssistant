@@ -1480,7 +1480,7 @@ open class WorkoutViewModel : ViewModel() {
                     is WeightSet -> {
                         !it.isRestPause
                     }
-                    else -> throw IllegalStateException("Unknown set type encountered after filtering.")
+                    else -> true
                 }
             }
 
