@@ -145,6 +145,14 @@ fun PageExercises(
                                 style = captionStyle
                             )
                         }
+
+                        if(currentStateSet.exerciseId == selectedExercise.id && currentStateSet.intraSetTotal != null){
+                            Text(
+                                textAlign = TextAlign.Center,
+                                text =  "${currentStateSet.intraSetCounter}/${currentStateSet.intraSetTotal}",
+                                style = captionStyle
+                            )
+                        }
                     }
                 }
 

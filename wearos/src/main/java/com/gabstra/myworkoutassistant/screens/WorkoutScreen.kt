@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn

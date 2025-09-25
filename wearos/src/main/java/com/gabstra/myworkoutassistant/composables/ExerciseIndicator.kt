@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import CircleWithNumber
-import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -25,7 +24,6 @@ fun ExerciseIndicator(
     set: WorkoutState.Set,
     selectedExerciseId : UUID? = null
 ){
-
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
     val exerciseOrSupersetIds = remember { exerciseIds.map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
     val exerciseCount = exerciseOrSupersetIds.count()
@@ -121,11 +119,12 @@ fun ExerciseIndicator(
         }
     }
 
-    if(selectedExerciseId != null && exerciseIds.contains(selectedExerciseId)){
-        val isSuperset = remember(selectedExerciseId) { viewModel.supersetIdByExerciseId.containsKey(selectedExerciseId)  }
+    @Composable
+    fun ShowRotatingIndicator(exerciseId : UUID){
+        val isSuperset = remember(exerciseId) { viewModel.supersetIdByExerciseId.containsKey(exerciseId)  }
 
         if(isSuperset){
-            val supersetId = viewModel.supersetIdByExerciseId[selectedExerciseId]
+            val supersetId = viewModel.supersetIdByExerciseId[exerciseId]
             val customExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(supersetId)
 
             val supersetExerciseIds = exerciseIds.filter { viewModel.supersetIdByExerciseId.containsKey(it) && viewModel.supersetIdByExerciseId[it] == supersetId }
@@ -133,7 +132,7 @@ fun ExerciseIndicator(
 
             val subSegmentArcAngle = (segmentArcAngle - (supersetExercisesCount - 1) * 1f) / supersetExercisesCount
 
-            val subIndex = supersetExerciseIds.indexOf(selectedExerciseId)
+            val subIndex = supersetExerciseIds.indexOf(exerciseId)
 
             val startAngle = startingAngle + customExerciseOrSupersetIndex * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)
             val middleAngle = startAngle + (subSegmentArcAngle / 2f)
@@ -141,17 +140,18 @@ fun ExerciseIndicator(
             RotatingIndicator(middleAngle, LightGray)
 
         }else{
-            val customExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(selectedExerciseId)
+            val customExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(exerciseId)
             val startAngle = startingAngle + customExerciseOrSupersetIndex * (segmentArcAngle + 2f)
             val middleAngle = startAngle + (segmentArcAngle / 2f)
 
             RotatingIndicator(middleAngle, LightGray)
         }
-    }else{
-        val startAngle = startingAngle + currentExerciseOrSupersetIndex * (segmentArcAngle + 2f)
-        val middleAngle = startAngle + (segmentArcAngle / 2f)
+    }
 
-        RotatingIndicator(middleAngle, LightGray)
+    if(selectedExerciseId != null && exerciseIds.contains(selectedExerciseId)){
+        ShowRotatingIndicator(selectedExerciseId)
+    }else{
+        ShowRotatingIndicator(set.exerciseId)
     }
 }
 

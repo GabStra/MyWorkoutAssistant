@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.removeRestAndRestPause
+import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -648,6 +649,8 @@ open class WorkoutViewModel : ViewModel() {
             isRestSet = { it is RestSet } // adapt if your rest set type differs
         ).filter { it !is RestSet }
 
+        Log.d("WorkoutViewModel", "Valid sets: ${validSets.joinToString(", ")}")
+
         val previousSets = validSets.map { it ->
             when (it) {
                 is BodyWeightSet -> {
@@ -782,7 +785,6 @@ open class WorkoutViewModel : ViewModel() {
                     break
                 }
             }
-
 
             delay(2000)
             _isResuming.value = false
@@ -1075,8 +1077,12 @@ open class WorkoutViewModel : ViewModel() {
                 val executedSetsHistoryByExerciseId = executedSetsHistory.groupBy { it.exerciseId }
 
                 executedSetsHistoryByExerciseId.forEach { it ->
-                    val exercise = exercisesById[it.key]!!
+                    if(!exercisesById.containsKey(it.key)){
+                        Log.e("MyWorkoutAssistant", "Exercise with id ${it.key} not found exercise histories ${it.value}")
+                        return@forEach
+                    }
 
+                    val exercise = exercisesById[it.key]!!
 
                     val progressionData =
                         if (exerciseProgressionByExerciseId.containsKey(it.key)) exerciseProgressionByExerciseId[it.key] else null
@@ -1127,7 +1133,6 @@ open class WorkoutViewModel : ViewModel() {
                                     lastSessionWasDeload = true
                                 )
                             } else {
-
                                 updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
 
                                 val currentVolume = currentSession.filter { it.setData !is RestSetData }.sumOf {
@@ -1137,7 +1142,6 @@ open class WorkoutViewModel : ViewModel() {
                                         else -> throw IllegalArgumentException("Unknown set type")
                                     }
                                 }
-
                                 val lastVolume = updatedInfo.lastSuccessfulSession.filter { it.setData !is RestSetData }.sumOf {
                                     when(it.setData){
                                         is BodyWeightSetData -> it.setData.calculateVolume()
@@ -1470,19 +1474,17 @@ open class WorkoutViewModel : ViewModel() {
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
-        val exerciseSets = exercise.sets
-            .filter { it !is RestSet }
-            .filter {
+        val exerciseSets = removeRestAndRestPause(
+            sets = exercise.sets,
+            isRestPause = {
                 when (it) {
-                    is BodyWeightSet -> {
-                        !it.isRestPause
-                    }
-                    is WeightSet -> {
-                        !it.isRestPause
-                    }
-                    else -> true
+                    is BodyWeightSet -> it.isRestPause
+                    is WeightSet -> it.isRestPause
+                    else -> false
                 }
-            }
+            },
+            isRestSet = { it is RestSet } // adapt if your rest set type differs
+        ).filter { it !is RestSet }
 
         if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
             val (workWeight,workReps) = exerciseSets.first().let  {
@@ -1623,9 +1625,9 @@ open class WorkoutViewModel : ViewModel() {
                 exerciseAllSets.add(newRestSet)
             }
 
-            exerciseAllSets.addAll(exercise.sets)
+            exerciseAllSets.addAll(exerciseSets)
         }else{
-            exerciseAllSets.addAll(exercise.sets)
+            exerciseAllSets.addAll(exerciseSets)
         }
 
         val plateChangeResults = getPlateChangeResults(exercise, exerciseAllSets, equipment)
@@ -1805,12 +1807,5 @@ open class WorkoutViewModel : ViewModel() {
 
             goToNextState()
         }
-    }
-
-    // Extension function for rounding doubles
-    protected fun Double.round(decimals: Int): Double {
-        var multiplier = 1.0
-        repeat(decimals) { multiplier *= 10 }
-        return kotlin.math.round(this * multiplier) / multiplier
     }
 }

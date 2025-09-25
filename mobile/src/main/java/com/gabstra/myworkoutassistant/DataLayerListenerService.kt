@@ -118,7 +118,16 @@ class DataLayerListenerService : WearableListenerService() {
 
                                         for (setHistory in setHistories) {
                                             val newSet = getNewSetFromSetHistory(setHistory)
-                                            if(newSet is BodyWeightSet || newSet is WeightSet && newSet.isRestPause) continue
+                                            when(newSet){
+                                                is BodyWeightSet -> {
+                                                    if(newSet.isRestPause) continue
+                                                }
+                                                is WeightSet -> {
+                                                    if(newSet.isRestPause) continue
+                                                }
+                                                else -> Unit
+                                            }
+
 
                                             workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                                         }

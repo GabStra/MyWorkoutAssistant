@@ -160,16 +160,16 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
 }
 
 fun initializeSetData(set: Set): SetData = when (set) {
-    is WeightSet -> WeightSetData(set.reps, set.weight,0.0)
-    is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0)
+    is WeightSet -> WeightSetData(set.reps, set.weight,0.0,set.isRestPause)
+    is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0,set.isRestPause)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds)
 }
 
 fun getNewSet(set: Set): Set = when (set) {
-    is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight)
-    is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight)
+    is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight,set.isRestPause)
+    is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight,set.isRestPause)
     is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
     is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
     is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds)
