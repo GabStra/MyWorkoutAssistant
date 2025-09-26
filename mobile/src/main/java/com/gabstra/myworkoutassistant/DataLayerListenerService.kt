@@ -18,8 +18,10 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
+import com.gabstra.myworkoutassistant.shared.removeRestAndRestPause
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -116,19 +118,23 @@ class DataLayerListenerService : WearableListenerService() {
 
                                         workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
 
+                                        val newSets = setHistories.map { getNewSetFromSetHistory(it) }
+
+                                        val setsToAdd = removeRestAndRestPause(
+                                            sets = newSets,
+                                            isRestPause = {
+                                                when (it) {
+                                                    is BodyWeightSet -> it.isRestPause
+                                                    is WeightSet -> it.isRestPause
+                                                    else -> false
+                                                }
+                                            },
+                                            isRestSet = { it is RestSet } // adapt if your rest set type differs
+                                        )
+
                                         for (setHistory in setHistories) {
                                             val newSet = getNewSetFromSetHistory(setHistory)
-                                            when(newSet){
-                                                is BodyWeightSet -> {
-                                                    if(newSet.isRestPause) continue
-                                                }
-                                                is WeightSet -> {
-                                                    if(newSet.isRestPause) continue
-                                                }
-                                                else -> Unit
-                                            }
-
-
+                                            if(newSet !in setsToAdd) continue
                                             workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                                         }
                                     }

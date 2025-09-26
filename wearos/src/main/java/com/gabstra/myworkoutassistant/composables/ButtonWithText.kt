@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -20,9 +20,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Text
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
@@ -33,6 +35,7 @@ fun ButtonWithText(
     enabled:Boolean = true,
     textColor : Color = MaterialTheme.colors.onBackground,
     backgroundColor: Color = MediumDarkGray,
+    style: TextStyle = MaterialTheme.typography.body1,
     onClick: () -> Unit
 ) {
     val backgroundOnPress = lerp(backgroundColor, textColor, 0.2f)
@@ -52,7 +55,7 @@ fun ButtonWithText(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .heightIn(min = 50.dp)
             .clip(RoundedCornerShape(50))
             .background(
                 when {
@@ -65,21 +68,22 @@ fun ButtonWithText(
                 enabled = enabled
             ){
                 onClick()
-            }
+            },
+        contentAlignment = Alignment.Center
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 5.dp),
+                .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            ScalableText(
-                modifier = Modifier.fillMaxSize(),
+            Text(
+                modifier = Modifier.fillMaxWidth(),
                 text = text,
                 textAlign = TextAlign.Center,
                 color = displayColor,
-                style = MaterialTheme.typography.title3
+                style = style
             )
         }
     }

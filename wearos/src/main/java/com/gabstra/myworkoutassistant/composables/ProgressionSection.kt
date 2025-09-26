@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import android.annotation.SuppressLint
 import android.util.Log
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -76,8 +77,8 @@ private fun ProgressionRow(
         modifier = modifier.height(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ScalableText(
-            modifier = Modifier.weight(2f),
+        Text(
+            modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
             text = info.exerciseName,
             style = itemStyle,
             textAlign = TextAlign.Center,

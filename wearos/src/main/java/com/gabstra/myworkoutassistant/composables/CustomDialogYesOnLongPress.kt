@@ -159,7 +159,7 @@ fun CustomDialogYesOnLongPress(
                         text = title,
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
-                        modifier = Modifier.padding(15.dp,8.dp)
+                        modifier = Modifier.padding(20.dp,8.dp)
                     )
                     Text(
                         text = message,

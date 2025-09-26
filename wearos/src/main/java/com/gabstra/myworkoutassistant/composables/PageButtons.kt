@@ -94,6 +94,18 @@ fun PageButtons(
                 else
                     MaterialTheme.colors.primary
             )
+            if (isMovementSet && isLastSet) {
+                ButtonWithText(
+                    text = "Add Rest Pause Set",
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.storeSetData()
+                        viewModel.pushAndStoreWorkoutData(false, context) {
+                            viewModel.addNewRestPauseSet()
+                        }
+                    }
+                )
+            }
             if (isMovementSet) {
                 ButtonWithText(
                     text = "Add Set",
@@ -118,19 +130,6 @@ fun PageButtons(
                             }
                         )
                     }*/
-
-            if (isMovementSet && isLastSet) {
-                ButtonWithText(
-                    text = "Add Rest-Pause Set",
-                    onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.storeSetData()
-                        viewModel.pushAndStoreWorkoutData(false, context) {
-                            viewModel.addNewRestPauseSet()
-                        }
-                    }
-                )
-            }
 
 /*            ButtonWithText(
                 text = "Go to Next Exercise",

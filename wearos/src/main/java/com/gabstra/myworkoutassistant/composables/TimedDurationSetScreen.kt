@@ -220,6 +220,7 @@ fun TimedDurationSetScreen(
                 state.startTime = LocalDateTime.now()
             }
 
+            hapticsViewModel.doHardVibrationTwice()
             startTimerJob()
         }
     }

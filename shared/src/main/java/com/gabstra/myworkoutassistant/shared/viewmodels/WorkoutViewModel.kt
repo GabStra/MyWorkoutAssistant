@@ -338,6 +338,7 @@ open class WorkoutViewModel : ViewModel() {
 
     fun resetAll() {
         resetWorkoutStore()
+        workoutStoreRepository.saveWorkoutStore(workoutStore)
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 workoutHistoryDao.deleteAll()
@@ -585,7 +586,7 @@ open class WorkoutViewModel : ViewModel() {
         val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
         val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
 
-        val today= LocalDate.now()
+        val today = LocalDate.now()
 
         var weeklyCount = 0
         exerciseInfo?.weeklyCompletionUpdateDate?.let { lastUpdate ->
@@ -648,8 +649,6 @@ open class WorkoutViewModel : ViewModel() {
             },
             isRestSet = { it is RestSet } // adapt if your rest set type differs
         ).filter { it !is RestSet }
-
-        Log.d("WorkoutViewModel", "Valid sets: ${validSets.joinToString(", ")}")
 
         val previousSets = validSets.map { it ->
             when (it) {
@@ -1075,14 +1074,10 @@ open class WorkoutViewModel : ViewModel() {
 
             if (isDone) {
                 val executedSetsHistoryByExerciseId = executedSetsHistory.groupBy { it.exerciseId }
+                val exercises = _selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + _selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
                 executedSetsHistoryByExerciseId.forEach { it ->
-                    if(!exercisesById.containsKey(it.key)){
-                        Log.e("MyWorkoutAssistant", "Exercise with id ${it.key} not found exercise histories ${it.value}")
-                        return@forEach
-                    }
-
-                    val exercise = exercisesById[it.key]!!
+                    val exercise = exercises.first { item -> item.id == it.key }
 
                     val progressionData =
                         if (exerciseProgressionByExerciseId.containsKey(it.key)) exerciseProgressionByExerciseId[it.key] else null
@@ -1189,7 +1184,7 @@ open class WorkoutViewModel : ViewModel() {
                     .filter { it.exerciseId != null }
                     .groupBy { it.exerciseId }
 
-                val exercises = _selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + _selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+
                 var workoutComponents = _selectedWorkout.value.workoutComponents
 
                 for (exercise in exercises) {
@@ -1198,8 +1193,23 @@ open class WorkoutViewModel : ViewModel() {
 
                     workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
 
+                    val newSets = setHistories.map { getNewSetFromSetHistory(it) }
+
+                    val setsToAdd = removeRestAndRestPause(
+                        sets = newSets,
+                        isRestPause = {
+                            when (it) {
+                                is BodyWeightSet -> it.isRestPause
+                                is WeightSet -> it.isRestPause
+                                else -> false
+                            }
+                        },
+                        isRestSet = { it is RestSet } // adapt if your rest set type differs
+                    )
+
                     for (setHistory in setHistories) {
                         val newSet = getNewSetFromSetHistory(setHistory)
+                        if(newSet !in setsToAdd) continue
                         workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                     }
                 }
@@ -1474,17 +1484,7 @@ open class WorkoutViewModel : ViewModel() {
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
-        val exerciseSets = removeRestAndRestPause(
-            sets = exercise.sets,
-            isRestPause = {
-                when (it) {
-                    is BodyWeightSet -> it.isRestPause
-                    is WeightSet -> it.isRestPause
-                    else -> false
-                }
-            },
-            isRestSet = { it is RestSet } // adapt if your rest set type differs
-        ).filter { it !is RestSet }
+        val exerciseSets = exercise.sets
 
         if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
             val (workWeight,workReps) = exerciseSets.first().let  {
