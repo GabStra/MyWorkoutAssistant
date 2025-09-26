@@ -18,11 +18,10 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
-import com.gabstra.myworkoutassistant.shared.removeRestAndRestPause
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataEventBuffer
@@ -118,23 +117,17 @@ class DataLayerListenerService : WearableListenerService() {
 
                                         workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
 
-                                        val newSets = setHistories.map { getNewSetFromSetHistory(it) }
+                                        val validSetHistories = setHistories.filter { it ->
+                                            when(val setData = it.setData){
+                                                is BodyWeightSetData -> !setData.isRestPause
+                                                is WeightSetData -> !setData.isRestPause
+                                                is RestSetData -> !setData.isRestPause
+                                                else -> true
+                                            }
+                                        }
 
-                                        val setsToAdd = removeRestAndRestPause(
-                                            sets = newSets,
-                                            isRestPause = {
-                                                when (it) {
-                                                    is BodyWeightSet -> it.isRestPause
-                                                    is WeightSet -> it.isRestPause
-                                                    else -> false
-                                                }
-                                            },
-                                            isRestSet = { it is RestSet } // adapt if your rest set type differs
-                                        )
-
-                                        for (setHistory in setHistories) {
+                                        for (setHistory in validSetHistories) {
                                             val newSet = getNewSetFromSetHistory(setHistory)
-                                            if(newSet !in setsToAdd) continue
                                             workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                                         }
                                     }

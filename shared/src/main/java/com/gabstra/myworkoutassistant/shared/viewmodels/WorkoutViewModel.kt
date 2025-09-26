@@ -1077,7 +1077,15 @@ open class WorkoutViewModel : ViewModel() {
                 val exercises = _selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + _selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
                 executedSetsHistoryByExerciseId.forEach { it ->
-                    val exercise = exercises.first { item -> item.id == it.key }
+                    val exercise = exercises.firstOrNull { item -> item.id == it.key }
+
+                    if(exercise == null){
+                        Log.e("WorkoutViewModel", "Exercise with id ${it.key} not found")
+                        return@forEach
+                    }
+
+                    val isValidExercise = exercise.enableProgression && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+                    if(!isValidExercise) return@forEach
 
                     val progressionData =
                         if (exerciseProgressionByExerciseId.containsKey(it.key)) exerciseProgressionByExerciseId[it.key] else null
@@ -1086,7 +1094,14 @@ open class WorkoutViewModel : ViewModel() {
 
                     val exerciseHistories = it.value
 
-                    val currentSession = exerciseHistories
+                    val currentSession = exerciseHistories.filter { it ->
+                        when(val setData = it.setData){
+                            is BodyWeightSetData -> !setData.isRestPause
+                            is WeightSetData -> !setData.isRestPause
+                            is RestSetData -> !setData.isRestPause
+                            else -> true
+                        }
+                    }
 
                     val exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
 
@@ -1120,54 +1135,52 @@ open class WorkoutViewModel : ViewModel() {
                     } else {
                         var updatedInfo = exerciseInfo.copy(version = exerciseInfo.version + 1u)
 
-                        if(exercise.enableProgression && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)){
-                            if (isDeloadSession) {
-                                updatedInfo = updatedInfo.copy(
-                                    sessionFailedCounter = 0u,
-                                    successfulSessionCounter = 0u,
-                                    lastSessionWasDeload = true
+                        if (isDeloadSession) {
+                            updatedInfo = updatedInfo.copy(
+                                sessionFailedCounter = 0u,
+                                successfulSessionCounter = 0u,
+                                lastSessionWasDeload = true
+                            )
+                        } else {
+                            updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
+
+                            val currentVolume = currentSession.filter { it.setData !is RestSetData }.sumOf {
+                                when(it.setData){
+                                    is BodyWeightSetData -> it.setData.calculateVolume()
+                                    is WeightSetData -> it.setData.calculateVolume()
+                                    else -> throw IllegalArgumentException("Unknown set type")
+                                }
+                            }
+                            val lastVolume = updatedInfo.lastSuccessfulSession.filter { it.setData !is RestSetData }.sumOf {
+                                when(it.setData){
+                                    is BodyWeightSetData -> it.setData.calculateVolume()
+                                    is WeightSetData -> it.setData.calculateVolume()
+                                    else -> throw IllegalArgumentException("Unknown set type")
+                                }
+                            }
+                            val bestVolume = updatedInfo.bestSession.filter { it.setData !is RestSetData }.sumOf {
+                                when(it.setData){
+                                    is BodyWeightSetData -> it.setData.calculateVolume()
+                                    is WeightSetData -> it.setData.calculateVolume()
+                                    else -> throw IllegalArgumentException("Unknown set type")
+                                }
+                            }
+
+                            if (currentVolume > bestVolume) {
+                                updatedInfo = updatedInfo.copy(bestSession = currentSession)
+                            }
+
+                            updatedInfo = if (currentVolume > lastVolume) {
+                                updatedInfo.copy(
+                                    lastSuccessfulSession = currentSession,
+                                    successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
+                                    sessionFailedCounter = 0u
                                 )
                             } else {
-                                updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
-
-                                val currentVolume = currentSession.filter { it.setData !is RestSetData }.sumOf {
-                                    when(it.setData){
-                                        is BodyWeightSetData -> it.setData.calculateVolume()
-                                        is WeightSetData -> it.setData.calculateVolume()
-                                        else -> throw IllegalArgumentException("Unknown set type")
-                                    }
-                                }
-                                val lastVolume = updatedInfo.lastSuccessfulSession.filter { it.setData !is RestSetData }.sumOf {
-                                    when(it.setData){
-                                        is BodyWeightSetData -> it.setData.calculateVolume()
-                                        is WeightSetData -> it.setData.calculateVolume()
-                                        else -> throw IllegalArgumentException("Unknown set type")
-                                    }
-                                }
-                                val bestVolume = updatedInfo.bestSession.filter { it.setData !is RestSetData }.sumOf {
-                                    when(it.setData){
-                                        is BodyWeightSetData -> it.setData.calculateVolume()
-                                        is WeightSetData -> it.setData.calculateVolume()
-                                        else -> throw IllegalArgumentException("Unknown set type")
-                                    }
-                                }
-
-                                if (currentVolume > bestVolume) {
-                                    updatedInfo = updatedInfo.copy(bestSession = currentSession)
-                                }
-
-                                updatedInfo = if (currentVolume > lastVolume) {
-                                    updatedInfo.copy(
-                                        lastSuccessfulSession = currentSession,
-                                        successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
-                                        sessionFailedCounter = 0u
-                                    )
-                                } else {
-                                    updatedInfo.copy(
-                                        successfulSessionCounter = 0u,
-                                        sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
-                                    )
-                                }
+                                updatedInfo.copy(
+                                    successfulSessionCounter = 0u,
+                                    sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
+                                )
                             }
                         }
 
@@ -1184,7 +1197,6 @@ open class WorkoutViewModel : ViewModel() {
                     .filter { it.exerciseId != null }
                     .groupBy { it.exerciseId }
 
-
                 var workoutComponents = _selectedWorkout.value.workoutComponents
 
                 for (exercise in exercises) {
@@ -1193,23 +1205,17 @@ open class WorkoutViewModel : ViewModel() {
 
                     workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
 
-                    val newSets = setHistories.map { getNewSetFromSetHistory(it) }
+                    val validSetHistories = setHistories.filter { it ->
+                        when(val setData = it.setData){
+                            is BodyWeightSetData -> !setData.isRestPause
+                            is WeightSetData -> !setData.isRestPause
+                            is RestSetData -> !setData.isRestPause
+                            else -> true
+                        }
+                    }
 
-                    val setsToAdd = removeRestAndRestPause(
-                        sets = newSets,
-                        isRestPause = {
-                            when (it) {
-                                is BodyWeightSet -> it.isRestPause
-                                is WeightSet -> it.isRestPause
-                                else -> false
-                            }
-                        },
-                        isRestSet = { it is RestSet } // adapt if your rest set type differs
-                    )
-
-                    for (setHistory in setHistories) {
+                    for (setHistory in validSetHistories) {
                         val newSet = getNewSetFromSetHistory(setHistory)
-                        if(newSet !in setsToAdd) continue
                         workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
                     }
                 }
@@ -1636,12 +1642,10 @@ open class WorkoutViewModel : ViewModel() {
 
         for ((index, set) in exerciseAllSets.withIndex()) {
             if (set is RestSet) {
-                val restSet = RestSet(set.id, set.timeInSeconds)
-
                 val restState = WorkoutState.Rest(
-                    set = restSet,
+                    set = set,
                     order = index.toUInt(),
-                    currentSetData = initializeSetData(RestSet(set.id, set.timeInSeconds)),
+                    currentSetData = initializeSetData(set),
                     exerciseId = exercise.id
                 )
                 states.add(restState)

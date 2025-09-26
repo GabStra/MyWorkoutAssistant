@@ -57,6 +57,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             is RestSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
                 jsonObject.addProperty("endTimer", src.endTimer)
+                jsonObject.addProperty("isRestPause", src.isRestPause)
             }
         }
         return jsonObject
@@ -99,7 +100,8 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             "RestSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt
                 val endTimer = jsonObject.get("endTimer").asInt
-                RestSetData(startTimer,endTimer)
+                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
+                RestSetData(startTimer,endTimer,isRestPause)
             }
             else -> throw RuntimeException("Unsupported set type")
         }

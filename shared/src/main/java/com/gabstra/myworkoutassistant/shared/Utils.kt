@@ -164,7 +164,7 @@ fun initializeSetData(set: Set): SetData = when (set) {
     is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0,set.isRestPause)
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop)
-    is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds)
+    is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds,set.isRestPause)
 }
 
 fun getNewSet(set: Set): Set = when (set) {
@@ -172,7 +172,7 @@ fun getNewSet(set: Set): Set = when (set) {
     is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight,set.isRestPause)
     is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
     is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
-    is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds)
+    is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds,set.isRestPause)
 }
 
 fun copySetData(setData: SetData): SetData = when (setData) {
@@ -192,7 +192,6 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
         is RestSet -> setData is RestSetData
     }
 }
-
 
 fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
     when (val setData = setHistory.setData) {
@@ -236,12 +235,11 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
             return RestSet(
                 id = setHistory.setId,
                 timeInSeconds = setData.startTimer,
+                isRestPause = setData.isRestPause
             )
         }
     }
 }
-
-
 
 val colorsByZone = arrayOf(
     Color(0x80F0F0F0), // Not used, but kept for consistency
