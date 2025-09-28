@@ -43,6 +43,10 @@ import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -394,37 +398,38 @@ fun Double.isEqualTo(other: Double, epsilon: Double = 1e-2): Boolean {
 }
 
 object OneRM {
-    // Percent-1RM model parameters (tune if desired)
-    private const val K = 30.0      // scale (≈ Epley)
-    private const val B = 1.0       // curvature
-    private const val REP_CAP = 80.0
+    private const val REP_CAP = 80.0 // practical upper bound for reps
 
-    // %1RM in [0,1]; %1RM(1)=1 and %1RM→0 as reps→∞
-    private fun percent1RM(reps: Double): Double {
-        require(reps >= 1.0)
-        return 1.0 / (1.0 + ((reps - 1.0) / K)).pow(B)
+    // Mayhew %1RM model: %1RM = 0.522 + 0.419 * e^(−0.055 * reps)
+    fun percent1RM(reps: Int): Double {
+        require(reps >= 1.0) { "reps must be >= 1" }
+        return 0.522 + 0.419 * exp(-0.055 * reps)
     }
 
-    /** Drop-in for est1RMBlended: 1RM estimate for given load+reps. */
-    fun est1RMBlended(weight: Double, reps: Double): Double {
+    // e1RM from a submax set (weight, reps)
+    fun estimate1RM(weight: Double, reps: Int): Double {
         require(weight > 0 && reps > 0)
         return weight / percent1RM(reps)
     }
 
-    /** Closed-form inverse: max reps at given load and 1RM. */
-    fun maxRepsForWeight(weight: Double, oneRepMax: Double, tol: Double = 1e-3): Double { // tol kept for signature compatibility
+    // Max reps possible at given weight for a known 1RM (invert Mayhew)
+    fun maxRepsForWeight(weight: Double, oneRepMax: Double): Double {
         require(weight > 0 && oneRepMax > 0)
-        if (oneRepMax <= weight) return 1.0
-        val i = (weight / oneRepMax).coerceIn(1e-6, 0.999999)
-        val reps = 1.0 + K * (i.pow(-1.0 / B) - 1.0)
-        return reps.coerceAtMost(REP_CAP)
+        val i = (weight / oneRepMax).coerceIn(1e-9, 1.0) // fraction of 1RM
+        if (i >= 1.0) return 1.0
+        if (i <= 0.522) return REP_CAP // ≤52.2% 1RM ⇒ very high reps; cap
+        val arg = (i - 0.522) / 0.419
+        // numerical safety: clamp into (0,1]
+        val safe = min(1.0, max(1e-12, arg))
+        val reps = -ln(safe) / 0.055
+        return reps.coerceIn(1.0, REP_CAP)
     }
 
     fun calculateRIR(weight: Double, reps: Int, oneRepMax: Double): Double =
         maxRepsForWeight(weight, oneRepMax) - reps
 
     fun calculateOneRepMax(weight: Double, reps: Int): Double =
-        est1RMBlended(weight, reps.toDouble())
+        estimate1RM(weight, reps)
 
     fun repsForTargetRIR(weight: Double, oneRepMax: Double, targetRIR: Double): Double {
         require(weight > 0 && oneRepMax > 0)

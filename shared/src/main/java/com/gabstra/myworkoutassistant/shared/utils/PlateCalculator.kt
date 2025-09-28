@@ -275,5 +275,147 @@ class PlateCalculator {
 
             return steps
         }
+
+        @JvmStatic
+        fun pickUniqueTotalsFromTotals(
+            availablePlatesPerSide: List<Double>,   // PER-SIDE inventory (e.g., 5.0 listed 3 times ⇒ 3 pairs)
+            achievableTotals: List<Double>,         // allowed totals (bar included), already filtered by constraints
+            desiredTotals: List<Double>,            // targets (bar included)
+            barWeight: Double,
+            initialPlates: List<Double> = emptyList(),
+            sidesOnBarbell: UInt = 2u
+        ): List<Double> {
+            require(desiredTotals.isNotEmpty()) { "desiredTotals is empty" }
+            require(achievableTotals.isNotEmpty()) { "achievableTotals is empty" }
+
+            val perSideCounts = availablePlatesPerSide.groupingBy { it }.eachCount()
+
+            // Build combos for each achievable total (skip totals that end up impossible with given inventory)
+            fun keyOf(x: Double) = "%.6f".format(x)
+            val byTotalKey = linkedMapOf<String, Pair<Double, List<List<Double>>>>()
+            for (t in achievableTotals) {
+                val needPlateTotal = (t - barWeight).coerceAtLeast(0.0)
+                val combos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotal, sidesOnBarbell)
+                if (combos.isNotEmpty()) byTotalKey[keyOf(t)] = t to combos.sortedBy { it.size } // prefer fewer plates within a total
+            }
+            require(byTotalKey.isNotEmpty()) { "No achievable total has a valid combo with the given inventory." }
+            require(desiredTotals.size <= byTotalKey.size) {
+                "Need ${desiredTotals.size} unique totals, only ${byTotalKey.size} achievable totals have valid combos."
+            }
+
+            data class Cand(val key: String, val total: Double, val combos: List<List<Double>>)
+            // For each target: candidates sorted by closeness (primary objective)
+            val perTarget: List<List<Cand>> = desiredTotals.map { target ->
+                byTotalKey.entries
+                    .asSequence()
+                    .map { (k, v) -> Cand(k, v.first, v.second) }
+                    .sortedBy { kotlin.math.abs(it.total - target) }
+                    .toList()
+            }
+
+            data class Score(val err: Double, val plc: Int, val chg: Int) // err → plc → chg
+            fun better(a: Score, b: Score, eps: Double = 1e-9): Boolean = when {
+                a.err < b.err - eps -> true
+                a.err > b.err + eps -> false
+                a.plc < b.plc -> true
+                a.plc > b.plc -> false
+                a.chg < b.chg -> true
+                a.chg > b.chg -> false
+                else -> false
+            }
+
+            var best = Score(Double.POSITIVE_INFINITY, Int.MAX_VALUE, Int.MAX_VALUE)
+            var bestPick: Array<Pair<Double, List<Double>>?> = arrayOfNulls(desiredTotals.size)
+
+            fun search(
+                i: Int,
+                used: MutableSet<String>,
+                prev: List<Double>,
+                accErr: Double,
+                accPlc: Int,
+                accChg: Int,
+                pick: Array<Pair<Double, List<Double>>?>
+            ) {
+                if (i == desiredTotals.size) {
+                    val sc = Score(accErr, accPlc, accChg)
+                    if (better(sc, best)) { best = sc; bestPick = pick.copyOf() }
+                    return
+                }
+
+                // Branch & bound in order: err → plc → chg
+                if (accErr > best.err) return
+                if (kotlin.math.abs(accErr - best.err) < 1e-9 && accPlc > best.plc) return
+                if (kotlin.math.abs(accErr - best.err) < 1e-9 && accPlc == best.plc && accChg > best.chg) return
+
+                val want = desiredTotals[i]
+                for (cand in perTarget[i]) {
+                    if (cand.key in used) continue
+
+                    // Choose combo within this total: minimize plates, then changes from prev
+                    var combo = cand.combos[0]
+                    var plc = combo.size
+                    var chg = generatePhysicalSteps(prev, combo).size
+                    for (c in cand.combos.asSequence().drop(1)) {
+                        val plc2 = c.size
+                        val chg2 = generatePhysicalSteps(prev, c).size
+                        if (plc2 < plc || (plc2 == plc && chg2 < chg)) { combo = c; plc = plc2; chg = chg2 }
+                    }
+
+                    val newErr = accErr + kotlin.math.abs(cand.total - want)
+                    val newPlc = accPlc + plc
+                    val newChg = accChg + chg
+
+                    used += cand.key
+                    pick[i] = cand.total to combo
+                    search(i + 1, used, combo, newErr, newPlc, newChg, pick)
+                    used.remove(cand.key)
+                    pick[i] = null
+                }
+            }
+
+            search(0, mutableSetOf(), initialPlates, 0.0, 0, 0, arrayOfNulls(desiredTotals.size))
+            check(bestPick.all { it != null }) { "No unique assignment found with the given achievableTotals." }
+            return bestPick.map { it!!.first } // unique totals in order
+        }
+
+        /** Build combos when available plates are PER-SIDE counts (i.e., count = number of pairs available). */
+        private fun generateValidCombosPerSideCounts(
+            plateCountsPerSide: Map<Double, Int>,
+            targetTotalPlateWeight: Double,   // (desiredTotal - barWeight) across BOTH sides
+            sidesOnBarbell: UInt
+        ): List<List<Double>> {
+            if (kotlin.math.abs(targetTotalPlateWeight) < 1e-9) return listOf(emptyList())
+            val results = mutableSetOf<List<Double>>()
+            val weights = plateCountsPerSide.keys.sortedDescending()
+            val sides = sidesOnBarbell.toDouble()
+
+            fun backtrack(idx: Int, oneSide: MutableList<Double>, curTotal: Double) {
+                if (kotlin.math.abs(curTotal - targetTotalPlateWeight) < 1e-9) {
+                    results.add(oneSide.sortedDescending())
+                    return
+                }
+                if (curTotal > targetTotalPlateWeight + 1e-9 || idx >= weights.size) return
+
+                val w = weights[idx]
+                val maxPairs = plateCountsPerSide.getValue(w)     // PER-SIDE count == number of pairs available
+                val pairTotal = sides * w                         // total contribution (both sides) of one pair
+
+                // skip this weight
+                backtrack(idx + 1, oneSide, curTotal)
+
+                // use 1..maxPairs pairs
+                for (pairs in 1..maxPairs) {
+                    val newTotal = curTotal + pairs * pairTotal
+                    if (newTotal > targetTotalPlateWeight + 1e-9) break
+                    repeat(pairs) { oneSide.add(w) }              // record ONE-SIDE stack; symmetry implied
+                    backtrack(idx + 1, oneSide, newTotal)
+                    repeat(pairs) { oneSide.removeAt(oneSide.lastIndex) }
+                }
+            }
+
+            backtrack(0, mutableListOf(), 0.0)
+            return results.toList().sortedBy { it.size }          // fewer plates preferred
+        }
+
     }
 }

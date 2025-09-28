@@ -13,6 +13,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.OneRM
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -1510,11 +1511,10 @@ open class WorkoutViewModel : ViewModel() {
             }
 
             val availableWeights = when (exercise.exerciseType) {
-                ExerciseType.WEIGHT -> getWeightByEquipment(equipment)
-
+                ExerciseType.WEIGHT -> equipment.getWeightsCombinationsNoExtra()
                 ExerciseType.BODY_WEIGHT -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    (getWeightByEquipment(equipment).map { value -> relativeBodyWeight + value }.toSet() + setOf(relativeBodyWeight)).sorted()
+                    equipment.getWeightsCombinationsNoExtra().map { value -> relativeBodyWeight + value }.toSet() + setOf(relativeBodyWeight)
                 }
 
                 else -> throw IllegalArgumentException("Unknown exercise type")
@@ -1557,61 +1557,70 @@ open class WorkoutViewModel : ViewModel() {
                 workReps: Int,
                 availableWeights: Collection<Double>
             ): List<Pair<Double, Int>> {
+                if (workWeight <= 0.0 || workReps <= 0 || availableWeights.isEmpty()) return emptyList()
 
-                if (workWeight <= 0.0 || availableWeights.isEmpty()) return emptyList()
+                val est1RM = OneRM.calculateOneRepMax(workWeight, workReps)
+                val workP = (workWeight / est1RM).coerceIn(0.0, 1.0)
 
-                // Only achievable loads that don't exceed the work weight
-                val weights = availableWeights.toSortedSet().filter { it > 0.0 && it <= workWeight }
+                // pick ladder based on work %e1RM
+                val targetPercents: List<Double> = when {
+                    workP < 0.55 -> listOf(0.40, 0.55)
+                    workP < 0.70 -> listOf(0.40, 0.55, 0.70)
+                    workP < 0.80 -> listOf(0.40, 0.55, 0.70, 0.80)
+                    workP < 0.88 -> listOf(0.40, 0.55, 0.70, 0.80, 0.87)
+                    else         -> listOf(0.40, 0.55, 0.70, 0.80, 0.87, 0.92)
+                }
+
+                fun repsForPercent(p: Double): Int = when {
+                    p <= 0.45 -> 5
+                    p <= 0.65 -> 3
+                    p <= 0.75 -> 2
+                    else      -> 1
+                }
+
+                val weights = availableWeights.toSortedSet().filter { it > 0.0 && it < workWeight }
                 if (weights.isEmpty()) return emptyList()
 
-                // 1) Base waypoints by rep range (fractions of W → reps)
-                val baseTargets: List<Pair<Double, Int>> = when {
-                    workReps <= 3  -> listOf(0.40 to 5, 0.60 to 3, 0.75 to 2, 0.85 to 1, 0.92 to 1)
-                    workReps <= 6  -> listOf(0.35 to 6, 0.55 to 4, 0.70 to 2, 0.82 to 1)
-                    workReps <= 12 -> listOf(0.30 to 8, 0.50 to 5, 0.70 to 2)
-                    else           -> listOf(0.25 to 10, 0.45 to 6)
-                }.map { (f, r) -> (f * workWeight) to r }
+                var baseTargets = targetPercents.map { p -> (p * est1RM) to repsForPercent(p) }
 
-                // Round to an achievable load WITHOUT overshooting (skip if none ≤ target)
-                fun roundToAvailable(target: Double, lastChosen: Double?): Double? =
-                    weights.lastOrNull { it <= target } ?: lastChosen
+                if(equipment is Barbell){
+                    val availablePlatesPerSide = equipment.availablePlates.map { it.weight } .toList()
 
-                // 2) Round base targets; skip un-loadable waypoints; keep non-decreasing loads
+                    val targetWeights = baseTargets.map {  it.first }
+                    val maxTargetWeight = targetWeights.max()
+                    val achievableTotals = weights.toList()
+                    val maxAchievableTotals = achievableTotals.filter { it >= maxTargetWeight * 1.05 }.minOrNull() ?: Double.MAX_VALUE
+
+                    val mostConvenientWeights = PlateCalculator.pickUniqueTotalsFromTotals(
+                        availablePlatesPerSide,
+                        achievableTotals.filter { it <= maxAchievableTotals },
+                        targetWeights,
+                        equipment.barWeight
+                    )
+
+                    baseTargets = mostConvenientWeights.map { it to repsForPercent(it / est1RM) }
+                }
+
+
+                fun roundToAvailable(t: Double, last: Double?) = weights.lastOrNull { it <= t } ?: last
+                fun eq(a: Double, b: Double) = kotlin.math.abs(a - b) <= 1e-6
+
                 val out = mutableListOf<Pair<Double, Int>>()
                 for ((target, reps) in baseTargets) {
-                    val candidateOrPrev = roundToAvailable(target, out.lastOrNull()?.first) ?: continue
-                    var w = candidateOrPrev
-                    val last = out.lastOrNull()?.first
-                    if (last != null && w < last) w = last
-
-                    // Skip if it's effectively the work set at equal-or-higher reps
-                    if (w.eq(workWeight) && reps >= workReps) continue
-
-                    // De-duplicate identical consecutive entries
-                    if (out.isEmpty() || !w.eq(out.last().first) || reps != out.last().second) {
-                        out.add(w to reps)
-                    }
+                    val c = roundToAvailable(target, out.lastOrNull()?.first) ?: continue
+                    val w = maxOf(c, out.lastOrNull()?.first ?: 0.0)
+                    if ((eq(w, workWeight) || w > workWeight) && reps >= workReps) continue
+                    if (out.isEmpty() || !eq(w, out.last().first) || reps != out.last().second) out += w to reps
                 }
 
-                if (out.isEmpty()) return emptyList()
-
-                // 3) Optional: cap total warm-up reps (≤ 25), drop earliest light extras first
-                var totalReps = out.sumOf { it.second }
-                if (totalReps > 25) {
-                    var idx = 0
-                    while (idx < out.size && totalReps > 25) {
-                        val (w, r) = out[idx]
-                        if (w < 0.5 * workWeight && r <= 2) {
-                            totalReps -= r
-                            out.removeAt(idx)
-                        } else idx++
-                    }
-                    idx = 0
-                    while (idx < out.size && totalReps > 25) {
-                        totalReps -= out[idx].second
-                        out.removeAt(idx)
-                    }
+                // optional cap: ≤25 total warm-up reps
+                var total = out.sumOf { it.second }
+                var i = 0
+                while (i < out.size && total > 25) {
+                    val (w, r) = out[i]
+                    if (w < 0.5 * est1RM && r <= 2) { total -= r; out.removeAt(i) } else i++
                 }
+                i = 0; while (i < out.size && total > 25) { total -= out[i].second; out.removeAt(i) }
 
                 return out
             }

@@ -20,6 +20,16 @@ abstract class WeightLoadedEquipment(
         }.toSet()
     }
 
+    open fun getWeightsCombinationsNoExtra(): Set<Double> {
+        val baseCombinations = getBaseCombinations().filter { combo -> isCombinationValid(combo) }
+
+        return baseCombinations
+            .map{ combo -> combo.sumOf { it.weight*loadingPoints } }
+            .filter { it != 0.0 }
+            .sorted()
+            .toSet()
+    }
+
     open fun getWeightsCombinations(): Set<Double> {
         val baseCombinations = getBaseCombinations()
         val additionalCombinations = generateExtraWeightCombinations()

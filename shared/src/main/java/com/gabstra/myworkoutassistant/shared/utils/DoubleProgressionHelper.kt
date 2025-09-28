@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import com.gabstra.myworkoutassistant.shared.OneRM
+
 object DoubleProgressionHelper {
     data class Plan(
         val sets: List<SimpleSet>,     // next-session targets (one working weight across sets)
@@ -89,7 +91,14 @@ object DoubleProgressionHelper {
 
         val nextReps: MutableList<Int> =
             if (nextWorkingWeight > lastWorkingWeight) {
-                MutableList(setCount) { bottom }                          // on jump → all sets at bottom
+                // On a weight jump: estimate 1RM from last session, then predict
+                // how many reps correspond to the chosen weight, and use that.
+                val bestRepsAtAnchor = kotlin.math.max(1, normalizedPrevReps.maxOrNull()!!)
+                val e1rm = OneRM.estimate1RM(lastWorkingWeight, bestRepsAtAnchor)
+                val predictedToFailure = OneRM.repsForTargetRIR(nextWorkingWeight, e1rm,2.0)
+                val repsPred = kotlin.math.round(predictedToFailure).toInt()
+                    .coerceIn(bottom, effectiveTop)
+                MutableList(setCount) { repsPred }
             } else if (wasNormalized) {
                 normalizedPrevReps.toMutableList()
             } else {
