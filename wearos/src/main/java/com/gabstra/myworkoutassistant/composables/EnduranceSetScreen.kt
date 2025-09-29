@@ -84,7 +84,7 @@ fun EnduranceSetScreen (
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    var displayStartingDialog by remember { mutableStateOf(false) }
+    var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
     var countdownValue by remember(set) { mutableIntStateOf(3) }
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
@@ -252,7 +252,7 @@ fun EnduranceSetScreen (
         }
     }
 
-    LaunchedEffect(set) {
+    LaunchedEffect(set.id) {
         if(state.startTime != null) {
             // Calculate elapsed time between startTime and now
             val now = LocalDateTime.now()

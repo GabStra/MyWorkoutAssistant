@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Duration
 
@@ -71,6 +72,31 @@ fun WorkoutCompleteScreen(
     val scope = rememberCoroutineScope()
     var closeJob by remember { mutableStateOf<Job?>(null) }
 
+    fun startCloseJob() {
+        closeJob?.cancel()
+        closeJob = scope.launch {
+            var remaining = countDownTimer.intValue
+
+            // schedule first tick on the next second boundary
+            var nextExecutionTime = System.currentTimeMillis() + 1000
+            nextExecutionTime = (nextExecutionTime / 1000) * 1000
+
+            while (remaining > 0 && isActive) {
+                val waitTime = maxOf(0, nextExecutionTime - System.currentTimeMillis())
+                delay(waitTime)
+
+                remaining--
+                countDownTimer.intValue = remaining
+
+                nextExecutionTime += 1000
+            }
+
+            if (isActive) {
+                (context as? Activity)?.finishAndRemoveTask()
+            }
+        }
+    }
+
     LaunchedEffect(Unit){
         delay(500)
 
@@ -89,15 +115,7 @@ fun WorkoutCompleteScreen(
         viewModel.pushAndStoreWorkoutData(true,context){
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
 
-            closeJob = scope.launch {
-                while(countDownTimer.intValue > 0){
-                    countDownTimer.intValue--
-                    delay(1000)
-                }
-
-                val activity = (context as? Activity)
-                activity?.finishAndRemoveTask()
-            }
+            startCloseJob()
         }
     }
 
@@ -123,7 +141,10 @@ fun WorkoutCompleteScreen(
                 style = MaterialTheme.typography.title3
             )
         }
-        ProgressionSection(modifier = Modifier.weight(1f).padding(top = 5.dp),viewModel = viewModel)
+        ProgressionSection(
+            modifier = Modifier.weight(1f).padding(top = 5.dp),
+            viewModel = viewModel
+        )
         Text(
             modifier = Modifier.padding(top = 5.dp),
             text = "CLOSING IN: ${countDownTimer.intValue}",
@@ -149,14 +170,17 @@ fun WorkoutCompleteScreen(
         handleNoClick = {
             viewModel.closeCustomDialog()
             hapticsViewModel.doGentleVibration()
+            startCloseJob()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             viewModel.closeCustomDialog()
+            startCloseJob()
         },
         holdTimeInMillis = 1000,
         onVisibilityChange = { isVisible ->
             if (isVisible) {
+                closeJob?.cancel()
                 viewModel.setDimming(false)
             } else {
                 viewModel.reEvaluateDimmingForCurrentState()

@@ -81,11 +81,11 @@ fun TimedDurationSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
+    var showStartButton by remember(set.id) { mutableStateOf(!set.autoStart) }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
 
-    var displayStartingDialog by remember { mutableStateOf(false) }
+    var displayStartingDialog by  remember(set.id) { mutableStateOf(false) }
     var countdownValue by remember(set) { mutableIntStateOf(3) }
 
     val previousSet =  state.previousSetData as TimedDurationSetData
@@ -188,7 +188,7 @@ fun TimedDurationSetScreen(
         }
     }
 
-    LaunchedEffect(set) {
+    LaunchedEffect(set.id) {
         if(state.startTime != null) {
             // Calculate elapsed time between now and startTime
             val now = LocalDateTime.now()
