@@ -304,6 +304,7 @@ fun BodyWeightSetScreen(
 
         Column (
             modifier = customModifier,
+            verticalArrangement = Arrangement.Center
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

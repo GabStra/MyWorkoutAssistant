@@ -11,7 +11,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.gabstra.myworkoutassistant.composables.Chip
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseDetail
@@ -58,7 +60,7 @@ enum class PageType {
     PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun ExerciseScreen(
     viewModel: AppViewModel,
@@ -222,43 +224,56 @@ fun ExerciseScreen(
                 onTimerDisabled = { },
                 onTimerEnabled = { },
                 extraInfo = { _ ->
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ){
-                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)){
+                        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Chip{
+                            val label = if (isSuperset) "Superset" else "Exercise"
                             Text(
                                 textAlign = TextAlign.Center,
-                                text =  "${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                                text =  "${label}: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                                style = captionStyle,
+                            )
+                        }
+
+                        if(isSuperset){
+                            val supersetExercises = viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
+                            val supersetIndex = supersetExercises.indexOf(exercise)
+
+                            Text(
+                                textAlign = TextAlign.Center,
+                                text =  "${supersetIndex + 1}/${supersetExercises.size}",
                                 style = captionStyle
                             )
-                            if(isSuperset){
-                                val supersetExercises = viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                                val supersetIndex = supersetExercises.indexOf(exercise)
+                        }
 
+                        if(exerciseSetIds.size > 1){
+                            Chip{
                                 Text(
                                     textAlign = TextAlign.Center,
-                                    text =  "${supersetIndex + 1}/${supersetExercises.size}",
-                                    style = captionStyle
+                                    text =  "Set: ${setIndex + 1}/${exerciseSetIds.size}",
+                                    style = captionStyle,
                                 )
                             }
-                            Text(
-                                textAlign = TextAlign.Center,
-                                text =  "${setIndex + 1}/${exerciseSetIds.size}",
-                                style = captionStyle
-                            )
-                            if(updatedState.isWarmupSet){
+                        }
+
+                        if(updatedState.isWarmupSet){
+                            Chip(backgroundColor = Orange) {
                                 Text(
                                     text = "WARM-UP",
                                     style = captionStyle,
-                                    color = Orange
+                                    color = MaterialTheme.colors.background
                                 )
                             }
+                        }
 
-                            if(updatedState.intraSetTotal != null){
+                        if(updatedState.intraSetTotal != null){
+                            Chip {
                                 Text(
                                     textAlign = TextAlign.Center,
-                                    text =  "${updatedState.intraSetCounter}/${updatedState.intraSetTotal}",
+                                    text = "Intra-Set: ${updatedState.intraSetCounter}/${updatedState.intraSetTotal}",
                                     style = captionStyle
                                 )
                             }

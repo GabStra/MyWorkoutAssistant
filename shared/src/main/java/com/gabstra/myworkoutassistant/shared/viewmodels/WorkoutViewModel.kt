@@ -67,6 +67,8 @@ import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -1557,70 +1559,75 @@ open class WorkoutViewModel : ViewModel() {
                 workReps: Int,
                 availableWeights: Collection<Double>
             ): List<Pair<Double, Int>> {
-                if (workWeight <= 0.0 || workReps <= 0 || availableWeights.isEmpty()) return emptyList()
+                if (workWeight <= 0.0 || workReps <= 0) return emptyList()
+
+                val choices = availableWeights.filter { it > 0.0 && it < workWeight }.sorted()
+                if (choices.isEmpty()) return emptyList()
 
                 val est1RM = OneRM.calculateOneRepMax(workWeight, workReps)
                 val workP = (workWeight / est1RM).coerceIn(0.0, 1.0)
 
-                // pick ladder based on work %e1RM
-                val targetPercents: List<Double> = when {
-                    workP < 0.55 -> listOf(0.40, 0.55)
-                    workP < 0.70 -> listOf(0.40, 0.55, 0.70)
-                    workP < 0.80 -> listOf(0.40, 0.55, 0.70, 0.80)
-                    workP < 0.88 -> listOf(0.40, 0.55, 0.70, 0.80, 0.87)
-                    else         -> listOf(0.40, 0.55, 0.70, 0.80, 0.87, 0.92)
+                // number of steps based on work intensity
+                val steps = when {
+                    workP < 0.55 -> 2
+                    workP < 0.70 -> 3
+                    workP < 0.80 -> 4
+                    workP < 0.88 -> 5
+                    else         -> 6
                 }
 
-                fun repsForPercent(p: Double): Int = when {
-                    p <= 0.45 -> 5
-                    p <= 0.65 -> 3
-                    p <= 0.75 -> 2
+                // span from ~half the work intensity up to just below it (cap at ~92% e1RM)
+                val low  = max(0.25, workP * 0.50)
+                val high = min(0.92, workP * 0.95)
+                if (low >= high) return emptyList()
+
+                fun repsAt(p: Double) = when {
+                    p <= 0.50 -> 5
+                    p <= 0.70 -> 3
+                    p <= 0.80 -> 2
                     else      -> 1
                 }
 
-                val weights = availableWeights.toSortedSet().filter { it > 0.0 && it < workWeight }
-                if (weights.isEmpty()) return emptyList()
+                fun roundDown(target: Double, last: Double?): Double? =
+                    choices.lastOrNull { it <= target } ?: last
 
-                var baseTargets = targetPercents.map { p -> (p * est1RM) to repsForPercent(p) }
+                // even spacing between low..high (exclude endpoints)
+                var targets = (1..steps).map { i ->
+                    val p = low + (high - low) * i / (steps + 1)
+                    (p * est1RM) to repsAt(p)
+                }
 
                 if(equipment is Barbell){
                     val availablePlatesPerSide = equipment.availablePlates.map { it.weight } .toList()
 
-                    val targetWeights = baseTargets.map {  it.first }
+                    val targetWeights = targets.map {  it.first }
                     val maxTargetWeight = targetWeights.max()
-                    val achievableTotals = weights.toList()
-                    val maxAchievableTotals = achievableTotals.filter { it >= maxTargetWeight * 1.05 }.minOrNull() ?: Double.MAX_VALUE
+                    val maxChoice = choices.minBy { abs(it - maxTargetWeight) }
 
                     val mostConvenientWeights = PlateCalculator.pickUniqueTotalsFromTotals(
                         availablePlatesPerSide,
-                        achievableTotals.filter { it <= maxAchievableTotals },
+                        choices.filter { it <= maxChoice },
                         targetWeights,
                         equipment.barWeight
                     )
 
-                    baseTargets = mostConvenientWeights.map { it to repsForPercent(it / est1RM) }
+                    targets = mostConvenientWeights.map{
+                        it to repsAt(it / est1RM)
+                    }
                 }
 
-
-                fun roundToAvailable(t: Double, last: Double?) = weights.lastOrNull { it <= t } ?: last
-                fun eq(a: Double, b: Double) = kotlin.math.abs(a - b) <= 1e-6
-
                 val out = mutableListOf<Pair<Double, Int>>()
-                for ((target, reps) in baseTargets) {
-                    val c = roundToAvailable(target, out.lastOrNull()?.first) ?: continue
-                    val w = maxOf(c, out.lastOrNull()?.first ?: 0.0)
-                    if ((eq(w, workWeight) || w > workWeight) && reps >= workReps) continue
-                    if (out.isEmpty() || !eq(w, out.last().first) || reps != out.last().second) out += w to reps
+                for ((t, r) in targets) {
+                    val c = roundDown(t, out.lastOrNull()?.first) ?: continue
+                    val w = max(c, out.lastOrNull()?.first ?: 0.0)
+                    if (w >= workWeight) continue
+                    if (out.isEmpty() || out.last().first != w || out.last().second != r) out += w to r
                 }
 
                 // optional cap: ≤25 total warm-up reps
                 var total = out.sumOf { it.second }
                 var i = 0
-                while (i < out.size && total > 25) {
-                    val (w, r) = out[i]
-                    if (w < 0.5 * est1RM && r <= 2) { total -= r; out.removeAt(i) } else i++
-                }
-                i = 0; while (i < out.size && total > 25) { total -= out[i].second; out.removeAt(i) }
+                while (i < out.size && total > 25) { total -= out[i].second; out.removeAt(i) }
 
                 return out
             }

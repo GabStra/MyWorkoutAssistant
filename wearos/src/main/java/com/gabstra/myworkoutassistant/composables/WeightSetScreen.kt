@@ -319,6 +319,7 @@ fun WeightSetScreen(
     fun SetScreen(customModifier: Modifier) {
         Column (
             modifier = customModifier,
+            verticalArrangement = Arrangement.Center
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

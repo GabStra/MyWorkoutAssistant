@@ -248,6 +248,8 @@ fun ExerciseSetsViewer(
                 (itemHeights[index] ?: 0) // + spacingHeight
             }
             scrollState.scrollTo(position)
+        }else{
+            scrollState.scrollTo(0)
         }
 
         readyToBeShown = true

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 
+import android.os.SystemClock
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -93,21 +94,18 @@ fun TimedDurationSetScreen(
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
-    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
-
-    val updateInteractionTime = {
-        lastInteractionTime = System.currentTimeMillis()
-    }
+    var lastInteractionTime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
 
     val typography = MaterialTheme.typography
     val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 2000) {
+            if (SystemClock.elapsedRealtime() - lastInteractionTime > 2000) {
                 isTimerInEditMode = false
             }
-            delay(1000) // Check every second
+            delay(1000)
         }
     }
 
@@ -158,21 +156,13 @@ fun TimedDurationSetScreen(
         timerJob = scope.launch {
             onTimerEnabled()
 
-            var nextExecutionTime = System.currentTimeMillis() + 1000
-            nextExecutionTime = (nextExecutionTime / 1000) * 1000 // Round to next second boundary
-
+            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP
             while (currentMillis > 0) {
-                val currentTime = System.currentTimeMillis()
-                val waitTime = maxOf(0, nextExecutionTime - currentTime)
-
-                delay(waitTime) // Wait until next second boundary
-
-                currentMillis -= 1000
-                currentSet = currentSet.copy(
-                    endTimer = currentMillis
-                )
-
-                nextExecutionTime += 1000 // Schedule next second
+                val waitTime = (nextExecutionTime - SystemClock.elapsedRealtime()).coerceAtLeast(0)
+                delay(waitTime)
+                currentMillis = (currentMillis - 1000).coerceAtLeast(0)
+                currentSet = currentSet.copy(endTimer = currentMillis)
+                nextExecutionTime += 1000
             }
 
             state.currentSetData = currentSet.copy(
@@ -188,56 +178,29 @@ fun TimedDurationSetScreen(
         }
     }
 
-    LaunchedEffect(set.id) {
-        if(state.startTime != null) {
-            // Calculate elapsed time between now and startTime
+    val isPaused by viewModel.isPaused
+
+    LaunchedEffect(set.id, set.autoStart, isPaused) {
+        if (state.startTime != null) {
             val now = LocalDateTime.now()
             val elapsedMillis = java.time.Duration.between(state.startTime, now).toMillis()
-
-            // Subtract elapsed time from the timer, ensuring it doesn't go below 0
             currentMillis = maxOf(currentSet.startTimer - elapsedMillis.toInt(), 0)
-
-            // If timer still has time left, start it
-            if (currentMillis > 0) {
+            if (currentMillis > 0 && !isPaused)
                 startTimerJob()
-            } else {
-                // If timer would have already ended, trigger timer end
-                state.currentSetData = currentSet.copy(
-                    endTimer = 0
-                )
+            else if (currentMillis <= 0) {
+                state.currentSetData = currentSet.copy(endTimer = 0)
                 hapticsViewModel.doHardVibrationTwice()
                 onTimerDisabled()
                 onTimerEnd()
             }
-
             return@LaunchedEffect
         }
 
-        if (set.autoStart) {
+        if (set.autoStart && !isPaused) {
             showCountDownIfEnabled()
-
-            if(state.startTime == null){
-                state.startTime = LocalDateTime.now()
-            }
-
+            state.startTime = LocalDateTime.now()
             hapticsViewModel.doHardVibrationTwice()
             startTimerJob()
-        }
-    }
-
-    val isPaused by viewModel.isPaused
-
-    LaunchedEffect(isPaused) {
-        if(!hasBeenStartedOnce){
-            return@LaunchedEffect
-        }
-
-        if (isPaused) {
-            timerJob?.takeIf { it.isActive }?.cancel()
-        } else {
-            if (timerJob?.isActive != true && !isTimerInEditMode) {
-                startTimerJob()
-            }
         }
     }
 
@@ -283,6 +246,7 @@ fun TimedDurationSetScreen(
     fun SetScreen(customModifier: Modifier) {
         Column (
             modifier = customModifier,
+            verticalArrangement = Arrangement.Center
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.Red
 
@@ -18,7 +19,8 @@ import com.gabstra.myworkoutassistant.shared.Red
 @Composable
 fun PulsingHeartWithBpm(
     bpm: Int,
-    tint: Color = Red
+    tint: Color = Red,
+    size: Dp = 15.dp
 ) {
     val shouldPulse = bpm > 0
 
@@ -41,7 +43,7 @@ fun PulsingHeartWithBpm(
 
     HeartIcon(
         modifier = Modifier
-            .size(15.dp)
+            .size(size)
             .scale(scale),
         tint = tint
     )

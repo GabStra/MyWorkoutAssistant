@@ -79,6 +79,8 @@ fun HrStatusDialog(
     show: Boolean,
     hr: Int,
     heartRateStatus: HeartRateStatus,
+    currentZone: Int,
+    colorsByZone: Array<Color>
 ){
     AnimatedVisibility(
         visible = show,
@@ -124,11 +126,28 @@ fun HrStatusDialog(
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.title3,
                     )
-                    Text(
-                        text = "$hr bpm",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.body1,
-                    )
+
+                    Row(
+                        verticalAlignment = Alignment.Bottom,
+                    ){
+                        PulsingHeartWithBpm(
+                            bpm = hr,
+                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone],
+                            size = 30.dp
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "$hr",
+                            style = MaterialTheme.typography.body1,
+                            color = if (hr == 0) MediumLightGray else LightGray
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "bpm",
+                            style = MaterialTheme.typography.caption1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.5f),
+                            color = if (hr == 0) MediumLightGray else LightGray
+                        )
+                    }
                 }
             }
         }
@@ -146,12 +165,15 @@ fun HeartRateCircularChart(
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
 ) {
-    val context = LocalContext.current
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
     val scope = rememberCoroutineScope()
     var alertJob by remember { mutableStateOf<Job?>(null) }
     var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
     var alarmJob by remember { mutableStateOf<Job?>(null) }
+
+    val currentZone by remember(mhrPercentage) {
+        derivedStateOf { mapPercentageToZone(mhrPercentage) }
+    }
 
     val alertCooldown = 1000L
 
@@ -231,7 +253,7 @@ fun HeartRateCircularChart(
             }
         }
 
-        HrStatusDialog(showHrStatusDialog,hr, hrStatus)
+        HrStatusDialog(showHrStatusDialog,hr, hrStatus,currentZone,colorsByZone)
     }
     
     LaunchedEffect(mhrPercentage) {
@@ -256,7 +278,7 @@ fun HeartRateCircularChart(
         }
     }
 
-    HeartRateView(modifier,appViewModel,hapticsViewModel,heartRateChangeViewModel, hr, mhrPercentage, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
+    HeartRateView(modifier,appViewModel,hapticsViewModel,heartRateChangeViewModel, hr, mhrPercentage, currentZone, colorsByZone, lowerBoundMaxHRPercent, upperBoundMaxHRPercent)
 }
 
 @Composable
@@ -266,9 +288,10 @@ private fun HeartRateDisplay(
     textToDisplay: String,
     currentZone: Int,
     colorsByZone: Array<Color>,
+    displayMode: Int
 ) {
     Row(
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
         modifier = modifier
     ) {
         Spacer(modifier = Modifier.weight(1f))
@@ -280,10 +303,18 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
-            textAlign = TextAlign.Center,
             style = MaterialTheme.typography.caption1,
             color = if (bpm == 0) MediumLightGray else LightGray
         )
+        Spacer(modifier = Modifier.width(2.5.dp))
+        if(bpm != 0 && displayMode == 0){
+            Text(
+                text = "bpm",
+                style = MaterialTheme.typography.caption1.copy(fontSize = MaterialTheme.typography.caption1.fontSize * 0.5f),
+                color = LightGray
+            )
+        }
+
         Spacer(modifier = Modifier.weight(1f))
     }
 }
@@ -401,6 +432,7 @@ private fun HeartRateView(
     heartRateChangeViewModel: HeartRateChangeViewModel,
     hr: Int,
     mhrPercentage: Float,
+    currentZone: Int,
     colorsByZone: Array<Color>,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
@@ -418,10 +450,6 @@ private fun HeartRateView(
                 }
             }
         }
-    }
-
-    val currentZone by remember(mhrPercentage) {
-        derivedStateOf { mapPercentageToZone(mhrPercentage) }
     }
 
     val zoneCount = colorsByZone.size - 1
@@ -462,6 +490,7 @@ private fun HeartRateView(
             textToDisplay = textToDisplay,
             currentZone = currentZone,
             colorsByZone = colorsByZone,
+            displayMode = displayMode
         )
 
         val (lowerBoundRotationAngle, upperBoundRotationAngle) = extractRotationAngles(

@@ -119,7 +119,7 @@ fun PreparingPolarScreen(
             Text(
                 modifier = Modifier.fillMaxWidth(),
                 text = "Preparing\nPolar Sensor",
-                style = MaterialTheme.typography.caption1,
+                style = MaterialTheme.typography.body1,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(15.dp))
