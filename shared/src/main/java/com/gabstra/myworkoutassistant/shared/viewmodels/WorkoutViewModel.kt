@@ -1700,6 +1700,8 @@ open class WorkoutViewModel : ViewModel() {
                     else -> false
                 }
 
+                val isUnilateral = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds > 0
+
                 val setState: WorkoutState.Set = WorkoutState.Set(
                     exercise.id,
                     set,
@@ -1717,9 +1719,12 @@ open class WorkoutViewModel : ViewModel() {
                     progressionState,
                     isWarmupSet,
                     exercise.equipmentId?.let { getEquipmentById(it) },
+                    isUnilateral = isUnilateral
                 )
 
-                if(!isWarmupSet && exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds > 0){
+
+
+                if(!isWarmupSet && isUnilateral){
                     val restSet = RestSet(UUID.randomUUID(), exercise.intraSetRestInSeconds)
                     val restState = WorkoutState.Rest(
                         set = restSet,
@@ -1730,7 +1735,7 @@ open class WorkoutViewModel : ViewModel() {
                         isIntraSetRest = true
                     )
 
-                    val newSetState = setState.copy(intraSetTotal = 2, intraSetCounter = 1)
+                    val newSetState = setState.copy(isUnilateral = true, intraSetTotal = 2u, intraSetCounter = 1u)
 
                     states.add(newSetState)
                     states.add(restState)

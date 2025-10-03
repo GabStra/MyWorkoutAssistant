@@ -48,14 +48,14 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
-                text = "NOT AVAILABLE",
+                text = "Not available",
                 style = MaterialTheme.typography.body1,
                 textAlign = TextAlign.Center
             )
         } else {
             if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
                 Text(
-                    text = "NO CHANGES",
+                    text = "No changes required",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,

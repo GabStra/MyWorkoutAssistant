@@ -74,14 +74,16 @@ fun PageExercises(
         } else null
     }
 
-    val currentExerciseSets : List<WorkoutState.Set> = remember(
+    val currentExerciseSetIds = remember(
         currentExercise
     ) {
         viewModel.allWorkoutStates
             .asSequence()
             .filterIsInstance<WorkoutState.Set>()
             .filter { it.exerciseId == currentExercise.id }
+            .map { it.set.id }
             .toList()
+            .distinct()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -99,9 +101,7 @@ fun PageExercises(
         val isSuperset = remember(selectedExerciseOrSupersetId) {
             viewModel.exercisesBySupersetId.containsKey(selectedExerciseOrSupersetId)
         }
-
-
-
+        
         val currentIndex = remember(selectedExercise) { exerciseIds.indexOf(selectedExercise.id) }
 
         Row(
@@ -166,27 +166,35 @@ fun PageExercises(
                     }
 
                     if(currentExercise == selectedExercise){
-                        currentExerciseSets
-
-                        if(currentExerciseSets.size > 1){
-                            val setIndex = remember (currentStateSet){ currentExerciseSets.indexOf(currentStateSet) }
+                        if(currentExerciseSetIds.size > 1){
+                            val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
                             Chip{
                                 Text(
                                     textAlign = TextAlign.Center,
-                                    text =  "Set: ${setIndex + 1}/${currentExerciseSets.size}",
+                                    text =  "Set: ${setIndex + 1}/${currentExerciseSetIds.size}",
                                     style = captionStyle,
                                 )
                             }
                         }
-                    }
 
-                    if(currentStateSet.exerciseId == selectedExercise.id && currentStateSet.intraSetTotal != null){
-                        Chip {
-                            Text(
-                                textAlign = TextAlign.Center,
-                                text =  "Intra-Set: ${currentStateSet.intraSetCounter}/${currentStateSet.intraSetTotal}",
-                                style = captionStyle
-                            )
+                        if(currentStateSet.isUnilateral){
+                            Chip {
+                                Text(
+                                    textAlign = TextAlign.Center,
+                                    text = "UNILATERAL",
+                                    style = captionStyle
+                                )
+                            }
+                        }
+
+                        if(currentStateSet.isWarmupSet){
+                            Chip(backgroundColor = Orange) {
+                                Text(
+                                    text = "WARM-UP",
+                                    style = captionStyle,
+                                    color = MaterialTheme.colors.background
+                                )
+                            }
                         }
                     }
                 }

@@ -259,22 +259,22 @@ fun ExerciseScreen(
                             }
                         }
 
+                        if(updatedState.isUnilateral){
+                            Chip {
+                                Text(
+                                    textAlign = TextAlign.Center,
+                                    text = "UNILATERAL",
+                                    style = captionStyle
+                                )
+                            }
+                        }
+
                         if(updatedState.isWarmupSet){
                             Chip(backgroundColor = Orange) {
                                 Text(
                                     text = "WARM-UP",
                                     style = captionStyle,
                                     color = MaterialTheme.colors.background
-                                )
-                            }
-                        }
-
-                        if(updatedState.intraSetTotal != null){
-                            Chip {
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text = "Intra-Set: ${updatedState.intraSetCounter}/${updatedState.intraSetTotal}",
-                                    style = captionStyle
                                 )
                             }
                         }
@@ -322,7 +322,7 @@ fun ExerciseScreen(
 
             CustomDialogYesOnLongPress(
                 show = showNextDialog,
-                title =  if(updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Continue Set" else "Complete Set",
+                title =  if(updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Switch side" else "Complete Set",
                 message = "Do you want to proceed?",
                 handleYesClick = {
 

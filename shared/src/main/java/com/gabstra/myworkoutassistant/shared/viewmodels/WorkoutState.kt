@@ -37,8 +37,9 @@ sealed class WorkoutState {
         val progressionState: ProgressionState?,
         val isWarmupSet: Boolean,
         val equipment: WeightLoadedEquipment?,
-        val intraSetTotal: Int? = null,
-        var intraSetCounter: Int = 0
+        val isUnilateral: Boolean = false,
+        val intraSetTotal : UInt? = null,
+        var intraSetCounter : UInt = 0u,
     ) : WorkoutState()
 
     data class Rest(
