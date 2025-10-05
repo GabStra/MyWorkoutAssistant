@@ -7,7 +7,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
@@ -97,8 +96,8 @@ fun BodyWeightSetScreen(
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
     val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f, fontWeight = FontWeight.Bold) }
+    val headerStyle = MaterialTheme.typography.caption3
+    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -337,10 +336,6 @@ fun BodyWeightSetScreen(
                         color =  LightGray,
                     )
                     RepsRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
-                }
-
-                if(!shouldShowWeights){
-                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }

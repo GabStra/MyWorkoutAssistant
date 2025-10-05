@@ -1075,6 +1075,7 @@ fun MyWorkoutAssistantNavHost(
                 val equipments by appViewModel.equipmentsFlow.collectAsState()
 
                 when (screenData.equipmentType) {
+                    EquipmentType.GENERIC -> throw NotImplementedError()
                     EquipmentType.BARBELL -> {
                         BarbellForm(onUpsert = { new ->
                             val newEquipments = equipments + new
@@ -1118,6 +1119,7 @@ fun MyWorkoutAssistantNavHost(
                 val equipments by appViewModel.equipmentsFlow.collectAsState()
 
                 when (screenData.equipmentType) {
+                    EquipmentType.GENERIC -> throw NotImplementedError()
                     EquipmentType.BARBELL -> {
                         val selectedBarbell = equipments.find { it.id == screenData.equipmentId } as Barbell
                         BarbellForm(onUpsert = { updatedBarbell ->

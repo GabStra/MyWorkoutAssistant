@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -237,9 +236,7 @@ fun ExerciseHistoryScreen(
 
         setHistoriesByWorkoutHistoryId = mutableMap
 
-        Log.d("WorkoutHistories", "1 - ${setHistoriesByWorkoutHistoryId.keys}")
-        Log.d("WorkoutHistories", "2 - ${workoutHistories.map { it.id }}")
-
+        if(setHistoriesByWorkoutHistoryId.isEmpty()) return
 
         selectedWorkoutHistory = workoutHistories.first { it.id == setHistoriesByWorkoutHistoryId.keys.last() }
 

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -37,7 +38,7 @@ fun CountDownDialog(
                 Text(
                     text = "$time",
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.title1.copy(fontSize = typography.title1.fontSize * 1.625f,fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.title1.copy(fontSize = MaterialTheme.typography.title1.fontSize * 1.625f,fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
                 )
             }
         }

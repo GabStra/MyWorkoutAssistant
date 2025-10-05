@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -55,6 +56,7 @@ import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
+import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
@@ -79,9 +81,13 @@ fun HrStatusDialog(
     show: Boolean,
     hr: Int,
     heartRateStatus: HeartRateStatus,
+    targetRange: IntRange,
     currentZone: Int,
     colorsByZone: Array<Color>
 ){
+    val typography = MaterialTheme.typography
+    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+
     AnimatedVisibility(
         visible = show,
         enter = fadeIn(animationSpec = tween(500)),
@@ -127,24 +133,33 @@ fun HrStatusDialog(
                         style = MaterialTheme.typography.title3,
                     )
 
+                    Text(
+                        text = "(${targetRange.first}-${targetRange.last})",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.body1,
+                    )
+
                     Row(
+                        modifier = Modifier.padding(top = 5.dp),
                         verticalAlignment = Alignment.Bottom,
                     ){
                         PulsingHeartWithBpm(
+                            modifier = Modifier.padding(bottom = 5.dp),
                             bpm = hr,
                             tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone],
-                            size = 30.dp
+                            size = 25.dp
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "$hr",
-                            style = MaterialTheme.typography.body1,
+                            style = itemStyle,
                             color = if (hr == 0) MediumLightGray else LightGray
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
+                            modifier = Modifier.padding(bottom = 5.dp),
                             text = "bpm",
-                            style = MaterialTheme.typography.caption1.copy(fontSize = MaterialTheme.typography.body1.fontSize * 0.5f),
+                            style = MaterialTheme.typography.caption1,
                             color = if (hr == 0) MediumLightGray else LightGray
                         )
                     }
@@ -205,6 +220,10 @@ fun HeartRateCircularChart(
     if(lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null) {
         var reachedTargetOnce by remember { mutableStateOf(false) }
 
+        val targetRange = remember(lowerBoundMaxHRPercent, upperBoundMaxHRPercent,age) {
+            getHeartRateFromPercentage(lowerBoundMaxHRPercent,age)..getHeartRateFromPercentage(upperBoundMaxHRPercent,age)
+        }
+
         LaunchedEffect(mhrPercentage) {
             if(alertJob?.isActive == true) return@LaunchedEffect
 
@@ -253,9 +272,9 @@ fun HeartRateCircularChart(
             }
         }
 
-        HrStatusDialog(showHrStatusDialog,hr, hrStatus,currentZone,colorsByZone)
+        HrStatusDialog(showHrStatusDialog,hr, hrStatus,targetRange,currentZone,colorsByZone)
     }
-    
+
     LaunchedEffect(mhrPercentage) {
         if (mhrPercentage > 100 && alertJob?.isActive == false) {
             startAlertJob()
@@ -310,7 +329,7 @@ private fun HeartRateDisplay(
         if(bpm != 0 && displayMode == 0){
             Text(
                 text = "bpm",
-                style = MaterialTheme.typography.caption1.copy(fontSize = MaterialTheme.typography.caption1.fontSize * 0.5f),
+                style = MaterialTheme.typography.caption3,
                 color = LightGray
             )
         }

@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.equipments.Generic
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
@@ -28,6 +29,7 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
             addProperty("name", src.name)
 
             when (src.type) {
+                EquipmentType.GENERIC -> {}
                 EquipmentType.BARBELL -> {
                     val barbell = src as Barbell
                     add("availablePlates", context.serialize(barbell.availablePlates))
@@ -75,6 +77,12 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
         val baseWeightListType = object : TypeToken<List<BaseWeight>>() {}.type
 
         return when (EquipmentType.valueOf(obj.get("type").asString)) {
+            EquipmentType.GENERIC -> {
+                Generic(
+                    id = id,
+                    name = name,
+                )
+            }
             EquipmentType.DUMBBELLS -> {
                 val maxExtraWeightsPerLoadingPoint = obj.get("maxExtraWeightsPerLoadingPoint").asInt
 

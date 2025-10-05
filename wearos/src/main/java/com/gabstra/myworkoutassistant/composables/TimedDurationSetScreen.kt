@@ -98,7 +98,8 @@ fun TimedDurationSetScreen(
     val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
 
     val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val headerStyle = MaterialTheme.typography.caption3
+    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
@@ -236,7 +237,7 @@ fun TimedDurationSetScreen(
                         }
                     ),
                 seconds = currentMillis / 1000,
-                style = MaterialTheme.typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold),
+                style = itemStyle,
                 color =  if(isDifferent) Orange else LightGray
             )
         }
@@ -246,7 +247,6 @@ fun TimedDurationSetScreen(
     fun SetScreen(customModifier: Modifier) {
         Column (
             modifier = customModifier,
-            verticalArrangement = Arrangement.Center
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

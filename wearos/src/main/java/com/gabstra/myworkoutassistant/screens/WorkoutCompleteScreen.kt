@@ -66,8 +66,7 @@ fun WorkoutCompleteScreen(
 
     val countDownTimer = remember { mutableIntStateOf(15) }
 
-    val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val headerStyle = MaterialTheme.typography.caption3
 
     val scope = rememberCoroutineScope()
     var closeJob by remember { mutableStateOf<Job?>(null) }

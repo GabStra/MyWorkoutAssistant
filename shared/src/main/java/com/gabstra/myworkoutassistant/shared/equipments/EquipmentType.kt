@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.equipments
 
 enum class EquipmentType {
+    GENERIC,
     BARBELL,
     DUMBBELLS,
     DUMBBELL,
@@ -13,6 +14,7 @@ enum class EquipmentType {
 
 fun EquipmentType.toDisplayText(): String {
     return when (this) {
+        EquipmentType.GENERIC -> "Generic"
         EquipmentType.BARBELL -> "Barbell"
         EquipmentType.DUMBBELLS -> "Dumbbells"
         EquipmentType.DUMBBELL -> "Dumbbell"

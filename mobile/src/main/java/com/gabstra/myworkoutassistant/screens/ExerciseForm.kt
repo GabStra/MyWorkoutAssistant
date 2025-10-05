@@ -101,9 +101,7 @@ fun ExerciseForm(
     val exerciseTypeDescriptions = getExerciseTypeDescriptions()
     val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
 
-
     val expandedType = remember { mutableStateOf(false) }
-
 
     // Progressive overload state
     val minLoadPercent = remember { mutableStateOf(exercise?.minLoadPercent?.toFloat()?:65f) }
@@ -119,7 +117,7 @@ fun ExerciseForm(
 
     val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
-    val equipments by viewModel.equipmentsFlow.collectAsState()
+    val equipments by viewModel.equipmentsFlowWithGeneric.collectAsState()
 
     val heartRateZones = listOf("None") + listOf("Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
     val selectedLowerBoundMaxHRPercent = remember { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
@@ -149,7 +147,7 @@ fun ExerciseForm(
     val expandedHeartRateZone = remember { mutableStateOf(false) }
     val showCustomTargetZone = remember (selectedTargetZone.value) { selectedTargetZone.value!=null && selectedTargetZone.value == -1 } // Show only when custom is selected
 
-    val selectedEquipmentId = remember { mutableStateOf<UUID?>(exercise?.equipmentId) }
+    val selectedEquipmentId = remember { mutableStateOf<UUID?>(exercise?.equipmentId ?: viewModel.GENERIC_ID) }
     val expandedEquipment = remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
@@ -279,6 +277,10 @@ fun ExerciseForm(
                                 DropdownMenuItem(
                                     onClick = {
                                         selectedExerciseType.value = stringToExerciseType(ExerciseDescription)!!
+
+                                        if(selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value = viewModel.GENERIC_ID
+                                        else selectedEquipmentId.value = null
+
                                         expandedType.value = false
                                     },
                                     text = {

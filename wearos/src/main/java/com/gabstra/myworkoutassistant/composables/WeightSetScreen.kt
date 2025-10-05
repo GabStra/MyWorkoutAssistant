@@ -97,9 +97,9 @@ fun WeightSetScreen(
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
+    val headerStyle = MaterialTheme.typography.caption3
     val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body1.copy(fontSize = typography.body1.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData

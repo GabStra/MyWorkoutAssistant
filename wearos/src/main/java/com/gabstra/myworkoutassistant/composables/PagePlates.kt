@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -62,9 +61,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     color = LightGray
                 )
             } else {
-                val typography = MaterialTheme.typography
-                val headerStyle =
-                    remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+                val headerStyle = MaterialTheme.typography.caption3
 
                 Column(
                     modifier = Modifier

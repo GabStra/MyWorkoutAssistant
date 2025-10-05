@@ -51,8 +51,7 @@ private fun ProgressionRow(
     modifier: Modifier = Modifier
 ) {
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.body1.copy(fontWeight = FontWeight.Bold) }
-
+    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
     val progression = if (info.initialVolume != 0.0) {
         ((info.finalVolume - info.initialVolume) / info.initialVolume) * 100
     } else if (info.finalVolume > 0) {
@@ -168,8 +167,7 @@ fun ProgressionSection(
         }
     }
 
-    val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val headerStyle = MaterialTheme.typography.caption3
 
     val scrollState = rememberScrollState()
 

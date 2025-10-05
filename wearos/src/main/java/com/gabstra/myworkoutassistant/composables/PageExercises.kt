@@ -59,9 +59,7 @@ fun PageExercises(
 
     var selectedExercise by remember { mutableStateOf(currentExercise) }
 
-    val typography = MaterialTheme.typography
-    val captionStyle =
-        remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val captionStyle = MaterialTheme.typography.caption3
 
     val isSuperset = remember(currentExerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
@@ -181,7 +179,7 @@ fun PageExercises(
                             Chip {
                                 Text(
                                     textAlign = TextAlign.Center,
-                                    text = "UNILATERAL",
+                                    text = "Unilateral",
                                     style = captionStyle
                                 )
                             }
@@ -190,7 +188,7 @@ fun PageExercises(
                         if(currentStateSet.isWarmupSet){
                             Chip(backgroundColor = Orange) {
                                 Text(
-                                    text = "WARM-UP",
+                                    text = "Warm-up",
                                     style = captionStyle,
                                     color = MaterialTheme.colors.background
                                 )

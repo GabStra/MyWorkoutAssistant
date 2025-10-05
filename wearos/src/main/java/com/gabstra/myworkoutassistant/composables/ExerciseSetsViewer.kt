@@ -70,8 +70,8 @@ fun SetTableRow(
     val triangleSize = 6f
 
     val typography = MaterialTheme.typography
-    val captionStyle = remember(typography) { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f, fontWeight = FontWeight.Bold) }
-    val itemStyle = remember(typography) { typography.body1.copy(fontWeight = FontWeight.Bold) }
+    val captionStyle = MaterialTheme.typography.caption3
+    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
 
     val equipment = setState.equipment
 
@@ -227,8 +227,7 @@ fun ExerciseSetsViewer(
             .distinctBy { it.set.id }
     }
 
-    val typography = MaterialTheme.typography
-    val headerStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val headerStyle = MaterialTheme.typography.caption3
 
     val scrollState = rememberScrollState()
 

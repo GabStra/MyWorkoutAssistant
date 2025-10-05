@@ -35,9 +35,9 @@ fun WeightInfoDialog(
     equipment: WeightLoadedEquipment?,
     onClick: () -> Unit = {}
 ){
+    val headerStyle = MaterialTheme.typography.caption3
     val typography = MaterialTheme.typography
-    val headerStyle = remember(typography) { typography.body2.copy(fontSize = typography.body2.fontSize * 0.625f) }
-    val itemStyle = remember(typography)  { typography.body2.copy(fontSize = typography.body2.fontSize * 1.625f,fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
 
     val weightText = if (weight == 0.0) "-" else formatWeight(weight)
 

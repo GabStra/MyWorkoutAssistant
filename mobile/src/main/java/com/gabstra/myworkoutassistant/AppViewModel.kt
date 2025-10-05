@@ -6,10 +6,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.equipments.Generic
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -18,7 +20,11 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import java.util.Calendar
 import java.util.UUID
 
@@ -32,10 +38,10 @@ sealed class ScreenData() {
     class ExerciseDetail(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
     class ExerciseHistory(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
 
-    class NewExercise(val workoutId: UUID,) : ScreenData()
+    class NewExercise(val workoutId: UUID) : ScreenData()
     class EditExercise(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
 
-    class NewSuperset(val workoutId: UUID,) : ScreenData()
+    class NewSuperset(val workoutId: UUID) : ScreenData()
     class EditSuperset(val workoutId: UUID, val selectedSupersetId: UUID) : ScreenData()
 
     class NewRest(val workoutId: UUID, val parentExerciseId: UUID?) : ScreenData()
@@ -136,7 +142,7 @@ class AppViewModel() : ViewModel() {
     val workoutsFlow = _workoutsFlow.asStateFlow()
 
     fun getEquipmentById(equipmentId: UUID): WeightLoadedEquipment? {
-        return equipments.find { it.id == equipmentId }
+        return (equipments + generic).find { it.id == equipmentId }
     }
 
     fun getWorkoutById(workoutId: UUID): Workout? {
@@ -194,6 +200,23 @@ class AppViewModel() : ViewModel() {
 
     private val _equipmentsFlow = MutableStateFlow(workoutStore.equipments)
     val equipmentsFlow = _equipmentsFlow.asStateFlow()
+
+    public val GENERIC_ID = UUID.fromString("babe5d97-a86d-4ec2-84b6-634034aa847c")
+    private val generic = Generic(GENERIC_ID, name = "Generic")
+
+    val equipmentsFlowWithGeneric: StateFlow<List<WeightLoadedEquipment>> = _equipmentsFlow
+        .map { equipments ->
+            if (equipments.any { it.id == GENERIC_ID }) equipments
+            else equipments + generic
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = run {
+                val base = workoutStore.equipments
+                if (base.any { it.id == GENERIC_ID }) base else base + generic
+            }
+        )
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore,triggerSend:Boolean = true) {
         val adjustedWorkouts = newWorkoutStore.workouts.map { workout ->

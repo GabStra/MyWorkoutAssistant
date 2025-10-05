@@ -578,6 +578,7 @@ fun WorkoutsScreen(
                             IconButton(onClick = {
                                 val newEquipments = selectedEquipments.map { it ->
                                     when (it.type){
+                                        EquipmentType.GENERIC -> throw NotImplementedError()
                                         EquipmentType.BARBELL -> Barbell(UUID.randomUUID(), it.name + " (Copy)", (it as Barbell).availablePlates, it.barLength,it.barWeight)
                                         EquipmentType.DUMBBELLS -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", (it as Dumbbells).availableDumbbells, it.extraWeights, it.maxExtraWeightsPerLoadingPoint)
                                         EquipmentType.DUMBBELL -> TODO()
@@ -1125,7 +1126,7 @@ fun WorkoutsScreen(
                                             verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                                         ) {
                                             GenericButtonWithMenu(
-                                                menuItems = EquipmentType.entries.map { equipmentType ->
+                                                menuItems = EquipmentType.entries.filter { it != EquipmentType.GENERIC }.map { equipmentType ->
                                                     MenuItem("Add ${equipmentType.toDisplayText()}") {
                                                         appViewModel.setScreenData(
                                                             ScreenData.NewEquipment(equipmentType)
@@ -1182,7 +1183,7 @@ fun WorkoutsScreen(
                                             verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                                         ) {
                                             GenericButtonWithMenu(
-                                                menuItems = EquipmentType.entries.map { equipmentType ->
+                                                menuItems = EquipmentType.entries.filter { it != EquipmentType.GENERIC }.map { equipmentType ->
                                                     MenuItem("Add ${equipmentType.toDisplayText()}") {
                                                         appViewModel.setScreenData(
                                                             ScreenData.NewEquipment(equipmentType)

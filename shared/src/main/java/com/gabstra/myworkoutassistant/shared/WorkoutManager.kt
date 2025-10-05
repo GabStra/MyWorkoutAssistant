@@ -281,7 +281,7 @@ class WorkoutManager {
                             is RestSet -> it.copy(id = UUID.randomUUID())
                         }
                     }
-                    workoutComponent.copy(id = UUID.randomUUID(), sets = newSets)
+                    workoutComponent.copy(name = workoutComponent.name + " (copy)", id = UUID.randomUUID(), sets = newSets)
                 }
                 is Rest -> {
                     workoutComponent.copy(id = UUID.randomUUID())

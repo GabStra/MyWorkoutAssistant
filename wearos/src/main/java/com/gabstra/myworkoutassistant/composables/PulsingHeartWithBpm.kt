@@ -18,6 +18,7 @@ import com.gabstra.myworkoutassistant.shared.Red
 
 @Composable
 fun PulsingHeartWithBpm(
+    modifier: Modifier = Modifier,
     bpm: Int,
     tint: Color = Red,
     size: Dp = 15.dp
@@ -42,7 +43,7 @@ fun PulsingHeartWithBpm(
     }
 
     HeartIcon(
-        modifier = Modifier
+        modifier = modifier
             .size(size)
             .scale(scale),
         tint = tint

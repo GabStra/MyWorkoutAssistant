@@ -409,6 +409,8 @@ open class WorkoutViewModel : ViewModel() {
                 setStates.clear()
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
+                _isPaused.value = false
+
                 originalWorkoutPlan = _selectedWorkout.value.copy()
 
                 currentWorkoutHistory =
@@ -811,6 +813,7 @@ open class WorkoutViewModel : ViewModel() {
                 heartBeatHistory.clear()
                 startWorkoutTime = null
                 currentWorkoutHistory = null
+                _isPaused.value = false
 
                 originalWorkoutPlan = _selectedWorkout.value.copy()
 

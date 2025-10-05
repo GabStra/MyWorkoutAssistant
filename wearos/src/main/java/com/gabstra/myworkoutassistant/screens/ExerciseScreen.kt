@@ -148,8 +148,7 @@ fun ExerciseScreen(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-    val typography = MaterialTheme.typography
-    val captionStyle = remember { typography.body1.copy(fontSize = typography.body1.fontSize * 0.625f) }
+    val captionStyle = MaterialTheme.typography.caption3
 
     val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
     val exerciseOrSupersetId = remember(state.exerciseId) { if(viewModel.supersetIdByExerciseId.containsKey(state.exerciseId)) viewModel.supersetIdByExerciseId[state.exerciseId] else state.exerciseId }
@@ -263,7 +262,7 @@ fun ExerciseScreen(
                             Chip {
                                 Text(
                                     textAlign = TextAlign.Center,
-                                    text = "UNILATERAL",
+                                    text = "Un",
                                     style = captionStyle
                                 )
                             }
@@ -272,7 +271,7 @@ fun ExerciseScreen(
                         if(updatedState.isWarmupSet){
                             Chip(backgroundColor = Orange) {
                                 Text(
-                                    text = "WARM-UP",
+                                    text = "Warm-up",
                                     style = captionStyle,
                                     color = MaterialTheme.colors.background
                                 )

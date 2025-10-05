@@ -48,6 +48,7 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
@@ -271,13 +272,13 @@ fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
 }
 
 fun getMaxHeartRate(age: Int): Int {
-    return 211 - (0.64f * age).toInt()
+    return 211 - (0.64f * age).roundToInt()
 }
 
 fun getHeartRateFromPercentage(percentage: Float, age: Int): Int {
     val mhr = getMaxHeartRate(age)
     val heartRate = (percentage/100) * mhr
-    return heartRate.toInt()
+    return heartRate.roundToInt()
 }
 
 fun Double.round(decimals: Int): Double {

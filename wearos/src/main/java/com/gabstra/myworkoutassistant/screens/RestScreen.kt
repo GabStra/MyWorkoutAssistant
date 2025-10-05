@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -191,16 +192,16 @@ fun RestScreen(
         timerJob?.cancel()
         timerJob = scope.launch {
             // Calculate the next second boundary
-            var nextExecutionTime = System.currentTimeMillis() + 1000
-            nextExecutionTime = (nextExecutionTime / 1000) * 1000 // Round to next second boundary
-
+            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP
             while (currentSeconds > 0) {
-                val currentTime = System.currentTimeMillis()
-                val waitTime = maxOf(0, nextExecutionTime - currentTime)
-
-                delay(waitTime) // Wait until next second boundary
+                val waitTime = (nextExecutionTime - SystemClock.elapsedRealtime()).coerceAtLeast(0)
+                delay(waitTime)
 
                 currentSeconds -= 1
+
+                if(currentSeconds == 5){
+                    viewModel.lightScreenUp()
+                }
 
                 currentSetData = currentSetData.copy(
                     endTimer = currentSeconds
