@@ -227,7 +227,7 @@ fun WorkoutSelectionScreen(
                             context.startActivity(intent)
                         },
                         backgroundColor = MaterialTheme.colorScheme.primary,
-                        textColor = MaterialTheme.colorScheme.background,
+                        textColor = MaterialTheme.colorScheme.onPrimary,
                     )
                 }
             }
@@ -250,7 +250,9 @@ fun WorkoutSelectionScreen(
                                 scope.launch {
                                     openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
                                 }
-                            }
+                            },
+                            backgroundColor = MaterialTheme.colorScheme.primary,
+                            textColor = MaterialTheme.colorScheme.onPrimary,
                         )
                     }
                 }else{
