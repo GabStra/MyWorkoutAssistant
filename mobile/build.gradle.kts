@@ -1,13 +1,18 @@
 plugins {
-    id("org.jetbrains.kotlin.plugin.compose") version "2.0.0"
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
 
-composeCompiler {
-    enableStrongSkippingMode = true
+java {
+    toolchain { languageVersion.set(JavaLanguageVersion.of(21)) }
 }
+
+kotlin {
+    jvmToolchain(21)
+}
+
 
 android {
     signingConfigs {
@@ -27,7 +32,7 @@ android {
         }
     }
     namespace = "com.gabstra.myworkoutassistant"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
@@ -56,8 +61,7 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildFeatures {
@@ -72,15 +76,15 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.core:core-ktx:1.17.0")
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.activity:activity-compose:1.10.0")
-    implementation(platform("androidx.compose:compose-bom:2025.01.00"))
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
+    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation(platform("androidx.compose:compose-bom:2025.09.01"))
     implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")
 
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.navigation:navigation-compose:2.8.5")
@@ -111,6 +115,8 @@ dependencies {
     implementation("com.kizitonwose.calendar:compose:2.5.0")
     implementation("androidx.health.connect:connect-client:1.1.0-beta01")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
+
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
 

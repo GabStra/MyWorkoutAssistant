@@ -22,9 +22,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 
 private fun getInitialBatteryPercentage(context: Context): Int {
     val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { ifilter ->
@@ -48,7 +48,7 @@ fun CurrentBattery(){
     val context = LocalContext.current
     var batteryPercentage by remember { mutableIntStateOf(getInitialBatteryPercentage(context)) }
 
-    val captionStyle =  MaterialTheme.typography.caption1
+    val captionStyle =  MaterialTheme.typography.labelSmall
 
     DisposableEffect(context) {
         val batteryReceiver = object : BroadcastReceiver() {

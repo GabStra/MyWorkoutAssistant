@@ -1,19 +1,49 @@
-package com.gabstra.myworkoutassistant.presentation.theme
-
 import androidx.compose.ui.graphics.Color
-import androidx.wear.compose.material.Colors
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.Orange
-import com.gabstra.myworkoutassistant.shared.Red
 
-internal val wearColorPalette: Colors = Colors(
-    primary = Orange,
-    error = Red,
-    onPrimary = LightGray,
-    onSecondary = LightGray,
-    onError = LightGray,
+// Primary seed
+val Orange = Color(0xFFFF6700)
 
-    onBackground = LightGray,
-    background = Color.Black,
-)
+// Normal-contrast dark palette (WCAG AA compliant)
+val primaryDark = Orange
+val onPrimaryDark = Color(0xFF000000)
+val primaryContainerDark = Color(0xFF512200)
+val onPrimaryContainerDark = Color(0xFFFFE7D6)
+
+val secondaryDark = Color(0xFFFFB870)
+val onSecondaryDark = Color(0xFF000000)
+val secondaryContainerDark = Color(0xFF4A2600)
+val onSecondaryContainerDark = Color(0xFFFFE6CC)
+
+val tertiaryDark = Color(0xFF4FC3F7)
+val onTertiaryDark = Color(0xFF000000)
+val tertiaryContainerDark = Color(0xFF003545)
+val onTertiaryContainerDark = Color(0xFFCDEEFF)
+
+val errorDark = Color(0xFFFFB4AB)
+val onErrorDark = Color(0xFF690005)
+val errorContainerDark = Color(0xFF93000A)
+val onErrorContainerDark = Color(0xFFFFDAD6)
+
+val backgroundDark = Color(0xFF000000)
+val onBackgroundDark = Color(0xFFF2F2F2)
+val surfaceDark = Color(0xFF141414)
+val onSurfaceDark = Color(0xFFF2F2F2)
+
+val surfaceVariantDark = Color(0xFF2A2A2A)
+val onSurfaceVariantDark = Color(0xFFDDDDDD)
+val outlineDark = Color(0xFF7A7A7A)
+val outlineVariantDark = Color(0xFF515151)
+val scrimDark = Color(0xFF000000)
+
+val inverseSurfaceDark = Color(0xFFE6E6E6)
+val inverseOnSurfaceDark = Color(0xFF1A1A1A)
+val inversePrimaryDark = Color(0xFF9E3F00)
+
+val surfaceDimDark = Color(0xFF0E0E0E)
+val surfaceBrightDark = Color(0xFF262626)
+val surfaceContainerLowestDark = Color(0xFF0A0A0A)
+val surfaceContainerLowDark = Color(0xFF141414)
+val surfaceContainerDark = Color(0xFF161616)
+val surfaceContainerHighDark = Color(0xFF1B1B1B)
+val surfaceContainerHighestDark = Color(0xFF212121)
 

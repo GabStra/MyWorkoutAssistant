@@ -1,3 +1,5 @@
+
+
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -15,11 +17,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.MaterialTheme
+import com.gabstra.myworkoutassistant.composables.ScalableText
 import kotlin.math.cos
 import kotlin.math.sin
-
-import androidx.wear.compose.material.MaterialTheme
-import com.gabstra.myworkoutassistant.composables.ScalableText
 
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
@@ -79,7 +80,7 @@ fun CircleWithNumber(
                         .fillMaxSize()
                         .padding(3.dp),
                     text = number.toString(),
-                    style = MaterialTheme.typography.body2.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                     textAlign = TextAlign.Center,
                 )
             }

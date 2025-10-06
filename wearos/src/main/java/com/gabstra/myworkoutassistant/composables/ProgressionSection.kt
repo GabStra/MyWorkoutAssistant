@@ -23,8 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -51,7 +51,7 @@ private fun ProgressionRow(
     modifier: Modifier = Modifier
 ) {
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.displaySmall.copy(fontWeight = FontWeight.Bold) }
     val progression = if (info.initialVolume != 0.0) {
         ((info.finalVolume - info.initialVolume) / info.initialVolume) * 100
     } else if (info.finalVolume > 0) {
@@ -167,7 +167,7 @@ fun ProgressionSection(
         }
     }
 
-    val headerStyle = MaterialTheme.typography.caption3
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
     val scrollState = rememberScrollState()
 

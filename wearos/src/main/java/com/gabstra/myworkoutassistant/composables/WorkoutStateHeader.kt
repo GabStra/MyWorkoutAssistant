@@ -26,9 +26,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -103,31 +103,31 @@ fun WorkoutStateHeader(
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
                     text = String.format("%02d", hours),
-                    style = MaterialTheme.typography.caption1,
+                    style = MaterialTheme.typography.labelLarge,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
                     text = ":",
-                    style = MaterialTheme.typography.caption1,
+                    style = MaterialTheme.typography.labelLarge,
                     textAlign = TextAlign.Center,
                 )
 
                 Text(
                     text = String.format("%02d", minutes),
-                    style = MaterialTheme.typography.caption1,
+                    style = MaterialTheme.typography.labelLarge,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
                     text = ":",
-                    style = MaterialTheme.typography.caption1,
+                    style = MaterialTheme.typography.labelLarge,
                     textAlign = TextAlign.Center,
                 )
 
                 Text(
                     text = String.format("%02d", seconds),
-                    style = MaterialTheme.typography.caption1,
+                    style = MaterialTheme.typography.labelLarge,
                     textAlign = TextAlign.Center
                 )
             }

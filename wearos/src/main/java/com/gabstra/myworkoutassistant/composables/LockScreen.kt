@@ -1,3 +1,4 @@
+/*
 package com.gabstra.myworkoutassistant.composables
 
 import android.widget.Toast
@@ -34,11 +35,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
-import androidx.wear.compose.material.ExperimentalWearMaterialApi
-import androidx.wear.compose.material.FractionalThreshold
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.rememberSwipeableState
-import androidx.wear.compose.material.swipeable
+import androidx.wear.compose.material3.ExperimentalWearMaterialApi
+import androidx.wear.compose.material3.FractionalThreshold
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.rememberSwipeableState
+import androidx.wear.compose.material3.swipeable
 
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class,
@@ -132,4 +133,4 @@ fun LockScreen(
             )
         }
     }
-}
+}*/

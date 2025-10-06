@@ -23,8 +23,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
@@ -96,8 +96,8 @@ fun BodyWeightSetScreen(
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
     val typography = MaterialTheme.typography
-    val headerStyle = MaterialTheme.typography.caption3
-    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+    val headerStyle = MaterialTheme.typography.labelSmall
+    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -366,8 +366,8 @@ fun BodyWeightSetScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            if (isRepsInEditMode) RepsRow(Modifier, style = itemStyle)
-                            if (isWeightInEditMode) WeightRow(Modifier, style = itemStyle)
+                            if (isRepsInEditMode) RepsRow(modifier = Modifier.fillMaxWidth(),style = itemStyle)
+                            if (isWeightInEditMode) WeightRow(modifier = Modifier.fillMaxWidth(),style = itemStyle)
                         }
                     }
                 )

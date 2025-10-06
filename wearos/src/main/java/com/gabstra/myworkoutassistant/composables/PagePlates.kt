@@ -19,8 +19,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -40,7 +40,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         ScalableText(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp),
             text = "Loading Guide",
-            style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(10.dp))
@@ -48,7 +48,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
                 text = "Not available",
-                style = MaterialTheme.typography.body1,
+                style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center
             )
         } else {
@@ -56,12 +56,12 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 Text(
                     text = "No changes required",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.body1,
+                    style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                     color = LightGray
                 )
             } else {
-                val headerStyle = MaterialTheme.typography.caption3
+                val headerStyle = MaterialTheme.typography.labelSmall
 
                 Column(
                     modifier = Modifier
@@ -82,7 +82,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     }
 
                     if (updatedState.plateChangeResult!!.change.steps.isNotEmpty()) {
-                        val style = MaterialTheme.typography.body1
+                        val style = MaterialTheme.typography.bodyLarge
 
                         Column(
                             modifier = Modifier

@@ -16,11 +16,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.Orange
+
 import com.gabstra.myworkoutassistant.shared.Red
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import kotlin.math.roundToInt
@@ -47,7 +47,7 @@ fun <T : Number> TrendComponent(
     ){
         Text(
             text = label,
-            style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
+            style = MaterialTheme.typography.titleSmall.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize * 0.625f),
             textAlign = TextAlign.End
         )
 
@@ -62,13 +62,13 @@ fun <T : Number> TrendComponent(
 
             Text(
                 text = displayText,
-                style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
+                style = MaterialTheme.typography.titleSmall.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize * 0.625f),
                 color = if (ratio > 0) Green else Red
             )
         }else{
             Text(
                 text = "-",
-                style = MaterialTheme.typography.title3.copy(fontSize = MaterialTheme.typography.title3.fontSize * 0.625f),
+                style = MaterialTheme.typography.titleSmall.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize * 0.625f),
             )
         }
     }
@@ -89,7 +89,7 @@ fun TrendComponentProgressBar(
     ){
         Text(
             text = label,
-            style = MaterialTheme.typography.caption3,
+            style = MaterialTheme.typography.labelSmall,
             textAlign = TextAlign.End
         )
 
@@ -97,7 +97,7 @@ fun TrendComponentProgressBar(
             progress = ratio.toFloat(),
             modifier = Modifier
                 .weight(1f),
-            progressBarColor = progressBarColor ?: if(ratio>=1) Green else Orange,
+            progressBarColor = progressBarColor ?: if(ratio>=1) Green else MaterialTheme.colorScheme.primary,
         )
 
         if(ratio != 0.0 && ratio>1){
@@ -108,7 +108,7 @@ fun TrendComponentProgressBar(
             }
             Text(
                 text = displayText,
-                style = MaterialTheme.typography.caption3,
+                style = MaterialTheme.typography.labelSmall,
                 color = Green
             )
         }
@@ -130,7 +130,7 @@ fun LinearProgressBarWithRounderBorders(
     ) {
         SimpleProgressIndicator(
             progress = progress,
-            trackColor = MaterialTheme.colors.background,
+            trackColor = MaterialTheme.colorScheme.background,
             progressBarColor = progressBarColor,
             modifier = Modifier
                 .fillMaxWidth()
@@ -139,15 +139,6 @@ fun LinearProgressBarWithRounderBorders(
         )
     }
 }
-
-
-data class MarkerData(
-    val ratio: Double,
-    val text: String,
-    val color:Color = Orange,
-    val textColor:Color = LightGray
-)
-
 
 @SuppressLint("DefaultLocale")
 @Composable

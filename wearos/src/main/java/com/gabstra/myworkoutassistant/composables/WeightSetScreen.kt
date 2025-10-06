@@ -24,8 +24,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
@@ -97,9 +97,9 @@ fun WeightSetScreen(
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
-    val headerStyle = MaterialTheme.typography.caption3
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -254,6 +254,7 @@ fun WeightSetScreen(
                 else -> Green
             }
 
+
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
                 text = "${currentSetData.actualReps}",
@@ -336,7 +337,7 @@ fun WeightSetScreen(
                         textAlign = TextAlign.Center,
                         color =  LightGray,
                     )
-                    WeightRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
+                    WeightRow(modifier = Modifier.weight(1f), style = itemStyle)
                 }
 
                 Column(
@@ -350,7 +351,7 @@ fun WeightSetScreen(
                         textAlign = TextAlign.Center,
                         color =  LightGray,
                     )
-                    RepsRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
+                    RepsRow(modifier = Modifier.weight(1f), style = itemStyle)
                 }
             }
             /*if(!state.isWarmupSet){
@@ -386,7 +387,7 @@ fun WeightSetScreen(
                                 else -> Green
                             }
 
-                            val style = MaterialTheme.typography.body1.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold)
 
                             Text(
                                 text = volumeText,
@@ -426,8 +427,8 @@ fun WeightSetScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            if (isRepsInEditMode) RepsRow(style = itemStyle)
-                            if (isWeightInEditMode) WeightRow(style = itemStyle)
+                            if (isRepsInEditMode) RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                            if (isWeightInEditMode) WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                         }
                     }
                 )

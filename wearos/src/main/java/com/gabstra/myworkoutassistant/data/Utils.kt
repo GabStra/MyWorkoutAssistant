@@ -11,7 +11,7 @@ import android.os.Vibrator
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -434,6 +434,12 @@ fun formatNumber(value: Double, unit: String? = null): String = (when {
 
 fun Double.round(decimals: Int): Double {
     var multiplier = 1.0
+    repeat(decimals) { multiplier *= 10 }
+    return kotlin.math.round(this * multiplier) / multiplier
+}
+
+fun Float.round(decimals: Int): Float {
+    var multiplier = 1.0f
     repeat(decimals) { multiplier *= 10 }
     return kotlin.math.round(this * multiplier) / multiplier
 }

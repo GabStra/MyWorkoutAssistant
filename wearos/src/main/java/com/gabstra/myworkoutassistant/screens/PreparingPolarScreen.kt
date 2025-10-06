@@ -32,11 +32,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.ButtonDefaults
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -119,7 +119,7 @@ fun PreparingPolarScreen(
             Text(
                 modifier = Modifier.fillMaxWidth(),
                 text = "Preparing\nPolar Sensor",
-                style = MaterialTheme.typography.body1,
+                style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(15.dp))
@@ -148,7 +148,7 @@ fun PreparingPolarScreen(
                                 onReady()
                             },
                             modifier = Modifier.size(35.dp),
-                            colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.background)
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.background)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.DoubleArrow,

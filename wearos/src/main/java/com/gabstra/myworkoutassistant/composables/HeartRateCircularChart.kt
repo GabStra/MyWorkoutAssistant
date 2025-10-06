@@ -41,9 +41,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -86,7 +86,7 @@ fun HrStatusDialog(
     colorsByZone: Array<Color>
 ){
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.displaySmall.copy(fontWeight = FontWeight.Bold) }
 
     AnimatedVisibility(
         visible = show,
@@ -99,7 +99,7 @@ fun HrStatusDialog(
         ) {
             Box(
                 modifier = Modifier
-                    .background(MaterialTheme.colors.background.copy(alpha = 0.75f))
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f))
                     .fillMaxSize()
                     .padding(20.dp),
                 contentAlignment = Alignment.Center
@@ -130,13 +130,13 @@ fun HrStatusDialog(
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3,
+                        style = MaterialTheme.typography.titleSmall,
                     )
 
                     Text(
                         text = "(${targetRange.first}-${targetRange.last})",
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.body1,
+                        style = MaterialTheme.typography.bodyLarge,
                     )
 
                     Row(
@@ -159,7 +159,7 @@ fun HrStatusDialog(
                         Text(
                             modifier = Modifier.padding(bottom = 5.dp),
                             text = "bpm",
-                            style = MaterialTheme.typography.caption1,
+                            style = MaterialTheme.typography.labelLarge,
                             color = if (hr == 0) MediumLightGray else LightGray
                         )
                     }
@@ -322,14 +322,14 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
-            style = MaterialTheme.typography.caption1,
+            style = MaterialTheme.typography.labelLarge,
             color = if (bpm == 0) MediumLightGray else LightGray
         )
         Spacer(modifier = Modifier.width(2.5.dp))
         if(bpm != 0 && displayMode == 0){
             Text(
                 text = "bpm",
-                style = MaterialTheme.typography.caption3,
+                style = MaterialTheme.typography.labelSmall,
                 color = LightGray
             )
         }

@@ -306,14 +306,9 @@ fun mapPercentageToZone(percentage: Float): Int {
     return if (zone > 5) 5 else zone
 }
 
-fun getVersionName(context: Context): String {
+fun getVersionName(context: Context): String? {
     return try {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        } else {
-            @Suppress("DEPRECATION")
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
     } catch (e: PackageManager.NameNotFoundException) {
         e.printStackTrace()
         ""

@@ -5,7 +5,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.wear.compose.material.Icon
+import androidx.wear.compose.material3.Icon
 
 @Composable
 fun HeartIcon(

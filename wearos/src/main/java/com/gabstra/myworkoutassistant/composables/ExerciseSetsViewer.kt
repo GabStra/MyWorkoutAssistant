@@ -35,8 +35,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -45,7 +45,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.Orange
+
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -70,8 +70,8 @@ fun SetTableRow(
     val triangleSize = 6f
 
     val typography = MaterialTheme.typography
-    val captionStyle = MaterialTheme.typography.caption3
-    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+    val captionStyle = MaterialTheme.typography.bodySmall
+    val itemStyle = remember(typography) { typography.bodyMedium.copy(fontWeight = FontWeight.Bold) }
 
     val equipment = setState.equipment
 
@@ -227,7 +227,7 @@ fun ExerciseSetsViewer(
             .distinctBy { it.set.id }
     }
 
-    val headerStyle = MaterialTheme.typography.caption3
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
     val scrollState = rememberScrollState()
 
@@ -282,7 +282,7 @@ fun ExerciseSetsViewer(
             isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
             color = customColor
                 ?: when {
-                    rowIndex < setIndex -> Orange // Orange, LightGray, MediumLightGray from outer scope
+                    rowIndex < setIndex -> MaterialTheme.colorScheme.primary // MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
                     rowIndex == setIndex -> LightGray
                     else -> MediumLightGray
                 }

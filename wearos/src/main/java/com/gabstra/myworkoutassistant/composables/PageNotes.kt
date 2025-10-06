@@ -12,8 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 
 @Composable
 fun PageNotes(notes: String) {
@@ -25,7 +25,7 @@ fun PageNotes(notes: String) {
         Text(
             modifier = Modifier.fillMaxSize(),
             text = "Notes",
-            style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             textAlign = TextAlign.Center
         )
 
@@ -38,7 +38,7 @@ fun PageNotes(notes: String) {
             Text(
                 text = notes.ifEmpty { "NOT AVAILABLE" },
                 modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.body1,
+                style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center
             )
         }

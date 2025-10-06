@@ -15,8 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.delay
@@ -30,7 +30,7 @@ fun CurrentTime() {
 
     var showDots by remember { mutableStateOf(true) }
 
-    val captionStyle =  MaterialTheme.typography.caption1
+    val captionStyle =  MaterialTheme.typography.labelSmall
 
     LaunchedEffect(Unit) {
         var nextTick = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP to next second

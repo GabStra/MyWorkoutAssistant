@@ -21,10 +21,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,11 +36,12 @@ import androidx.core.content.edit
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavHostController
 import androidx.wear.compose.material.CircularProgressIndicator
-import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.navigation.SwipeDismissableNavHost
+import androidx.wear.compose.navigation.composable
+import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -148,9 +145,9 @@ class MyReceiver(
 }
 
 class MainActivity : ComponentActivity() {
-    private val alarmManager by lazy { getSystemService(Context.ALARM_SERVICE) as AlarmManager }
+    private val alarmManager by lazy { getSystemService(ALARM_SERVICE) as AlarmManager }
 
-    private val notificationManager by lazy { getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }
+    private val notificationManager by lazy { getSystemService(NOTIFICATION_SERVICE) as NotificationManager }
 
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
@@ -172,7 +169,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
 
-        val prefs = getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("workout_state", MODE_PRIVATE)
         val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
 
         if(isWorkoutInProgress){
@@ -189,7 +186,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
 
-        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
         if (km.isKeyguardLocked) {
             km.requestDismissKeyguard(this, null) // callback optional
         }
@@ -205,7 +202,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val prefs = getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            val prefs = getSharedPreferences("workout_state", MODE_PRIVATE)
             prefs.getBoolean("isWorkoutInProgress", false)
         }
 
@@ -270,10 +267,10 @@ fun WearApp(
     appHelper: WearDataLayerAppHelper,
     alarmManager: AlarmManager,
     workoutStoreRepository: WorkoutStoreRepository,
-    onNavControllerAvailable: (NavController) -> Unit
+    onNavControllerAvailable: (NavHostController) -> Unit
 ) {
     MyWorkoutAssistantTheme {
-        val navController = rememberNavController()
+        val navController = rememberSwipeDismissableNavController()
         val localContext = LocalContext.current
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
@@ -336,24 +333,12 @@ fun WearApp(
         }else{
             val enableDimming by appViewModel.enableDimming
             KeepOn(appViewModel,enableDimming = enableDimming){
-                NavHost(
+                SwipeDismissableNavHost(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colors.background),
+                        .fillMaxSize(),
                     navController = navController,
                     startDestination = startDestination,
-                    enterTransition = {
-                        fadeIn(animationSpec = tween(500))
-                    },
-                    exitTransition = {
-                        fadeOut(animationSpec = tween(500))
-                    },
-                    popEnterTransition= {
-                        fadeIn(animationSpec = tween(500))
-                    },
-                    popExitTransition = {
-                        fadeOut(animationSpec = tween(500))
-                    },
+                    userSwipeEnabled = false
                 ) {
                     composable(Screen.WorkoutSelection.route) {
                         WorkoutSelectionScreen(alarmManager,dataClient,navController, appViewModel,hapticsViewModel, appHelper)
@@ -372,7 +357,7 @@ fun WearApp(
                             progress = animatedProgress,
                             modifier = Modifier.fillMaxSize(),
                             strokeWidth = 4.dp,
-                            indicatorColor = MaterialTheme.colors.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary,
                             trackColor = MediumDarkGray
                         )
 

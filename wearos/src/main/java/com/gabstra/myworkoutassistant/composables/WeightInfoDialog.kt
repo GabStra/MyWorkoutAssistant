@@ -20,8 +20,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -35,9 +35,9 @@ fun WeightInfoDialog(
     equipment: WeightLoadedEquipment?,
     onClick: () -> Unit = {}
 ){
-    val headerStyle = MaterialTheme.typography.caption3
+    val headerStyle = MaterialTheme.typography.labelSmall
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.displaySmall.copy(fontWeight = FontWeight.Bold) }
 
     val weightText = if (weight == 0.0) "-" else formatWeight(weight)
 
@@ -50,7 +50,7 @@ fun WeightInfoDialog(
         ) {
             Box(
                 modifier = Modifier
-                    .background(MaterialTheme.colors.background.copy(alpha = 0.75f))
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f))
                     .fillMaxSize()
                     .padding(25.dp)
                     .clickable(

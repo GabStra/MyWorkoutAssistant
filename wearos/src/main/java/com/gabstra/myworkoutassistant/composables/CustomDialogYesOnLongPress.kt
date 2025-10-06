@@ -33,14 +33,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButtonDefaults
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
+
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.Orange
+
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -147,7 +148,7 @@ fun CustomDialogYesOnLongPress(
         ) {
             Box(
                 modifier = Modifier
-                    .background(MaterialTheme.colors.background)
+                    .background(MaterialTheme.colorScheme.background)
                     .fillMaxSize()
                     .padding(25.dp), contentAlignment = Alignment.Center
             ) {
@@ -158,13 +159,13 @@ fun CustomDialogYesOnLongPress(
                     Text(
                         text = title,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         modifier = Modifier.padding(20.dp,8.dp)
                     )
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.body1,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(8.dp)
                     )
 
@@ -175,7 +176,7 @@ fun CustomDialogYesOnLongPress(
                         modifier = Modifier
                             .fillMaxWidth()
                     ) {
-                        EnhancedButton(
+                        EnhancedIconButton(
                             buttonSize = 35.dp,
                             hitBoxScale = 2f,
                             onClick = {
@@ -185,7 +186,7 @@ fun CustomDialogYesOnLongPress(
                             buttonModifier = Modifier
                                 .size(35.dp)
                                 .clip(CircleShape),
-                            colors = ButtonDefaults.buttonColors(backgroundColor = MediumDarkGray)
+                            colors = IconButtonDefaults.iconButtonColors(containerColor = MediumDarkGray)
                         ) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
@@ -208,10 +209,10 @@ fun CustomDialogYesOnLongPress(
                                 modifier = Modifier
                                     .size(35.dp)
                                     .clip(CircleShape)
-                                    .background(Orange),
+                                    .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ){
-                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colors.background)
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.background)
                             }
                         }
                     }
@@ -228,6 +229,7 @@ fun CustomDialogYesOnLongPress(
                 label = "DialogProgressBarAlpha"
             )*/
 
+
             if (showProgressBar) {
                 CircularProgressIndicator(
                     progress = progress,
@@ -235,7 +237,7 @@ fun CustomDialogYesOnLongPress(
                         .fillMaxSize(),
                         //.graphicsLayer(alpha = progressBarAlpha),
                     strokeWidth = 4.dp,
-                    indicatorColor = MaterialTheme.colors.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primary,
                     trackColor = MediumDarkGray
                 )
             }

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -34,8 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.foundation.pager.rememberPagerState
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.composables.Chip
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
@@ -48,7 +48,6 @@ import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
@@ -148,7 +147,7 @@ fun ExerciseScreen(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-    val captionStyle = MaterialTheme.typography.caption3
+    val captionStyle = MaterialTheme.typography.bodyExtraSmall
 
     val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
     val exerciseOrSupersetId = remember(state.exerciseId) { if(viewModel.supersetIdByExerciseId.containsKey(state.exerciseId)) viewModel.supersetIdByExerciseId[state.exerciseId] else state.exerciseId }
@@ -176,7 +175,7 @@ fun ExerciseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 30.dp, start = 50.dp, end = 50.dp, bottom = 30.dp),
+            .padding(top = 30.dp, start = 50.dp, end = 50.dp, bottom = 20.dp),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(
@@ -208,7 +207,7 @@ fun ExerciseScreen(
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = exercise.name,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.body1.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -269,11 +268,11 @@ fun ExerciseScreen(
                         }
 
                         if(updatedState.isWarmupSet){
-                            Chip(backgroundColor = Orange) {
+                            Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
                                 Text(
                                     text = "Warm-up",
                                     style = captionStyle,
-                                    color = MaterialTheme.colors.background
+                                    color = MaterialTheme.colorScheme.onPrimary
                                 )
                             }
                         }

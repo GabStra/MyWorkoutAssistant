@@ -33,21 +33,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.ScalingLazyListState
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.PositionIndicator
-import androidx.wear.compose.material.Scaffold
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.getVersionName
 import com.google.android.gms.wearable.DataClient
@@ -154,7 +152,6 @@ fun WorkoutSelectionScreen(
     hapticsViewModel: HapticsViewModel,
     appHelper: WearDataLayerAppHelper
 ) {
-    val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
     val workouts by viewModel.workouts.collectAsState()
 
     val sortedWorkouts = workouts.sortedBy { it.order }
@@ -171,16 +168,14 @@ fun WorkoutSelectionScreen(
     var showClearData by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    Scaffold(
-        positionIndicator = {
-            PositionIndicator(
-                scalingLazyListState = scalingLazyListState
-            )
-        }
-    ) {
-        ScalingLazyColumn(
-            modifier = Modifier.padding(horizontal = 10.dp),
-            state = scalingLazyListState,
+    val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
+
+    ScreenScaffold(
+        scrollState = state,
+    ){ contentPadding ->
+        TransformingLazyColumn(
+            contentPadding = contentPadding,
+            state = state,
         ) {
             item {
                 Text(
@@ -205,7 +200,7 @@ fun WorkoutSelectionScreen(
                         ),
                     text = "My Workout Assistant",
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 )
             }
 
@@ -215,7 +210,7 @@ fun WorkoutSelectionScreen(
                         modifier = Modifier.padding(vertical = 5.dp),
                         text = "Enable Alarms for scheduled workouts",
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.caption1,
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
 
@@ -231,8 +226,8 @@ fun WorkoutSelectionScreen(
 
                             context.startActivity(intent)
                         },
-                        backgroundColor = Orange,
-                        textColor = MaterialTheme.colors.background,
+                        backgroundColor = MaterialTheme.colorScheme.primary,
+                        textColor = MaterialTheme.colorScheme.background,
                     )
                 }
             }
@@ -244,7 +239,7 @@ fun WorkoutSelectionScreen(
                             modifier = Modifier.padding(vertical = 5.dp),
                             text = "Input your age on the companion app",
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.caption1,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                     item{
@@ -264,7 +259,7 @@ fun WorkoutSelectionScreen(
                             modifier = Modifier.padding(vertical = 5.dp),
                             text = "Install the companion app on your phone",
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.caption1,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
@@ -275,7 +270,7 @@ fun WorkoutSelectionScreen(
                             modifier = Modifier.fillMaxWidth(),
                             text = "No Workouts Available",
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.caption1,
+                            style = MaterialTheme.typography.labelLarge,
                         )
                     }
                 } else {

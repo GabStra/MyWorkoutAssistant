@@ -25,12 +25,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.Orange
+
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
@@ -59,7 +59,7 @@ fun PageExercises(
 
     var selectedExercise by remember { mutableStateOf(currentExercise) }
 
-    val captionStyle = MaterialTheme.typography.caption3
+    val captionStyle = MaterialTheme.typography.bodyExtraSmall
 
     val isSuperset = remember(currentExerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
@@ -127,7 +127,7 @@ fun PageExercises(
                     Text(
                         text = selectedExercise.name,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -186,11 +186,11 @@ fun PageExercises(
                         }
 
                         if(currentStateSet.isWarmupSet){
-                            Chip(backgroundColor = Orange) {
+                            Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
                                 Text(
                                     text = "Warm-up",
                                     style = captionStyle,
-                                    color = MaterialTheme.colors.background
+                                    color = MaterialTheme.colorScheme.background
                                 )
                             }
                         }
@@ -205,7 +205,7 @@ fun PageExercises(
                     exercise = selectedExercise,
                     currentSet = currentStateSet.set,
                     customColor = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> Orange
+                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary
                         selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MediumLightGray
                         else -> null
                     },

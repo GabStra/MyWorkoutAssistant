@@ -28,19 +28,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.ButtonDefaults
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButton
+import androidx.wear.compose.material3.IconButtonDefaults
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -101,8 +100,8 @@ fun EnduranceSetScreen (
     val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
 
     val typography = MaterialTheme.typography
-    val headerStyle = MaterialTheme.typography.caption3
-    val itemStyle = remember(typography) { typography.display3.copy(fontWeight = FontWeight.Bold) }
+    val headerStyle = MaterialTheme.typography.labelSmall
+    val itemStyle = remember(typography) { typography.numeralMedium.copy(fontWeight = W700) }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
@@ -185,7 +184,7 @@ fun EnduranceSetScreen (
                     ),
                 seconds = (if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000,
                 style = itemStyle,
-                color = if(isOverLimit) Green else if(isDifferent) Orange else LightGray,
+                color = if(isOverLimit) Green else if(isDifferent) MaterialTheme.colorScheme.primary else LightGray,
             )
         }
     }
@@ -261,6 +260,8 @@ fun EnduranceSetScreen (
         }
 
         if (set.autoStart && !isPaused) {
+            delay(500)
+
             showCountDownIfEnabled()
 
             if (state.startTime == null) {
@@ -296,7 +297,7 @@ fun EnduranceSetScreen (
                     textComposable()
                 }
                 if (showStartButton) {
-                    Button(
+                    IconButton(
                         modifier = Modifier.size(35.dp),
                         onClick = {
                             scope.launch {
@@ -312,19 +313,19 @@ fun EnduranceSetScreen (
                                 showStartButton = false
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Green)
-                    ) {
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
+                    ){
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
                     }
                 }else{
-                    Button(
+                    IconButton(
                         modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             timerJob?.cancel()
                             showStopDialog = true
                         },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Red)
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = Red, contentColor = LightGray),
                     ) {
                         Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
                     }

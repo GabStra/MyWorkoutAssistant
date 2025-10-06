@@ -8,57 +8,46 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.delay
 
 @Composable
-fun LoadingText(baseText: String, style: TextStyle = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold)) {
-    val dotCount = remember(baseText) { mutableIntStateOf(0) }
+fun LoadingText(
+    baseText: String,
+    style: TextStyle = MaterialTheme.typography.titleMedium
+) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
 
-    val textWithDots = "$baseText..."
-    val textWithDotsWidth = remember(baseText) { mutableIntStateOf(0) }
-
-    if(textWithDotsWidth.intValue == 0){
-        Layout(
-            content = {
-                Text(
-                    text = textWithDots,
-                    style = style,
-                    onTextLayout = { textLayoutResult ->
-                        textWithDotsWidth.intValue = textLayoutResult.size.width
-                    },
-                    color = Color.Transparent
-                )
-            },
-        ) { measurables, constraints ->
-            val placeables = measurables.map { it.measure(constraints) }
-            layout(0, 0) {
-                placeables.forEach { it.place(0, 0) }
-            }
+    // Measure once for "baseText..."
+    val fullWidthDp = remember(measurer, baseText, style, density) {
+        with(density) {
+            measurer
+                .measure(text = AnnotatedString("$baseText..."), style = style, maxLines = 1)
+                .size.width
+                .toDp()
         }
     }
 
-    LaunchedEffect(baseText,textWithDotsWidth.intValue) {
-        if (textWithDotsWidth.intValue != 0) {
-            while (true) {
-                delay(500)
-                dotCount.intValue = (dotCount.intValue + 1) % 4
-            }
+    val dotCount = remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(500)
+            dotCount.intValue = (dotCount.intValue + 1) % 4
         }
     }
 
-    Box(
-        modifier = Modifier.width(with(LocalDensity.current) { textWithDotsWidth.intValue.toDp() })
-    ) {
+    Box(Modifier.width(fullWidthDp)) {
         Text(
             text = baseText + ".".repeat(dotCount.intValue),
             style = style,
+            maxLines = 1
         )
     }
 }

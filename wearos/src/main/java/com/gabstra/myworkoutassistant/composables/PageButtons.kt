@@ -16,12 +16,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -86,13 +85,13 @@ fun PageButtons(
                     viewModel.toggleScreenDimming()
                 },
                 textColor = if (dimmingEnabled)
-                    MaterialTheme.colors.onBackground
+                    MaterialTheme.colorScheme.onSecondaryContainer
                 else
-                    MaterialTheme.colors.background,
+                    MaterialTheme.colorScheme.onPrimary,
                 backgroundColor = if (dimmingEnabled)
-                    MediumDarkGray
+                    MaterialTheme.colorScheme.secondaryContainer
                 else
-                    MaterialTheme.colors.primary
+                    MaterialTheme.colorScheme.primary
             )
             if (isMovementSet && isLastSet) {
                 ButtonWithText(

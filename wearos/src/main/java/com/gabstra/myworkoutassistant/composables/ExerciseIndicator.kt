@@ -6,10 +6,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.Orange
+
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
@@ -63,7 +64,7 @@ fun ExerciseIndicator(
                     // Create a single segment for each indicator
                     val trackSegment = ProgressIndicatorSegment(
                         weight = 1f,
-                        indicatorColor = if (index != currentExerciseOrSupersetIndex) Orange else LightGray
+                        indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
                     )
 
                     val startAngle = startingAngle + index * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)
@@ -95,7 +96,7 @@ fun ExerciseIndicator(
                 // Create a single segment for each indicator
                 val trackSegment = ProgressIndicatorSegment(
                     weight = 1f,
-                    indicatorColor = if (index != currentExerciseOrSupersetIndex) Orange else LightGray
+                    indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else LightGray
                 )
 
                 // Calculate angle for each indicator to space them evenly
@@ -213,7 +214,7 @@ fun SetIndicator(
             // Create a single segment for each indicator
             val trackSegment = ProgressIndicatorSegment(
                 weight = 1f,
-                indicatorColor = if (index != currentExerciseOrSupersetIndex) Orange else LightGray
+                indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else LightGray
             )
 
             // Calculate angle for each indicator to space them evenly

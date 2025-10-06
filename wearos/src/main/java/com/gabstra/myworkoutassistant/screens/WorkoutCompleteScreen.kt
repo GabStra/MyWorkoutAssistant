@@ -25,8 +25,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.navigation.NavController
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.ProgressionSection
 import com.gabstra.myworkoutassistant.composables.ScalableText
@@ -66,7 +66,7 @@ fun WorkoutCompleteScreen(
 
     val countDownTimer = remember { mutableIntStateOf(15) }
 
-    val headerStyle = MaterialTheme.typography.caption3
+    val headerStyle = MaterialTheme.typography.labelSmall
 
     val scope = rememberCoroutineScope()
     var closeJob by remember { mutableStateOf<Job?>(null) }
@@ -119,7 +119,7 @@ fun WorkoutCompleteScreen(
     }
 
     Column(
-        verticalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxSize()
@@ -137,7 +137,7 @@ fun WorkoutCompleteScreen(
             )
             ScalableText(
                 text = workout.name,
-                style = MaterialTheme.typography.title3
+                style = MaterialTheme.typography.titleSmall
             )
         }
         ProgressionSection(

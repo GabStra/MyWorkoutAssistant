@@ -23,20 +23,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.navigation.NavController
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.ScalingLazyListState
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.PositionIndicator
-import androidx.wear.compose.material.Scaffold
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.shared.Orange
 
 @Composable
 fun WorkoutDetailScreen(
@@ -96,18 +94,14 @@ fun WorkoutDetailScreen(
 
     if(viewModel.executeStartWorkout.value == null){
         var marqueeEnabled by remember { mutableStateOf(false) }
-        val scalingLazyListState: ScalingLazyListState = rememberScalingLazyListState()
+        val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
 
-        Scaffold(
-            positionIndicator = {
-                PositionIndicator(
-                    scalingLazyListState = scalingLazyListState
-                )
-            }
-        ) {
-            ScalingLazyColumn(
-                modifier = Modifier.padding(horizontal = 10.dp),
-                state = scalingLazyListState,
+        ScreenScaffold(
+            scrollState = state,
+        ){ contentPadding ->
+            TransformingLazyColumn(
+                contentPadding = contentPadding,
+                state = state,
             ) {
                 item {
                     Text(
@@ -119,7 +113,7 @@ fun WorkoutDetailScreen(
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
                             .padding(bottom = 5.dp),
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -132,8 +126,8 @@ fun WorkoutDetailScreen(
                             hapticsViewModel.doGentleVibration()
                             permissionLauncherStart.launch(basePermissions.toTypedArray())
                         },
-                        backgroundColor = Orange,
-                        textColor = MaterialTheme.colors.background,
+                        backgroundColor = MaterialTheme.colorScheme.primary,
+                        textColor =  MaterialTheme.colorScheme.onPrimary,
                         enabled = hasExercises
                     )
                 }
@@ -142,8 +136,8 @@ fun WorkoutDetailScreen(
                     item {
                         ButtonWithText(
                             text = "Resume",
-                            backgroundColor = Orange,
-                            textColor = MaterialTheme.colors.background,
+                            backgroundColor = MaterialTheme.colorScheme.primary,
+                            textColor =  MaterialTheme.colorScheme.onPrimary,
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 permissionLauncherResume.launch(basePermissions.toTypedArray())

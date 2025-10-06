@@ -4,12 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
-import com.gabstra.myworkoutassistant.repository.MeasureMessageSensor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class SensorDataViewModel(
@@ -36,11 +34,8 @@ class SensorDataViewModel(
             sensorDataRepository.heartBeatMeasureFlow()
                 .collect { measureMessage ->
                     when (measureMessage) {
-                        is MeasureMessageSensor.MeasureData -> {
-                            _heartRateBpm.value = measureMessage.bpm
-                        }
                         else -> {
-                            // Handle other message types if needed
+                            _heartRateBpm.value = measureMessage.bpm
                         }
                     }
                 }

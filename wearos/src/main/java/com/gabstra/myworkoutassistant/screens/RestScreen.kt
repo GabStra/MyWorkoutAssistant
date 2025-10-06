@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -32,7 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.foundation.pager.rememberPagerState
+import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
@@ -46,7 +46,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.Orange
+
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -248,7 +248,7 @@ fun RestScreen(
     }
 
     @Composable
-    fun textComposable(modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.title3.copy(fontWeight = FontWeight.Bold)){
+    fun textComposable(modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)){
         Row(
             modifier = modifier
                 .fillMaxWidth(),
@@ -300,7 +300,7 @@ fun RestScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     content = {
-                        textComposable(style = MaterialTheme.typography.title1.copy(fontWeight = FontWeight.Bold))
+                        textComposable(style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
                     }
                 )
             }
@@ -308,7 +308,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 30.dp, start = 50.dp, end = 50.dp, bottom = 30.dp),
+                    .padding(top = 30.dp, start = 50.dp, end = 50.dp, bottom = 20.dp),
                 contentAlignment = Alignment.Center
             ) {
                 CustomHorizontalPager(
@@ -355,7 +355,7 @@ fun RestScreen(
         SegmentedProgressIndicator(
             trackSegments = listOf(ProgressIndicatorSegment(
                 weight = 1f,
-                indicatorColor = Orange
+                indicatorColor = MaterialTheme.colorScheme.primary
             )),
             progress = indicatorProgress,
             modifier = Modifier.fillMaxSize(),
@@ -370,7 +370,7 @@ fun RestScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 5.dp),
-            style = MaterialTheme.typography.caption1.copy(fontWeight = FontWeight.Bold)
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
         )
     }
 
