@@ -80,7 +80,7 @@ fun CircleWithNumber(
                         .fillMaxSize()
                         .padding(3.dp),
                     text = number.toString(),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.numeralMedium.copy(fontWeight = FontWeight.Bold),
                     textAlign = TextAlign.Center,
                 )
             }

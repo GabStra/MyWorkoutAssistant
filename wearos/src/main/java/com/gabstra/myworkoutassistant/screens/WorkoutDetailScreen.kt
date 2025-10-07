@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +27,7 @@ import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
@@ -120,29 +122,38 @@ fun WorkoutDetailScreen(
                 }
 
                 item {
-                    ButtonWithText(
-                        text = "Start",
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             permissionLauncherStart.launch(basePermissions.toTypedArray())
                         },
-                        backgroundColor = MaterialTheme.colorScheme.primary,
-                        textColor =  MaterialTheme.colorScheme.onPrimary,
-                        enabled = hasExercises
-                    )
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Start",
+                            textAlign = TextAlign.Center,
+                            style =  MaterialTheme.typography.bodyLarge,
+                        )
+                    }
                 }
 
                 if (hasWorkoutRecord) {
                     item {
-                        ButtonWithText(
-                            text = "Resume",
-                            backgroundColor = MaterialTheme.colorScheme.primary,
-                            textColor =  MaterialTheme.colorScheme.onPrimary,
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 permissionLauncherResume.launch(basePermissions.toTypedArray())
                             }
-                        )
+                        ) {
+                            Text(
+                                modifier = Modifier.fillMaxWidth(),
+                                text = "Resume",
+                                textAlign = TextAlign.Center,
+                                style =  MaterialTheme.typography.bodyLarge,
+                            )
+                        }
                     }
 
                     item {

@@ -103,31 +103,31 @@ fun WorkoutStateHeader(
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
                     text = String.format("%02d", hours),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
                     text = ":",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     textAlign = TextAlign.Center,
                 )
 
                 Text(
                     text = String.format("%02d", minutes),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
                     text = ":",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     textAlign = TextAlign.Center,
                 )
 
                 Text(
                     text = String.format("%02d", seconds),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     textAlign = TextAlign.Center
                 )
             }

@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,8 +16,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.OutlinedButton
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
@@ -78,21 +83,37 @@ fun PageButtons(
             )
             val dimmingEnabled by viewModel.currentScreenDimmingState
 
-            ButtonWithText(
-                text = if (dimmingEnabled) "Disable Dimming" else "Enable Dimming",
-                onClick = {
-                    hapticsViewModel.doGentleVibration()
-                    viewModel.toggleScreenDimming()
-                },
-                textColor = if (dimmingEnabled)
-                    MaterialTheme.colorScheme.onSecondaryContainer
-                else
-                    MaterialTheme.colorScheme.onPrimary,
-                backgroundColor = if (dimmingEnabled)
-                    MaterialTheme.colorScheme.secondaryContainer
-                else
-                    MaterialTheme.colorScheme.primary
-            )
+            if (dimmingEnabled){
+                OutlinedButton(
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.toggleScreenDimming()
+                    }
+                ) {
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "Disable Dimming",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+
+            }else{
+                Button(
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.toggleScreenDimming()
+                    }
+                ) {
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "Enable Dimming",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+
             if (isMovementSet && isLastSet) {
                 ButtonWithText(
                     text = "Add Rest Pause Set",

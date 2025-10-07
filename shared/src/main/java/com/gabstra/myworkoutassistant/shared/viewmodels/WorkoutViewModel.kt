@@ -786,6 +786,7 @@ open class WorkoutViewModel : ViewModel() {
                 goToNextState()
 
                 if (isCurrentStateTheTargetResumeSet()){
+                    goToNextState()
                     break
                 }
             }

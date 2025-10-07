@@ -37,6 +37,7 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
@@ -215,8 +216,8 @@ fun WorkoutSelectionScreen(
                 }
 
                 item{
-                    ButtonWithText(
-                        text = "Open Alarms Settings",
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             val intent = Intent(
@@ -225,10 +226,15 @@ fun WorkoutSelectionScreen(
                             )
 
                             context.startActivity(intent)
-                        },
-                        backgroundColor = MaterialTheme.colorScheme.primary,
-                        textColor = MaterialTheme.colorScheme.onPrimary,
-                    )
+                        }
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Open Alarms Settings",
+                            textAlign = TextAlign.Center,
+                            style =  MaterialTheme.typography.bodyLarge,
+                        )
+                    }
                 }
             }
 
@@ -243,17 +249,22 @@ fun WorkoutSelectionScreen(
                         )
                     }
                     item{
-                        ButtonWithText(
-                            text = "Open Mobile App",
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 scope.launch {
                                     openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
                                 }
-                            },
-                            backgroundColor = MaterialTheme.colorScheme.primary,
-                            textColor = MaterialTheme.colorScheme.onPrimary,
-                        )
+                            }
+                        ) {
+                            Text(
+                                modifier = Modifier.fillMaxWidth(),
+                                text = "Open Mobile App",
+                                textAlign = TextAlign.Center,
+                                style =  MaterialTheme.typography.bodyLarge,
+                            )
+                        }
                     }
                 }else{
                     item{

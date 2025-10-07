@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -11,23 +12,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.MaterialTheme
 
 
 @Composable
 fun Chip(
-    backgroundColor: androidx.compose.ui.graphics.Color = MediumDarkGray,
+    backgroundColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.background,
     content: @Composable () -> Unit
 ) {
+    val useBorder = backgroundColor == MaterialTheme.colorScheme.background
+
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(25))
+            .then(if(useBorder) Modifier.border(ButtonDefaults.outlinedButtonBorder(true),RoundedCornerShape(25)) else Modifier.clip(RoundedCornerShape(25)))
             .background(backgroundColor),
         contentAlignment = Alignment.Center
     ) {
         Row(
             modifier = Modifier
-                .padding(3.dp),
+                .padding(5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {

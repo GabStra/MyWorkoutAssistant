@@ -10,7 +10,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
@@ -78,7 +77,7 @@ fun ExerciseIndicator(
                         paddingAngle = 0f,
                         startAngle = startAngle,
                         endAngle = endAngle,
-                        trackColor = MediumDarkGray,
+                        trackColor = MediumDarkGray
                     )
                 }
             }else{
@@ -113,7 +112,7 @@ fun ExerciseIndicator(
                     paddingAngle = 0f,
                     startAngle = startAngle,
                     endAngle = endAngle,
-                    trackColor = MediumDarkGray,
+                    trackColor = MediumDarkGray
                 )
             }
         }
@@ -231,7 +230,7 @@ fun SetIndicator(
                 paddingAngle = 0f,
                 startAngle = startAngle,
                 endAngle = endAngle,
-                trackColor = MediumDarkGray,
+                trackColor = MediumDarkGray
             )
         }
     }

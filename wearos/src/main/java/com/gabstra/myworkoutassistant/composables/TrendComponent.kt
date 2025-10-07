@@ -130,7 +130,6 @@ fun LinearProgressBarWithRounderBorders(
     ) {
         SimpleProgressIndicator(
             progress = progress,
-            trackColor = MaterialTheme.colorScheme.background,
             progressBarColor = progressBarColor,
             modifier = Modifier
                 .fillMaxWidth()
@@ -159,7 +158,6 @@ fun ProgressIndicator(
             Row(modifier = Modifier.height(6.dp).weight(1f).clip(roundedCornerShape)){
                 SimpleProgressIndicator(
                     progress = ratio.toFloat(),
-                    trackColor = LightGray,
                     progressBarColor = progressBarColor,
                     modifier = Modifier.fillMaxHeight().weight(1f),
                 )

@@ -248,7 +248,7 @@ fun RestScreen(
     }
 
     @Composable
-    fun textComposable(modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)){
+    fun textComposable(modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleSmall){
         Row(
             modifier = modifier
                 .fillMaxWidth(),
@@ -268,7 +268,7 @@ fun RestScreen(
                     ),
                 seconds = currentSeconds,
                 style = style,
-                color = LightGray,
+                color = MaterialTheme.colorScheme.onSurface,
             )
         }
     }
@@ -363,7 +363,7 @@ fun RestScreen(
             paddingAngle = 0f,
             startAngle = 130f,
             endAngle = 230f,
-            trackColor = MediumDarkGray,
+            trackColor = MediumDarkGray
         )
 
         textComposable(

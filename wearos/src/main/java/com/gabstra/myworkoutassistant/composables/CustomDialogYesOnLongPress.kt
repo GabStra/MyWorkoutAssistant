@@ -28,20 +28,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
-
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -159,17 +155,19 @@ fun CustomDialogYesOnLongPress(
                     Text(
                         text = title,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(20.dp,8.dp)
                     )
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(8.dp)
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
+
+                    val contentColor = MaterialTheme.colorScheme.onSurface
 
                     Row(
                         horizontalArrangement = Arrangement.Center,
@@ -186,9 +184,8 @@ fun CustomDialogYesOnLongPress(
                             buttonModifier = Modifier
                                 .size(35.dp)
                                 .clip(CircleShape),
-                            colors = IconButtonDefaults.iconButtonColors(containerColor = MediumDarkGray)
                         ) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close",tint = contentColor)
                         }
                         Spacer(modifier = Modifier.width(5.dp))
                         Box(
@@ -212,7 +209,7 @@ fun CustomDialogYesOnLongPress(
                                     .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ){
-                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.background)
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }

@@ -4,7 +4,6 @@ import android.R.attr.maxLines
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.wear.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.LightGray
 import kotlin.math.abs
@@ -35,11 +35,11 @@ fun ScalableText(
     modifier: Modifier = Modifier,
     color: Color = LightGray,
     style: TextStyle = LocalTextStyle.current,
-    textAlign: TextAlign? = null,
+    textAlign: TextAlign? = TextAlign.Center,
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
     fadeInMillis: Int = 250,
-    scaleDownOnly: Boolean = true
+    scaleDownOnly: Boolean = false
 ) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
@@ -58,7 +58,6 @@ fun ScalableText(
                     text = text,
                     style = style.copy(
                         fontSize = size,
-                        lineHeight = TextUnit.Unspecified,
                         platformStyle = PlatformTextStyle(includeFontPadding = false),
                         lineHeightStyle = LineHeightStyle(
                             alignment = LineHeightStyle.Alignment.Center,
@@ -83,7 +82,7 @@ fun ScalableText(
             var hi = upperBound.value
             var best = lo
             var i = 0
-            while (i < 16 && abs(hi - lo) > 1f) {
+            while (i < 16 && abs(hi - lo) > 0.5f) {
                 val mid = (lo + hi) / 2f
                 if (fits(mid.sp)) {
                     best = mid
@@ -105,11 +104,17 @@ fun ScalableText(
 
         Text(
             text = text,
-            style = style.copy(fontSize = fittedSize),
+            style = style.copy(
+                fontSize = fittedSize,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both
+                )
+            ),
             color = color,
             maxLines = maxLines,
             textAlign = textAlign,
-            overflow = TextOverflow.Clip,
             modifier = Modifier.alpha(alpha)
         )
     }

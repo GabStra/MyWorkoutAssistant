@@ -36,7 +36,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -85,9 +84,6 @@ fun HrStatusDialog(
     currentZone: Int,
     colorsByZone: Array<Color>
 ){
-    val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.displaySmall.copy(fontWeight = FontWeight.Bold) }
-
     AnimatedVisibility(
         visible = show,
         enter = fadeIn(animationSpec = tween(500)),
@@ -144,22 +140,22 @@ fun HrStatusDialog(
                         verticalAlignment = Alignment.Bottom,
                     ){
                         PulsingHeartWithBpm(
-                            modifier = Modifier.padding(bottom = 5.dp),
+                            modifier = Modifier.padding(bottom = 10.dp),
                             bpm = hr,
                             tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone],
-                            size = 25.dp
+                            size = 30.dp
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "$hr",
-                            style = itemStyle,
+                            style =  MaterialTheme.typography.numeralMedium,
                             color = if (hr == 0) MediumLightGray else LightGray
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             modifier = Modifier.padding(bottom = 5.dp),
                             text = "bpm",
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.bodySmall,
                             color = if (hr == 0) MediumLightGray else LightGray
                         )
                     }
@@ -322,14 +318,14 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium,
             color = if (bpm == 0) MediumLightGray else LightGray
         )
         Spacer(modifier = Modifier.width(2.5.dp))
         if(bpm != 0 && displayMode == 0){
             Text(
                 text = "bpm",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodyExtraSmall,
                 color = LightGray
             )
         }
@@ -387,7 +383,7 @@ private fun ZoneSegment(
         paddingAngle = 0f,
         startAngle = startAngle,
         endAngle = endAngle,
-        trackColor = MediumDarkGray,
+        trackColor = MediumDarkGray
     )
 }
 

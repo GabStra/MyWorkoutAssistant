@@ -39,7 +39,6 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -184,7 +183,7 @@ fun EnduranceSetScreen (
                     ),
                 seconds = (if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000,
                 style = itemStyle,
-                color = if(isOverLimit) Green else if(isDifferent) MaterialTheme.colorScheme.primary else LightGray,
+                color = if(isOverLimit) Green else if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
         }
     }
@@ -315,7 +314,7 @@ fun EnduranceSetScreen (
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
                     ){
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 }else{
                     IconButton(
@@ -325,9 +324,9 @@ fun EnduranceSetScreen (
                             timerJob?.cancel()
                             showStopDialog = true
                         },
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Red, contentColor = LightGray),
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                     ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
             }

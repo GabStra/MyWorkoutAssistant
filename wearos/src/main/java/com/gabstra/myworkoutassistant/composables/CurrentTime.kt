@@ -15,10 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.time.LocalDateTime
@@ -55,21 +53,18 @@ fun CurrentTime() {
             text = String.format("%02d", currentTime.hour),
             style = captionStyle,
             textAlign = TextAlign.Center,
-            color =  LightGray,
         )
 
         Text(
             text = ":",
             style = captionStyle,
-            color = if (showDots) LightGray else MediumDarkGray,
-            textAlign = TextAlign.Center,
+            color = if (showDots) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.background,
         )
 
         Text(
             text = String.format("%02d", currentTime.minute),
             style = captionStyle,
             textAlign = TextAlign.Center,
-            color =  LightGray,
         )
     }
 }

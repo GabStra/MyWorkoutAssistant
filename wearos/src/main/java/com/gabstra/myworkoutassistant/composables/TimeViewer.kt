@@ -16,8 +16,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
@@ -33,7 +33,6 @@ fun TimeViewer(
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
-
 
     var showDots by remember { mutableStateOf(true) }
 
@@ -65,7 +64,7 @@ fun TimeViewer(
             Text(
                 text = ":",
                 style = style,
-                color = if (showDots) color else MediumGray,
+                color = if (showDots) color else MaterialTheme.colorScheme.background,
                 textAlign = TextAlign.Center,
             )
         }
@@ -81,7 +80,7 @@ fun TimeViewer(
         Text(
             text = ":",
             style = style,
-            color = if (showDots) color else MediumGray,
+            color = if (showDots) color else MaterialTheme.colorScheme.background,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 3.dp),
         )

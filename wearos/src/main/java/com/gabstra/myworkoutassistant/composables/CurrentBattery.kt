@@ -72,7 +72,7 @@ fun CurrentBattery(){
         horizontalArrangement = Arrangement.spacedBy(1.dp)
     ){
         Icon(
-            modifier = Modifier.size(15.dp),
+            modifier = Modifier.size(10.dp),
             imageVector = Icons.Filled.BatteryStd,
             contentDescription = "battery",
         )
