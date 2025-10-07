@@ -100,7 +100,7 @@ open class WorkoutViewModel : ViewModel() {
         )
     )
 
-    var originalWorkoutPlan by mutableStateOf<Workout?>(null)
+    var originalWorkout by mutableStateOf<Workout?>(null)
 
     fun getEquipmentById(id: UUID): WeightLoadedEquipment? {
         return workoutStore.equipments.find { it.id == id }
@@ -128,6 +128,8 @@ open class WorkoutViewModel : ViewModel() {
 
     private var _backupProgress = mutableStateOf(0f)
     val backupProgress: State<Float> = _backupProgress
+
+    private var _selectedWorkoutId = mutableStateOf<UUID?>(null)
 
     // Create a function to update the backup progress
     fun setBackupProgress(progress: Float) {
@@ -329,8 +331,10 @@ open class WorkoutViewModel : ViewModel() {
     }
 
 
-    fun setWorkout(workout: Workout) {
-        _selectedWorkout.value = workout;
+    fun setSelectedWorkoutId(workoutId: UUID) {
+        val workout = workouts.value.find { it.id == workoutId }!!
+
+        _selectedWorkoutId.value = workoutId
 
         _hasExercises.value =
             selectedWorkout.value.workoutComponents.filter { it.enabled }.isNotEmpty()
@@ -410,8 +414,9 @@ open class WorkoutViewModel : ViewModel() {
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
                 _isPaused.value = false
+                _selectedWorkout.value = workouts.value.find { it.id == _selectedWorkoutId }!!
 
-                originalWorkoutPlan = _selectedWorkout.value.copy()
+                originalWorkout = _selectedWorkout.value.copy()
 
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
@@ -818,8 +823,9 @@ open class WorkoutViewModel : ViewModel() {
                 startWorkoutTime = null
                 currentWorkoutHistory = null
                 _isPaused.value = false
+                _selectedWorkout.value = workouts.value.find { it.id == _selectedWorkoutId }!!
 
-                originalWorkoutPlan = _selectedWorkout.value.copy()
+                originalWorkout = _selectedWorkout.value.copy()
 
                 loadWorkoutHistory()
                 generateProgressions()

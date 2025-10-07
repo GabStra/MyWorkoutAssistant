@@ -21,6 +21,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,11 +40,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.rememberNavController
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
-import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -58,7 +61,6 @@ import com.gabstra.myworkoutassistant.screens.LoadingScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.google.android.gms.wearable.DataClient
@@ -270,7 +272,7 @@ fun WearApp(
     onNavControllerAvailable: (NavHostController) -> Unit
 ) {
     MyWorkoutAssistantTheme {
-        val navController = rememberSwipeDismissableNavController()
+        val navController = rememberNavController()
         val localContext = LocalContext.current
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
@@ -307,7 +309,7 @@ fun WearApp(
             if(appViewModel.executeStartWorkout.value == null) return@LaunchedEffect
             val workoutStore = workoutStoreRepository.getWorkoutStore()
             val workout = workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }!!
-            appViewModel.setWorkout(workout)
+            appViewModel.setSelectedWorkoutId(workout.id)
             startDestination = Screen.WorkoutDetail.route
         }
 
@@ -333,12 +335,23 @@ fun WearApp(
         }else{
             val enableDimming by appViewModel.enableDimming
             KeepOn(appViewModel,enableDimming = enableDimming){
-                SwipeDismissableNavHost(
+                NavHost(
                     modifier = Modifier
                         .fillMaxSize(),
                     navController = navController,
                     startDestination = startDestination,
-                    userSwipeEnabled = false
+                    enterTransition = {
+                        fadeIn(animationSpec = tween(500))
+                    },
+                    exitTransition = {
+                        fadeOut(animationSpec = tween(500))
+                    },
+                    popEnterTransition= {
+                        fadeIn(animationSpec = tween(500))
+                    },
+                    popExitTransition = {
+                        fadeOut(animationSpec = tween(500))
+                    }
                 ) {
                     composable(Screen.WorkoutSelection.route) {
                         WorkoutSelectionScreen(alarmManager,dataClient,navController, appViewModel,hapticsViewModel, appHelper)

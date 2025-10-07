@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -29,8 +28,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
-
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -76,7 +73,7 @@ private fun ProgressionRow(
         modifier = modifier.height(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
+        ScalableText(
             modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
             text = info.exerciseName,
             style = itemStyle,
@@ -116,18 +113,16 @@ fun ProgressionSection(
                     .sumOf {
                         when (val setData = it.setData) {
                             is WeightSetData -> {
-                                Log.d("ProgressionSection", "WeightSetData: $setData")
                                 setData.volume
                             }
                             is BodyWeightSetData -> {
-                                Log.d("ProgressionSection", "BodyWeightSetData: $setData")
                                 setData.volume
                             }
                             else -> 0.0
                         }
                     }
 
-                val initialVolume = viewModel.originalWorkoutPlan?.let { originalWorkout ->
+                val initialVolume = viewModel.originalWorkout?.let { originalWorkout ->
                     val originalExercise = (originalWorkout.workoutComponents.filterIsInstance<Exercise>() +
                             originalWorkout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises })
                         .find { it.id == exerciseId } ?: return@let 0.0
@@ -140,14 +135,12 @@ fun ProgressionSection(
                         .sumOf { set ->
                             when (set) {
                                 is WeightSet -> {
-                                    Log.d("ProgressionSection", "WeightSet: $set")
                                     set.weight * set.reps
                                 }
                                 is BodyWeightSet -> {
                                     val bodyWeight = viewModel.bodyWeight.value
                                     val bodyWeightPercentage = originalExercise.bodyWeightPercentage ?: 100.0
                                     val relativeBodyWeight = bodyWeight * (bodyWeightPercentage / 100.0)
-                                    Log.d("ProgressionSection", "BodyWeightSet: $set, Relative Body Weight: $relativeBodyWeight")
                                     set.getWeight(relativeBodyWeight) * set.reps
                                 }
                                 else -> 0.0
@@ -155,10 +148,9 @@ fun ProgressionSection(
                         }
                 } ?: 0.0
 
-                Log.d("ProgressionSection", "Exercise: ${exercise.name}, Initial Volume: $initialVolume, Final Volume: $finalVolume")
+
 
                 if (initialVolume > 0 || finalVolume > 0) {
-
                     ProgressionInfo(exercise.name, initialVolume, finalVolume)
                 } else {
                     null

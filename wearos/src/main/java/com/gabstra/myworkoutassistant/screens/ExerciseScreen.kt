@@ -264,15 +264,22 @@ fun ExerciseScreen(
                             }
 
                             if (isSuperset) {
-                                val supersetExercises =
+                                val supersetExercises = remember(exerciseOrSupersetId){
                                     viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                                val supersetIndex = supersetExercises.indexOf(exercise)
+                                }
+                                val supersetIndex =
+                                    remember(
+                                        supersetExercises,
+                                        exercise
+                                    ) { supersetExercises.indexOf(exercise) }
 
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text = "${supersetIndex + 1}/${supersetExercises.size}",
-                                    style = captionStyle
-                                )
+                                Chip {
+                                    Text(
+                                        textAlign = TextAlign.Center,
+                                        text = "Exercise: ${supersetIndex + 1}/${supersetExercises.size}",
+                                        style = captionStyle
+                                    )
+                                }
                             }
 
                             if (exerciseSetIds.size > 1) {

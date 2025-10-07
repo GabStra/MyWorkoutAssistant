@@ -314,7 +314,7 @@ fun WorkoutSelectionScreen(
                             onItemClick = {
                                 hapticsViewModel.doGentleVibration()
                                 navController.navigate(Screen.WorkoutDetail.route)
-                                viewModel.setWorkout(workout)
+                                viewModel.setSelectedWorkoutId(workout.id)
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
