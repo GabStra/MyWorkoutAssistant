@@ -786,7 +786,10 @@ open class WorkoutViewModel : ViewModel() {
                 goToNextState()
 
                 if (isCurrentStateTheTargetResumeSet()){
-                    goToNextState()
+                    //go to the next set after the target set which is not rest
+                    do{
+                        goToNextState()
+                    } while (_workoutState.value is WorkoutState.Rest)
                     break
                 }
             }

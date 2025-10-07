@@ -314,7 +314,7 @@ fun EnduranceSetScreen (
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
                     ){
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onPrimary)
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }else{
                     IconButton(
@@ -326,7 +326,7 @@ fun EnduranceSetScreen (
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                     ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onPrimary)
+                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }

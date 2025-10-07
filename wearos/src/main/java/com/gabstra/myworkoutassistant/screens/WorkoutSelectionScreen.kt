@@ -24,7 +24,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -38,9 +37,13 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -57,8 +60,10 @@ import java.util.Calendar
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit) {
+fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit, modifier: Modifier, transformation: SurfaceTransformation) {
     ButtonWithText(
+        modifier = modifier,
+        transformation = transformation,
         text = workout.name,
         onClick = { onItemClick() }
     )
@@ -170,6 +175,7 @@ fun WorkoutSelectionScreen(
     val scope = rememberCoroutineScope()
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
+    val spec = rememberTransformationSpec()
 
     ScreenScaffold(
         scrollState = state,
@@ -179,30 +185,37 @@ fun WorkoutSelectionScreen(
             state = state,
         ) {
             item {
-                Text(
+                ListHeader(
                     modifier = Modifier
-                        .padding(vertical = 5.dp)
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClick = {
-                                hapticsViewModel.doHardVibration()
-                                Toast
-                                    .makeText(
-                                        context,
-                                        "Build version code: $versionName",
-                                        Toast.LENGTH_LONG
-                                    )
-                                    .show()
-                            },
-                            onDoubleClick = {
-                                showClearData = true
-                                hapticsViewModel.doHardVibrationTwice()
-                            }
-                        ),
-                    text = "My Workout Assistant",
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                )
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec).animateItem(),
+                    transformation = SurfaceTransformation(spec),
+                ) {
+                    Text(
+                        modifier = Modifier
+                            .combinedClickable(
+                                onClick = {},
+                                onLongClick = {
+                                    hapticsViewModel.doHardVibration()
+                                    Toast
+                                        .makeText(
+                                            context,
+                                            "Build version code: $versionName",
+                                            Toast.LENGTH_LONG
+                                        )
+                                        .show()
+                                },
+                                onDoubleClick = {
+                                    showClearData = true
+                                    hapticsViewModel.doHardVibrationTwice()
+                                }
+                            ),
+                        text = "My Workout Assistant",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+
+                }
             }
 
             if(!canScheduleExactAlarms){
@@ -217,7 +230,10 @@ fun WorkoutSelectionScreen(
 
                 item{
                     Button(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec).animateItem(),
+                        transformation = SurfaceTransformation(spec),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             val intent = Intent(
@@ -250,7 +266,9 @@ fun WorkoutSelectionScreen(
                     }
                     item{
                         Button(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth().animateItem(),
+                            transformation = SurfaceTransformation(spec),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 scope.launch {
@@ -291,11 +309,18 @@ fun WorkoutSelectionScreen(
                         items = sortedWorkouts,
                         key = { workout -> workout.id }
                     ) { workout ->
-                        WorkoutListItem(workout) {
-                            hapticsViewModel.doGentleVibration()
-                            navController.navigate(Screen.WorkoutDetail.route)
-                            viewModel.setWorkout(workout)
-                        }
+                        WorkoutListItem(
+                            workout = workout,
+                            onItemClick = {
+                                hapticsViewModel.doGentleVibration()
+                                navController.navigate(Screen.WorkoutDetail.route)
+                                viewModel.setWorkout(workout)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, spec).animateItem(),
+                            transformation = SurfaceTransformation(spec)
+                        )
                     }
                 }
             }

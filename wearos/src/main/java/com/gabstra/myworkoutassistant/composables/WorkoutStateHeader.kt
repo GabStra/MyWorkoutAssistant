@@ -80,7 +80,7 @@ fun WorkoutStateHeader(
         horizontalArrangement = Arrangement.Center
     ) {
         if(displayMode == 0){
-            Row{
+            Row(verticalAlignment = Alignment.CenterVertically){
                 CurrentBattery()
                 Spacer(modifier = Modifier.width(5.dp))
                 CurrentTime()
@@ -103,31 +103,31 @@ fun WorkoutStateHeader(
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
                     text = String.format("%02d", hours),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
                     text = ":",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center,
                 )
 
                 Text(
                     text = String.format("%02d", minutes),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
                     text = ":",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center,
                 )
 
                 Text(
                     text = String.format("%02d", seconds),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center
                 )
             }

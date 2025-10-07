@@ -1,28 +1,21 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.annotation.SuppressLint
+
+
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
@@ -43,6 +36,7 @@ private fun getBatteryPercentage(intent: Intent?): Int {
     }
 }
 
+@SuppressLint("DefaultLocale")
 @Composable
 fun CurrentBattery(){
     val context = LocalContext.current
@@ -66,23 +60,9 @@ fun CurrentBattery(){
         }
     }
 
-    Row(
-        modifier = Modifier.fillMaxHeight(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(1.dp)
-    ){
-        Icon(
-            modifier = Modifier.size(10.dp),
-            imageVector = Icons.Filled.BatteryStd,
-            contentDescription = "battery",
-        )
-
-        Text(
-            textAlign = TextAlign.Center,
-            text = String.format("%d%%", batteryPercentage),
-            style = captionStyle
-        )
-    }
-
-
+    Text(
+        textAlign = TextAlign.Center,
+        text = String.format("%d%%", batteryPercentage),
+        style = captionStyle
+    )
 }

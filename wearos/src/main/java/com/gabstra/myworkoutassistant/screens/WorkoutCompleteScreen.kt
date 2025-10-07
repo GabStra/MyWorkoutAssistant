@@ -131,13 +131,13 @@ fun WorkoutCompleteScreen(
             verticalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
             Text(
-                text = "COMPLETED",
+                text = "Completed",
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
             ScalableText(
                 text = workout.name,
-                style = MaterialTheme.typography.titleSmall
+                style = MaterialTheme.typography.titleLarge
             )
         }
         ProgressionSection(
@@ -146,7 +146,7 @@ fun WorkoutCompleteScreen(
         )
         Text(
             modifier = Modifier.padding(top = 5.dp),
-            text = "CLOSING IN: ${countDownTimer.intValue}",
+            text = "Closing in: ${countDownTimer.intValue}",
             style = headerStyle,
             textAlign = TextAlign.Center,
         )

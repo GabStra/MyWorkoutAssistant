@@ -36,7 +36,7 @@ fun PageNotes(notes: String) {
                 .verticalScroll(scrollState)
         ) {
             Text(
-                text = notes.ifEmpty { "NOT AVAILABLE" },
+                text = notes.ifEmpty { "Not available" },
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center

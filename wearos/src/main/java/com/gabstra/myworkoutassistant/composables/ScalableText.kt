@@ -39,7 +39,7 @@ fun ScalableText(
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
     fadeInMillis: Int = 250,
-    scaleDownOnly: Boolean = false
+    scaleDownOnly: Boolean = true
 ) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current

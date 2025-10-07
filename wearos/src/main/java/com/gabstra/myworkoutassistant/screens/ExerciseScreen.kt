@@ -29,7 +29,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -149,10 +148,18 @@ fun ExerciseScreen(
 
     val captionStyle = MaterialTheme.typography.bodyExtraSmall
 
-    val exerciseOrSupersetIds = remember { viewModel.setsByExerciseId.keys.toList().map { if(viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct() }
-    val exerciseOrSupersetId = remember(state.exerciseId) { if(viewModel.supersetIdByExerciseId.containsKey(state.exerciseId)) viewModel.supersetIdByExerciseId[state.exerciseId] else state.exerciseId }
-    val currentExerciseOrSupersetIndex = remember(exerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
-    val isSuperset =  remember(exerciseOrSupersetId) { viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId) }
+    val exerciseOrSupersetIds = remember {
+        viewModel.setsByExerciseId.keys.toList()
+            .map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
+            .distinct()
+    }
+    val exerciseOrSupersetId =
+        remember(state.exerciseId) { if (viewModel.supersetIdByExerciseId.containsKey(state.exerciseId)) viewModel.supersetIdByExerciseId[state.exerciseId] else state.exerciseId }
+    val currentExerciseOrSupersetIndex =
+        remember(exerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
+    val isSuperset = remember(exerciseOrSupersetId) {
+        viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId)
+    }
 
     var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
 
@@ -167,26 +174,21 @@ fun ExerciseScreen(
             viewModel.reEvaluateDimmingForCurrentState()
         }
 
-        if(pagerState.currentPage != exercisesPageIndex){
+        if (pagerState.currentPage != exercisesPageIndex) {
             selectedExerciseId = null
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 30.dp, start = 50.dp, end = 50.dp, bottom = 20.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedContent(
-            targetState = state,
-            transitionSpec = {
-                fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-            }, label = ""
-        ) { updatedState ->
-            val setIndex = remember(updatedState.set.id) { exerciseSetIds.indexOf(updatedState.set.id)  }
+    AnimatedContent(
+        targetState = state,
+        transitionSpec = {
+            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+        }, label = ""
+    ) { updatedState ->
+        val setIndex = remember(updatedState.set.id) { exerciseSetIds.indexOf(updatedState.set.id) }
 
-            val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit = { providedOnLongClick ->
+        val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
+            { providedOnLongClick ->
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -207,168 +209,173 @@ fun ExerciseScreen(
                             .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = exercise.name,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
-            ExerciseDetail(
-                updatedState = updatedState,
-                viewModel = viewModel,
-                onEditModeDisabled = { allowHorizontalScrolling = true },
-                onEditModeEnabled = {  allowHorizontalScrolling = false },
-                onTimerDisabled = { },
-                onTimerEnabled = { },
-                extraInfo = { _ ->
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Chip{
-                            val label = if (isSuperset) "Superset" else "Exercise"
-                            Text(
-                                textAlign = TextAlign.Center,
-                                text =  "${label}: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                                style = captionStyle,
-                            )
+        CustomHorizontalPager(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 25.dp, horizontal = 35.dp)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.changes.any { it.pressed }) {
+                                restartGoBack()
+                            }
                         }
+                    }
+                },
+            pagerState = pagerState,
+            userScrollEnabled = allowHorizontalScrolling,
+        ) { pageIndex ->
+            // Get the page type for the current index
+            val pageType = pageTypes[pageIndex]
 
-                        if(isSuperset){
-                            val supersetExercises = viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                            val supersetIndex = supersetExercises.indexOf(exercise)
-
-                            Text(
-                                textAlign = TextAlign.Center,
-                                text =  "${supersetIndex + 1}/${supersetExercises.size}",
-                                style = captionStyle
-                            )
-                        }
-
-                        if(exerciseSetIds.size > 1){
-                            Chip{
+            when (pageType) {
+                PageType.PLATES -> PagePlates(updatedState, equipment)
+                PageType.EXERCISE_DETAIL -> ExerciseDetail(
+                    updatedState = updatedState,
+                    viewModel = viewModel,
+                    onEditModeDisabled = { allowHorizontalScrolling = true },
+                    onEditModeEnabled = { allowHorizontalScrolling = false },
+                    onTimerDisabled = { },
+                    onTimerEnabled = { },
+                    extraInfo = { _ ->
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(
+                                5.dp,
+                                Alignment.CenterHorizontally
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Chip {
+                                val label = if (isSuperset) "Superset" else "Exercise"
                                 Text(
                                     textAlign = TextAlign.Center,
-                                    text =  "Set: ${setIndex + 1}/${exerciseSetIds.size}",
+                                    text = "${label}: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
                                     style = captionStyle,
                                 )
                             }
-                        }
 
-                        if(updatedState.isUnilateral){
-                            Chip {
+                            if (isSuperset) {
+                                val supersetExercises =
+                                    viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
+                                val supersetIndex = supersetExercises.indexOf(exercise)
+
                                 Text(
                                     textAlign = TextAlign.Center,
-                                    text = "Un",
+                                    text = "${supersetIndex + 1}/${supersetExercises.size}",
                                     style = captionStyle
                                 )
                             }
-                        }
 
-                        if(updatedState.isWarmupSet){
-                            Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                Text(
-                                    text = "Warm-up",
-                                    style = captionStyle,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
+                            if (exerciseSetIds.size > 1) {
+                                Chip {
+                                    Text(
+                                        textAlign = TextAlign.Center,
+                                        text = "Set: ${setIndex + 1}/${exerciseSetIds.size}",
+                                        style = captionStyle,
+                                    )
+                                }
+                            }
+
+                            if (updatedState.isUnilateral) {
+                                Chip {
+                                    Text(
+                                        textAlign = TextAlign.Center,
+                                        text = "Un",
+                                        style = captionStyle
+                                    )
+                                }
+                            }
+
+                            if (updatedState.isWarmupSet) {
+                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
+                                    Text(
+                                        text = "Warm-up",
+                                        style = captionStyle,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
                             }
                         }
+                    },
+                    exerciseTitleComposable = exerciseTitleComposable,
+                    hapticsViewModel = hapticsViewModel,
+                    customComponentWrapper = { content ->
+                        content()
                     }
-                },
-                exerciseTitleComposable = exerciseTitleComposable,
-                hapticsViewModel = hapticsViewModel,
-                customComponentWrapper = { content ->
-                    CustomHorizontalPager(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        if (event.changes.any { it.pressed }) {
-                                            restartGoBack()
-                                        }
-                                    }
-                                }
-                            },
-                        pagerState = pagerState,
-                        userScrollEnabled = allowHorizontalScrolling,
-                    ) { pageIndex ->
-                        // Get the page type for the current index
-                        val pageType = pageTypes[pageIndex]
+                )
 
+                PageType.EXERCISES -> PageExercises(
+                    updatedState,
+                    viewModel, hapticsViewModel,
+                    exercise,
+                    onExerciseSelected = {
+                        selectedExerciseId = it
+                    })
 
-                        when (pageType) {
-                            PageType.PLATES -> PagePlates(updatedState, equipment)
-                            PageType.EXERCISE_DETAIL -> content()
-                            PageType.EXERCISES -> PageExercises(
-                                updatedState,
-                                viewModel, hapticsViewModel,
-                                exercise,
-                                onExerciseSelected = {
-                                selectedExerciseId = it
-                            })
-                            PageType.NOTES -> PageNotes(exercise.notes)
-                            PageType.BUTTONS -> PageButtons(updatedState, viewModel,hapticsViewModel)
-                        }
-                    }
-                }
-            )
-
-            CustomDialogYesOnLongPress(
-                show = showNextDialog,
-                title =  if(updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Switch side" else "Complete Set",
-                message = "Do you want to proceed?",
-                handleYesClick = {
-
-                    if(updatedState.intraSetTotal != null){
-                        updatedState.intraSetCounter++
-                    }
-
-                    hapticsViewModel.doGentleVibration()
-                    viewModel.storeSetData()
-                    viewModel.pushAndStoreWorkoutData(false, context) {
-                        viewModel.goToNextState()
-                        viewModel.lightScreenUp()
-                    }
-
-                    viewModel.closeCustomDialog()
-                },
-                handleNoClick = {
-                    viewModel.closeCustomDialog()
-                    hapticsViewModel.doGentleVibration()
-                },
-                closeTimerInMillis = 5000,
-                handleOnAutomaticClose = {
-                    viewModel.closeCustomDialog()
-                },
-                holdTimeInMillis = 1000,
-                onVisibilityChange = { isVisible ->
-                    if (isVisible) {
-                        viewModel.setDimming(false)
-                    } else {
-                        viewModel.reEvaluateDimmingForCurrentState()
-                    }
-                }
-            )
+                PageType.NOTES -> PageNotes(exercise.notes)
+                PageType.BUTTONS -> PageButtons(updatedState, viewModel, hapticsViewModel)
+            }
         }
-    }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        ExerciseIndicator(
-            viewModel,
-            state,
-            selectedExerciseId
+        CustomDialogYesOnLongPress(
+            show = showNextDialog,
+            title = if (updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Switch side" else "Complete Set",
+            message = "Do you want to proceed?",
+            handleYesClick = {
+
+                if (updatedState.intraSetTotal != null) {
+                    updatedState.intraSetCounter++
+                }
+
+                hapticsViewModel.doGentleVibration()
+                viewModel.storeSetData()
+                viewModel.pushAndStoreWorkoutData(false, context) {
+                    viewModel.goToNextState()
+                    viewModel.lightScreenUp()
+                }
+
+                viewModel.closeCustomDialog()
+            },
+            handleNoClick = {
+                viewModel.closeCustomDialog()
+                hapticsViewModel.doGentleVibration()
+            },
+            closeTimerInMillis = 5000,
+            handleOnAutomaticClose = {
+                viewModel.closeCustomDialog()
+            },
+            holdTimeInMillis = 1000,
+            onVisibilityChange = { isVisible ->
+                if (isVisible) {
+                    viewModel.setDimming(false)
+                } else {
+                    viewModel.reEvaluateDimmingForCurrentState()
+                }
+            }
         )
 
-        hearthRateChart()
+        Box(
+            modifier = Modifier
+                .fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            ExerciseIndicator(
+                viewModel,
+                updatedState,
+                selectedExerciseId
+            )
+
+            hearthRateChart()
+        }
     }
 
     DisposableEffect(Unit) {

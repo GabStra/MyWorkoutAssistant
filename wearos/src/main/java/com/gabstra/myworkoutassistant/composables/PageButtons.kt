@@ -1,12 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -17,15 +13,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -58,106 +58,111 @@ fun PageButtons(
         scrollState.scrollTo(0)
     }
 
-    Column(
-    modifier = Modifier
-        .fillMaxSize(),
-        verticalArrangement = Arrangement.Center
-    ){
-        Column(
-            modifier = Modifier
-                .verticalColumnScrollbar(
-                    scrollState = scrollState,
-                    scrollBarColor = LightGray
-                )
-                .padding(horizontal = 15.dp)
-                .verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+    val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
+    val spec = rememberTransformationSpec()
+
+    ScreenScaffold(
+        modifier = Modifier.fillMaxSize(),
+        scrollState = state,
+    ) { contentPadding ->
+        TransformingLazyColumn(
+            contentPadding = contentPadding,
+            state = state,
         ) {
-            ButtonWithText(
-                text = "Back",
-                onClick = {
-                    hapticsViewModel.doGentleVibration()
-                    showGoBackDialog = true
-                },
-                enabled = !isHistoryEmpty,
-            )
-            val dimmingEnabled by viewModel.currentScreenDimmingState
-
-            if (dimmingEnabled){
-                OutlinedButton(
+            item {
+                ButtonWithText(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec).animateItem(),
+                    transformation = SurfaceTransformation(spec),
+                    text = "Back",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
-                        viewModel.toggleScreenDimming()
-                    }
-                ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "Disable Dimming",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
+                        showGoBackDialog = true
+                    },
+                    enabled = !isHistoryEmpty,
+                )
+            }
+            item{
+                val dimmingEnabled by viewModel.currentScreenDimmingState
 
-            }else{
-                Button(
-                    onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.toggleScreenDimming()
+                if (dimmingEnabled){
+                    OutlinedButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec).animateItem(),
+                        transformation = SurfaceTransformation(spec),
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.toggleScreenDimming()
+                        }
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Disable Dimming",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                     }
-                ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "Enable Dimming",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
+
+                }else{
+                    Button(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec).animateItem(),
+                        transformation = SurfaceTransformation(spec),
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.toggleScreenDimming()
+                        }
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Enable Dimming",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
                 }
             }
 
             if (isMovementSet && isLastSet) {
-                ButtonWithText(
-                    text = "Add Rest Pause Set",
-                    onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.storeSetData()
-                        viewModel.pushAndStoreWorkoutData(false, context) {
-                            viewModel.addNewRestPauseSet()
+                item{
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec).animateItem(),
+                        transformation = SurfaceTransformation(spec),
+                        text = "Add Rest Pause Set",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.storeSetData()
+                            viewModel.pushAndStoreWorkoutData(false, context) {
+                                viewModel.addNewRestPauseSet()
+                            }
                         }
-                    }
-                )
+                    )
+                }
+
             }
             if (isMovementSet) {
-                ButtonWithText(
-                    text = "Add Set",
-                    onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.storeSetData()
-                        viewModel.pushAndStoreWorkoutData(false, context) {
-                            viewModel.addNewSetStandard()
-                        }
-                    }
-                )
-            }
-            /*        if (nextWorkoutState !is WorkoutState.Rest) {
-                        ButtonWithText(
-                            text = "Add Rest",
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                viewModel.storeSetData()
-                                viewModel.pushAndStoreWorkoutData(false, context) {
-                                    viewModel.addNewRest()
-                                }
+                item{
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec).animateItem(),
+                        transformation = SurfaceTransformation(spec),
+                        text = "Add Set",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.storeSetData()
+                            viewModel.pushAndStoreWorkoutData(false, context) {
+                                viewModel.addNewSetStandard()
                             }
-                        )
-                    }*/
-
-/*            ButtonWithText(
-                text = "Go to Next Exercise",
-                onClick = {
-                    hapticsViewModel.doGentleVibration()
-                    viewModel.goToNextExercise()
+                        }
+                    )
                 }
-            )*/
+            }
         }
     }
 

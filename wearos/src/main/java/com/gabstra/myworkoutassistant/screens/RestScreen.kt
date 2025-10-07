@@ -44,9 +44,7 @@ import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -283,7 +281,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 35.dp, start = 40.dp, end = 40.dp, bottom = 35.dp),
+                    .padding(vertical = 20.dp, horizontal = 35.dp),
                 contentAlignment = Alignment.Center
             ) {
                 ControlButtonsVertical(
@@ -305,36 +303,30 @@ fun RestScreen(
                 )
             }
         } else {
-            Box(
+            CustomHorizontalPager(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 30.dp, start = 50.dp, end = 50.dp, bottom = 20.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                CustomHorizontalPager(
-                    modifier = Modifier
-                        .fillMaxSize(),
-                    pagerState = pagerState,
-                ) { pageIndex ->
-                    val pageType = pageTypes[pageIndex]
+                    .padding(vertical = 25.dp, horizontal = 35.dp),
+                pagerState = pagerState,
+            ) { pageIndex ->
+                val pageType = pageTypes[pageIndex]
 
-                    when (pageType) {
-                        PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
-                        PageType.EXERCISE_DETAIL -> {}
-                        PageType.EXERCISES -> {
-                            PageExercises(
-                                state.nextStateSets.first(),
-                                viewModel,
-                                hapticsViewModel,
-                                exercise,
-                                onExerciseSelected = {
-                                    selectedExerciseId = it
-                                }
-                            )
-                        }
-                        PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel,hapticsViewModel)
-                        PageType.NOTES -> TODO()
+                when (pageType) {
+                    PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
+                    PageType.EXERCISE_DETAIL -> {}
+                    PageType.EXERCISES -> {
+                        PageExercises(
+                            state.nextStateSets.first(),
+                            viewModel,
+                            hapticsViewModel,
+                            exercise,
+                            onExerciseSelected = {
+                                selectedExerciseId = it
+                            }
+                        )
                     }
+                    PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel,hapticsViewModel)
+                    PageType.NOTES -> TODO()
                 }
             }
         }
@@ -368,9 +360,8 @@ fun RestScreen(
 
         textComposable(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 5.dp),
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                .align(Alignment.BottomCenter),
+            style = MaterialTheme.typography.labelMedium
         )
     }
 

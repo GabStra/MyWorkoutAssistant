@@ -7,17 +7,21 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 
 @Composable
 fun ButtonWithText(
+    modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
     text: String,
     enabled: Boolean = true,
     style: TextStyle = MaterialTheme.typography.bodyLarge,
     onClick: () -> Unit
 ) {
     OutlinedButton(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
+        transformation = transformation,
         enabled = enabled,
         onClick = onClick,
     ) {
