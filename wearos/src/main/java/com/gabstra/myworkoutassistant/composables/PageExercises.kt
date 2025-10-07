@@ -28,7 +28,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
@@ -174,11 +173,12 @@ fun PageExercises(
                         }
 
                         if(currentStateSet.isUnilateral){
-                            Chip {
+                            Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
                                 Text(
                                     textAlign = TextAlign.Center,
                                     text = "Unilateral",
-                                    style = captionStyle
+                                    style = captionStyle,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -188,7 +188,7 @@ fun PageExercises(
                                 Text(
                                     text = "Warm-up",
                                     style = captionStyle,
-                                    color = MaterialTheme.colorScheme.background
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -204,7 +204,7 @@ fun PageExercises(
                     currentSet = currentStateSet.set,
                     customColor = when {
                         selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MediumLightGray
+                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
                         else -> null
                     },
                     overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {

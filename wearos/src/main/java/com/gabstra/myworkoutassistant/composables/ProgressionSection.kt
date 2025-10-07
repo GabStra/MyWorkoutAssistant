@@ -30,7 +30,7 @@ import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -69,7 +69,7 @@ private fun ProgressionRow(
     val progressionColor = when {
         progression > 0 -> Green
         progression < 0 -> Red
-        else -> LightGray
+        else -> MaterialTheme.colorScheme.onBackground
     }
 
     Row(
@@ -81,7 +81,7 @@ private fun ProgressionRow(
             text = info.exerciseName,
             style = itemStyle,
             textAlign = TextAlign.Center,
-            color = LightGray
+            color = MaterialTheme.colorScheme.onBackground
         )
         ScalableText(
             modifier = Modifier.weight(1f),
@@ -212,7 +212,7 @@ fun ProgressionSection(
                         .fillMaxWidth()
                         .verticalColumnScrollbar(
                             scrollState = scrollState,
-                            scrollBarColor = LightGray,
+                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
                             enableTopFade = false,
                             enableBottomFade = false
                         )
@@ -220,7 +220,7 @@ fun ProgressionSection(
                 ) {
                     progressionData?.forEachIndexed { index, info ->
                         val backgroundColor = if (index % 2 == 0) {
-                            MediumDarkGray
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                         } else {
                             Color.Transparent
                         }

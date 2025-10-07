@@ -8,8 +8,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.composables.ProgressIndicatorSegment
@@ -77,7 +75,7 @@ fun ExerciseIndicator(
                         paddingAngle = 0f,
                         startAngle = startAngle,
                         endAngle = endAngle,
-                        trackColor = MediumDarkGray
+                        trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                     )
                 }
             }else{
@@ -95,7 +93,7 @@ fun ExerciseIndicator(
                 // Create a single segment for each indicator
                 val trackSegment = ProgressIndicatorSegment(
                     weight = 1f,
-                    indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else LightGray
+                    indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
                 )
 
                 // Calculate angle for each indicator to space them evenly
@@ -112,7 +110,7 @@ fun ExerciseIndicator(
                     paddingAngle = 0f,
                     startAngle = startAngle,
                     endAngle = endAngle,
-                    trackColor = MediumDarkGray
+                    trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                 )
             }
         }
@@ -136,14 +134,14 @@ fun ExerciseIndicator(
             val startAngle = startingAngle + customExerciseOrSupersetIndex * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)
             val middleAngle = startAngle + (subSegmentArcAngle / 2f)
 
-            RotatingIndicator(middleAngle, LightGray)
+            RotatingIndicator(middleAngle, MaterialTheme.colorScheme.onBackground)
 
         }else{
             val customExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(exerciseId)
             val startAngle = startingAngle + customExerciseOrSupersetIndex * (segmentArcAngle + 2f)
             val middleAngle = startAngle + (segmentArcAngle / 2f)
 
-            RotatingIndicator(middleAngle, LightGray)
+            RotatingIndicator(middleAngle, MaterialTheme.colorScheme.onBackground)
         }
     }
 
@@ -213,7 +211,7 @@ fun SetIndicator(
             // Create a single segment for each indicator
             val trackSegment = ProgressIndicatorSegment(
                 weight = 1f,
-                indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else LightGray
+                indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
             )
 
             // Calculate angle for each indicator to space them evenly
@@ -230,7 +228,7 @@ fun SetIndicator(
                 paddingAngle = 0f,
                 startAngle = startAngle,
                 endAngle = endAngle,
-                trackColor = MediumDarkGray
+                trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
             )
         }
     }
@@ -238,5 +236,5 @@ fun SetIndicator(
     val startAngle = startingAngle + currentSetIndex * (segmentArcAngle + 2f)
     val middleAngle = startAngle + (segmentArcAngle / 2f)
 
-    RotatingIndicator(middleAngle, LightGray)
+    RotatingIndicator(middleAngle, MaterialTheme.colorScheme.onBackground)
 }

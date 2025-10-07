@@ -25,15 +25,15 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.LocalTextStyle
+import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.shared.LightGray
 import kotlin.math.abs
 
 @Composable
 fun ScalableText(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = LightGray,
+    color: Color = MaterialTheme.colorScheme.onBackground,
     style: TextStyle = LocalTextStyle.current,
     textAlign: TextAlign? = TextAlign.Center,
     minTextSize: TextUnit = 12.sp,

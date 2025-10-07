@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,7 +19,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -31,7 +29,6 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -251,7 +248,7 @@ fun WeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
-                currentSetData.actualReps == previousSetData.actualReps -> LightGray
+                currentSetData.actualReps == previousSetData.actualReps -> MaterialTheme.colorScheme.onBackground
                 currentSetData.actualReps < previousSetData.actualReps -> Red
                 else -> Green
             }
@@ -300,7 +297,7 @@ fun WeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
-                currentSetData.actualWeight == previousSetData.actualWeight -> LightGray
+                currentSetData.actualWeight == previousSetData.actualWeight -> MaterialTheme.colorScheme.onBackground
                 currentSetData.actualWeight < previousSetData.actualWeight -> Red
                 else -> Green
             }
@@ -337,7 +334,7 @@ fun WeightSetScreen(
                         text = "WEIGHT (KG)",
                         style = headerStyle,
                         textAlign = TextAlign.Center,
-                        color =  LightGray,
+                        color =  MaterialTheme.colorScheme.onBackground,
                     )
                     WeightRow(modifier = Modifier.weight(1f), style = itemStyle)
                 }
@@ -351,7 +348,7 @@ fun WeightSetScreen(
                         text = "REPS",
                         style = headerStyle,
                         textAlign = TextAlign.Center,
-                        color =  LightGray,
+                        color =  MaterialTheme.colorScheme.onBackground,
                     )
                     RepsRow(modifier = Modifier.weight(1f), style = itemStyle)
                 }

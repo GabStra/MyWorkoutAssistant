@@ -37,7 +37,6 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -235,7 +234,7 @@ fun CustomDialogYesOnLongPress(
                         //.graphicsLayer(alpha = progressBarAlpha),
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colorScheme.primary,
-                    trackColor = MediumDarkGray
+                    trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                 )
             }
         }

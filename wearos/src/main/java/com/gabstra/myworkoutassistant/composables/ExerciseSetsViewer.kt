@@ -42,10 +42,6 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
-
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -64,7 +60,7 @@ fun SetTableRow(
     setState: WorkoutState.Set,
     index: Int?,
     isCurrentSet: Boolean,
-    color: Color = LightGray,
+    color: Color = MaterialTheme.colorScheme.onBackground,
 ){
     val density = LocalDensity.current.density
     val triangleSize = 6f
@@ -74,6 +70,8 @@ fun SetTableRow(
     val itemStyle = remember(typography) { typography.bodyMedium.copy(fontWeight = FontWeight.Bold) }
 
     val equipment = setState.equipment
+
+    val indicatorColor = MaterialTheme.colorScheme.onBackground
 
     val indicatorComposable = @Composable {
         Box(modifier= Modifier.width(18.dp), contentAlignment = Alignment.Center){
@@ -103,7 +101,7 @@ fun SetTableRow(
                     // Draw filled white triangle
                     drawPath(
                         path = trianglePath,
-                        color = LightGray
+                        color = indicatorColor
                     )
                 }
             }
@@ -283,8 +281,8 @@ fun ExerciseSetsViewer(
             color = customColor
                 ?: when {
                     rowIndex < setIndex -> MaterialTheme.colorScheme.primary // MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
-                    rowIndex == setIndex -> LightGray
-                    else -> MediumLightGray
+                    rowIndex == setIndex -> MaterialTheme.colorScheme.onBackground
+                    else -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
                 }
         )
     }
@@ -334,7 +332,7 @@ fun ExerciseSetsViewer(
                         .fillMaxWidth()
                         .verticalColumnScrollbar(
                             scrollState = scrollState,
-                            scrollBarColor = LightGray,
+                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
                             enableTopFade = false,
                             enableBottomFade = false
                         )
@@ -342,7 +340,7 @@ fun ExerciseSetsViewer(
                 ) {
                     exerciseSetStates.forEachIndexed { index, nextSetState ->
                         val backgroundColor = if (index % 2 == 0) {
-                            MediumDarkGray
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                         } else {
                             Color.Transparent
                         }
@@ -378,7 +376,7 @@ fun ExerciseSetsViewer(
                         .fillMaxWidth()
                         .verticalColumnScrollbar(
                             scrollState = scrollState,
-                            scrollBarColor = LightGray,
+                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
                             enableTopFade = false,
                             enableBottomFade = false
                         )
@@ -386,7 +384,7 @@ fun ExerciseSetsViewer(
                 ) {
                     exerciseSetStates.forEachIndexed { index, nextSetState ->
                         val backgroundColor = if (index % 2 == 0) {
-                            MediumDarkGray
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                         } else {
                             Color.Transparent
                         }

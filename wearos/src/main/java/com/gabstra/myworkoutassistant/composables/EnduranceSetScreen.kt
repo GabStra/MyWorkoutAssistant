@@ -183,7 +183,7 @@ fun EnduranceSetScreen (
                     ),
                 seconds = (if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000,
                 style = itemStyle,
-                color = if(isOverLimit) Green else if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                color = if(isOverLimit) Green else if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
             )
         }
     }

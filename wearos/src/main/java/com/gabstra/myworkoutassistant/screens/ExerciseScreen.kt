@@ -286,11 +286,12 @@ fun ExerciseScreen(
                             }
 
                             if (updatedState.isUnilateral) {
-                                Chip {
+                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
                                     Text(
                                         textAlign = TextAlign.Center,
-                                        text = "Un",
-                                        style = captionStyle
+                                        text = "Unilateral",
+                                        style = captionStyle,
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
@@ -300,7 +301,7 @@ fun ExerciseScreen(
                                     Text(
                                         text = "Warm-up",
                                         style = captionStyle,
-                                        color = MaterialTheme.colorScheme.onPrimary
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }

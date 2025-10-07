@@ -358,7 +358,7 @@ fun WearApp(
                             modifier = Modifier.fillMaxSize(),
                             strokeWidth = 4.dp,
                             indicatorColor = MaterialTheme.colorScheme.primary,
-                            trackColor = MediumDarkGray
+                            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                         )
 
                         LoadingScreen(appViewModel,"Syncing with phone")

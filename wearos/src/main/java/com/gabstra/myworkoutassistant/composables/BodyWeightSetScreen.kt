@@ -28,7 +28,6 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -230,7 +229,7 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor  = when {
-                currentSetData.actualReps == previousSetData.actualReps -> LightGray
+                currentSetData.actualReps == previousSetData.actualReps -> MaterialTheme.colorScheme.onBackground
                 currentSetData.actualReps < previousSetData.actualReps  -> Red
                 else -> Green
             }
@@ -278,7 +277,7 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
-                currentSetData.additionalWeight == previousSetData.additionalWeight -> LightGray
+                currentSetData.additionalWeight == previousSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
                 currentSetData.additionalWeight < previousSetData.additionalWeight  -> Red
                 else -> Green
             }
@@ -319,7 +318,7 @@ fun BodyWeightSetScreen(
                             text = "WEIGHT (KG)",
                             style = headerStyle,
                             textAlign = TextAlign.Center,
-                            color =  LightGray,
+                            color =  MaterialTheme.colorScheme.onBackground,
                         )
                         WeightRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
                     }
@@ -333,7 +332,7 @@ fun BodyWeightSetScreen(
                         text = "REPS",
                         style = headerStyle,
                         textAlign = TextAlign.Center,
-                        color =  LightGray,
+                        color =  MaterialTheme.colorScheme.onBackground,
                     )
                     RepsRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
                 }

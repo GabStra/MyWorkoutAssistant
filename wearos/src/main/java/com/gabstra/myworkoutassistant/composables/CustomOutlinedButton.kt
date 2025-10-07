@@ -19,7 +19,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import androidx.wear.compose.material3.MaterialTheme
+
 
 @Composable
 fun CustomOutlinedButton(
@@ -30,7 +31,7 @@ fun CustomOutlinedButton(
     enabled: Boolean = true
 ) {
     val backgroundOnPress = color.copy(alpha = 0.15f)
-    val disabledColor = MediumDarkGray
+    val disabledColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
     val interactionSource = remember { MutableInteractionSource() }
     val interactions = interactionSource.interactions
     val isPressed = if (enabled) interactions.collectAsState(initial = null).value is PressInteraction.Press else false

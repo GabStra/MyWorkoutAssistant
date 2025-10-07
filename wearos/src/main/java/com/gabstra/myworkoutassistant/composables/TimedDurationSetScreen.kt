@@ -237,7 +237,7 @@ fun TimedDurationSetScreen(
                     ),
                 seconds = currentMillis / 1000,
                 style = itemStyle,
-                color =  if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                color =  if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
             )
         }
     }

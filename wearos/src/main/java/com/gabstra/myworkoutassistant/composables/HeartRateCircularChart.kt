@@ -49,10 +49,6 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -142,21 +138,21 @@ fun HrStatusDialog(
                         PulsingHeartWithBpm(
                             modifier = Modifier.padding(bottom = 10.dp),
                             bpm = hr,
-                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone],
+                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else colorsByZone[currentZone],
                             size = 30.dp
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "$hr",
                             style =  MaterialTheme.typography.numeralMedium,
-                            color = if (hr == 0) MediumLightGray else LightGray
+                            color = if (hr == 0) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             modifier = Modifier.padding(bottom = 5.dp),
                             text = "bpm",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (hr == 0) MediumLightGray else LightGray
+                            color = if (hr == 0) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onBackground
                         )
                     }
                 }
@@ -313,20 +309,20 @@ private fun HeartRateDisplay(
 
         PulsingHeartWithBpm(
             bpm = bpm,
-            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumLightGray else colorsByZone[currentZone]
+            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
             style = MaterialTheme.typography.labelMedium,
-            color = if (bpm == 0) MediumLightGray else LightGray
+            color = if (bpm == 0) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.width(2.5.dp))
         if(bpm != 0 && displayMode == 0){
             Text(
                 text = "bpm",
                 style = MaterialTheme.typography.bodyExtraSmall,
-                color = LightGray
+                color = MaterialTheme.colorScheme.onBackground
             )
         }
 
@@ -383,7 +379,7 @@ private fun ZoneSegment(
         paddingAngle = 0f,
         startAngle = startAngle,
         endAngle = endAngle,
-        trackColor = MediumDarkGray
+        trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
     )
 }
 
@@ -546,8 +542,8 @@ private fun HeartRateView(
 
             var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MediumGray)
-            RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MediumGray)
+            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f))
+            RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f))
         }
     }
 }

@@ -63,7 +63,7 @@ fun WeightInfoDialog(
                     modifier = Modifier
                         .verticalColumnScrollbar(
                             scrollState = scrollState,
-                            scrollBarColor = LightGray
+                            scrollBarColor = MaterialTheme.colorScheme.onBackground
                         )
                         .verticalScroll(scrollState),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -84,7 +84,7 @@ fun WeightInfoDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 text = equipment.type.toDisplayText().uppercase(),
                                 style = itemStyle,
-                                color =  LightGray,
+                                color =  MaterialTheme.colorScheme.onBackground,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -102,7 +102,7 @@ fun WeightInfoDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 text =  "${equipment.formatWeight(weight)} (TOT: ${weightText})",
                                 style = itemStyle,
-                                color =  LightGray,
+                                color =  MaterialTheme.colorScheme.onBackground,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -121,7 +121,7 @@ fun WeightInfoDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 text = "-",
                                 style = itemStyle,
-                                color =  LightGray,
+                                color =  MaterialTheme.colorScheme.onBackground,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -139,7 +139,7 @@ fun WeightInfoDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 text = weightText,
                                 style = itemStyle,
-                                color =  LightGray,
+                                color =  MaterialTheme.colorScheme.onBackground,
                                 textAlign = TextAlign.Center
                             )
                         }

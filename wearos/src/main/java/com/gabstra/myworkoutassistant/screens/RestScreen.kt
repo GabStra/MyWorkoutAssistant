@@ -44,7 +44,6 @@ import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -347,7 +346,8 @@ fun RestScreen(
         SegmentedProgressIndicator(
             trackSegments = listOf(ProgressIndicatorSegment(
                 weight = 1f,
-                indicatorColor = MaterialTheme.colorScheme.primary
+                indicatorColor = MaterialTheme.colorScheme.primary,
+
             )),
             progress = indicatorProgress,
             modifier = Modifier.fillMaxSize(),
@@ -355,7 +355,7 @@ fun RestScreen(
             paddingAngle = 0f,
             startAngle = 130f,
             endAngle = 230f,
-            trackColor = MediumDarkGray
+            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
         )
 
         textComposable(

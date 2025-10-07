@@ -21,8 +21,6 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
@@ -57,7 +55,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
-                    color = LightGray
+                    color = MaterialTheme.colorScheme.onBackground
                 )
             } else {
                 val headerStyle = MaterialTheme.typography.bodyExtraSmall
@@ -76,7 +74,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             text = "PLATES (KG)",
                             style = headerStyle,
                             textAlign = TextAlign.Center,
-                            color = LightGray
+                            color = MaterialTheme.colorScheme.onBackground
                         )
                     }
 
@@ -88,7 +86,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                 .fillMaxWidth()
                                 .verticalColumnScrollbar(
                                     scrollState = scrollState,
-                                    scrollBarColor = LightGray
+                                    scrollBarColor = MaterialTheme.colorScheme.onBackground
                                 )
                                 .padding(horizontal = 10.dp)
                                 .verticalScroll(scrollState),
@@ -97,7 +95,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
                                 val backgroundColor = if (index % 2 == 0) {
-                                    MediumDarkGray
+                                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                                 } else {
                                     Color.Transparent
                                 }
@@ -126,13 +124,13 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                                 text = actionText,
                                                 style = style,
                                                 textAlign = TextAlign.End,
-                                                color = LightGray
+                                                color = MaterialTheme.colorScheme.onBackground
                                             )
                                             Text(
                                                 text = weightText,
                                                 style = style,
                                                 textAlign = TextAlign.Start,
-                                                color = LightGray
+                                                color = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                     }
