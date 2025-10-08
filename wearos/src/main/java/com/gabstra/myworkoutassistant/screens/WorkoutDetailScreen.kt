@@ -46,7 +46,10 @@ fun WorkoutDetailScreen(
     hapticsViewModel: HapticsViewModel,
     hrViewModel : SensorDataViewModel
 ) {
-    val workout by viewModel.selectedWorkout
+    val selectedWorkoutId by viewModel.selectedWorkoutId
+    val workouts by viewModel.workouts.collectAsState()
+
+    val workout = remember(selectedWorkoutId,workouts) { workouts.find { it.id == selectedWorkoutId }!! }
     val context = LocalContext.current
 
     var showDeleteDialog by remember { mutableStateOf(false) }

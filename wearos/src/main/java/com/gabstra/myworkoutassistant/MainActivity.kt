@@ -41,10 +41,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.navigation.composable
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -220,12 +220,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             WearApp(dataClient, appViewModel,hapticsViewModel, heartRateChangeViewModel, appHelper, alarmManager, workoutStoreRepository){
-                navController ->
-                    if(::myReceiver.isInitialized) return@WearApp
-                    myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
-                    val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
-                    registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
-                }
+                    navController ->
+                if(::myReceiver.isInitialized) return@WearApp
+                myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository,this)
+                val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
+                registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
+            }
         }
     }
 

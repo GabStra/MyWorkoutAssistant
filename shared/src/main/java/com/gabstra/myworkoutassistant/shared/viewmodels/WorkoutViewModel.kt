@@ -130,6 +130,7 @@ open class WorkoutViewModel : ViewModel() {
     val backupProgress: State<Float> = _backupProgress
 
     private var _selectedWorkoutId = mutableStateOf<UUID?>(null)
+    val selectedWorkoutId: State<UUID?> get() = _selectedWorkoutId
 
     // Create a function to update the backup progress
     fun setBackupProgress(progress: Float) {
@@ -414,7 +415,7 @@ open class WorkoutViewModel : ViewModel() {
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
                 _isPaused.value = false
-                _selectedWorkout.value = workouts.value.find { it.id == _selectedWorkoutId }!!
+                _selectedWorkout.value = _workouts.value.find { it.id == _selectedWorkoutId.value }!!
 
                 originalWorkout = _selectedWorkout.value.copy()
 
@@ -823,7 +824,8 @@ open class WorkoutViewModel : ViewModel() {
                 startWorkoutTime = null
                 currentWorkoutHistory = null
                 _isPaused.value = false
-                _selectedWorkout.value = workouts.value.find { it.id == _selectedWorkoutId }!!
+
+                _selectedWorkout.value = _workouts.value.find { it.id == _selectedWorkoutId.value }!!
 
                 originalWorkout = _selectedWorkout.value.copy()
 
