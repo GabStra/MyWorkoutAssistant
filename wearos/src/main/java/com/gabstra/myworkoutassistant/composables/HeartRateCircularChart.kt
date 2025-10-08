@@ -314,7 +314,7 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             color = if (bpm == 0) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.width(2.5.dp))

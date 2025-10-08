@@ -61,7 +61,7 @@ fun ExerciseIndicator(
                     // Create a single segment for each indicator
                     val trackSegment = ProgressIndicatorSegment(
                         weight = 1f,
-                        indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                        indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
                     )
 
                     val startAngle = startingAngle + index * (segmentArcAngle + 2f) + subIndex * (subSegmentArcAngle + 1f)

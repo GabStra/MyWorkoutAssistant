@@ -19,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -47,8 +46,6 @@ private fun ProgressionRow(
     info: ProgressionInfo,
     modifier: Modifier = Modifier
 ) {
-    val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.displaySmall.copy(fontWeight = FontWeight.Bold) }
     val progression = if (info.initialVolume != 0.0) {
         ((info.finalVolume - info.initialVolume) / info.initialVolume) * 100
     } else if (info.finalVolume > 0) {
@@ -76,14 +73,14 @@ private fun ProgressionRow(
         ScalableText(
             modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
             text = info.exerciseName,
-            style = itemStyle,
+            style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onBackground
         )
         ScalableText(
             modifier = Modifier.weight(1f),
             text = progressionText.replace(',','.'),
-            style = itemStyle,
+            style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = progressionColor
         )

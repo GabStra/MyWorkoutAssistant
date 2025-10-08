@@ -189,31 +189,25 @@ fun ExerciseScreen(
 
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = {
-                                    hapticsViewModel.doGentleVibration()
-                                    marqueeEnabled = !marqueeEnabled
-                                },
-                                onLongClick = {
-                                    providedOnLongClick.invoke()
-                                }
-                            )
-                            .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                        text = exercise.name,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth().padding(horizontal = 20.dp)
+                        .combinedClickable(
+                            onClick = {
+                                hapticsViewModel.doGentleVibration()
+                                marqueeEnabled = !marqueeEnabled
+                            },
+                            onLongClick = {
+                                providedOnLongClick.invoke()
+                            }
+                        )
+                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                    text = exercise.name,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
         CustomHorizontalPager(

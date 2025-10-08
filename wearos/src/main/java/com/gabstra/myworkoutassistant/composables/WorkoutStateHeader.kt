@@ -7,9 +7,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -66,7 +64,6 @@ fun WorkoutStateHeader(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 5.dp)
-            .height(20.dp)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null
@@ -74,15 +71,13 @@ fun WorkoutStateHeader(
                 if(workoutState is WorkoutState.Preparing) return@clickable
                 viewModel.switchHeaderDisplayMode()
                 hapticsViewModel.doGentleVibration()
-            }
-        ,
-        verticalAlignment = Alignment.CenterVertically,
+            },
         horizontalArrangement = Arrangement.Center
     ) {
         if(displayMode == 0){
             Row(verticalAlignment = Alignment.CenterVertically){
                 CurrentBattery()
-                Spacer(modifier = Modifier.width(5.dp))
+                Spacer(modifier = Modifier.width(2.5.dp))
                 CurrentTime()
             }
         }else{
@@ -91,9 +86,8 @@ fun WorkoutStateHeader(
             val seconds = remember(duration) { duration.seconds % 60 }
 
             Row(
-                modifier = Modifier.fillMaxHeight(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(1.dp)
+                horizontalArrangement = Arrangement.spacedBy(1.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     modifier = Modifier.size(15.dp),

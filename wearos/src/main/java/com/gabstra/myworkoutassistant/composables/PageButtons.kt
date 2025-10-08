@@ -60,6 +60,7 @@ fun PageButtons(
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
     val spec = rememberTransformationSpec()
+    val dimmingEnabled by viewModel.currentScreenDimmingState
 
     ScreenScaffold(
         modifier = Modifier.fillMaxSize(),
@@ -84,8 +85,6 @@ fun PageButtons(
                 )
             }
             item{
-                val dimmingEnabled by viewModel.currentScreenDimmingState
-
                 if (dimmingEnabled){
                     OutlinedButton(
                         modifier = Modifier

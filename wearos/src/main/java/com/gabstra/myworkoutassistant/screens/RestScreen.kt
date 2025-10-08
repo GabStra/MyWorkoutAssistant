@@ -29,7 +29,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
@@ -297,7 +296,7 @@ fun RestScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     content = {
-                        textComposable(style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+                        textComposable(style = MaterialTheme.typography.titleLarge)
                     }
                 )
             }
@@ -359,9 +358,8 @@ fun RestScreen(
         )
 
         textComposable(
-            modifier = Modifier
-                .align(Alignment.BottomCenter),
-            style = MaterialTheme.typography.labelMedium
+            modifier = Modifier.align(Alignment.BottomCenter),
+            style = MaterialTheme.typography.labelSmall
         )
     }
 
