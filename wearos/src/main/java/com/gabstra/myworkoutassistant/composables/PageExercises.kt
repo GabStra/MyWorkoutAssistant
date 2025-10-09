@@ -112,24 +112,30 @@ fun PageExercises(
                 verticalArrangement = Arrangement.spacedBy(5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Box(
+                Text(
                     modifier = Modifier
-                        .fillMaxWidth().padding(horizontal = 20.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 30.dp),
+                    text = "Workout",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
                         .clickable {
                             marqueeEnabled = !marqueeEnabled
                             hapticsViewModel.doGentleVibration()
                         }
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = selectedExercise.name,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                    text = selectedExercise.name,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
 
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),

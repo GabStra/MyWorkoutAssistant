@@ -192,7 +192,8 @@ fun ExerciseScreen(
             { providedOnLongClick ->
                 Text(
                     modifier = Modifier
-                        .fillMaxWidth().padding(horizontal = 20.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 30.dp)
                         .combinedClickable(
                             onClick = {
                                 hapticsViewModel.doGentleVibration()

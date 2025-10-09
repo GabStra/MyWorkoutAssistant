@@ -169,8 +169,6 @@ fun WorkoutSelectionScreen(
 
     val canScheduleExactAlarms by rememberCanScheduleExactAlarmsState(context)
 
-
-
     var showClearData by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 

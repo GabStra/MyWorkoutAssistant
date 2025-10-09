@@ -215,7 +215,9 @@ fun WorkoutScreen(
                         viewModel,
                         hapticsViewModel,
                         state,
-                        hearthRateChart = { heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent) }
+                        hearthRateChart = {
+                            heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
+                        }
                     )
                 }
                 is WorkoutState.Rest -> {

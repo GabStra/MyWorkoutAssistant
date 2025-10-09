@@ -11,7 +11,6 @@ import android.os.Vibrator
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.wear.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -29,6 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -483,3 +483,20 @@ fun FormatWeightForSetScreen(equipment: WeightLoadedEquipment, weight: Double): 
         else -> "$weight kg".replace(",", ".")
     }
 }
+
+fun Modifier.scrim(visible: Boolean, color: Color) = this.then(
+    if (!visible) Modifier
+    else Modifier
+        .drawWithContent {
+            drawContent()
+            drawRect(color) // overlay on top
+        }
+        .pointerInput(Unit) { // swallow all pointer events while visible
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    event.changes.forEach { it.consume() }
+                }
+            }
+        }
+)
