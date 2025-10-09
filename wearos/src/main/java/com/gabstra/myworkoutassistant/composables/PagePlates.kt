@@ -34,8 +34,8 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        ScalableText(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        Text(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 50.dp),
             text = "Loading Guide",
             style = MaterialTheme.typography.titleSmall,
             textAlign = TextAlign.Center
@@ -62,7 +62,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
                 Column(
                     modifier = Modifier
-                        .fillMaxSize(),
+                        .fillMaxSize().padding(horizontal = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Row(
@@ -79,7 +79,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     }
 
                     if (updatedState.plateChangeResult!!.change.steps.isNotEmpty()) {
-                        val style = MaterialTheme.typography.bodyLarge
+                        val style = MaterialTheme.typography.numeralExtraSmall
 
                         Column(
                             modifier = Modifier
@@ -101,7 +101,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                 }
 
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().background(backgroundColor),
+                                    modifier = Modifier.fillMaxWidth().height(20.dp).background(backgroundColor),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val weightText = String.format("%.2f", step.weight).replace(",", ".")
@@ -113,27 +113,13 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                             "-"
                                         }
 
-                                    Row(
-                                        modifier = Modifier.weight(1f),
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ){
-                                            Text(
-                                                text = actionText,
-                                                style = style,
-                                                textAlign = TextAlign.End,
-                                                color = MaterialTheme.colorScheme.onBackground
-                                            )
-                                            Text(
-                                                text = weightText,
-                                                style = style,
-                                                textAlign = TextAlign.Start,
-                                                color = MaterialTheme.colorScheme.onBackground
-                                            )
-                                        }
-                                    }
+                                    ScalableText(
+                                        modifier = Modifier.fillMaxSize(),
+                                        text = "$actionText $weightText",
+                                        style = style,
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
                                 }
                             }
                         }

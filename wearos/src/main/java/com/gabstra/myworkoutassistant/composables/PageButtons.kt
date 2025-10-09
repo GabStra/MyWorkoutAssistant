@@ -19,6 +19,7 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
+
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
@@ -60,7 +61,7 @@ fun PageButtons(
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
     val spec = rememberTransformationSpec()
-    val dimmingEnabled by viewModel.currentScreenDimmingState
+    val keepScreenOn by viewModel.keepScreenOn
 
     ScreenScaffold(
         modifier = Modifier.fillMaxSize(),
@@ -85,7 +86,7 @@ fun PageButtons(
                 )
             }
             item{
-                if (dimmingEnabled){
+                if (keepScreenOn){
                     OutlinedButton(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -93,12 +94,12 @@ fun PageButtons(
                         transformation = SurfaceTransformation(spec),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
-                            viewModel.toggleScreenDimming()
+                            viewModel.toggleKeepScreenOn()
                         }
                     ) {
                         Text(
                             modifier = Modifier.fillMaxWidth(),
-                            text = "Disable Dimming",
+                            text = "Allow Screen to Dim",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyLarge
                         )
@@ -112,12 +113,12 @@ fun PageButtons(
                         transformation = SurfaceTransformation(spec),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
-                            viewModel.toggleScreenDimming()
+                            viewModel.toggleKeepScreenOn()
                         }
                     ) {
                         Text(
                             modifier = Modifier.fillMaxWidth(),
-                            text = "Enable Dimming",
+                            text = "Keep Screen On",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyLarge
                         )
@@ -167,7 +168,7 @@ fun PageButtons(
 
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
-        title = "Go to previous Set",
+        title = "Go back one set",
         message = "Do you want to proceed?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()

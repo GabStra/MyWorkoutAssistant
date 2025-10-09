@@ -10,12 +10,12 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -27,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -210,123 +211,137 @@ fun ExerciseScreen(
                 )
             }
 
-        CustomHorizontalPager(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 25.dp, horizontal = 35.dp)
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (event.changes.any { it.pressed }) {
-                                restartGoBack()
-                            }
-                        }
-                    }
-                },
-            pagerState = pagerState,
-            userScrollEnabled = allowHorizontalScrolling,
-        ) { pageIndex ->
-            // Get the page type for the current index
-            val pageType = pageTypes[pageIndex]
-
-            when (pageType) {
-                PageType.PLATES -> PagePlates(updatedState, equipment)
-                PageType.EXERCISE_DETAIL -> ExerciseDetail(
-                    updatedState = updatedState,
-                    viewModel = viewModel,
-                    onEditModeDisabled = { allowHorizontalScrolling = true },
-                    onEditModeEnabled = { allowHorizontalScrolling = false },
-                    onTimerDisabled = { },
-                    onTimerEnabled = { },
-                    extraInfo = { _ ->
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(
-                                5.dp,
-                                Alignment.CenterHorizontally
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Chip {
-                                val label = if (isSuperset) "Superset" else "Exercise"
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text = "${label}: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                                    style = captionStyle,
-                                )
-                            }
-
-                            if (isSuperset) {
-                                val supersetExercises = remember(exerciseOrSupersetId){
-                                    viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                                }
-                                val supersetIndex =
-                                    remember(
-                                        supersetExercises,
-                                        exercise
-                                    ) { supersetExercises.indexOf(exercise) }
-
-                                Chip {
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text = "Exercise: ${supersetIndex + 1}/${supersetExercises.size}",
-                                        style = captionStyle
-                                    )
-                                }
-                            }
-
-                            if (exerciseSetIds.size > 1) {
-                                Chip {
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text = "Set: ${setIndex + 1}/${exerciseSetIds.size}",
-                                        style = captionStyle,
-                                    )
-                                }
-                            }
-
-                            if (updatedState.isUnilateral) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text = "Unilateral",
-                                        style = captionStyle,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-
-                            if (updatedState.isWarmupSet) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                    Text(
-                                        text = "Warm-up",
-                                        style = captionStyle,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
+                .padding(vertical = 20.dp, horizontal = 17.5.dp)
+                .clip(CircleShape),
+        ) {
+            CustomHorizontalPager(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.changes.any { it.pressed }) {
+                                    restartGoBack()
                                 }
                             }
                         }
                     },
-                    exerciseTitleComposable = exerciseTitleComposable,
-                    hapticsViewModel = hapticsViewModel,
-                    customComponentWrapper = { content ->
-                        content()
+                pagerState = pagerState,
+                userScrollEnabled = allowHorizontalScrolling,
+            ) { pageIndex ->
+                // Get the page type for the current index
+                val pageType = pageTypes[pageIndex]
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 5.dp, horizontal = 7.5.dp)
+                ) {
+                    when (pageType) {
+                        PageType.PLATES -> PagePlates(updatedState, equipment)
+                        PageType.EXERCISE_DETAIL -> ExerciseDetail(
+                            updatedState = updatedState,
+                            viewModel = viewModel,
+                            onEditModeDisabled = { allowHorizontalScrolling = true },
+                            onEditModeEnabled = { allowHorizontalScrolling = false },
+                            onTimerDisabled = { },
+                            onTimerEnabled = { },
+                            extraInfo = { _ ->
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(
+                                        5.dp,
+                                        Alignment.CenterHorizontally
+                                    ),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Chip {
+                                        val label = if (isSuperset) "Superset" else "Exercise"
+                                        Text(
+                                            textAlign = TextAlign.Center,
+                                            text = "${label}: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                                            style = captionStyle,
+                                        )
+                                    }
+
+                                    if (isSuperset) {
+                                        val supersetExercises = remember(exerciseOrSupersetId) {
+                                            viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
+                                        }
+                                        val supersetIndex =
+                                            remember(
+                                                supersetExercises,
+                                                exercise
+                                            ) { supersetExercises.indexOf(exercise) }
+
+                                        Chip {
+                                            Text(
+                                                textAlign = TextAlign.Center,
+                                                text = "Exercise: ${supersetIndex + 1}/${supersetExercises.size}",
+                                                style = captionStyle
+                                            )
+                                        }
+                                    }
+
+                                    if (exerciseSetIds.size > 1) {
+                                        Chip {
+                                            Text(
+                                                textAlign = TextAlign.Center,
+                                                text = "Set: ${setIndex + 1}/${exerciseSetIds.size}",
+                                                style = captionStyle,
+                                            )
+                                        }
+                                    }
+
+                                    if (updatedState.isUnilateral) {
+                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
+                                            Text(
+                                                textAlign = TextAlign.Center,
+                                                text = "Unilateral",
+                                                style = captionStyle,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+
+                                    if (updatedState.isWarmupSet) {
+                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
+                                            Text(
+                                                text = "Warm-up",
+                                                style = captionStyle,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            exerciseTitleComposable = exerciseTitleComposable,
+                            hapticsViewModel = hapticsViewModel,
+                            customComponentWrapper = { content ->
+                                content()
+                            }
+                        )
+
+                        PageType.EXERCISES -> PageExercises(
+                            updatedState,
+                            viewModel, hapticsViewModel,
+                            exercise,
+                            onExerciseSelected = {
+                                selectedExerciseId = it
+                            })
+
+                        PageType.NOTES -> PageNotes(exercise.notes)
+                        PageType.BUTTONS -> PageButtons(updatedState, viewModel, hapticsViewModel)
                     }
-                )
-
-                PageType.EXERCISES -> PageExercises(
-                    updatedState,
-                    viewModel, hapticsViewModel,
-                    exercise,
-                    onExerciseSelected = {
-                        selectedExerciseId = it
-                    })
-
-                PageType.NOTES -> PageNotes(exercise.notes)
-                PageType.BUTTONS -> PageButtons(updatedState, viewModel, hapticsViewModel)
+                }
             }
         }
+
+
 
         CustomDialogYesOnLongPress(
             show = showNextDialog,
@@ -377,6 +392,14 @@ fun ExerciseScreen(
             )
 
             hearthRateChart()
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 20.dp, horizontal = 20.dp)
+                .clip(CircleShape),
+        ) {
         }
     }
 

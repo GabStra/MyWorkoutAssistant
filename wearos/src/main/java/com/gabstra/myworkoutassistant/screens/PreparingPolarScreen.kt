@@ -118,7 +118,7 @@ fun PreparingPolarScreen(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 modifier = Modifier.fillMaxWidth(),
-                text = "Preparing\nPolar Sensor",
+                text = "Preparing Polar Sensor",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )

@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -316,88 +318,65 @@ fun WeightSetScreen(
 
     @SuppressLint("DefaultLocale")
     @Composable
-    fun SetScreen(customModifier: Modifier) {
-        Column (
-            modifier = customModifier,
-            verticalArrangement = Arrangement.Center
-        ){
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                ) {
-                    Text(
-                        text = "WEIGHT (KG)",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color =  MaterialTheme.colorScheme.onBackground,
-                    )
-                    WeightRow(modifier = Modifier.weight(1f), style = itemStyle)
-                }
+    fun SetScreen(customModifier: Modifier, compactHeight: Dp = 75.dp) {
+        BoxWithConstraints(modifier = customModifier) {
+            val compact = maxHeight < compactHeight
 
-                Column(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            if (compact) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    Text(
-                        text = "REPS",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color =  MaterialTheme.colorScheme.onBackground,
-                    )
-                    RepsRow(modifier = Modifier.weight(1f), style = itemStyle)
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text("WEIGHT (KG)", style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onBackground)
+                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text("REPS", style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onBackground)
+                        RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
+                }
+            } else {
+                // Stacked when there’s enough height
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text("WEIGHT (KG)", style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onBackground)
+                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
+                    Column(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text("REPS", style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onBackground)
+                        RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
                 }
             }
-            /*if(!state.isWarmupSet){
-                Column(
-                    modifier = Modifier.padding(bottom = 5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            text = "VOLUME: ${previousTotalVolume.round(1)} -> ${executedVolume.round(1)}",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    if(executedVolume != 0.0){
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            val volumePercentage = ((executedVolume - previousTotalVolume) / previousTotalVolume) * 100
-                            val volumeText = if (volumePercentage > 0) {
-                                "+${volumePercentage.round(1)}%"
-                            } else {
-                                "${volumePercentage.round(1)}%"
-                            }
-
-                            val textColor = when {
-                                volumePercentage < 0 -> Red
-                                else -> Green
-                            }
-
-                            val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold)
-
-                            Text(
-                                text = volumeText,
-                                style = style,
-                                textAlign = TextAlign.Center,
-                                color = textColor
-                            )
-                        }
-                    }
-                }
-            }*/
         }
     }
 

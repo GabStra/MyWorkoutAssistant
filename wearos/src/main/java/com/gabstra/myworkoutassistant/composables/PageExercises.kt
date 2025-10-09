@@ -198,7 +198,7 @@ fun PageExercises(
 
                 ExerciseSetsViewer(
                     modifier = Modifier
-                        .fillMaxSize(),
+                        .fillMaxSize().padding(horizontal = 10.dp),
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
                     exercise = selectedExercise,

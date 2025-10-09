@@ -32,7 +32,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -65,9 +64,8 @@ fun SetTableRow(
     val density = LocalDensity.current.density
     val triangleSize = 6f
 
-    val typography = MaterialTheme.typography
     val captionStyle = MaterialTheme.typography.bodySmall
-    val itemStyle = remember(typography) { typography.bodyMedium.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipment
 

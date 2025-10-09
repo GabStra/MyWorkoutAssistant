@@ -63,7 +63,7 @@ fun WorkoutStateHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 5.dp)
+            .padding(top = 7.5.dp)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null
@@ -90,7 +90,7 @@ fun WorkoutStateHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(12.5.dp).padding(bottom = 1.dp),
                     imageVector = Icons.Filled.AccessTimeFilled,
                     contentDescription = "clock",
                 )

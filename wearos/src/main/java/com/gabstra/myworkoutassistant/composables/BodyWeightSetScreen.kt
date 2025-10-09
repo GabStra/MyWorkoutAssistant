@@ -320,7 +320,7 @@ fun BodyWeightSetScreen(
                             textAlign = TextAlign.Center,
                             color =  MaterialTheme.colorScheme.onBackground,
                         )
-                        WeightRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
+                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                     }
                 }
                 Column(
@@ -334,7 +334,7 @@ fun BodyWeightSetScreen(
                         textAlign = TextAlign.Center,
                         color =  MaterialTheme.colorScheme.onBackground,
                     )
-                    RepsRow(modifier = Modifier.fillMaxSize(), style = itemStyle)
+                    RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                 }
             }
         }

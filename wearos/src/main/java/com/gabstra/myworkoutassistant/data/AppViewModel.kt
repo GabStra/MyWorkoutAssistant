@@ -52,6 +52,10 @@ open class AppViewModel : WorkoutViewModel() {
     val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
     private val _headerDisplayMode = mutableStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
+
+    private val _keepScreenOn = mutableStateOf(false)
+    val keepScreenOn: State<Boolean> = _keepScreenOn
+
     private val _currentScreenDimmingState = mutableStateOf(false)
 
     val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
@@ -59,7 +63,7 @@ open class AppViewModel : WorkoutViewModel() {
     val lightScreenUp = _lightScreenUp.receiveAsFlow()
 
     val enableDimming: State<Boolean> = derivedStateOf {
-        !isPaused.value && currentScreenDimmingState.value
+        !isPaused.value && currentScreenDimmingState.value && !keepScreenOn.value
     }
 
     fun switchHrDisplayMode() {
@@ -70,9 +74,8 @@ open class AppViewModel : WorkoutViewModel() {
         _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
     }
 
-    fun toggleScreenDimming() {
-        _currentScreenDimmingState.value = !_currentScreenDimmingState.value
-
+    fun toggleKeepScreenOn() {
+        _keepScreenOn.value = !_keepScreenOn.value
     }
 
     fun setDimming(shouldDim: Boolean) {

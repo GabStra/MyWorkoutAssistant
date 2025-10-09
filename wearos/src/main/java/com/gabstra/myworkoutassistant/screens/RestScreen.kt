@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -28,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.rememberPagerState
@@ -81,9 +83,20 @@ fun RestScreen(
 
     var amountToWait by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
 
-    val indicatorProgress = remember(currentSeconds,amountToWait) { currentSeconds.toFloat() / amountToWait.toFloat() }
+    var currentSecondsFreeze by remember { mutableIntStateOf(0) }
+    var amountToWaitFreeze by remember { mutableIntStateOf(0) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
+
+    val indicatorProgress = remember(currentSeconds,amountToWait,currentSecondsFreeze,amountToWaitFreeze,isTimerInEditMode) {
+        if(isTimerInEditMode){
+            currentSecondsFreeze.toFloat() / amountToWaitFreeze.toFloat()
+        }else{
+            currentSeconds.toFloat() / amountToWait.toFloat()
+        }
+    }
+
+
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
@@ -136,14 +149,6 @@ fun RestScreen(
         lastInteractionTime = System.currentTimeMillis()
     }
 
-    LaunchedEffect(isTimerInEditMode) {
-        while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 2000) {
-                isTimerInEditMode = false
-            }
-            delay(1000) // Check every second
-        }
-    }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -167,9 +172,11 @@ fun RestScreen(
         if (currentSeconds > 5) {
             val newTimerValue = currentSeconds - 5
             amountToWait = amountToWait - 5
+            amountToWaitFreeze = amountToWait
 
             //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
             currentSeconds = newTimerValue
+            currentSecondsFreeze = newTimerValue
             hapticsViewModel.doGentleVibration()
         }
         updateInteractionTime()
@@ -178,8 +185,10 @@ fun RestScreen(
     fun onPlusClick() {
         val newTimerValue = currentSeconds + 5
         amountToWait = amountToWait + 5
+        amountToWaitFreeze = amountToWait
         //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
         currentSeconds = newTimerValue
+        currentSecondsFreeze = newTimerValue
         hapticsViewModel.doGentleVibration()
         updateInteractionTime()
     }
@@ -218,6 +227,15 @@ fun RestScreen(
         }
     }
 
+    LaunchedEffect(isTimerInEditMode) {
+        while (isTimerInEditMode) {
+            if (System.currentTimeMillis() - lastInteractionTime > 2000) {
+                isTimerInEditMode = false
+            }
+            delay(1000) // Check every second
+        }
+    }
+
     LaunchedEffect(set.id) {
         delay(500)
         startTimerJob()
@@ -244,7 +262,7 @@ fun RestScreen(
     }
 
     @Composable
-    fun textComposable(modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleSmall){
+    fun textComposable(seconds:Int,modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleSmall){
         Row(
             modifier = modifier
                 .fillMaxWidth(),
@@ -256,13 +274,15 @@ fun RestScreen(
                     .combinedClickable(
                         onClick = {},
                         onLongClick = {
+                            currentSecondsFreeze = currentSeconds
+                            amountToWaitFreeze = amountToWait
                             isTimerInEditMode = !isTimerInEditMode
                             updateInteractionTime()
                             hapticsViewModel.doGentleVibration()
                         },
                         onDoubleClick = {}
                     ),
-                seconds = currentSeconds,
+                seconds = seconds,
                 style = style,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -296,35 +316,53 @@ fun RestScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     content = {
-                        textComposable(style = MaterialTheme.typography.titleLarge)
+                        textComposable(seconds = currentSecondsFreeze, style = MaterialTheme.typography.titleLarge)
                     }
                 )
             }
         } else {
-            CustomHorizontalPager(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(vertical = 25.dp, horizontal = 35.dp),
-                pagerState = pagerState,
-            ) { pageIndex ->
-                val pageType = pageTypes[pageIndex]
+                    .padding(vertical = 20.dp, horizontal = 17.5.dp)
+                    .clip(CircleShape),
+            ) {
+                CustomHorizontalPager(
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    pagerState = pagerState,
+                ) { pageIndex ->
+                    val pageType = pageTypes[pageIndex]
 
-                when (pageType) {
-                    PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
-                    PageType.EXERCISE_DETAIL -> {}
-                    PageType.EXERCISES -> {
-                        PageExercises(
-                            state.nextStateSets.first(),
-                            viewModel,
-                            hapticsViewModel,
-                            exercise,
-                            onExerciseSelected = {
-                                selectedExerciseId = it
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(vertical = 5.dp, horizontal = 7.5.dp)
+                    ) {
+                        when (pageType) {
+                            PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
+                            PageType.EXERCISE_DETAIL -> {}
+                            PageType.EXERCISES -> {
+                                PageExercises(
+                                    state.nextStateSets.first(),
+                                    viewModel,
+                                    hapticsViewModel,
+                                    exercise,
+                                    onExerciseSelected = {
+                                        selectedExerciseId = it
+                                    }
+                                )
                             }
-                        )
+
+                            PageType.BUTTONS -> PageButtons(
+                                state.nextStateSets.first(),
+                                viewModel,
+                                hapticsViewModel
+                            )
+
+                            PageType.NOTES -> TODO()
+                        }
                     }
-                    PageType.BUTTONS -> PageButtons(state.nextStateSets.first(), viewModel,hapticsViewModel)
-                    PageType.NOTES -> TODO()
                 }
             }
         }
@@ -358,6 +396,7 @@ fun RestScreen(
         )
 
         textComposable(
+            seconds = if(isTimerInEditMode) currentSecondsFreeze else currentSeconds,
             modifier = Modifier.align(Alignment.BottomCenter),
             style = MaterialTheme.typography.labelSmall
         )
