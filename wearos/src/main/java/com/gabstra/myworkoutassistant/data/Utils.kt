@@ -293,12 +293,12 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
 }
 
 @OptIn(ExperimentalHorologistApi::class)
-suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, phoneNode: Node, appHelper: WearDataLayerAppHelper) {
+suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, phoneNode: Node, appHelper: WearDataLayerAppHelper) : Boolean {
     try {
         val result = appHelper.startRemoteOwnApp(phoneNode.id)
         if(result != AppHelperResultCode.APP_HELPER_RESULT_SUCCESS){
             Toast.makeText(context, "Failed to open app in phone", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
 
         val request = PutDataMapRequest.create("/openPagePath").apply {
@@ -307,11 +307,14 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(request)
-        Toast.makeText(context, "Opened Settings in phone", Toast.LENGTH_SHORT).show()
+        return true
+
     } catch (cancellationException: CancellationException) {
         cancellationException.printStackTrace()
+        return false
     } catch (exception: Exception) {
         exception.printStackTrace()
+        return false
     }
 }
 

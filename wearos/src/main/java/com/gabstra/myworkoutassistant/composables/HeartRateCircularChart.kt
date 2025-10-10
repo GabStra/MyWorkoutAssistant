@@ -27,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,8 +41,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -57,8 +60,6 @@ import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
-import com.google.android.horologist.composables.ProgressIndicatorSegment
-import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -347,39 +348,33 @@ private fun ZoneSegment(
 ) {
     if (index !in zoneRanges.indices || index !in colorsByZone.indices) return
 
-    val indicatorProgress by remember(hr, currentZone, index, mhrPercentage, lowerBound, upperBound) {
-        derivedStateOf {
-            when {
-                hr == 0 -> 0f
-                index == currentZone -> {
-                    if (upperBound > lowerBound) {
-                        ((mhrPercentage - lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
-                    } else {
-                        if (mhrPercentage >= lowerBound) 1f else 0f
-                    }
-                }
-                index < currentZone -> 1f
-                else -> 0f
+    val progressState = remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(hr, mhrPercentage, currentZone, lowerBound, upperBound, index) {
+        progressState.floatValue = when {
+            hr == 0 -> 0f
+            currentZone == index -> {
+                if (upperBound > lowerBound)
+                    ((mhrPercentage - lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
+                else if (mhrPercentage >= lowerBound) 1f else 0f
             }
+            currentZone > index -> 1f
+            else -> 0f
         }
     }
 
-    val trackSegment = remember(colorsByZone, index) {
-        ProgressIndicatorSegment(
-            weight = 1f,
-            indicatorColor = colorsByZone[index]
-        )
-    }
-
-    SegmentedProgressIndicator(
-        trackSegments = listOf(trackSegment),
-        progress = indicatorProgress,
+    CircularProgressIndicator(
+        progress = {
+            progressState.floatValue
+        },
         modifier = modifier,
+        colors = ProgressIndicatorDefaults.colors(
+            indicatorColor = colorsByZone[index],
+            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+        ),
         strokeWidth = 4.dp,
-        paddingAngle = 0f,
         startAngle = startAngle,
         endAngle = endAngle,
-        trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
     )
 }
 
@@ -466,7 +461,7 @@ private fun HeartRateView(
     val zoneCount = colorsByZone.size - 1
     val totalStartAngle = 130f
     val totalEndAngle = 230f
-    val paddingAngle = 2f
+    val paddingAngle = 1f
 
     val totalArcAngle by remember { derivedStateOf { totalEndAngle - totalStartAngle } }
     val segmentArcAngle by remember(zoneCount, totalArcAngle, paddingAngle) {

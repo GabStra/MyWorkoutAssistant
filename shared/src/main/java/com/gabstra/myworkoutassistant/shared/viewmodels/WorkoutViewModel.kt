@@ -337,8 +337,7 @@ open class WorkoutViewModel : ViewModel() {
 
         _selectedWorkoutId.value = workoutId
 
-        _hasExercises.value =
-            selectedWorkout.value.workoutComponents.filter { it.enabled }.isNotEmpty()
+        _hasExercises.value = workout.workoutComponents.filter { it.enabled }.isNotEmpty()
 
         initializeExercisesMaps(workout)
         getWorkoutRecord(workout)

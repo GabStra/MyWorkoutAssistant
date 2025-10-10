@@ -39,11 +39,14 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.OpenOnPhoneDialog
+import androidx.wear.compose.material3.OpenOnPhoneDialogDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import androidx.wear.compose.material3.openOnPhoneDialogCurvedText
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -263,22 +266,33 @@ fun WorkoutSelectionScreen(
                         )
                     }
                     item{
+                        var showOpenOnPhoneDialog by remember { mutableStateOf(false) }
                         Button(
                             modifier = Modifier
                                 .fillMaxWidth().animateItem(),
                             transformation = SurfaceTransformation(spec),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
+                                showOpenOnPhoneDialog = true
                                 scope.launch {
                                     openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
                                 }
                             }
                         ) {
+
                             Text(
                                 modifier = Modifier.fillMaxWidth(),
-                                text = "Open Mobile App",
+                                text = "Open mobile app",
                                 textAlign = TextAlign.Center,
                                 style =  MaterialTheme.typography.bodyLarge,
+                            )
+                            val text = OpenOnPhoneDialogDefaults.text
+                            val style = OpenOnPhoneDialogDefaults.curvedTextStyle
+
+                            OpenOnPhoneDialog(
+                                visible = showOpenOnPhoneDialog,
+                                onDismissRequest = { showOpenOnPhoneDialog = false },
+                                curvedText = { openOnPhoneDialogCurvedText(text = text, style = style) },
                             )
                         }
                     }

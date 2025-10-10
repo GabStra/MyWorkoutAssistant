@@ -17,6 +17,7 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 
@@ -87,7 +88,7 @@ fun PageButtons(
             }
             item{
                 if (keepScreenOn){
-                    OutlinedButton(
+                    FilledTonalButton(
                         modifier = Modifier
                             .fillMaxWidth()
                             .transformedHeight(this, spec).animateItem(),

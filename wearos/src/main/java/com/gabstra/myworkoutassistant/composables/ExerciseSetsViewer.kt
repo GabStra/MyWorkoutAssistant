@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -26,7 +24,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -39,6 +36,7 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.data.scrim
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -48,6 +46,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import kotlinx.coroutines.delay
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -247,6 +246,7 @@ fun ExerciseSetsViewer(
             scrollState.scrollTo(0)
         }
 
+        delay(100)
         readyToBeShown = true
     }
 
@@ -289,14 +289,8 @@ fun ExerciseSetsViewer(
         MeasuredSetTableRow(setStateForThisRow = exerciseSetStates[0], rowIndex = 0, rowBackgroundColor = Color.Transparent)
     }
 
-    val alpha: Float by animateFloatAsState(
-        targetValue = if (readyToBeShown) 1f else 0f,
-        animationSpec = tween(durationMillis = 500),
-        label = "alphaAnimation"
-    )
-
     Column(
-        modifier = modifier.alpha(alpha),
+        modifier = modifier.scrim(!readyToBeShown,MaterialTheme.colorScheme.background),
         verticalArrangement = Arrangement.spacedBy(2.5.dp),
     ) {
         if (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) {

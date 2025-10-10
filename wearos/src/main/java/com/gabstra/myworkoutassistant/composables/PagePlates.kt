@@ -35,7 +35,9 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 50.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 25.dp),
             text = "Loading Guide",
             style = MaterialTheme.typography.titleSmall,
             textAlign = TextAlign.Center
@@ -79,7 +81,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     }
 
                     if (updatedState.plateChangeResult!!.change.steps.isNotEmpty()) {
-                        val style = MaterialTheme.typography.numeralExtraSmall
+                        val style = MaterialTheme.typography.numeralSmall
 
                         Column(
                             modifier = Modifier

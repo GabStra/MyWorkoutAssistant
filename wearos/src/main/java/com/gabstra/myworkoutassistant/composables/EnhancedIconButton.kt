@@ -11,9 +11,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.IconButtonColors
 import androidx.wear.compose.material3.IconButtonDefaults
-import androidx.wear.compose.material3.OutlinedIconButton
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
@@ -23,7 +23,7 @@ fun EnhancedIconButton(
     boxModifier: Modifier = Modifier,
     buttonModifier: Modifier = Modifier,
     enabled: Boolean = true,
-    colors: IconButtonColors = IconButtonDefaults.outlinedIconButtonColors(),
+    colors: IconButtonColors = IconButtonDefaults.filledTonalIconButtonColors(),
     buttonSize: Dp = 48.dp,  // Default button size
     hitBoxScale: Float = 1.5f,
     content: @Composable () -> Unit
@@ -59,7 +59,7 @@ fun EnhancedIconButton(
                 }
             }
     ) {
-        OutlinedIconButton(
+        FilledTonalIconButton(
             onClick = { /* Handled by Box */ },
             modifier = buttonModifier
                 .size(buttonSize)

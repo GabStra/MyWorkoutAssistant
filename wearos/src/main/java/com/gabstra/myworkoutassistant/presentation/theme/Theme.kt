@@ -16,7 +16,6 @@ import onPrimaryContainerDark
 import onPrimaryDark
 import onSecondaryContainerDark
 import onSecondaryDark
-import onSurfaceDark
 import onSurfaceVariantDark
 import onTertiaryContainerDark
 import onTertiaryDark
@@ -26,9 +25,6 @@ import primaryContainerDark
 import primaryDark
 import secondaryContainerDark
 import secondaryDark
-import surfaceContainerDark
-import surfaceContainerHighDark
-import surfaceContainerLowDark
 import tertiaryContainerDark
 import tertiaryDark
 
@@ -52,13 +48,13 @@ val normalDarkColorScheme = ColorScheme(
     onErrorContainer = onErrorContainerDark,
     background = backgroundDark,
     onBackground = onBackgroundDark,
-    onSurface = onSurfaceDark,
+    onSurface = onSecondaryContainerDark,
     onSurfaceVariant = onSurfaceVariantDark,
     outline = outlineDark,
     outlineVariant = outlineVariantDark,
-    surfaceContainerLow = surfaceContainerLowDark,
-    surfaceContainer = surfaceContainerDark,
-    surfaceContainerHigh = surfaceContainerHighDark,
+    surfaceContainerLow = secondaryContainerDark,
+    surfaceContainer = secondaryContainerDark,
+    surfaceContainerHigh = secondaryContainerDark,
 )
 
 @Immutable

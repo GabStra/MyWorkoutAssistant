@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +33,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
+import com.gabstra.myworkoutassistant.composables.CircularEndsPillShape
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
@@ -324,8 +324,8 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(vertical = 20.dp, horizontal = 17.5.dp)
-                    .clip(CircleShape),
+                    .padding(vertical = 25.dp, horizontal = 15.dp)
+                    .clip(CircularEndsPillShape(straightWidth = 50.dp)),
             ) {
                 CustomHorizontalPager(
                     modifier = Modifier
@@ -337,7 +337,8 @@ fun RestScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(vertical = 5.dp, horizontal = 7.5.dp)
+                            .padding(top = 5.dp)
+                            .padding(horizontal = 15.dp)
                     ) {
                         when (pageType) {
                             PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)

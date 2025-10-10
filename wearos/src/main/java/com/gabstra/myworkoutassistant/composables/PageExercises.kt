@@ -115,16 +115,7 @@ fun PageExercises(
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 30.dp),
-                    text = "Workout",
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-
-                Text(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
+                        .padding(horizontal = 25.dp)
                         .clickable {
                             marqueeEnabled = !marqueeEnabled
                             hapticsViewModel.doGentleVibration()
@@ -167,7 +158,7 @@ fun PageExercises(
                         }
                     }
 
-                    if(currentExercise == selectedExercise){
+/*                    if(currentExercise == selectedExercise){
                         if(currentExerciseSetIds.size > 1){
                             val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
                             Chip{
@@ -199,7 +190,7 @@ fun PageExercises(
                                 )
                             }
                         }
-                    }
+                    }*/
                 }
 
                 ExerciseSetsViewer(
