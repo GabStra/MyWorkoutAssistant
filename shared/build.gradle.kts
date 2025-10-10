@@ -38,13 +38,14 @@ android {
 }
 
 dependencies {
-    implementation("androidx.compose.ui:ui-graphics:1.9.2")
+    implementation("androidx.compose.ui:ui-graphics:1.9.3")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("com.google.code.gson:gson:2.13.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
-    ksp("androidx.room:room-compiler:2.8.1")
-    implementation("androidx.room:room-ktx:2.8.1")
+
+    ksp("androidx.room:room-compiler:2.8.2")
+    implementation("androidx.room:room-ktx:2.8.2")
 }

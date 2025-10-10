@@ -76,45 +76,61 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    implementation("androidx.core:core-ktx:1.17.0")
-    implementation("com.google.android.gms:play-services-wearable:19.0.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
-    implementation("androidx.activity:activity-compose:1.11.0")
-    implementation(platform("androidx.compose:compose-bom:2025.09.01"))
-    implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")
 
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-    implementation("androidx.navigation:navigation-compose:2.8.5")
+    // Compose BOM (Oct 2025)
+    val composeBom = platform("androidx.compose:compose-bom:2025.10.00")
+    implementation(composeBom)
+    testImplementation(composeBom)
+    androidTestImplementation(composeBom)
 
+    // Jetpack Compose (BOM-managed; no versions)
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("com.google.accompanist:accompanist-systemuicontroller:0.34.0")
-    implementation("com.google.accompanist:accompanist-permissions:0.35.0-alpha")
-    implementation("com.google.code.gson:gson:2.11.0")
-    implementation("androidx.compose.material:material-icons-extended:1.7.6")
-    implementation("com.google.accompanist:accompanist-permissions:0.35.0-alpha")
-    implementation("com.google.android.horologist:horologist-datalayer:0.6.17")
-    implementation("com.google.android.horologist:horologist-datalayer-phone:0.5.21")
-    ksp("androidx.room:room-compiler:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2025.01.00"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")                    // Material 3
+    implementation("androidx.compose.material3:material3-window-size-class") // Material 3 adaptive
+    implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
-    implementation("com.patrykandpatrick.vico:compose:2.1.3")
-    implementation("com.kizitonwose.calendar:compose:2.5.0")
-    implementation("androidx.health.connect:connect-client:1.1.0-beta01")
+    // Navigation
+    implementation("androidx.navigation:navigation-compose:2.9.5")
+
+    // AndroidX core
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.activity:activity-compose:1.11.0")
+
+    // Lifecycle
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
+
+    // Google / Wear
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")
+    implementation("com.google.android.horologist:horologist-datalayer:0.7.15")
+    implementation("com.google.android.horologist:horologist-datalayer-phone:0.7.15")
+
+    // Accompanist
+    implementation("com.google.accompanist:accompanist-permissions:0.37.3")
+    implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
+
+    // Room
+    ksp("androidx.room:room-compiler:2.8.2")
+    implementation("androidx.room:room-runtime:2.8.2")
+
+    // Misc
+    implementation("com.google.code.gson:gson:2.13.2")
+    implementation("com.patrykandpatrick.vico:compose:2.2.1")
+    implementation("com.kizitonwose.calendar:compose:2.9.0")
+    implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
+    implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")
+
+    // Tests
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }

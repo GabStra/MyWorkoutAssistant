@@ -65,7 +65,7 @@ import java.util.UUID
 import kotlin.math.roundToInt
 
 fun ExerciseType.toReadableString(): String {
-    return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
+    return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize(java.util.Locale.ROOT) }
 }
 
 fun getExerciseTypeDescriptions(): List<String> {
@@ -76,7 +76,7 @@ fun getExerciseTypeDescriptions(): List<String> {
 
 fun stringToExerciseType(value: String): ExerciseType? {
     return ExerciseType.values().firstOrNull {
-        it.name.equals(value.replace(' ', '_').toUpperCase(), ignoreCase = true)
+        it.name.equals(value.replace(' ', '_').uppercase(java.util.Locale.ROOT), ignoreCase = true)
     }
 }
 
