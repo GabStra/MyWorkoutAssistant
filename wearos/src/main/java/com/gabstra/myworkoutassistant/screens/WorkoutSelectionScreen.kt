@@ -226,6 +226,7 @@ fun WorkoutSelectionScreen(
                         text = "Enable Alarms for scheduled workouts",
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 }
 
@@ -263,6 +264,7 @@ fun WorkoutSelectionScreen(
                             text = "Input your age on the companion app",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onBackground
                         )
                     }
                     item{

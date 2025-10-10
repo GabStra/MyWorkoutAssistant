@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
@@ -262,7 +263,7 @@ fun RestScreen(
     }
 
     @Composable
-    fun textComposable(seconds:Int,modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.titleSmall){
+    fun textComposable(seconds:Int,modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.numeralExtraSmall){
         Row(
             modifier = modifier
                 .fillMaxWidth(),
@@ -284,7 +285,7 @@ fun RestScreen(
                     ),
                 seconds = seconds,
                 style = style,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = MaterialTheme.colorScheme.onBackground,
             )
         }
     }
@@ -316,7 +317,7 @@ fun RestScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     content = {
-                        textComposable(seconds = currentSecondsFreeze, style = MaterialTheme.typography.titleLarge)
+                        textComposable(seconds = currentSecondsFreeze, style = MaterialTheme.typography.numeralSmall.copy(fontWeight = W700))
                     }
                 )
             }
