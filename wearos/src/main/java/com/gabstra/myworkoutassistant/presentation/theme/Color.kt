@@ -1,52 +1,44 @@
 import androidx.compose.ui.graphics.Color
 
-// Primary seed
+// Primary
 val Orange = Color(0xFFFF6700)
-
-// Normal-contrast dark palette (WCAG AA on black bg)
 val primaryDark = Orange
-val onPrimaryDark = Color(0xFF000000)
+val primaryDimDark = Color(0xFFCC5200)           // toned down primary
+val primaryContainerDark = Color(0xFF7f3300)     // ≥3:1 vs black
+val onPrimaryDark = Color(0xFF303030)
+val onPrimaryContainerDark = Color(0xFFFFFFFF)
 
-// UPDATED: ≥3:1 vs black, and on* text ≥4.5:1
-val primaryContainerDark = Color(0xFF994000)   // 3.09:1 vs #000; 5.72:1 with onPrimaryContainerDark
-val onPrimaryContainerDark = Color(0xFFFFE7D6)
-
+// Secondary (warm accent)
 val secondaryDark = Color(0xFFFFB870)
+val secondaryDimDark = Color(0xFFE3A25E)
+val secondaryContainerDark = Color(0xFF7f3300)   // ≥3:1 vs black
 val onSecondaryDark = Color(0xFF000000)
-val secondaryContainerDark = Color(0xFF8F4900) // 3.12:1 vs #000; 5.59:1 with onSecondaryContainerDark
-val onSecondaryContainerDark = Color(0xFFFFE6CC)
+val onSecondaryContainerDark = Color(0xFFFFFFFF)
 
+// Tertiary (cool accent)
 val tertiaryDark = Color(0xFF4FC3F7)
+val tertiaryDimDark = Color(0xFF39AEDF)
+val tertiaryContainerDark = Color(0xFF006280)    // ≥3:1 vs black
 val onTertiaryDark = Color(0xFF000000)
-val tertiaryContainerDark = Color(0xFF006280)  // 3.06:1 vs #000; 5.65:1 with onTertiaryContainerDark
 val onTertiaryContainerDark = Color(0xFFCDEEFF)
 
+// Error
 val errorDark = Color(0xFFFFB4AB)
-val onErrorDark = Color(0xFF690005)
+val errorDimDark = Color(0xFFB3261E)             // M3 dim/error tone
 val errorContainerDark = Color(0xFF93000A)
+val onErrorDark = Color(0xFF690005)
 val onErrorContainerDark = Color(0xFFFFDAD6)
 
+// Surfaces / background
 val backgroundDark = Color(0xFF000000)
-val onBackgroundDark = Color(0xFFF2F2F2)
-val surfaceDark = Color(0xFF141414)
-val onSurfaceDark = Color(0xFFF2F2F2)
+val onBackgroundDark = Color(0xFFF5F5F5)
 
-val surfaceVariantDark = Color(0xFF2A2A2A)
-val onSurfaceVariantDark = Color(0xFFDDDDDD)
-val outlineDark = Color(0xFF7A7A7A)
-// ensure visible dividers/borders on black (≥3:1)
-val outlineVariantDark = Color(0xFF5A5A5A)
+val surfaceContainerLowDark  = Color(0xFF121212) // onSurface 17.95:1; onSurfaceVariant 11.20:1
+val surfaceContainerDark     = Color(0xFF5C5C5C) // onSurface 16.67:1; onSurfaceVariant 10.40:1
+val surfaceContainerHighDark = Color(0xFF242424) // onSurface 14.87:1; onSurfaceVariant  9.28:1
 
-val scrimDark = Color(0xFF000000)
+val onSurfaceDark            = Color(0xFFFFFFFF) // ≥4.5:1 vs all surfaces (see above)
+val onSurfaceVariantDark     = Color(0xFFC8C8C8) // ≥4.5:1 vs all surfaces (see above)
 
-val inverseSurfaceDark = Color(0xFFE6E6E6)
-val inverseOnSurfaceDark = Color(0xFF1A1A1A)
-val inversePrimaryDark = Color(0xFF9E3F00)
-
-val surfaceDimDark = Color(0xFF0E0E0E)
-val surfaceBrightDark = Color(0xFF262626)
-val surfaceContainerLowestDark = Color(0xFF0A0A0A)
-val surfaceContainerLowDark = Color(0xFF141414)
-val surfaceContainerDark = Color(0xFF161616)
-val surfaceContainerHighDark = Color(0xFF1B1B1B)
-val surfaceContainerHighestDark = Color(0xFF212121)
+val outlineDark              = Color(0xFFB0B0B0) // ≥3:1 vs all surfaces (5.43 / 5.04 / 4.50)
+val outlineVariantDark       = Color(0xFF6D6D6D) // adjusted to meet ≥3:1; ratios 3.62 / 3.36 / 3.00

@@ -55,7 +55,7 @@ fun CurrentTime() {
         Text(
             text = ":",
             style = captionStyle,
-            color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
+            color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
         )
 
         Text(

@@ -394,7 +394,7 @@ fun RestScreen(
             paddingAngle = 0f,
             startAngle = 130f,
             endAngle = 230f,
-            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+            trackColor = MaterialTheme.colorScheme.surfaceContainer
         )
 
         textComposable(

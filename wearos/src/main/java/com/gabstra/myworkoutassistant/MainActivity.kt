@@ -20,7 +20,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -29,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,8 +43,9 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.wear.compose.material.CircularProgressIndicator
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -272,6 +273,7 @@ fun WearApp(
     onNavControllerAvailable: (NavHostController) -> Unit
 ) {
     MyWorkoutAssistantTheme {
+
         val navController = rememberNavController()
         val localContext = LocalContext.current
         appViewModel.initExerciseHistoryDao(localContext)
@@ -364,14 +366,23 @@ fun WearApp(
                     }
                     composable(Screen.Loading.route) {
                         val progress by appViewModel.backupProgress
-                        val animatedProgress by animateFloatAsState(targetValue = progress, label = "")
+
+                        val progressState = remember { mutableFloatStateOf(0f) }
+
+                        LaunchedEffect(progress)
+                        {
+                            progressState.floatValue = progress
+                        }
 
                         CircularProgressIndicator(
-                            progress = animatedProgress,
+                            progress = {
+                                progressState.floatValue
+                            },
                             modifier = Modifier.fillMaxSize(),
                             strokeWidth = 4.dp,
-                            indicatorColor = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+                            colors = ProgressIndicatorDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.primary,
+                            )
                         )
 
                         LoadingScreen(appViewModel,"Syncing with phone")

@@ -6,6 +6,5 @@
     -->
     <string name="hello_world">From the Square world,\nHello, %1$s!</string>
     <style name="ThemeActivity" parent="android:Theme.DeviceDefault">
-        <item name="android:windowSwipeToDismiss">false</item>
     </style>
 </resources>

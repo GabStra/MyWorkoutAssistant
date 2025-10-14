@@ -139,21 +139,21 @@ fun HrStatusDialog(
                         PulsingHeartWithBpm(
                             modifier = Modifier.padding(bottom = 10.dp),
                             bpm = hr,
-                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else colorsByZone[currentZone],
+                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainer else colorsByZone[currentZone],
                             size = 30.dp
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "$hr",
                             style =  MaterialTheme.typography.numeralMedium,
-                            color = if (hr == 0) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onBackground
+                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             modifier = Modifier.padding(bottom = 5.dp),
                             text = "bpm",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (hr == 0) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onBackground
+                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.onBackground
                         )
                     }
                 }
@@ -310,13 +310,13 @@ private fun HeartRateDisplay(
 
         PulsingHeartWithBpm(
             bpm = bpm,
-            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else colorsByZone[currentZone]
+            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainer else colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
             style = MaterialTheme.typography.labelSmall,
-            color = if (bpm == 0) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f) else MaterialTheme.colorScheme.onBackground
+            color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.width(2.5.dp))
         if(bpm != 0 && displayMode == 0){
@@ -348,19 +348,21 @@ private fun ZoneSegment(
 ) {
     if (index !in zoneRanges.indices || index !in colorsByZone.indices) return
 
-    val progressState = remember { mutableFloatStateOf(0f) }
+    fun computeProgress(): Float = when {
+        hr == 0 -> 0f
+        currentZone == index -> {
+            if (upperBound > lowerBound)
+                ((mhrPercentage - lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
+            else if (mhrPercentage >= lowerBound) 1f else 0f
+        }
+        currentZone > index -> 1f
+        else -> 0f
+    }
+
+    val progressState = remember { mutableFloatStateOf(computeProgress()) }
 
     LaunchedEffect(hr, mhrPercentage, currentZone, lowerBound, upperBound, index) {
-        progressState.floatValue = when {
-            hr == 0 -> 0f
-            currentZone == index -> {
-                if (upperBound > lowerBound)
-                    ((mhrPercentage - lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
-                else if (mhrPercentage >= lowerBound) 1f else 0f
-            }
-            currentZone > index -> 1f
-            else -> 0f
-        }
+        progressState.floatValue = computeProgress()
     }
 
     CircularProgressIndicator(
@@ -370,7 +372,6 @@ private fun ZoneSegment(
         modifier = modifier,
         colors = ProgressIndicatorDefaults.colors(
             indicatorColor = colorsByZone[index],
-            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
         ),
         strokeWidth = 4.dp,
         startAngle = startAngle,
@@ -537,8 +538,8 @@ private fun HeartRateView(
 
             var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f))
-            RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f))
+            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainer)
+            RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainer)
         }
     }
 }

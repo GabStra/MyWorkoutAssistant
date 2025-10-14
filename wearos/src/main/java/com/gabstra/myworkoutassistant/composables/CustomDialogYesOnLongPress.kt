@@ -234,7 +234,7 @@ fun CustomDialogYesOnLongPress(
                         //.graphicsLayer(alpha = progressBarAlpha),
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+                    trackColor = MaterialTheme.colorScheme.surfaceContainer
                 )
             }
         }

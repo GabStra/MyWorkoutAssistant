@@ -5,7 +5,7 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.VibrationEffect
 import android.os.Vibrator
-import androidx.core.content.ContextCompat
+import android.os.VibratorManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -13,30 +13,43 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class HapticsHelper(context: Context) {
+    private val appContext = context.applicationContext
+
+    // Modern vibrator on API 31+; fallback otherwise
     private val vibrator: Vibrator? =
-        ContextCompat.getSystemService(context, Vibrator::class.java)
-    private var toneGen: ToneGenerator? =
-        ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
+        (appContext.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager)
+            .defaultVibrator
+
+    private val hasAmp: Boolean = vibrator?.hasAmplitudeControl() == true
+
+    private val tone: ToneGenerator = ToneGenerator(
+        AudioManager.STREAM_NOTIFICATION,
+        ToneGenerator.MAX_VOLUME
+    )
+
+    private fun vibrate(durationMs: Int, amplitude: Int) {
+        val effect = VibrationEffect.createOneShot(durationMs.toLong(), amplitude)
+        vibrator?.vibrate(effect)
+    }
 
     fun vibrateHard() {
-        vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+        val amp = if (hasAmp) 255 else VibrationEffect.DEFAULT_AMPLITUDE
+        vibrate(150, amp)
     }
 
     fun vibrateGentle() {
-        vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+        val amp = if (hasAmp) 128 else VibrationEffect.DEFAULT_AMPLITUDE
+        vibrate(50, amp)
     }
 
+    // fire sound + vibration together
     fun vibrateHardAndBeep() {
-        val t = toneGen ?: return
-        vibrator?.let { v ->
-            v.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-            t.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-        }
+        vibrateHard()
+        tone.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
     }
 
     fun release() {
-        toneGen?.release()
-        toneGen = null
+        tone.release()
     }
 }
 
@@ -44,59 +57,27 @@ class HapticsViewModel(
     private val haptics: HapticsHelper
 ) : ViewModel() {
 
-    fun doHardVibration() {
-        haptics.vibrateHard()
+    fun doHardVibration() = haptics.vibrateHard()
+    fun doGentleVibration() = haptics.vibrateGentle()
+    fun doHardVibrationWithBeep() = haptics.vibrateHardAndBeep()
+    fun doHardVibrationTwice() = viewModelScope.launch {
+        haptics.vibrateHard(); delay(200); haptics.vibrateHard()
+    }
+    fun doHardVibrationTwiceWithBeep() = viewModelScope.launch {
+        haptics.vibrateHardAndBeep(); delay(200); haptics.vibrateHardAndBeep()
+    }
+    fun doShortImpulse() = viewModelScope.launch {
+        haptics.vibrateHard(); delay(200); haptics.vibrateHard(); delay(200); haptics.vibrateHard()
     }
 
-    fun doGentleVibration() {
-        haptics.vibrateGentle()
-    }
-
-    fun doHardVibrationWithBeep() {
-        haptics.vibrateHardAndBeep()
-    }
-
-    fun doHardVibrationTwice() {
-        viewModelScope.launch {
-            haptics.vibrateHard()
-            delay(200)
-            haptics.vibrateHard()
-        }
-    }
-
-    fun doHardVibrationTwiceWithBeep() {
-        viewModelScope.launch {
-            haptics.vibrateHardAndBeep()
-            delay(200)
-            haptics.vibrateHardAndBeep()
-        }
-    }
-
-    fun doShortImpulse() {
-        viewModelScope.launch {
-            haptics.vibrateHard()
-            delay(200)
-            haptics.vibrateHard()
-            delay(200)
-            haptics.vibrateHard()
-        }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        haptics.release()
-    }
+    override fun onCleared() { super.onCleared(); haptics.release() }
 }
 
-class HapticsViewModelFactory(
-    private val appContext: Context
-) : ViewModelProvider.Factory {
-
+class HapticsViewModelFactory(private val appContext: Context) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(HapticsViewModel::class.java)) {
-            val helper = HapticsHelper(appContext)
-            return HapticsViewModel(helper) as T
+            return HapticsViewModel(HapticsHelper(appContext)) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

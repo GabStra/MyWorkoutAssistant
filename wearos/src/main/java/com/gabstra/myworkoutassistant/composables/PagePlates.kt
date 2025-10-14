@@ -90,14 +90,13 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                     scrollState = scrollState,
                                     scrollBarColor = MaterialTheme.colorScheme.onBackground
                                 )
-                                .padding(horizontal = 10.dp)
                                 .verticalScroll(scrollState),
                             verticalArrangement = Arrangement.spacedBy(3.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
                                 val backgroundColor = if (index % 2 == 0) {
-                                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+                                    MaterialTheme.colorScheme.surfaceContainer
                                 } else {
                                     Color.Transparent
                                 }

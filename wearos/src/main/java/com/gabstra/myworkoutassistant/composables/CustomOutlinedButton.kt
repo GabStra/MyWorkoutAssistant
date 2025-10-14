@@ -31,7 +31,7 @@ fun CustomOutlinedButton(
     enabled: Boolean = true
 ) {
     val backgroundOnPress = color.copy(alpha = 0.15f)
-    val disabledColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+    val disabledColor = MaterialTheme.colorScheme.surfaceContainer
     val interactionSource = remember { MutableInteractionSource() }
     val interactions = interactionSource.interactions
     val isPressed = if (enabled) interactions.collectAsState(initial = null).value is PressInteraction.Press else false

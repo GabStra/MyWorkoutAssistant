@@ -11,8 +11,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
@@ -22,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -37,6 +41,8 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.Card
+import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OpenOnPhoneDialog
@@ -189,10 +195,11 @@ fun WorkoutSelectionScreen(
                 ListHeader(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec).animateItem(),
+                        .transformedHeight(this, spec)
+                        .animateItem(),
                     transformation = SurfaceTransformation(spec),
                 ) {
-                    Text(
+                    Row(
                         modifier = Modifier
                             .combinedClickable(
                                 onClick = {},
@@ -211,68 +218,91 @@ fun WorkoutSelectionScreen(
                                     hapticsViewModel.doHardVibrationTwice()
                                 }
                             ),
-                        text = "My Workout Assistant",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "My Workout Assistant",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
                 }
             }
 
             if(!canScheduleExactAlarms){
                 item {
-                    Text(
-                        modifier = Modifier.padding(vertical = 5.dp),
-                        text = "Enable Alarms for scheduled workouts",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-
-                item{
-                    Button(
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        ),
+                        transformation = SurfaceTransformation(spec),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .transformedHeight(this, spec).animateItem(),
-                        transformation = SurfaceTransformation(spec),
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            val intent = Intent(
-                                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                                "package:${context.packageName}".toUri()
-                            )
-
-                            context.startActivity(intent)
-                        }
+                            .animateItem(),
                     ) {
                         Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = "Open Alarms Settings",
+                            modifier = Modifier,
+                            text = "Enable Alarms for scheduled workouts",
                             textAlign = TextAlign.Center,
-                            style =  MaterialTheme.typography.bodyLarge,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                hapticsViewModel.doGentleVibration()
+                                val intent = Intent(
+                                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                    "package:${context.packageName}".toUri()
+                                )
+
+                                context.startActivity(intent)
+                            }
+                        ) {
+                            Text(
+                                modifier = Modifier.fillMaxWidth(),
+                                text = "Open Alarms Settings",
+                                textAlign = TextAlign.Center,
+                                style =  MaterialTheme.typography.bodyLarge,
+                            )
+                        }
                     }
                 }
             }
 
             if (userAge == currentYear) {
-                if(viewModel.isPhoneConnectedAndHasApp){
-                    item{
-                        Text(
-                            modifier = Modifier.padding(vertical = 5.dp),
-                            text = "Input your age on the companion app",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                    item{
+                item{
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        ),
+                        transformation = SurfaceTransformation(spec),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateItem(),
+                    ) {
+                        if(viewModel.isPhoneConnectedAndHasApp){
+                            Text(
+                                text = "Input your age on the mobile app",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }else{
+                            Text(
+                                text = "Install the mobile app on your phone",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
                         var showOpenOnPhoneDialog by remember { mutableStateOf(false) }
                         Button(
-                            modifier = Modifier
-                                .fillMaxWidth().animateItem(),
-                            transformation = SurfaceTransformation(spec),
+                            modifier = Modifier.fillMaxWidth(),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 showOpenOnPhoneDialog = true
@@ -298,16 +328,9 @@ fun WorkoutSelectionScreen(
                             )
                         }
                     }
-                }else{
-                    item{
-                        Text(
-                            modifier = Modifier.padding(vertical = 5.dp),
-                            text = "Install the companion app on your phone",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
                 }
+
+
             }else{
                 if (sortedWorkouts.isEmpty()) {
                     item {
@@ -332,14 +355,13 @@ fun WorkoutSelectionScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .transformedHeight(this, spec).animateItem(),
+                                .transformedHeight(this, spec)
+                                .animateItem(),
                             transformation = SurfaceTransformation(spec)
                         )
                     }
                 }
             }
-
-
         }
     }
 

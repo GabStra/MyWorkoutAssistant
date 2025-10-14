@@ -66,7 +66,6 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -1539,6 +1538,13 @@ open class WorkoutViewModel : ViewModel() {
                     equipment.barWeight,
                     initialSetup,
                 )
+
+                Log.d("PlatesCalculator", "Plate changes calculated for: ${exercise.name}")
+
+                results.forEach {
+                    Log.d("PlatesCalculator", "$it")
+                }
+
                 plateChangeResults.addAll(results)
             } catch (e: Exception) {
                 Log.e("PlatesCalculator", "Error calculating plate changes", e)
@@ -1623,8 +1629,6 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            fun Double.eq(other: Double, eps: Double = 1e-6) = abs(this - other) <= eps
-
             fun buildWarmupSets(
                 workWeight: Double,
                 workReps: Int,
@@ -1670,8 +1674,8 @@ open class WorkoutViewModel : ViewModel() {
 
                 if(equipment is Barbell){
                     val availablePlatesPerSide = equipment.availablePlates.map { it.weight }.toList()
-                    val targetWeights = targets.map {  it.first } + listOf(workWeight)
-                    val usableChoices = choices + listOf(workWeight)
+                    val targetWeights = targets.map {  it.first }
+                    val usableChoices = choices
 
                     val mostConvenientWeights = PlateCalculator.pickUniqueTotalsFromTotals(
                         availablePlatesPerSide,
@@ -1680,9 +1684,7 @@ open class WorkoutViewModel : ViewModel() {
                         equipment.barWeight
                     )
 
-                    targets = mostConvenientWeights
-                        .dropLast(1)
-                        .map{ it to repsAt(it / est1RM) }
+                    targets = mostConvenientWeights.map{ it to repsAt(it / est1RM) }
                 }
 
                 val out = mutableListOf<Pair<Double, Int>>()

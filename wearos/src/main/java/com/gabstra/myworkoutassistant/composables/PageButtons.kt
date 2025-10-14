@@ -16,11 +16,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.FilledTonalButton
-import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.OutlinedButton
-
+import androidx.wear.compose.material3.CheckboxButton
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
@@ -87,44 +83,21 @@ fun PageButtons(
                 )
             }
             item{
-                if (keepScreenOn){
-                    FilledTonalButton(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, spec).animateItem(),
-                        transformation = SurfaceTransformation(spec),
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            viewModel.toggleKeepScreenOn()
-                        }
-                    ) {
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = "Allow Screen to Dim",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+                CheckboxButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec).animateItem(),
+                    transformation = SurfaceTransformation(spec),
+                    label = { Text(
+                        text = "Keep screen on",
+                        textAlign = TextAlign.Center
+                    ) },
+                    checked = keepScreenOn,
+                    onCheckedChange = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.toggleKeepScreenOn()
                     }
-
-                }else{
-                    Button(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, spec).animateItem(),
-                        transformation = SurfaceTransformation(spec),
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            viewModel.toggleKeepScreenOn()
-                        }
-                    ) {
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = "Keep Screen On",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
-                }
+                )
             }
 
             if (isMovementSet && isLastSet) {
@@ -134,7 +107,7 @@ fun PageButtons(
                             .fillMaxWidth()
                             .transformedHeight(this, spec).animateItem(),
                         transformation = SurfaceTransformation(spec),
-                        text = "Add Rest Pause Set",
+                        text = "Add Rest-Pause set",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             viewModel.storeSetData()
@@ -153,7 +126,7 @@ fun PageButtons(
                             .fillMaxWidth()
                             .transformedHeight(this, spec).animateItem(),
                         transformation = SurfaceTransformation(spec),
-                        text = "Add Set",
+                        text = "Add set",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             viewModel.storeSetData()

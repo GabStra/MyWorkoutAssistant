@@ -202,7 +202,7 @@ fun PageExercises(
                     currentSet = currentStateSet.set,
                     customColor = when {
                         selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                         else -> null
                     },
                     overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {

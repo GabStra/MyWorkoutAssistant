@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
@@ -175,7 +176,7 @@ fun CustomHorizontalPager(
     ) {
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize().padding(bottom = 20.dp),
+            modifier = Modifier.fillMaxSize().padding(bottom = 20.dp).clip(RectangleShape),
             userScrollEnabled = userScrollEnabled,
         ) { page ->
             CustomAnimatedPage(pageIndex = page, pagerState = pagerState) {

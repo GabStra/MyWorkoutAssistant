@@ -279,8 +279,8 @@ fun ExerciseSetsViewer(
             color = customColor
                 ?: when {
                     rowIndex < setIndex -> MaterialTheme.colorScheme.primary // MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
-                    rowIndex == setIndex -> MaterialTheme.colorScheme.onBackground
-                    else -> MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                    rowIndex == setIndex -> MaterialTheme.colorScheme.onSurface
+                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 }
         )
     }
@@ -332,7 +332,7 @@ fun ExerciseSetsViewer(
                 ) {
                     exerciseSetStates.forEachIndexed { index, nextSetState ->
                         val backgroundColor = if (index % 2 == 0) {
-                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+                            MaterialTheme.colorScheme.surfaceContainer
                         } else {
                             Color.Transparent
                         }
@@ -376,7 +376,7 @@ fun ExerciseSetsViewer(
                 ) {
                     exerciseSetStates.forEachIndexed { index, nextSetState ->
                         val backgroundColor = if (index % 2 == 0) {
-                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+                            MaterialTheme.colorScheme.surfaceContainer
                         } else {
                             Color.Transparent
                         }

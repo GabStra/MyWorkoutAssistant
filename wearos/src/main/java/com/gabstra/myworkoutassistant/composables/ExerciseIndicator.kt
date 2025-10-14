@@ -69,7 +69,6 @@ fun ExerciseIndicator(
                     CircularProgressIndicator(
                         colors = ProgressIndicatorDefaults.colors(
                             indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-                            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                         ),
                         progress = { indicatorProgress },
                         modifier = Modifier.fillMaxSize(),
@@ -100,7 +99,6 @@ fun ExerciseIndicator(
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
                         indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-                        trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
                     ),
                     progress = { indicatorProgress },
                     modifier = Modifier.fillMaxSize(),
@@ -224,7 +222,7 @@ fun SetIndicator(
                 paddingAngle = 0f,
                 startAngle = startAngle,
                 endAngle = endAngle,
-                trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+                trackColor = MaterialTheme.colorScheme.surfaceContainer
             )
         }
     }

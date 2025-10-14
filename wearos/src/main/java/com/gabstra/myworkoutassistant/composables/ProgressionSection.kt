@@ -209,7 +209,7 @@ fun ProgressionSection(
                 ) {
                     progressionData?.forEachIndexed { index, info ->
                         val backgroundColor = if (index % 2 == 0) {
-                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+                            MaterialTheme.colorScheme.surfaceContainer
                         } else {
                             Color.Transparent
                         }
