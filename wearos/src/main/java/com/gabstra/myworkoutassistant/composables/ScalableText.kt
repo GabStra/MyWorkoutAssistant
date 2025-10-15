@@ -115,7 +115,7 @@ fun ScalableText(
             color = color,
             maxLines = maxLines,
             textAlign = textAlign,
-            modifier = Modifier.alpha(alpha)
+            modifier = if(fadeInMillis > 200) Modifier.alpha(alpha) else Modifier.alpha(if (show) 1f else 0f)
         )
     }
 }

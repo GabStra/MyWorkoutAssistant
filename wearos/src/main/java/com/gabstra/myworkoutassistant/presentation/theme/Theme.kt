@@ -4,77 +4,57 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.wear.compose.material3.ColorScheme
 import androidx.wear.compose.material3.MaterialTheme
-import backgroundDark
-import errorContainerDark
-import errorDark
-import errorDimDark
-import onBackgroundDark
-import onErrorContainerDark
-import onErrorDark
-import onPrimaryContainerDark
-import onPrimaryDark
-import onSecondaryContainerDark
-import onSecondaryDark
-import onSurfaceDark
-import onSurfaceVariantDark
-import onTertiaryContainerDark
-import onTertiaryDark
-import outlineDark
-import outlineVariantDark
-import primaryContainerDark
-import primaryDark
-import primaryDimDark
-import secondaryContainerDark
-import secondaryDark
-import secondaryDimDark
-import surfaceContainerDark
-import surfaceContainerHighDark
-import surfaceContainerLowDark
-import tertiaryContainerDark
-import tertiaryDark
-import tertiaryDimDark
+import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
+import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.Orange
+import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.Yellow
 
 val darkScheme = ColorScheme(
-    primary = primaryDark,
-    primaryDim = primaryDimDark,
-    primaryContainer = primaryContainerDark,
-    onPrimary = onPrimaryDark,
-    onPrimaryContainer = onPrimaryContainerDark,
+    primary = Orange,
+    primaryDim = Orange,
+    primaryContainer = MediumDarkerGray,
+    onPrimary = DarkGray,
+    onPrimaryContainer = LightGray,
 
-    secondary = secondaryDark,
-    secondaryDim = secondaryDimDark,
-    secondaryContainer = secondaryContainerDark,
-    onSecondary = onSecondaryDark,
-    onSecondaryContainer = onSecondaryContainerDark,
+    secondary = Green,
+    secondaryDim = Green,
+    secondaryContainer = MediumDarkerGray,
+    onSecondary = DarkGray,
+    onSecondaryContainer = LightGray,
 
-    tertiary = tertiaryDark,
-    tertiaryDim = tertiaryDimDark,
-    tertiaryContainer = tertiaryContainerDark,
-    onTertiary = onTertiaryDark,
-    onTertiaryContainer = onTertiaryContainerDark,
+    tertiary = Yellow,
+    tertiaryDim = Yellow,
+    tertiaryContainer = MediumDarkerGray,
+    onTertiary = DarkGray,
+    onTertiaryContainer = LightGray,
 
-    surfaceContainerLow = surfaceContainerLowDark,
-    surfaceContainer = surfaceContainerDark,
-    surfaceContainerHigh = surfaceContainerHighDark,
-    onSurface = onSurfaceDark,
-    onSurfaceVariant = onSurfaceVariantDark,
-    outline = outlineDark,
-    outlineVariant = outlineVariantDark,
+    surfaceContainerLow = MediumDarkerGray,
+    surfaceContainer = MediumDarkGray,
+    surfaceContainerHigh = MediumGray,
+    onSurface = LightGray,
+    onSurfaceVariant = MediumLightGray,
+    outline = MediumGray,
+    outlineVariant = MediumLightGray,
 
-    background = backgroundDark,
-    onBackground = onBackgroundDark,
+    background = Color.Black,
+    onBackground = LightGray,
 
-    error = errorDark,
-    errorDim = errorDimDark,
-    errorContainer = errorContainerDark,
-    onError = onErrorDark,
-    onErrorContainer = onErrorContainerDark,
+    error = Red,
+    errorDim = Red,
+    errorContainer = MediumDarkerGray,
+    onError = LightGray,
+    onErrorContainer = Red,
 )
 
 @Immutable
@@ -93,21 +73,17 @@ val unspecified_scheme = ColorFamily(
 fun MyWorkoutAssistantTheme(
     content: @Composable () -> Unit
 ) {
-    CompositionLocalProvider(
-        androidx.compose.material3.LocalTonalElevationEnabled provides false
-    ) {
-        MaterialTheme(
-            colorScheme = darkScheme,
-            typography = baseline,
-            content = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background)
-                ){
-                    content()
-                }
+    MaterialTheme(
+        colorScheme = darkScheme,
+        typography = baseline,
+        content = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+            ){
+                content()
             }
-        )
-    }
+        }
+    )
 }

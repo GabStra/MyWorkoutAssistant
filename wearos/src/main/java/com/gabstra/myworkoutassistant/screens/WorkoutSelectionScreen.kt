@@ -235,7 +235,7 @@ fun WorkoutSelectionScreen(
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                         ),
                         transformation = SurfaceTransformation(spec),
                         modifier = Modifier
@@ -277,7 +277,7 @@ fun WorkoutSelectionScreen(
                 item{
                     Card(
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                         ),
                         transformation = SurfaceTransformation(spec),
                         modifier = Modifier

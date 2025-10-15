@@ -259,7 +259,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
 fun WearApp(

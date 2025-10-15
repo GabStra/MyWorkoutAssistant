@@ -200,9 +200,14 @@ fun PageExercises(
                     hapticsViewModel = hapticsViewModel,
                     exercise = selectedExercise,
                     currentSet = currentStateSet.set,
+                    customMarkAsDone = when {
+                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> true
+                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> false
+                        else -> null
+                    },
                     customColor = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurfaceVariant
+                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurface
                         else -> null
                     },
                     overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {

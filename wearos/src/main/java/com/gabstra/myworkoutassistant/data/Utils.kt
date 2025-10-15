@@ -93,7 +93,7 @@ fun Modifier.verticalColumnScrollbar(
     // Scrollbar appearance
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = false,
-    scrollBarTrackColor: Color = MaterialTheme.colorScheme.background,
+    scrollBarTrackColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     scrollBarColor: Color = MaterialTheme.colorScheme.onBackground,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 0f,

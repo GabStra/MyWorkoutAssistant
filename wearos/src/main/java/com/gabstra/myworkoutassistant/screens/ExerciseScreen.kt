@@ -345,7 +345,6 @@ fun ExerciseScreen(
         }
 
 
-
         CustomDialogYesOnLongPress(
             show = showNextDialog,
             title = if (updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Switch side" else "Complete Set",

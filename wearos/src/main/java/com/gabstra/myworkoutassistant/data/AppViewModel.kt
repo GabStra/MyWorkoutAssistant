@@ -4,7 +4,6 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -18,8 +17,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -53,49 +50,12 @@ open class AppViewModel : WorkoutViewModel() {
     private val _headerDisplayMode = mutableStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
 
-    private val _keepScreenOn = mutableStateOf(false)
-    val keepScreenOn: State<Boolean> = _keepScreenOn
-
-    private val _currentScreenDimmingState = mutableStateOf(false)
-
-    val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
-    private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
-    val lightScreenUp = _lightScreenUp.receiveAsFlow()
-
-    val enableDimming: State<Boolean> = derivedStateOf {
-        !isPaused.value && currentScreenDimmingState.value && !keepScreenOn.value
-    }
-
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
     }
 
     fun switchHeaderDisplayMode() {
         _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
-    }
-
-    fun toggleKeepScreenOn() {
-        _keepScreenOn.value = !_keepScreenOn.value
-    }
-
-    fun setDimming(shouldDim: Boolean) {
-        _currentScreenDimmingState.value = shouldDim
-    }
-
-    fun lightScreenUp() {
-        viewModelScope.launch {
-            _lightScreenUp.send(Unit)
-        }
-    }
-
-    fun reEvaluateDimmingForCurrentState() {
-        val currentState = workoutState.value
-        if (currentState is WorkoutState.Set) {
-            val exercise = exercisesById[currentState.exerciseId]!!
-            _currentScreenDimmingState.value = !exercise.keepScreenOn
-        } else if (currentState is WorkoutState.Rest) {
-            _currentScreenDimmingState.value = true
-        }
     }
 
     fun sendAll(context: Context) {
@@ -184,7 +144,7 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun startWorkout() {
-        _currentScreenDimmingState.value = false
+
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
         super.startWorkout()
@@ -196,7 +156,7 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
-        _currentScreenDimmingState.value = false
+
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
 

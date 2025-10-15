@@ -11,16 +11,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
@@ -88,21 +91,28 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                 .fillMaxWidth()
                                 .verticalColumnScrollbar(
                                     scrollState = scrollState,
-                                    scrollBarColor = MaterialTheme.colorScheme.onBackground
+                                    scrollBarColor = MaterialTheme.colorScheme.onBackground,
+                                    enableTopFade = false,
+                                    enableBottomFade = false
                                 )
                                 .verticalScroll(scrollState),
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
-                                val backgroundColor = if (index % 2 == 0) {
-                                    MaterialTheme.colorScheme.surfaceContainer
+                                val backgroundColor = if (step.action == PlateCalculator.Companion.Action.ADD) {
+                                    Green.copy(0.35f)
                                 } else {
-                                    Color.Transparent
+                                    Red.copy(0.35f)
                                 }
 
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().height(20.dp).background(backgroundColor),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp)
+                                        .clip(RoundedCornerShape(25))
+                                        .background(  backgroundColor)
+                                        .height(20.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val weightText = String.format("%.2f", step.weight).replace(",", ".")
