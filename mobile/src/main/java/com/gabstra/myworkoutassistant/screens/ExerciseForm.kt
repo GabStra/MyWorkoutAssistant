@@ -52,6 +52,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
@@ -65,15 +66,6 @@ import java.util.UUID
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-
-// ---- Consistent spacing scale ----------------------------------------------
-private object Spacing {
-    val xs = 6.dp
-    val sm = 8.dp
-    val md = 12.dp
-    val lg = 16.dp
-    val xl = 24.dp
-}
 
 private fun ExerciseType.toReadableString(): String {
     return name.replace('_', ' ')
@@ -227,17 +219,13 @@ fun ExerciseForm(
 
             // Exercise type (create only)
             if (exercise == null) {
-                Text(
-                    text = "Exercise type",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = Spacing.sm)
-                )
                 ExposedDropdownMenuBox(
                     expanded = exerciseTypeExpanded,
                     onExpandedChange = { exerciseTypeExpanded = it }
                 ) {
                     OutlinedTextField(
                         value = selectedExerciseType.value.toReadableString(),
+                        label = { Text("Exercise type", style = MaterialTheme.typography.labelLarge) },
                         onValueChange = {},
                         readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = exerciseTypeExpanded) },

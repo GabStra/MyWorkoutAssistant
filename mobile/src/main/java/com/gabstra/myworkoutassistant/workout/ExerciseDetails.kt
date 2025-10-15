@@ -135,19 +135,6 @@ fun ExerciseDetail(
                     }
                 }
             }
-
-            BodyWeightSetScreen(
-                viewModel = viewModel,
-                hapticsViewModel = hapticsViewModel,
-                modifier = modifier,
-                state = updatedState,
-                forceStopEditMode = false,
-                onEditModeDisabled = onEditModeDisabled,
-                onEditModeEnabled = onEditModeEnabled,
-                extraInfo = extraInfo,
-                exerciseTitleComposable = { exerciseTitleComposable {} },
-                customComponentWrapper = customComponentWrapper
-            )
         }
 
         is TimedDurationSet -> {

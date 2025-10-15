@@ -8,16 +8,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -182,19 +178,7 @@ fun WorkoutScreen(
                                 .fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(15.dp)
-                            ){
-                                CircularProgressIndicator(
-                                    modifier = Modifier.width(32.dp),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    trackColor = Color.DarkGray,
-                                )
-
-                                LoadingText("Starting workout",MaterialTheme.typography.bodyLarge)
-                            }
-
+                            LoadingText("Starting workout",MaterialTheme.typography.bodyLarge)
                         }
                     }
 

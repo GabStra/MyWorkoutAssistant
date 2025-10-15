@@ -15,25 +15,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -49,26 +47,24 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.WorkoutTypes
-import com.gabstra.myworkoutassistant.composables.CustomButton
-import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -79,32 +75,32 @@ import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
 
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkoutForm(
     onWorkoutUpsert: (Workout, List<WorkoutSchedule>) -> Unit,
     onCancel: () -> Unit,
-    workout: Workout? = null, // Add workout parameter with default value null
+    workout: Workout? = null,
     existingSchedules: List<WorkoutSchedule> = emptyList()
 ) {
-    // Mutable state for form fields
-    val workoutNameState = remember { mutableStateOf(workout?.name ?: "") }
-    val workoutDescriptionState = remember { mutableStateOf(workout?.description ?: "") }
-    val timesCompletedInAWeekState = remember { mutableStateOf(workout?.timesCompletedInAWeek?.toString() ?: "0") }
-    val usePolarDeviceState = remember { mutableStateOf(workout?.usePolarDevice ?: false) }
+    // ---- state ----
+    val workoutNameState = rememberSaveable { mutableStateOf(workout?.name ?: "") }
+    val workoutDescriptionState = rememberSaveable { mutableStateOf(workout?.description ?: "") }
+    val timesCompletedInAWeekState = rememberSaveable { mutableStateOf(workout?.timesCompletedInAWeek?.toString() ?: "0") }
+    val usePolarDeviceState = rememberSaveable { mutableStateOf(workout?.usePolarDevice ?: false) }
 
-    val selectedWorkoutType = remember { mutableStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING) }
-    val expanded = remember { mutableStateOf(false) }
-    
-    // Schedule states
-    val schedules = remember(existingSchedules) { mutableStateOf(existingSchedules.toMutableList()) }
+    val selectedWorkoutType = rememberSaveable { mutableStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING) }
+    var workoutTypeExpanded by rememberSaveable { mutableStateOf(false) }
+
+    val schedules = remember { mutableStateOf(existingSchedules.toMutableList()) }
     val showScheduleDialog = remember { mutableStateOf(false) }
     val currentEditingSchedule = remember { mutableStateOf<WorkoutSchedule?>(null) }
 
-    val newGlobalId = remember { UUID.randomUUID() }
-
     val showBatchScheduleDialog = remember { mutableStateOf(false) }
+
+    val newGlobalId = remember { workout?.globalId ?: UUID.randomUUID() }
+
+    val scrollState = rememberScrollState()
 
     Scaffold(
         topBar = {
@@ -117,17 +113,17 @@ fun WorkoutForm(
                         strokeWidth = 1.dp.toPx()
                     )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 title = {
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
+                        text = if (workout == null) "Insert Workout" else "Edit Workout",
                         textAlign = TextAlign.Center,
-                        text = if(workout == null) "Insert Workout" else "Edit Workout",
-                        color = LightGray,
+                        style = MaterialTheme.typography.titleLarge
                     )
                 },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
@@ -137,7 +133,8 @@ fun WorkoutForm(
                     }
                 },
                 actions = {
-                    IconButton(modifier = Modifier.alpha(0f), onClick = {onCancel()}) {
+                    // invisible icon to keep title centered like in ExerciseForm
+                    IconButton(modifier = Modifier.alpha(0f), onClick = { }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -146,264 +143,232 @@ fun WorkoutForm(
                 }
             )
         }
-    ){
-            it ->
-        val scrollState = rememberScrollState()
-
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(it)
-                .padding(top = 10.dp)
+                .padding(padding)
+                .padding(top = Spacing.md)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
-            verticalArrangement = Arrangement.Center,
+                .padding(horizontal = Spacing.lg),
         ) {
-            // Workout name field
+            // Name
             OutlinedTextField(
                 value = workoutNameState.value,
                 onValueChange = { workoutNameState.value = it },
-                label = { Text("Workout Name") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
+                label = { Text("Workout name", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.fillMaxWidth()
             )
 
-            // Workout description field
+            Spacer(Modifier.height(Spacing.lg))
+
+            // Description
             OutlinedTextField(
                 value = workoutDescriptionState.value,
                 onValueChange = { workoutDescriptionState.value = it },
-                label = { Text("Description") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp)
-                    .padding(8.dp)
+                label = { Text("Description", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 5,
+                singleLine = false
             )
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
+            Spacer(Modifier.height(Spacing.lg))
+
+            ExposedDropdownMenuBox(
+                expanded = workoutTypeExpanded,
+                onExpandedChange = { workoutTypeExpanded = it }
             ) {
-                Text(text = "Type:")
-                Box {
-                    Text(
-                        text = WorkoutTypes.GetNameFromInt(selectedWorkoutType.value),
-                        modifier = Modifier
-                            .clickable { expanded.value = true }
-                            .padding(8.dp)
-                    )
-                    DropdownMenu(
-                        expanded = expanded.value,
-                        onDismissRequest = { expanded.value = false },
-                        modifier = Modifier.background(MediumDarkerGray),
-                        border = BorderStroke(1.dp, MediumLightGray)
-                    ) {
-                        WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
-                            DropdownMenuItem(
-                                onClick = {
-                                    selectedWorkoutType.value =  WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP[key]!!
-                                    expanded.value = false
-                                },
-                                text = {
-                                    Text(text =  key.replace('_', ' ').capitalize(Locale.ROOT))
-                                }
-                            )
-                        }
+                val typeLabel = remember(selectedWorkoutType.value) {
+                    WorkoutTypes.GetNameFromInt(selectedWorkoutType.value)
+                    .replace('_', ' ')
+                    .lowercase(Locale.ROOT)
+                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                }
+
+                OutlinedTextField(
+                    value = typeLabel,
+                    label = { Text("Workout type", style = MaterialTheme.typography.labelLarge) },
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(workoutTypeExpanded) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor()
+                )
+
+                ExposedDropdownMenu(
+                    expanded = workoutTypeExpanded,
+                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                    border = BorderStroke(1.dp, MediumLightGray),
+                    onDismissRequest = { workoutTypeExpanded = false }
+                ) {
+                    WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    key.replace('_', ' ').lowercase(Locale.ROOT)
+                                        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() },
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            },
+                            onClick = {
+                                selectedWorkoutType.value = WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP[key]!!
+                                workoutTypeExpanded = false
+                            }
+                        )
                     }
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = timesCompletedInAWeekState.value,
-                    onValueChange = { input ->
-                        if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                            timesCompletedInAWeekState.value = input
-                        }
-                    },
-                    label = { Text("Target sessions per week") },
-                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                )
-            }
+            // Target sessions per week
+            Spacer(Modifier.height(Spacing.lg))
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                Checkbox(
-                    checked = usePolarDeviceState.value,
-                    onCheckedChange = { usePolarDeviceState.value = it },
-                    colors = CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                    )
-                )
-                Text(text = "Use Polar Device")
-            }
-
-            // Workout Schedule Section
-            StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = "Workout Schedule",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    
-                    // Display existing schedules
-                    if (schedules.value.isEmpty()) {
-                        Text(
-                            text = "No schedules set",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                    } else {
-                        Column {
-                            schedules.value.forEachIndexed { index, schedule ->
-                                ScheduleListItem(
-                                    schedule = schedule,
-                                    index = index,
-                                    onEdit = {
-                                        currentEditingSchedule.value = schedule
-                                        showScheduleDialog.value = true
-                                    },
-                                    onDelete = {
-                                        val updatedSchedules = schedules.value.toMutableList()
-                                        updatedSchedules.removeAt(index)
-                                        schedules.value = updatedSchedules
-                                    }
-                                )
-                            }
-                        }
+            OutlinedTextField(
+                value = timesCompletedInAWeekState.value,
+                onValueChange = { input ->
+                    if (input.isEmpty() || input.all { it.isDigit() }) {
+                        timesCompletedInAWeekState.value = input
                     }
+                },
+                label = { Text("Target sessions per week", style = MaterialTheme.typography.labelLarge) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                currentEditingSchedule.value = null
+            // Use Polar toggle (aligned style)
+            ListItem(
+                colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                headlineContent = { Text("Use Polar device", style = MaterialTheme.typography.bodyLarge) },
+                trailingContent = {
+                    Switch(
+                        checked = usePolarDeviceState.value,
+                        onCheckedChange = { usePolarDeviceState.value = it }
+                    )
+                }
+            )
+            HorizontalDivider(color = MediumLightGray)
+
+            // ---- Schedules --------------------------------------------------
+            Spacer(Modifier.height(Spacing.lg))
+            Text(
+                text = "Workout schedule",
+                style = MaterialTheme.typography.titleMedium,
+            )
+
+            Spacer(Modifier.height(Spacing.md))
+
+            if (schedules.value.isEmpty()) {
+                Text(
+                    text = "No schedules set",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    schedules.value.forEachIndexed { index, schedule ->
+                        ScheduleListItem(
+                            schedule = schedule,
+                            index = index,
+                            onEdit = {
+                                currentEditingSchedule.value = schedule
                                 showScheduleDialog.value = true
                             },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Add Single", color = DarkGray)
-                        }
-
-                        Button(
-                            onClick = {
-                                showBatchScheduleDialog.value = true
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Add Multiple", color = DarkGray)
-                        }
+                            onDelete = {
+                                val updated = schedules.value.toMutableList()
+                                updated.removeAt(index)
+                                schedules.value = updated
+                            }
+                        )
                     }
                 }
             }
-            
-            // Submit button
-            Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                onClick = {
-                    if (workoutNameState.value.isBlank()) {
-                        return@Button
-                    }
 
-                    val newWorkout = Workout(
-                        id  = workout?.id ?: UUID.randomUUID(),
-                        name = workoutNameState.value.trim(),
-                        description = workoutDescriptionState.value.trim(),
-                        workoutComponents = workout?.workoutComponents ?: listOf(),
-                        usePolarDevice = usePolarDeviceState.value,
-                        creationDate = LocalDate.now(),
-                        order =  workout?.order ?: 0,
-                        timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
-                        globalId = workout?.globalId ?: newGlobalId,
-                        type = selectedWorkoutType.value
-                    )
+            Spacer(Modifier.height(Spacing.md))
 
-                    // Call the callback to insert/update the workout with schedules
-                    onWorkoutUpsert(newWorkout, schedules.value)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
-                if(workout==null) Text("Insert Workout", color = DarkGray) else Text("Edit Workout", color = DarkGray)
+                Button(
+                    onClick = {
+                        currentEditingSchedule.value = null
+                        showScheduleDialog.value = true
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Add single") }
+
+                Button(
+                    onClick = { showBatchScheduleDialog.value = true },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Add multiple") }
             }
 
-            CustomButton(
-                text = "Cancel",
-                onClick = {
-                    onCancel()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
+            Spacer(Modifier.height(Spacing.md))
+            HorizontalDivider(color = MediumLightGray)
+
+            Spacer(Modifier.height(Spacing.xl))
+
+            // ---- Actions ----------------------------------------------------
+            val canBeSaved = workoutNameState.value.isNotBlank()
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+            ) {
+                TextButton(
+                    onClick = onCancel,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel", style = MaterialTheme.typography.bodyLarge) }
+
+                Button(
+                    onClick = {
+                        val newWorkout = Workout(
+                            id = workout?.id ?: UUID.randomUUID(),
+                            name = workoutNameState.value.trim(),
+                            description = workoutDescriptionState.value.trim(),
+                            workoutComponents = workout?.workoutComponents ?: listOf(),
+                            usePolarDevice = usePolarDeviceState.value,
+                            creationDate = LocalDate.now(),
+                            order = workout?.order ?: 0,
+                            timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
+                            globalId = newGlobalId,
+                            type = selectedWorkoutType.value
+                        )
+                        onWorkoutUpsert(newWorkout, schedules.value)
+                    },
+                    enabled = canBeSaved,
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (workout == null) "Insert" else "Save", style = MaterialTheme.typography.bodyLarge) }
+            }
+
+            Spacer(Modifier.height(Spacing.xl))
         }
     }
-    
-    // Schedule Dialog
+
+    // ---- Dialogs -----------------------------------------------------------
     if (showScheduleDialog.value) {
         ScheduleDialog(
             schedule = currentEditingSchedule.value,
-            workoutId = workout?.globalId ?: newGlobalId,
+            workoutId = newGlobalId,
             onDismiss = { showScheduleDialog.value = false },
             onSave = { newSchedule ->
-                val updatedSchedules = schedules.value.toMutableList()
-                
-                if (currentEditingSchedule.value != null) {
-                    // Update existing schedule
-                    val index = updatedSchedules.indexOfFirst { it.id == newSchedule.id }
-                    if (index != -1) {
-                        updatedSchedules[index] = newSchedule
-                    }
-                } else {
-                    // Add new schedule
-                    updatedSchedules.add(newSchedule)
-                }
-                
-                schedules.value = updatedSchedules
+                val updated = schedules.value.toMutableList()
+                val idx = updated.indexOfFirst { it.id == newSchedule.id }
+                if (idx >= 0) updated[idx] = newSchedule else updated.add(newSchedule)
+                schedules.value = updated
                 showScheduleDialog.value = false
             }
         )
     }
 
-    // Add this right after the single ScheduleDialog
-// Batch Schedule Dialog
     if (showBatchScheduleDialog.value) {
         BatchScheduleDialog(
-            workoutId = workout?.globalId ?: newGlobalId,
+            workoutId = newGlobalId,
             onDismiss = { showBatchScheduleDialog.value = false },
             onSave = { newSchedules ->
-                val updatedSchedules = schedules.value.toMutableList()
-                updatedSchedules.addAll(newSchedules)
-                schedules.value = updatedSchedules
+                val updated = schedules.value.toMutableList()
+                updated.addAll(newSchedules)
+                schedules.value = updated
                 showBatchScheduleDialog.value = false
             }
         )
@@ -419,122 +384,124 @@ fun ScheduleDialog(
     onSave: (WorkoutSchedule) -> Unit
 ) {
     val isEditing = schedule != null
-    
-    // Schedule state
-    val labelState = remember { mutableStateOf(schedule?.label ?: "") }
-    val hourState = remember { mutableIntStateOf(schedule?.hour ?: 8) }
-    val minuteState = remember { mutableIntStateOf(schedule?.minute ?: 0) }
-    val isEnabledState = remember { mutableStateOf(schedule?.isEnabled ?: true) }
-    
-    // Days of week state (bit field)
-    val daysOfWeekState = remember { mutableIntStateOf(schedule?.daysOfWeek ?: 0) }
-    
-    // Specific date vs recurring
-    val useSpecificDate = remember { mutableStateOf(schedule?.specificDate != null) }
-    
-    // Date picker state
+
+    val labelState = rememberSaveable { mutableStateOf(schedule?.label ?: "") }
+    val hourState = rememberSaveable { mutableIntStateOf(schedule?.hour ?: 8) }
+    val minuteState = rememberSaveable { mutableIntStateOf(schedule?.minute ?: 0) }
+    val isEnabledState = rememberSaveable { mutableStateOf(schedule?.isEnabled ?: true) }
+
+    val useSpecificDate = rememberSaveable { mutableStateOf(schedule?.specificDate != null) }
+
+    val daysOfWeekState = rememberSaveable { mutableIntStateOf(schedule?.daysOfWeek ?: 0) }
+
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = schedule?.specificDate?.atStartOfDay(ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
             ?: System.currentTimeMillis()
     )
     val showDatePicker = remember { mutableStateOf(false) }
-    
-    // Time picker state
+
     val timePickerState = rememberTimePickerState(
-        initialHour = schedule?.hour ?: 8,
-        initialMinute = schedule?.minute ?: 0
+        initialHour = hourState.intValue,
+        initialMinute = minuteState.intValue
     )
     val showTimePicker = remember { mutableStateOf(false) }
-    
-    // Dialog content
-    androidx.compose.material3.AlertDialog(
+
+    AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEditing) "Edit Schedule" else "Add Schedule") },
+        title = { Text(if (isEditing) "Edit schedule" else "Add schedule") },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(Spacing.sm)
             ) {
-                // Label field
                 OutlinedTextField(
                     value = labelState.value,
                     onValueChange = { labelState.value = it },
-                    label = { Text("Label (optional)") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
+                    label = { Text("Label (optional)", style = MaterialTheme.typography.labelLarge) },
+                    modifier = Modifier.fillMaxWidth()
                 )
-                
-                // Time selection
-                LabeledButton(
-                    label = "Time:",
-                    buttonText = "${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}",
-                    onClick = { showTimePicker.value = true }
+
+                Spacer(Modifier.height(Spacing.lg))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Time", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.width(Spacing.md))
+                    Button(onClick = { showTimePicker.value = true }) {
+                        Text("${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}")
+                    }
+                }
+
+                Spacer(Modifier.height(Spacing.lg))
+                HorizontalDivider(color = MediumLightGray)
+
+
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = { Text("Use specific date", style = MaterialTheme.typography.bodyLarge) },
+                    trailingContent = {
+                        Switch(
+                            checked = useSpecificDate.value,
+                            onCheckedChange = { useSpecificDate.value = it }
+                        )
+                    }
                 )
-                
-                // Toggle between specific date and recurring
-                LabeledSwitch(
-                    label = "Use specific date:",
-                    checked = useSpecificDate.value,
-                    onCheckedChange = { useSpecificDate.value = it }
-                )
-                
-                // Date selection or days of week
+                HorizontalDivider(color = MediumLightGray)
+
+                Spacer(Modifier.height(Spacing.lg))
+
                 if (useSpecificDate.value) {
-                    // Specific date
                     val date = datePickerState.selectedDateMillis?.let {
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     } ?: LocalDate.now()
-                    
-                    LabeledButton(
-                        label = "Date:",
-                        buttonText = date.toString(),
-                        onClick = { showDatePicker.value = true }
-                    )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Date", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.width(Spacing.md))
+                        Button(onClick = { showDatePicker.value = true }) { Text(date.toString()) }
+                    }
                 } else {
-                    // Days of week
-                    Text(
-                        text = "Days of week:",
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    
-                    // First row: Sun-Wed
+                    Text("Days of week", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
                     WeekdaySelectionRow(
-                        days = listOf("Sun", "Mon", "Tue", "Wed"),
-                        bitValues = listOf(1, 2, 4, 8),
+                        days = listOf("Mon", "Tue", "Wed", "Thu"),
+                        bitValues = listOf(2, 4, 8, 16),
                         daysOfWeekState = daysOfWeekState
                     )
-                    
-                    // Second row: Thu-Sat + empty space
                     WeekdaySelectionRow(
-                        days = listOf("Thu", "Fri", "Sat", ""),
-                        bitValues = listOf(16, 32, 64, 0),
+                        days = listOf("Fri", "Sat", "Sun", ""),
+                        bitValues = listOf(32, 64, 1, 0),
                         daysOfWeekState = daysOfWeekState,
                         showLastCheckbox = false
                     )
                 }
-                
-                // Enabled toggle
-                LabeledCheckbox(
-                    label = "Enabled:",
-                    checked = isEnabledState.value,
-                    onCheckedChange = { isEnabledState.value = it }
+
+                Spacer(Modifier.height(Spacing.lg))
+                HorizontalDivider(color = MediumLightGray)
+
+
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = { Text("Enabled", style = MaterialTheme.typography.bodyLarge) },
+                    trailingContent = {
+                        Switch(
+                            checked = isEnabledState.value,
+                            onCheckedChange = { isEnabledState.value = it }
+                        )
+                    }
                 )
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    val specificDate = if (useSpecificDate.value) {
-                        datePickerState.selectedDateMillis?.let {
-                            Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-                        }
-                    } else {
-                        null
+            TextButton(onClick = {
+                val specificDate = if (useSpecificDate.value) {
+                    datePickerState.selectedDateMillis?.let {
+                        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     }
-                    
-                    val newSchedule = WorkoutSchedule(
+                } else null
+
+                onSave(
+                    WorkoutSchedule(
                         id = schedule?.id ?: UUID.randomUUID(),
                         workoutId = workoutId,
                         label = labelState.value,
@@ -545,26 +512,16 @@ fun ScheduleDialog(
                         specificDate = specificDate,
                         hasExecuted = schedule?.hasExecuted ?: false
                     )
-                    
-                    onSave(newSchedule)
-                }
-            ) {
-                Text("Save")
-            }
+                )
+            }) { Text("Save") }
         },
-        dismissButton = {
-            CustomButton(
-                text = "Cancel",
-                onClick = onDismiss,
-            )
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-    
-    // Time picker dialog
+
     if (showTimePicker.value) {
         TimePickerDialog(
             onDismiss = { showTimePicker.value = false },
-            onConfirm = { 
+            onConfirm = {
                 hourState.intValue = timePickerState.hour
                 minuteState.intValue = timePickerState.minute
                 showTimePicker.value = false
@@ -572,90 +529,13 @@ fun ScheduleDialog(
             timePickerState = timePickerState
         )
     }
-    
-    // Date picker dialog
+
     if (showDatePicker.value) {
         DatePickerDialog(
             onDismissRequest = { showDatePicker.value = false },
-            confirmButton = {
-                TextButton(onClick = { showDatePicker.value = false }) {
-                    Text("OK")
-                }
-            },
-            dismissButton = {
-                CustomButton(
-                    text = "Cancel",
-                    onClick = { showDatePicker.value = false },
-                )
-            }
-        ) {
-            DatePicker(state = datePickerState)
-        }
-    }
-}
-
-@Composable
-fun LabeledButton(
-    label: String,
-    buttonText: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label)
-        Spacer(modifier = Modifier.width(8.dp))
-        Button(onClick = onClick) {
-            Text(buttonText)
-        }
-    }
-}
-
-@Composable
-fun LabeledSwitch(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label)
-        Spacer(modifier = Modifier.width(8.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange
-        )
-    }
-}
-
-@Composable
-fun LabeledCheckbox(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label)
-        Spacer(modifier = Modifier.width(8.dp))
-        Checkbox(
-            checked = checked,
-            onCheckedChange = onCheckedChange
-        )
+            confirmButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("Cancel") } }
+        ) { DatePicker(state = datePickerState) }
     }
 }
 
@@ -697,19 +577,12 @@ fun TimePickerDialog(
     onConfirm: () -> Unit,
     timePickerState: TimePickerState
 ) {
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select Time") },
+        title = { Text("Select time") },
         text = { TimePicker(state = timePickerState) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text("OK") }
-        },
-        dismissButton = {
-            CustomButton(
-                text = "Cancel",
-                onClick = onDismiss,
-            )
-        }
+        confirmButton = { TextButton(onClick = onConfirm) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
@@ -719,26 +592,21 @@ fun DayOfWeekCheckbox(
     isChecked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(text = day, style = MaterialTheme.typography.bodySmall)
-        Checkbox(
+        androidx.compose.material3.Checkbox(
             checked = isChecked,
             onCheckedChange = onCheckedChange
         )
     }
 }
 
-// Helper function to convert bit field to readable days string
 fun getDaysOfWeekString(daysOfWeek: Int): String {
     val dayPairs = listOf(
-        1 to "Sun", 2 to "Mon", 4 to "Tue", 8 to "Wed", 
+        1 to "Sun", 2 to "Mon", 4 to "Tue", 8 to "Wed",
         16 to "Thu", 32 to "Fri", 64 to "Sat"
     )
-    
     val days = dayPairs.filter { (bit, _) -> (daysOfWeek and bit) != 0 }.map { it.second }
-    
     return when {
         days.isEmpty() -> "No days selected"
         days.size == 7 -> "Every day"
@@ -755,51 +623,30 @@ fun ScheduleListItem(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    Card(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(vertical = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                // Display schedule info
-                Text(
-                    text = if (schedule.label.isNotEmpty()) schedule.label else "Schedule ${index + 1}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                Text(
-                    text = if (schedule.specificDate != null) {
-                        "On ${schedule.specificDate} at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
-                    } else {
-                        val days = getDaysOfWeekString(schedule.daysOfWeek)
-                        "Every $days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
-                    },
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-
-            Text(modifier = Modifier.clickable {
-                onEdit()
-            },
-                text= "Edit"
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (schedule.label.isNotEmpty()) schedule.label else "Schedule ${index + 1}",
+                style = MaterialTheme.typography.bodyMedium
             )
-
-            Text(modifier = Modifier.clickable {
-                onDelete()
-            },
-                text= "Delete"
+            Text(
+                text = if (schedule.specificDate != null) {
+                    "On ${schedule.specificDate} at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
+                } else {
+                    val days = getDaysOfWeekString(schedule.daysOfWeek)
+                    "Every $days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
+                },
+                style = MaterialTheme.typography.bodySmall
             )
         }
+        Text(text = "Edit", modifier = Modifier.clickable { onEdit() })
+        Text(text = "Delete", modifier = Modifier.clickable { onDelete() })
     }
 }
 
@@ -810,226 +657,162 @@ fun BatchScheduleDialog(
     onDismiss: () -> Unit,
     onSave: (List<WorkoutSchedule>) -> Unit
 ) {
-    // Tab selection
-    val selectedTabIndex = remember { mutableStateOf(0) }
+    val selectedTabIndex = rememberSaveable { mutableStateOf(0) }
 
-    // Shared state
-    val labelPrefixState = remember { mutableStateOf("Schedule") }
-    val isEnabledState = remember { mutableStateOf(true) }
+    val labelPrefixState = rememberSaveable { mutableStateOf("Schedule") }
+    val isEnabledState = rememberSaveable { mutableStateOf(true) }
 
-    // Time range state
-    val startHourState = remember { mutableIntStateOf(8) }
-    val startMinuteState = remember { mutableIntStateOf(0) }
-    val endHourState = remember { mutableIntStateOf(16) }
-    val endMinuteState = remember { mutableIntStateOf(0) }
+    val startHourState = rememberSaveable { mutableIntStateOf(8) }
+    val startMinuteState = rememberSaveable { mutableIntStateOf(0) }
+    val endHourState = rememberSaveable { mutableIntStateOf(16) }
+    val endMinuteState = rememberSaveable { mutableIntStateOf(0) }
 
-    // Time picker states
     val currentPickerMode = remember { mutableStateOf("") } // "start" or "end"
     val showTimePicker = remember { mutableStateOf(false) }
     val timePickerState = rememberTimePickerState(initialHour = 8, initialMinute = 0)
 
-    // Interval state
-    val intervalHoursState = remember { mutableStateOf("0") }
-    val intervalMinutesState = remember { mutableStateOf("30") }
+    val intervalHoursState = rememberSaveable { mutableStateOf("0") }
+    val intervalMinutesState = rememberSaveable { mutableStateOf("30") }
 
-    // Days of week state (bit field)
-    val daysOfWeekState = remember { mutableIntStateOf(0) }
+    val daysOfWeekState = rememberSaveable { mutableIntStateOf(0) }
 
-    // Date picker for one-time schedules
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
     val showDatePicker = remember { mutableStateOf(false) }
 
-    // Dialog content
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Multiple Schedules") },
+        title = { Text("Add multiple schedules") },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp)
+                    .padding(Spacing.sm)
             ) {
-                // Tab selection for schedule type
                 TabRow(selectedTabIndex = selectedTabIndex.value) {
-                    Tab(
-                        selected = selectedTabIndex.value == 0,
-                        onClick = { selectedTabIndex.value = 0 },
-                        text = { Text("Recurring") }
-                    )
-                    Tab(
-                        selected = selectedTabIndex.value == 1,
-                        onClick = { selectedTabIndex.value = 1 },
-                        text = { Text("One-time") }
-                    )
+                    Tab(selected = selectedTabIndex.value == 0, onClick = { selectedTabIndex.value = 0 }, text = { Text("Recurring") })
+                    Tab(selected = selectedTabIndex.value == 1, onClick = { selectedTabIndex.value = 1 }, text = { Text("One-time") })
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(Modifier.height(Spacing.lg))
 
-                // Label prefix field
                 OutlinedTextField(
                     value = labelPrefixState.value,
                     onValueChange = { labelPrefixState.value = it },
-                    label = { Text("Label Prefix") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
+                    label = { Text("Label prefix", style = MaterialTheme.typography.labelLarge) },
+                    modifier = Modifier.fillMaxWidth()
                 )
 
-                // Time range selection
-                Text(
-                    text = "Time Range:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
+                Spacer(Modifier.height(Spacing.lg))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("From:")
-                    Spacer(modifier = Modifier.width(8.dp))
+                Text("Time range", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(Spacing.sm))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("From")
+                    Spacer(Modifier.width(Spacing.sm))
                     Button(onClick = {
                         timePickerState.hour = startHourState.intValue
                         timePickerState.minute = startMinuteState.intValue
                         currentPickerMode.value = "start"
                         showTimePicker.value = true
-                    }) {
-                        Text("${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}")
-                    }
+                    }) { Text("${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}") }
 
-                    Spacer(modifier = Modifier.width(16.dp))
+                    Spacer(Modifier.width(Spacing.lg))
 
-                    Text("To:")
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("To")
+                    Spacer(Modifier.width(Spacing.sm))
                     Button(onClick = {
                         timePickerState.hour = endHourState.intValue
                         timePickerState.minute = endMinuteState.intValue
                         currentPickerMode.value = "end"
                         showTimePicker.value = true
-                    }) {
-                        Text("${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}")
-                    }
+                    }) { Text("${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}") }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(Modifier.height(Spacing.lg))
 
-                // Interval selection
-                Text(
-                    text = "Interval:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Hours
+                Text("Interval", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(Spacing.sm))
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = intervalHoursState.value,
-                        onValueChange = { value ->
-                            if (value.isEmpty() || value.all { it.isDigit() }) {
-                                intervalHoursState.value = value
-                            }
-                        },
-                        label = { Text("Hours") },
+                        onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalHoursState.value = v },
+                        label = { Text("Hours", style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
                     )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Minutes
+                    Spacer(Modifier.width(Spacing.md))
                     OutlinedTextField(
                         value = intervalMinutesState.value,
-                        onValueChange = { value ->
-                            if (value.isEmpty() || value.all { it.isDigit() }) {
-                                intervalMinutesState.value = value
-                            }
-                        },
-                        label = { Text("Minutes") },
+                        onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalMinutesState.value = v },
+                        label = { Text("Minutes", style = MaterialTheme.typography.labelLarge) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(Modifier.height(Spacing.lg))
 
-                // Specific date or days of week based on tab
                 if (selectedTabIndex.value == 1) {
-                    // Specific date for one-time schedules
                     val date = datePickerState.selectedDateMillis?.let {
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     } ?: LocalDate.now()
-
-                    LabeledButton(
-                        label = "Date:",
-                        buttonText = date.toString(),
-                        onClick = { showDatePicker.value = true }
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Date", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.width(Spacing.md))
+                        Button(onClick = { showDatePicker.value = true }) { Text(date.toString()) }
+                    }
                 } else {
-                    // Days of week for recurring schedules
-                    Text(
-                        text = "Days of week:",
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
-                    // First row: Sun-Wed
+                    Text("Days of week", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
                     WeekdaySelectionRow(
-                        days = listOf( "Mon", "Tue", "Wed","Thu"),
+                        days = listOf("Mon", "Tue", "Wed", "Thu"),
                         bitValues = listOf(2, 4, 8, 16),
                         daysOfWeekState = daysOfWeekState
                     )
-
-                    // Second row: Thu-Sat + empty space
                     WeekdaySelectionRow(
-                        days = listOf("Fri", "Sat", "Sun"),
-                        bitValues = listOf(32, 64, 1),
+                        days = listOf("Fri", "Sat", "Sun", ""),
+                        bitValues = listOf(32, 64, 1, 0),
                         daysOfWeekState = daysOfWeekState,
                         showLastCheckbox = false
                     )
                 }
 
-                // Enabled toggle
-                LabeledCheckbox(
-                    label = "Enable all schedules:",
-                    checked = isEnabledState.value,
-                    onCheckedChange = { isEnabledState.value = it }
+                Spacer(Modifier.height(Spacing.lg))
+
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = { Text("Enable all", style = MaterialTheme.typography.bodyLarge) },
+                    trailingContent = {
+                        Switch(
+                            checked = isEnabledState.value,
+                            onCheckedChange = { isEnabledState.value = it }
+                        )
+                    }
                 )
+                HorizontalDivider(color = MediumLightGray)
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    val schedules = mutableListOf<WorkoutSchedule>()
+            TextButton(onClick = {
+                val list = mutableListOf<WorkoutSchedule>()
+                val startTotal = startHourState.intValue * 60 + startMinuteState.intValue
+                val endTotal = endHourState.intValue * 60 + endMinuteState.intValue
+                val interval = ((intervalHoursState.value.toIntOrNull() ?: 0) * 60 + (intervalMinutesState.value.toIntOrNull()
+                    ?: 30)).coerceAtLeast(1)
 
-                    // Calculate total minutes in each time
-                    val startTotalMinutes = startHourState.intValue * 60 + startMinuteState.intValue
-                    val endTotalMinutes = endHourState.intValue * 60 + endMinuteState.intValue
-
-                    // Calculate interval in minutes
-                    val intervalMinutes = (intervalHoursState.value.toIntOrNull() ?: 0) * 60 +
-                            (intervalMinutesState.value.toIntOrNull() ?: 30)
-
-                    // Ensure interval is at least 1 minute
-                    val safeInterval = if (intervalMinutes < 1) 1 else intervalMinutes
-
-                    var currentTime = startTotalMinutes
-                    var count = 1
-
-                    while (currentTime <= endTotalMinutes) {
-                        val hour = currentTime / 60
-                        val minute = currentTime % 60
-
-                        val specificDate = if (selectedTabIndex.value == 1) {
-                            datePickerState.selectedDateMillis?.let {
-                                Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-                            }
-                        } else {
-                            null
+                var t = startTotal
+                var count = 1
+                while (t <= endTotal) {
+                    val hour = t / 60
+                    val minute = t % 60
+                    val specificDate = if (selectedTabIndex.value == 1) {
+                        datePickerState.selectedDateMillis?.let {
+                            Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                         }
+                    } else null
 
-                        val newSchedule = WorkoutSchedule(
+                    list.add(
+                        WorkoutSchedule(
                             id = UUID.randomUUID(),
                             workoutId = workoutId,
                             label = "${labelPrefixState.value} $count",
@@ -1040,28 +823,17 @@ fun BatchScheduleDialog(
                             specificDate = specificDate,
                             hasExecuted = false
                         )
+                    )
 
-                        schedules.add(newSchedule)
-
-                        currentTime += safeInterval
-                        count++
-                    }
-
-                    onSave(schedules)
+                    t += interval
+                    count++
                 }
-            ) {
-                Text("Save")
-            }
+                onSave(list)
+            }) { Text("Save") }
         },
-        dismissButton = {
-            CustomButton(
-                text = "Cancel",
-                onClick = onDismiss,
-            )
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 
-    // Time picker dialog
     if (showTimePicker.value) {
         TimePickerDialog(
             onDismiss = { showTimePicker.value = false },
@@ -1079,26 +851,11 @@ fun BatchScheduleDialog(
         )
     }
 
-    // Date picker dialog
     if (showDatePicker.value) {
         DatePickerDialog(
             onDismissRequest = { showDatePicker.value = false },
-            confirmButton = {
-                TextButton(onClick = { showDatePicker.value = false }) {
-                    Text("OK")
-                }
-            },
-            dismissButton = {
-                CustomButton(
-                    text = "Cancel",
-                    onClick = { showDatePicker.value = false },
-                )
-            }
-        ) {
-            DatePicker(
-                state = datePickerState,
-                colors =  DatePickerDefaults.colors().copy()
-            )
-        }
+            confirmButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("Cancel") } }
+        ) { DatePicker(state = datePickerState) }
     }
 }

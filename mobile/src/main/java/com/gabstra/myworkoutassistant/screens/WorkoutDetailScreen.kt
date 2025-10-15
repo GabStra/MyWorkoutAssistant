@@ -18,8 +18,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
@@ -42,6 +44,7 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,12 +67,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
@@ -123,6 +128,7 @@ fun Menu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
+            shape = RectangleShape,
             modifier = Modifier.background(MediumDarkerGray),
             border = BorderStroke(1.dp, MediumLightGray)
         ) {
@@ -676,8 +682,7 @@ fun WorkoutDetailScreen(
                         if(workout.enabled){
                             Row(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 100.dp),
+                                    .fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ){
@@ -687,13 +692,15 @@ fun WorkoutDetailScreen(
                                     },
                                 ) {
                                     Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = "Start",
+                                        text = "Start Workout",
                                         textAlign = TextAlign.Center,
                                         style = MaterialTheme.typography.bodyLarge,
                                     )
                                 }
                             }
+
+                            Spacer(Modifier.height(Spacing.md))
+                            HorizontalDivider(color = MediumLightGray)
                         }
 
 
@@ -783,46 +790,39 @@ fun WorkoutDetailScreen(
                             },
                             isDragDisabled = true
                         )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                        ) {
-                            GenericButtonWithMenu(
-                                menuItems = listOf(
-                                    MenuItem("Add Exercise") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewExercise(
-                                                workout.id
-                                            )
-                                        );
-                                    },
-                                    MenuItem("Add Rests Between Exercises") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewRest(
-                                                workout.id,
-                                                null
-                                            )
-                                        );
-                                    },
-                                    MenuItem("Add Superset") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewSuperset(
-                                                workout.id
-                                            )
-                                        );
-                                    }
-                                ),
-                                content = {
-                                    Icon(
-                                        imageVector = Icons.Filled.Add,
-                                        contentDescription = "Add",
-                                        tint = MaterialTheme.colorScheme.background,
-                                    )
+                        GenericButtonWithMenu(
+                            menuItems = listOf(
+                                MenuItem("Add Exercise") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewExercise(
+                                            workout.id
+                                        )
+                                    );
+                                },
+                                MenuItem("Add Rests Between Exercises") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewRest(
+                                            workout.id,
+                                            null
+                                        )
+                                    );
+                                },
+                                MenuItem("Add Superset") {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewSuperset(
+                                            workout.id
+                                        )
+                                    );
                                 }
-                            )
-                        }
+                            ),
+                            content = {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "Add",
+                                    tint = MaterialTheme.colorScheme.background,
+                                )
+                            }
+                        )
                     }
                 }
 
