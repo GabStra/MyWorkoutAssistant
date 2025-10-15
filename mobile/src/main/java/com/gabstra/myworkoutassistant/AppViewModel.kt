@@ -32,6 +32,7 @@ sealed class ScreenData() {
     class Workouts(val selectedTabIndex : Int) : ScreenData()
     class Settings() : ScreenData()
     class NewWorkout() : ScreenData()
+    class Workout(val workoutId: UUID) : ScreenData()
     class EditWorkout(val workoutId: UUID) : ScreenData()
     class WorkoutDetail(val workoutId: UUID) : ScreenData()
     class WorkoutHistory(val workoutId: UUID,val workoutHistoryId: UUID? = null) : ScreenData()
@@ -101,6 +102,11 @@ class AppViewModel() : ViewModel() {
 
     fun setHomeTab(tabIndex: Int) {
         selectedHomeTab = tabIndex
+    }
+
+    fun initScreenData(screenData: ScreenData) {
+        screenDataStack.clear()
+        currentScreenData = screenData
     }
 
     fun setScreenData(screenData: ScreenData,skipStack: Boolean = false) {

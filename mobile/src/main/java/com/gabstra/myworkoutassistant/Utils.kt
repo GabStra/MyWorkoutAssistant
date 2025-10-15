@@ -7,10 +7,12 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -19,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
@@ -49,7 +52,10 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
@@ -722,3 +728,67 @@ fun List<WorkoutHistory>.filterBy(range: FilterRange): List<WorkoutHistory> {
     val (start, end) = dateRangeFor(range)
     return this.filter { it.date >= start && it.date <= end }
 }
+
+@SuppressLint("SuspiciousModifierThen")
+@OptIn(ExperimentalComposeUiApi::class)
+fun Modifier.repeatActionOnLongPressOrTap(
+    coroutineScope: CoroutineScope,
+    thresholdMillis: Long = 5000L,
+    intervalMillis: Long = 1000L,
+    onAction: () -> Unit,
+    onTap: () -> Unit
+): Modifier = this.then(
+    pointerInput(Unit) {
+        var repeatedActionHappening = false
+        detectTapGestures(
+            onPress = { _ ->
+                val job = coroutineScope.launch {
+                    delay(thresholdMillis)
+                    do {
+                        repeatedActionHappening = true
+                        onAction()
+                        delay(intervalMillis)
+                    } while (true)
+                }
+                tryAwaitRelease()
+                job.cancel()
+                repeatedActionHappening = false
+            },
+            onTap = {
+                if(!repeatedActionHappening) onTap()
+            }
+        )
+    }
+)
+
+@SuppressLint("SuspiciousModifierThen")
+@OptIn(ExperimentalComposeUiApi::class)
+fun Modifier.repeatActionOnLongPress(
+    coroutineScope: CoroutineScope,
+    thresholdMillis: Long = 5000L,
+    intervalMillis: Long = 1000L,
+    onPressStart: () -> Unit,
+    onBeforeLongPressRepeat: () -> Unit,
+    onLongPressRepeat: () -> Unit,
+    onRelease: () -> Unit
+): Modifier = this.then(
+    pointerInput(Unit) {
+        detectTapGestures(
+            onPress = { _ ->
+                onPressStart()
+                val job = coroutineScope.launch {
+                    delay(thresholdMillis)
+                    onBeforeLongPressRepeat()
+                    do {
+                        delay(intervalMillis)
+                        onLongPressRepeat()
+                    } while (isActive)
+                }
+
+                tryAwaitRelease()
+                job.cancel()
+                onRelease()
+            }
+        )
+    }
+)

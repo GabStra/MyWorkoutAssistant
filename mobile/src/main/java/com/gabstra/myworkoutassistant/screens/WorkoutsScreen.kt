@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -259,6 +260,7 @@ fun WorkoutsScreen(
     var isLoading by remember { mutableStateOf(true) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
+
     val equipments by appViewModel.equipmentsFlow.collectAsState()
 
     val enabledWorkouts = workouts.filter { it.enabled }

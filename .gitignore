@@ -27,3 +27,5 @@ wearos/release/wearos-release.apk
 mobile/version.properties.mobile
 .aider*
 repomix-output.xml
+mobile/release/baselineProfiles/0/mobile-release.dm
+mobile/release/

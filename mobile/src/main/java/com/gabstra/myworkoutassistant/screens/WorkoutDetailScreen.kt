@@ -1,7 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -64,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.DashedCard
@@ -87,6 +91,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -229,6 +234,7 @@ fun WorkoutComponentRenderer(
 @Composable
 fun WorkoutDetailScreen(
     appViewModel: AppViewModel,
+    workoutViewModel: WorkoutViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
     workoutRecordDao: WorkoutRecordDao,
     setHistoryDao: SetHistoryDao,
@@ -236,6 +242,31 @@ fun WorkoutDetailScreen(
     workout: Workout,
     onGoBack: () -> Unit
 ) {
+    val context = LocalContext.current
+
+    val basePermissions = emptyList<String>() /*listOf(
+        Manifest.permission.BODY_SENSORS,
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.POST_NOTIFICATIONS
+    )*/
+
+    val permissionLauncherStart = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.all { it.value }) {
+            //if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
+            workoutViewModel.setSelectedWorkoutId(workout.id)
+            workoutViewModel.startWorkout()
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+
+            appViewModel.setScreenData(ScreenData.Workout(workout.id));
+        }
+    }
+
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
@@ -244,7 +275,7 @@ fun WorkoutDetailScreen(
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
     val allWorkouts by appViewModel.workoutsFlow.collectAsState()
 
-    val context = LocalContext.current
+
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(showRest) {
@@ -642,6 +673,30 @@ fun WorkoutDetailScreen(
                             )
                         }
                     }else{
+                        if(workout.enabled){
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 100.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ){
+                                Button(
+                                    onClick = {
+                                        permissionLauncherStart.launch(basePermissions.toTypedArray())
+                                    },
+                                ) {
+                                    Text(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        text = "Start",
+                                        textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                    )
+                                }
+                            }
+                        }
+
+
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.End,

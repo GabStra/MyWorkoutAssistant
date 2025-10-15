@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.viewmodels
 import android.content.Context
 import android.util.Log
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,9 +52,11 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
@@ -88,6 +91,43 @@ private class ResettableLazy<T>(private val initializer: () -> T) {
 }
 
 open class WorkoutViewModel : ViewModel() {
+    private val _keepScreenOn = mutableStateOf(false)
+    val keepScreenOn: State<Boolean> = _keepScreenOn
+
+    private val _currentScreenDimmingState = mutableStateOf(false)
+
+    val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
+    private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
+    val lightScreenUp = _lightScreenUp.receiveAsFlow()
+
+    val enableDimming: State<Boolean> = derivedStateOf {
+        !isPaused.value && currentScreenDimmingState.value && !keepScreenOn.value
+    }
+
+    fun toggleKeepScreenOn() {
+        _keepScreenOn.value = !_keepScreenOn.value
+    }
+
+    fun setDimming(shouldDim: Boolean) {
+        _currentScreenDimmingState.value = shouldDim
+    }
+
+    fun lightScreenUp() {
+        viewModelScope.launch {
+            _lightScreenUp.send(Unit)
+        }
+    }
+
+    fun reEvaluateDimmingForCurrentState() {
+        val currentState = workoutState.value
+        if (currentState is WorkoutState.Set) {
+            val exercise = exercisesById[currentState.exerciseId]!!
+            _currentScreenDimmingState.value = !exercise.keepScreenOn
+        } else if (currentState is WorkoutState.Rest) {
+            _currentScreenDimmingState.value = true
+        }
+    }
+
     var workoutStore by mutableStateOf(
         WorkoutStore(
             workouts = emptyList(),
@@ -403,6 +443,7 @@ open class WorkoutViewModel : ViewModel() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 _enableWorkoutNotificationFlow.value = null
+                _currentScreenDimmingState.value = false
 
                 val preparingState = WorkoutState.Preparing(dataLoaded = false)
 
@@ -825,6 +866,7 @@ open class WorkoutViewModel : ViewModel() {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 _enableWorkoutNotificationFlow.value = null
+                _currentScreenDimmingState.value = false
 
                 val preparingState = WorkoutState.Preparing(dataLoaded = false)
                 _workoutState.value = preparingState
@@ -923,12 +965,14 @@ open class WorkoutViewModel : ViewModel() {
                 setHistoriesFound.distinctBy { it.setId }.toList()
         }
 
+        /*
         val neverCalledWorkoutHistories =
             workoutHistories.filterIndexed { index, _ -> index !in calledIndexes }
 
         neverCalledWorkoutHistories.forEach {
             workoutHistoryDao.deleteById(it.id)
         }
+        */
     }
 
     open fun registerHeartBeat(heartBeat: Int) {

@@ -3,13 +3,10 @@ package com.gabstra.myworkoutassistant.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -19,28 +16,33 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
@@ -50,36 +52,44 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import java.util.Locale
 import java.util.UUID
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
-fun ExerciseType.toReadableString(): String {
-    return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize(java.util.Locale.ROOT) }
+// ---- Consistent spacing scale ----------------------------------------------
+private object Spacing {
+    val xs = 6.dp
+    val sm = 8.dp
+    val md = 12.dp
+    val lg = 16.dp
+    val xl = 24.dp
 }
 
-fun getExerciseTypeDescriptions(): List<String> {
+private fun ExerciseType.toReadableString(): String {
+    return name.replace('_', ' ')
+        .lowercase(Locale.ROOT)
+        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+}
+
+private fun getExerciseTypeDescriptions(): List<String> {
     return ExerciseType.values().map { it.toReadableString() }
 }
 
-
-
-fun stringToExerciseType(value: String): ExerciseType? {
+private fun stringToExerciseType(value: String): ExerciseType? {
     return ExerciseType.values().firstOrNull {
-        it.name.equals(value.replace(' ', '_').uppercase(java.util.Locale.ROOT), ignoreCase = true)
+        it.name.equals(value.replace(' ', '_').uppercase(Locale.ROOT), ignoreCase = true)
     }
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,68 +97,72 @@ fun ExerciseForm(
     viewModel: AppViewModel,
     onExerciseUpsert: (Exercise) -> Unit,
     onCancel: () -> Unit,
-    exercise: Exercise? = null, // Add exercise parameter with default value null
+    exercise: Exercise? = null,
     allowSettingDoNotStoreHistory: Boolean = true
 ) {
-    // Mutable state for form fields
-    val nameState = remember { mutableStateOf(exercise?.name ?: "") }
-    val notesState = remember { mutableStateOf(exercise?.notes ?: "") }
-    val doNotStoreHistory = remember { mutableStateOf(exercise?.doNotStoreHistory ?: !allowSettingDoNotStoreHistory) }
+    // ----- state -----
+    val nameState = rememberSaveable { mutableStateOf(exercise?.name ?: "") }
+    val notesState = rememberSaveable { mutableStateOf(exercise?.notes ?: "") }
+    val doNotStoreHistory = rememberSaveable {
+        mutableStateOf(exercise?.doNotStoreHistory ?: !allowSettingDoNotStoreHistory)
+    }
 
-    val hms = remember { mutableStateOf(TimeConverter.secondsToHms(exercise?.intraSetRestInSeconds ?: 0)) }
+    val hms = rememberSaveable {
+        mutableStateOf(TimeConverter.secondsToHms(exercise?.intraSetRestInSeconds ?: 0))
+    }
     val (hours, minutes, seconds) = hms.value
 
-    val exerciseTypeDescriptions = getExerciseTypeDescriptions()
-    val selectedExerciseType = remember { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
+    val exerciseTypeDescriptions = rememberSaveable { getExerciseTypeDescriptions() }
+    val selectedExerciseType = rememberSaveable { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
+    var exerciseTypeExpanded by rememberSaveable { mutableStateOf(false) }
 
-    val expandedType = remember { mutableStateOf(false) }
+    val minLoadPercent = rememberSaveable { mutableFloatStateOf(exercise?.minLoadPercent?.toFloat() ?: 65f) }
+    val maxLoadPercent = rememberSaveable { mutableFloatStateOf(exercise?.maxLoadPercent?.toFloat() ?: 85f) }
+    val minReps = rememberSaveable { mutableFloatStateOf(exercise?.minReps?.toFloat() ?: 6f) }
+    val maxReps = rememberSaveable { mutableFloatStateOf(exercise?.maxReps?.toFloat() ?: 12f) }
 
-    // Progressive overload state
-    val minLoadPercent = remember { mutableStateOf(exercise?.minLoadPercent?.toFloat()?:65f) }
-    val maxLoadPercent = remember { mutableStateOf(exercise?.maxLoadPercent?.toFloat()?:85f) }
-    val minReps = remember { mutableStateOf(exercise?.minReps?.toFloat()?:6f) }
-    val maxReps = remember { mutableStateOf(exercise?.maxReps?.toFloat()?:12f) }
+    val generateWarmupSets = rememberSaveable { mutableStateOf(exercise?.generateWarmUpSets ?: false) }
+    val enableProgression = rememberSaveable { mutableStateOf(exercise?.enableProgression ?: false) }
+    val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
+    val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
 
-    val generateWarmupSets = remember { mutableStateOf(exercise?.generateWarmUpSets ?: false) } // Added state for generateWarmupSets
-
-    val enableProgression = remember { mutableStateOf(exercise?.enableProgression ?: false) } // Added state for enableProgression
-    val keepScreenOn = remember { mutableStateOf(exercise?.keepScreenOn ?: false) } // Added state for keepScreenOn
-    val showCountDownTimer = remember { mutableStateOf(exercise?.showCountDownTimer ?: false) } // Added state for keepScreenOn
-
-    val bodyWeightPercentage = remember { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
+    val bodyWeightPercentage = rememberSaveable { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
     val equipments by viewModel.equipmentsFlowWithGeneric.collectAsState()
 
-    val heartRateZones = listOf("None") + listOf("Zone 2", "Zone 3", "Zone 4", "Zone 5") + listOf("Custom")
-    val selectedLowerBoundMaxHRPercent = remember { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
-    val selectedUpperBoundMaxHRPercent = remember { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
+    val heartRateZones = listOf("None", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Custom")
+    val selectedLowerBoundMaxHRPercent = rememberSaveable { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
+    val selectedUpperBoundMaxHRPercent = rememberSaveable { mutableStateOf(exercise?.upperBoundMaxHRPercent) }
 
-    val loadJumpDefaultPctState = remember { mutableStateOf(exercise?.loadJumpDefaultPct?.toFloat() ?: 0.025f) }
-    val loadJumpMaxPctState = remember { mutableStateOf(exercise?.loadJumpMaxPct?.toFloat() ?: 0.1f) }
-    val loadJumpOvercapUntilState = remember { mutableStateOf(exercise?.loadJumpOvercapUntil?.toFloat() ?: 2f) }
+    val loadJumpDefaultPctState = rememberSaveable { mutableFloatStateOf(exercise?.loadJumpDefaultPct?.toFloat() ?: 0.025f) }
+    val loadJumpMaxPctState = rememberSaveable { mutableFloatStateOf(exercise?.loadJumpMaxPct?.toFloat() ?: 0.1f) }
+    val loadJumpOvercapUntilState = rememberSaveable { mutableIntStateOf(exercise?.loadJumpOvercapUntil ?: 2) }
 
-    //get the index from zoneRanges that contains both selectedLowerBoundMaxHRPercent and selectedUpperBoundMaxHRPercent
-    val selectedTargetZone = remember(selectedLowerBoundMaxHRPercent.value,selectedUpperBoundMaxHRPercent.value) {
+    // Map HR custom/zone selection to indices used by the menu
+    val selectedTargetZone = rememberSaveable(selectedLowerBoundMaxHRPercent.value, selectedUpperBoundMaxHRPercent.value) {
         mutableStateOf(
-            if(selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) null
-            else {
-                val index = zoneRanges.indexOfFirst { it.first == selectedLowerBoundMaxHRPercent.value && it.second== selectedUpperBoundMaxHRPercent.value }
-                if(index == -1) {
-                    index
-                }else if(index <= 1){
-                    null
-                }else{
-                    index - 1
+            if (selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) {
+                null
+            } else {
+                val index = zoneRanges.indexOfFirst {
+                    it.first == selectedLowerBoundMaxHRPercent.value && it.second == selectedUpperBoundMaxHRPercent.value
+                }
+                if (index == -1) {
+                    -1 // custom
+                } else if (index <= 1) {
+                    null // out-of-range/none in your table
+                } else {
+                    index - 1 // menu indices 1..4 (Zone 2..5)
                 }
             }
         )
     }
 
-    val expandedHeartRateZone = remember { mutableStateOf(false) }
-    val showCustomTargetZone = remember (selectedTargetZone.value) { selectedTargetZone.value!=null && selectedTargetZone.value == -1 } // Show only when custom is selected
+    var hrZoneExpanded by rememberSaveable { mutableStateOf(false) }
+    val showCustomTargetZone = selectedTargetZone.value == -1
 
-    val selectedEquipmentId = remember { mutableStateOf<UUID?>(exercise?.equipmentId ?: viewModel.GENERIC_ID) }
-    val expandedEquipment = remember { mutableStateOf(false) }
+    val selectedEquipmentId = rememberSaveable { mutableStateOf<UUID?>(exercise?.equipmentId ?: viewModel.GENERIC_ID) }
+    var equipmentExpanded by rememberSaveable { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
@@ -163,16 +177,17 @@ fun ExerciseForm(
                         strokeWidth = 1.dp.toPx()
                     )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 title = {
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
+                        text = if (exercise == null) "Insert Exercise" else "Edit Exercise",
                         textAlign = TextAlign.Center,
-                        text = if(exercise == null) "Insert Exercise" else "Edit Exercise"
+                        style = MaterialTheme.typography.titleLarge
                     )
                 },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(
@@ -182,9 +197,7 @@ fun ExerciseForm(
                     }
                 },
                 actions = {
-                    IconButton(modifier = Modifier.alpha(0f), onClick = {
-                        onCancel()
-                    }) {
+                    IconButton(modifier = Modifier.alpha(0f), onClick = { }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -193,484 +206,434 @@ fun ExerciseForm(
                 }
             )
         }
-    ){
-        it ->
+    ) { padding ->
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(it)
-                .padding(top = 10.dp)
+                .padding(padding)
+                .padding(top = Spacing.md)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
-            verticalArrangement = Arrangement.Center,
+                .padding(horizontal = Spacing.lg),
         ) {
-            // Exercise name field
+            // Name
             OutlinedTextField(
                 value = nameState.value,
                 onValueChange = { nameState.value = it },
-                label = { Text("Exercise Name") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
+                label = { Text("Exercise name", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.fillMaxWidth()
             )
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-            ) {
-                Checkbox(
-                    checked = keepScreenOn.value,
-                    onCheckedChange = { keepScreenOn.value = it },
-                    colors = CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                    )
+            Spacer(Modifier.height(Spacing.lg))
+
+            // Exercise type (create only)
+            if (exercise == null) {
+                Text(
+                    text = "Exercise type",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = Spacing.sm)
                 )
-                Text(text = "Keep Screen On")
-            }
-
-            if(selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP){
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp)
+                ExposedDropdownMenuBox(
+                    expanded = exerciseTypeExpanded,
+                    onExpandedChange = { exerciseTypeExpanded = it }
                 ) {
-                    Checkbox(
-                        checked = showCountDownTimer.value,
-                        onCheckedChange = { showCountDownTimer.value = it },
-                        colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                        )
+                    OutlinedTextField(
+                        value = selectedExerciseType.value.toReadableString(),
+                        onValueChange = {},
+                        readOnly = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = exerciseTypeExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
                     )
-                    Text(text = "Show CountDown Timer")
+                    ExposedDropdownMenu(
+                        expanded = exerciseTypeExpanded,
+                        modifier =  Modifier.background(MaterialTheme.colorScheme.background),
+                        border = BorderStroke(1.dp, MediumLightGray),
+                        onDismissRequest = { exerciseTypeExpanded = false }
+                    ) {
+                        exerciseTypeDescriptions.forEach { desc ->
+                            DropdownMenuItem(
+                                text = { Text(desc, style = MaterialTheme.typography.bodyLarge) },
+                                onClick = {
+                                    selectedExerciseType.value = stringToExerciseType(desc)!!
+                                    selectedEquipmentId.value =
+                                        if (selectedExerciseType.value == ExerciseType.WEIGHT) viewModel.GENERIC_ID
+                                        else null
+                                    exerciseTypeExpanded = false
+                                }
+                            )
+                        }
+                    }
                 }
+                Spacer(Modifier.height(Spacing.lg))
+                HorizontalDivider(color = MediumLightGray)
             }
 
-            if(exercise == null){
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp)
-                ) {
-                    Text(text = "Exercise Type:")
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = selectedExerciseType.value.name.replace('_', ' ').capitalize(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { expandedType.value = true }
-                                .padding(8.dp)
+            // Toggles
+            ListItem(
+                colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                headlineContent = { Text("Keep screen on", style = MaterialTheme.typography.bodyLarge) },
+                trailingContent = {
+                    Switch(
+                        checked = keepScreenOn.value,
+                        onCheckedChange = { keepScreenOn.value = it }
+                    )
+                }
+            )
+            HorizontalDivider(color = MediumLightGray)
+
+            if (selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP) {
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = { Text("Show count-down timer", style = MaterialTheme.typography.bodyLarge) },
+                    trailingContent = {
+                        Switch(
+                            checked = showCountDownTimer.value,
+                            onCheckedChange = { showCountDownTimer.value = it }
                         )
-                        DropdownMenu(
-                            expanded = expandedType.value,
-                            onDismissRequest = { expandedType.value = false },
-                            modifier = Modifier.background(MediumDarkerGray),
-                            border = BorderStroke(1.dp, MediumLightGray)
-                        ) {
-                            exerciseTypeDescriptions.forEach { ExerciseDescription ->
-                                DropdownMenuItem(
-                                    onClick = {
-                                        selectedExerciseType.value = stringToExerciseType(ExerciseDescription)!!
+                    }
+                )
+                HorizontalDivider(color = MediumLightGray)
+            }
 
-                                        if(selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value = viewModel.GENERIC_ID
-                                        else selectedEquipmentId.value = null
+            if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
+                Spacer(Modifier.height(Spacing.lg))
 
-                                        expandedType.value = false
-                                    },
-                                    text = {
-                                        Text(text = ExerciseDescription)
-                                    }
-                                )
+                // Equipment picker
+                Text(
+                    text = "Equipment",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = Spacing.sm)
+                )
+                ExposedDropdownMenuBox(
+                    expanded = equipmentExpanded,
+                    onExpandedChange = { equipmentExpanded = it }
+                ) {
+                    val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
+                    OutlinedTextField(
+                        value = selectedEquipment?.name ?: "None",
+                        onValueChange = {},
+                        readOnly = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(equipmentExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = equipmentExpanded,
+                        modifier =  Modifier.background(MaterialTheme.colorScheme.background),
+                        border = BorderStroke(1.dp, MediumLightGray),
+                        onDismissRequest = { equipmentExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("None", style = MaterialTheme.typography.bodyLarge) },
+                            onClick = {
+                                selectedEquipmentId.value = null
+                                equipmentExpanded = false
                             }
+                        )
+                        equipments.forEach { equipment ->
+                            DropdownMenuItem(
+                                text = { Text(equipment.name, style = MaterialTheme.typography.bodyLarge) },
+                                onClick = {
+                                    selectedEquipmentId.value = equipment.id
+                                    equipmentExpanded = false
+                                }
+                            )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
             }
 
-            if(selectedExerciseType.value == ExerciseType.WEIGHT || (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)){
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp)
-                ) {
-                    Text(
-                        text = "Load Range (${minLoadPercent.value.toInt()}% - ${maxLoadPercent.value.toInt()}%)",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+            // Weight / Bodyweight sections
+            if (selectedExerciseType.value == ExerciseType.WEIGHT ||
+                (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)
+            ) {
+                Spacer(Modifier.height(Spacing.lg))
+                Text(
+                    text = "Load range (${minLoadPercent.floatValue.toInt()}% – ${maxLoadPercent.floatValue.toInt()}%)",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                RangeSlider(
+                    value = minLoadPercent.floatValue..maxLoadPercent.floatValue,
+                    onValueChange = { r ->
+                        minLoadPercent.floatValue = r.start
+                        maxLoadPercent.floatValue = r.endInclusive
+                    },
+                    valueRange = 0f..100f
+                )
 
-                    RangeSlider(
-                        value = minLoadPercent.value..maxLoadPercent.value,
-                        onValueChange = { range ->
-                            minLoadPercent.value = range.start
-                            maxLoadPercent.value = range.endInclusive
-                        },
-                        valueRange = 0f..100f,
-                        steps = 98,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                Spacer(Modifier.height(Spacing.md))
+                Text(
+                    text = "Reps range (${minReps.floatValue.toInt()} – ${maxReps.floatValue.toInt()})",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                RangeSlider(
+                    value = minReps.floatValue..maxReps.floatValue,
+                    onValueChange = { r ->
+                        minReps.floatValue = r.start
+                        maxReps.floatValue = r.endInclusive
+                    },
+                    valueRange = 1f..50f
+                )
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = "Reps Range (${minReps.value.toInt()} - ${maxReps.value.toInt()})",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
-                    RangeSlider(
-                        value = minReps.value..maxReps.value,
-                        onValueChange = { range ->
-                            minReps.value = range.start
-                            maxReps.value = range.endInclusive
-                        },
-                        valueRange = 1f..50f,
-                        steps = 49,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp)) // Added spacer
-                }
+                Spacer(Modifier.height(Spacing.lg))
             }
 
-            if(selectedExerciseType.value == ExerciseType.BODY_WEIGHT){
-                Spacer(modifier = Modifier.height(8.dp))
+            if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT) {
                 OutlinedTextField(
                     value = bodyWeightPercentage.value,
                     onValueChange = {
-                        if (it.isEmpty() || (it.all { it.isDigit() || it == '.' } && !it.startsWith("."))) {
+                        if (it.isEmpty() || (it.all { ch -> ch.isDigit() || ch == '.' } && !it.startsWith("."))) {
                             bodyWeightPercentage.value = it
                         }
                     },
-                    label = { Text("BodyWeight %") },
+                    label = { Text("Bodyweight %", style = MaterialTheme.typography.labelLarge) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(Spacing.lg))
             }
 
-            if(selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT){
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp)
-                ) {
-                    Checkbox(
-                        checked = generateWarmupSets.value,
-                        onCheckedChange = { generateWarmupSets.value = it },
-                        colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
+            if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
+                // Auto warmups
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = { Text("Auto-generate warm-up sets", style = MaterialTheme.typography.bodyLarge) },
+                    trailingContent = {
+                        Switch(
+                            checked = generateWarmupSets.value,
+                            onCheckedChange = { generateWarmupSets.value = it }
                         )
-                    )
-                    Text(text = "Auto-Generate Warm-up Sets")
-                }
+                    }
+                )
+                HorizontalDivider(color = MediumLightGray)
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp)
-                ) {
-                    Checkbox(
-                        checked = enableProgression.value,
-                        onCheckedChange = { enableProgression.value = it },
-                        colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                // Enable progression
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = { Text("Enable progression", style = MaterialTheme.typography.bodyLarge) },
+                    trailingContent = {
+                        Switch(
+                            checked = enableProgression.value,
+                            onCheckedChange = { enableProgression.value = it }
                         )
-                    )
-                    Text(text = "Enable Progression")
-                }
+                    }
+                )
+                HorizontalDivider(color = MediumLightGray)
 
                 if (enableProgression.value) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                        // Default Percentage Slider
-                        Text(
-                            text = "Default Load Jump: ${(loadJumpDefaultPctState.value * 100).round(2)}%",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = 16.dp)
-                        )
-                        Slider(
-                            value = loadJumpDefaultPctState.value,
-                            onValueChange = { loadJumpDefaultPctState.value = it },
-                            valueRange = 0f..0.1f, // 0% to 10%
-                            steps = 39 // Allows for 0.25% increments
-                        )
+                    Spacer(Modifier.height(Spacing.lg))
+                    Text(
+                        text = "Default load jump: ${(loadJumpDefaultPctState.floatValue * 100).round(2)}%",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Slider(
+                        value = loadJumpDefaultPctState.floatValue,
+                        onValueChange = { loadJumpDefaultPctState.floatValue = it.coerceIn(0f, 0.10f) },
+                        valueRange = 0f..0.10f
+                    )
 
-                        // Max Percentage Slider
-                        Text(
-                            text = "Max Load Jump: ${(loadJumpMaxPctState.value * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = 8.dp)
-                        )
-                        val maxLoadJumpStartRange = loadJumpDefaultPctState.value
-                        val maxLoadJumpEndRange = 0.25f
-                        // Calculate the number of 1% steps within the dynamic range.
-                        // The number of steps is the number of intervals minus one.
-                        val maxLoadJumpSteps = ((maxLoadJumpEndRange - maxLoadJumpStartRange) / 0.01f).roundToInt() - 1
-
-                        Slider(
-                            value = loadJumpMaxPctState.value,
-                            onValueChange = { loadJumpMaxPctState.value = it },
-                            valueRange = maxLoadJumpStartRange..maxLoadJumpEndRange, // Default + 5% to 25%
-                            steps = if (maxLoadJumpSteps > 0) maxLoadJumpSteps else 0 // Ensure steps is not negative
-                        )
-
-                        // Overcap Reps Slider
-                        Text(
-                            text = "Overcap Reps: ${loadJumpOvercapUntilState.value.toInt()}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = 8.dp)
-                        )
-                        Slider(
-                            value = loadJumpOvercapUntilState.value,
-                            onValueChange = { loadJumpOvercapUntilState.value = it.roundToInt().toFloat() },
-                            valueRange = 0f..5f,
-                            steps = 4 // Allows for integer increments
-                        )
+                    // Ensure max slider's lower bound tracks the default value
+                    val maxLower = loadJumpDefaultPctState.floatValue
+                    if (loadJumpMaxPctState.floatValue < maxLower) {
+                        loadJumpMaxPctState.floatValue = maxLower
                     }
-                }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                ) {
-                    Text("Intra-Set Rest")
-                    Spacer(modifier = Modifier.height(15.dp))
-                    CustomTimePicker(
-                        initialHour = hours,
-                        initialMinute = minutes,
-                        initialSecond = seconds,
-                        onTimeChange = { hour, minute, second ->
-                            hms.value = Triple(hour, minute, second)
-                        }
+                    Text(
+                        text = "Max load jump: ${(loadJumpMaxPctState.floatValue * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = Spacing.md)
+                    )
+                    Slider(
+                        value = loadJumpMaxPctState.floatValue,
+                        onValueChange = { loadJumpMaxPctState.floatValue = it.coerceIn(maxLower, 0.25f) },
+                        valueRange = maxLower..0.25f
+                    )
+
+                    Text(
+                        text = "Overcap reps: ${loadJumpOvercapUntilState.intValue}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = Spacing.md)
+                    )
+                    Slider(
+                        value = loadJumpOvercapUntilState.intValue.toFloat(),
+                        onValueChange = { loadJumpOvercapUntilState.intValue = it.roundToInt().coerceIn(0, 5) },
+                        valueRange = 0f..5f
                     )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp)
+                Spacer(Modifier.height(Spacing.lg))
+                Text("Intra-set rest", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(Spacing.sm))
+                CustomTimePicker(
+                    initialHour = hours,
+                    initialMinute = minutes,
+                    initialSecond = seconds,
+                    onTimeChange = { h, m, s -> hms.value = Triple(h, m, s) }
+                )
+
+                Spacer(Modifier.height(Spacing.lg))
+                HorizontalDivider(color = MediumLightGray)
+            } else {
+                // Cardio HR target zone
+                Text(
+                    text = "Target HR zone",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = Spacing.sm)
+                )
+                ExposedDropdownMenuBox(
+                    expanded = hrZoneExpanded,
+                    onExpandedChange = { hrZoneExpanded = it }
                 ) {
-                    Text(text = "Equipment:", style = MaterialTheme.typography.titleMedium)
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
-                        Text(
-                            text = selectedEquipment?.name ?: "None",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { expandedEquipment.value = true }
-                                .padding(8.dp)
-                        )
-                        DropdownMenu(
-                            expanded = expandedEquipment.value,
-                            onDismissRequest = { expandedEquipment.value = false },
-                            modifier = Modifier.background(MediumDarkerGray),
-                            border = BorderStroke(1.dp, MediumLightGray)
-                        ) {
+                    val zoneText = when (selectedTargetZone.value) {
+                        null -> heartRateZones[0]
+                        -1 -> heartRateZones[5]
+                        else -> heartRateZones[selectedTargetZone.value!! + 1] // 1..4 -> Zone 2..5
+                    }
+                    OutlinedTextField(
+                        value = zoneText,
+                        onValueChange = {},
+                        readOnly = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(hrZoneExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = hrZoneExpanded,
+                        modifier =  Modifier.background(MaterialTheme.colorScheme.background),
+                        border = BorderStroke(1.dp, MediumLightGray),
+                        onDismissRequest = { hrZoneExpanded = false }
+                    ) {
+                        heartRateZones.forEachIndexed { index, zoneLabel ->
                             DropdownMenuItem(
+                                text = { Text(zoneLabel, style = MaterialTheme.typography.bodyLarge) },
                                 onClick = {
-                                    selectedEquipmentId.value = null
-                                    expandedEquipment.value = false
-                                },
-                                text = {
-                                    Text(text = "None")
+                                    when (index) {
+                                        0 -> { // None
+                                            selectedLowerBoundMaxHRPercent.value = null
+                                            selectedUpperBoundMaxHRPercent.value = null
+                                            selectedTargetZone.value = null
+                                        }
+                                        in 1..4 -> { // Zone 2..5
+                                            val (lower, upper) = zoneRanges[index + 1] // align with your table
+                                            selectedLowerBoundMaxHRPercent.value = lower
+                                            selectedUpperBoundMaxHRPercent.value = upper
+                                            selectedTargetZone.value = index
+                                        }
+                                        5 -> { // Custom
+                                            selectedLowerBoundMaxHRPercent.value = 50f
+                                            selectedUpperBoundMaxHRPercent.value = 60f
+                                            selectedTargetZone.value = -1
+                                        }
+                                    }
+                                    hrZoneExpanded = false
                                 }
                             )
-                            equipments.forEach { equipment ->
-                                DropdownMenuItem(
-                                    onClick = {
-                                        selectedEquipmentId.value = equipment.id
-                                        expandedEquipment.value = false
-                                    },
-                                    text = {
-                                        Text(text = equipment.name)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }else{
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp)
-                ) {
-                    Text(text = "Target HR Zone:")
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = when(selectedTargetZone.value) {
-                                null -> heartRateZones[0] // None
-                                -1 -> heartRateZones[5] // Custom
-                                else -> heartRateZones[selectedTargetZone.value!! + 1] // Zone 1-5 (index + 1)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { expandedHeartRateZone.value = true }
-                                .padding(8.dp)
-                        )
-                        DropdownMenu(
-                            expanded = expandedHeartRateZone.value,
-                            onDismissRequest = { expandedHeartRateZone.value = false },
-                            modifier = Modifier.background(MediumDarkerGray),
-                            border = BorderStroke(1.dp, MediumLightGray)
-                        ) {
-                            heartRateZones.forEachIndexed { index, zone ->
-                                DropdownMenuItem(
-                                    onClick = {
-                                        when (index) {
-                                            0 -> { // None
-                                                selectedLowerBoundMaxHRPercent.value = null
-                                                selectedUpperBoundMaxHRPercent.value = null
-                                                selectedTargetZone.value = null
-                                            }
-                                            in 1..4 -> { // Zone 2-5
-                                                val (lowerBound, upperBound) = zoneRanges[index + 1] // Adjust index for zoneRanges
-                                                selectedLowerBoundMaxHRPercent.value = lowerBound
-                                                selectedUpperBoundMaxHRPercent.value = upperBound
-                                                selectedTargetZone.value = index // Store zone index
-                                            }
-                                            5 -> { // Custom
-                                                selectedLowerBoundMaxHRPercent.value = 50f // Default custom range
-                                                selectedUpperBoundMaxHRPercent.value = 60f
-                                                selectedTargetZone.value = -1 // Indicate custom
-                                            }
-                                        }
-                                        expandedHeartRateZone.value = false
-                                    },
-                                    text = {
-                                        Text(text = zone)
-                                    }
-                                )
-                            }
                         }
                     }
                 }
 
-                if(showCustomTargetZone){
-                    Column(modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp)) { // Wrap in column for better spacing
-                        Text(
-                            text = "Custom HR Zone (${selectedLowerBoundMaxHRPercent.value?.toInt()}% - ${selectedUpperBoundMaxHRPercent.value?.toInt()}%)",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                        RangeSlider(
-                            value =  selectedLowerBoundMaxHRPercent.value!!..selectedUpperBoundMaxHRPercent.value!!,
-                            onValueChange = { range ->
-                                selectedLowerBoundMaxHRPercent.value = range.start.roundToInt().toFloat()
-                                selectedUpperBoundMaxHRPercent.value = range.endInclusive.roundToInt().toFloat()
-                            },
-                            valueRange = 1f..100f,
-                            steps = 99,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp)
-                        )
-                    }
+                if (showCustomTargetZone) {
+                    Spacer(Modifier.height(Spacing.lg))
+                    val lb = selectedLowerBoundMaxHRPercent.value ?: 50f
+                    val ub = selectedUpperBoundMaxHRPercent.value ?: 60f
+                    Text(
+                        text = "Custom HR zone (${lb.toInt()}% – ${ub.toInt()}%)",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    RangeSlider(
+                        value = lb..ub,
+                        onValueChange = { r ->
+                            selectedLowerBoundMaxHRPercent.value = max(1f, r.start.roundToInt().toFloat())
+                            selectedUpperBoundMaxHRPercent.value = min(100f, r.endInclusive.roundToInt().toFloat())
+                        },
+                        valueRange = 1f..100f
+                    )
                 }
+                HorizontalDivider(color = MediumLightGray)
             }
+
+            // Do not store history
+            ListItem(
+                colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                headlineContent = { Text("Do not store history", style = MaterialTheme.typography.bodyLarge) },
+                trailingContent = {
+                    Switch(
+                        checked = doNotStoreHistory.value,
+                        onCheckedChange = { doNotStoreHistory.value = it },
+                        enabled = allowSettingDoNotStoreHistory
+                    )
+                }
+            )
+            HorizontalDivider(color = MediumLightGray)
+
+            // Notes
+            Spacer(Modifier.height(Spacing.lg))
+            OutlinedTextField(
+                value = notesState.value,
+                onValueChange = { notesState.value = it },
+                label = { Text("Notes", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 5,
+                singleLine = false
+            )
+
+            Spacer(Modifier.height(Spacing.xl))
+
+            val canBeSaved =
+                nameState.value.isNotBlank() &&
+                        (if (selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true)
 
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
-                Checkbox(
-                    checked = doNotStoreHistory.value,
-                    onCheckedChange = { doNotStoreHistory.value = it },
-                    enabled = allowSettingDoNotStoreHistory,
-                    colors = CheckboxDefaults.colors().copy(
-                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                    )
-                )
-                Text(text = "Do not store history")
+                TextButton(
+                    onClick = onCancel,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel", style = MaterialTheme.typography.bodyLarge) }
+
+                Button(
+                    onClick = {
+                        val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()
+                        val newExercise = Exercise(
+                            id = exercise?.id ?: UUID.randomUUID(),
+                            name = nameState.value.trim(),
+                            doNotStoreHistory = doNotStoreHistory.value,
+                            enabled = exercise?.enabled ?: true,
+                            sets = exercise?.sets ?: listOf(),
+                            exerciseType = selectedExerciseType.value,
+                            minLoadPercent = minLoadPercent.floatValue.toDouble(),
+                            maxLoadPercent = maxLoadPercent.floatValue.toDouble(),
+                            minReps = minReps.floatValue.toInt(),
+                            maxReps = maxReps.floatValue.toInt(),
+                            notes = notesState.value.trim(),
+                            lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value,
+                            upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value,
+                            equipmentId = selectedEquipmentId.value,
+                            bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
+                            generateWarmUpSets = generateWarmupSets.value,
+                            enableProgression = enableProgression.value,
+                            keepScreenOn = keepScreenOn.value,
+                            showCountDownTimer = showCountDownTimer.value,
+                            intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
+                            loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble(),
+                            loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble(),
+                            loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue
+                        )
+                        onExerciseUpsert(newExercise)
+                    },
+                    enabled = canBeSaved,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (exercise == null) "Insert" else "Save", style = MaterialTheme.typography.bodyLarge)
+                }
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = notesState.value,
-                    onValueChange = { notesState.value = it },
-                    label = { Text("Notes") },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 5,
-                    singleLine = false
-                )
-            }
-
-            val canBeSaved = nameState.value.isNotBlank() && if(selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true
-
-            // Submit button
-            Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
-                onClick = {
-                    val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()
-                    val newExercise = Exercise(
-                        id = exercise?.id ?: java.util.UUID.randomUUID(),
-                        name = nameState.value.trim(),
-                        doNotStoreHistory = doNotStoreHistory.value,
-                        enabled = exercise?.enabled ?: true,
-                        sets = exercise?.sets ?: listOf(),
-                        exerciseType = selectedExerciseType.value,
-                        minLoadPercent = minLoadPercent.value.toDouble(),
-                        maxLoadPercent = maxLoadPercent.value.toDouble(),
-                        minReps = minReps.value.toInt(),
-                        maxReps = maxReps.value.toInt(),
-                        notes = notesState.value.trim(),
-                        lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value,
-                        upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value,
-                        equipmentId = selectedEquipmentId.value,
-                        bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
-                        generateWarmUpSets = generateWarmupSets.value,
-                        enableProgression = enableProgression.value,
-                        keepScreenOn = keepScreenOn.value,
-                        showCountDownTimer = showCountDownTimer.value,
-                        intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
-                        loadJumpDefaultPct = loadJumpDefaultPctState.value.toDouble(),
-                        loadJumpMaxPct = loadJumpMaxPctState.value.toDouble(),
-                        loadJumpOvercapUntil = loadJumpOvercapUntilState.value.toInt()
-                    )
-
-                    onExerciseUpsert(newExercise)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                enabled = canBeSaved
-            ) {
-                if (exercise == null) Text("Insert Exercise", color = if(canBeSaved) DarkGray else Color.Unspecified) else Text("Edit Exercise", color = if(canBeSaved) DarkGray else Color.Unspecified)
-            }
-
-            CustomButton(
-                text = "Cancel",
-                onClick = {
-                    onCancel()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
+            Spacer(Modifier.height(Spacing.xl))
         }
     }
 }

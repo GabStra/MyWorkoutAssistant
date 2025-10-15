@@ -45,6 +45,7 @@ import com.gabstra.myworkoutassistant.screens.SupersetForm
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
 import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
+import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.screens.equipments.BarbellForm
 import com.gabstra.myworkoutassistant.screens.equipments.DumbbellForm
@@ -68,6 +69,7 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -87,6 +89,7 @@ import java.util.Locale
 
 class MyReceiver(
     private val appViewModel: AppViewModel,
+    private val workoutViewModel: WorkoutViewModel,
     private val workoutStoreRepository: WorkoutStoreRepository,
     private val activity: Activity
 ) : BroadcastReceiver() {
@@ -104,6 +107,8 @@ class MyReceiver(
 
                     scope.launch {
                         appViewModel.updateWorkoutStore(workoutStore,false)
+                        workoutViewModel.updateWorkoutStore(workoutStore)
+
                         appViewModel.triggerUpdate()
 
                         try{
@@ -139,6 +144,12 @@ class MainActivity : ComponentActivity() {
 
     private val appViewModel: AppViewModel by viewModels()
 
+    private val workoutViewModel: WorkoutViewModel by viewModels()
+
+    private val hapticsViewModel: HapticsViewModel by viewModels {
+        HapticsViewModelFactory(applicationContext)
+    }
+
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
 
     private lateinit var myReceiver: BroadcastReceiver
@@ -147,7 +158,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
     }
 
     override fun onDestroy(){
@@ -161,18 +171,25 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        myReceiver = MyReceiver(appViewModel, workoutStoreRepository,this)
+        myReceiver = MyReceiver(appViewModel, workoutViewModel,workoutStoreRepository,this)
         val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
         registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
 
         setContent {
             MyWorkoutAssistantTheme {
-                // A surface container using the 'background' color from the theme
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MyWorkoutAssistantNavHost(dataClient, appViewModel, workoutStoreRepository, db,healthConnectClient)
+                    MyWorkoutAssistantNavHost(
+                        dataClient,
+                        appViewModel,
+                        workoutViewModel,
+                        hapticsViewModel,
+                        workoutStoreRepository,
+                        db,
+                        healthConnectClient
+                    )
                 }
             }
         }
@@ -202,11 +219,21 @@ class MainActivity : ComponentActivity() {
 fun MyWorkoutAssistantNavHost(
     dataClient: DataClient,
     appViewModel: AppViewModel,
+    workoutViewModel: WorkoutViewModel,
+    hapticsViewModel: HapticsViewModel,
     workoutStoreRepository: WorkoutStoreRepository,
     db: AppDatabase,
     healthConnectClient: HealthConnectClient
 ) {
     val context = LocalContext.current
+
+    val localContext = LocalContext.current
+    workoutViewModel.initExerciseHistoryDao(localContext)
+    workoutViewModel.initWorkoutHistoryDao(localContext)
+    workoutViewModel.initWorkoutScheduleDao(localContext)
+    workoutViewModel.initWorkoutRecordDao(localContext)
+    workoutViewModel.initExerciseInfoDao(localContext)
+    workoutViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
     val systemUiController = rememberSystemUiController()
     val backgroundColor = DarkGray
@@ -238,13 +265,15 @@ fun MyWorkoutAssistantNavHost(
 
     val updateMobileFlow = appViewModel.updateMobileFlow
 
-    LaunchedEffect(appViewModel.workoutStore) {
-        workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
-    }
-
-    val equipments by appViewModel.equipmentsFlow.collectAsState()
-    LaunchedEffect(equipments) {
-        workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
+    LaunchedEffect(Unit) {
+        try{
+            val workoutStore = workoutStoreRepository.getWorkoutStore()
+            appViewModel.updateWorkoutStore(workoutStore)
+            workoutViewModel.updateWorkoutStore(workoutStore)
+        }catch (ex: Exception) {
+            Log.e("MainActivity", "Error getting workout store", ex)
+            Toast.makeText(context, "Error during startup, please check logs", Toast.LENGTH_SHORT).show()
+        }
     }
 
     BackHandler(enabled = true) {
@@ -318,6 +347,8 @@ fun MyWorkoutAssistantNavHost(
                             deleteAndInsertJob.join()
 
                             appViewModel.updateWorkoutStore(newWorkoutStore)
+                            workoutViewModel.updateWorkoutStore(newWorkoutStore)
+
                             workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
                             appViewModel.triggerUpdate()
 
@@ -561,6 +592,14 @@ fun MyWorkoutAssistantNavHost(
                 )
             }
 
+            is ScreenData.Workout ->{
+                WorkoutScreen(
+                    appViewModel,
+                    workoutViewModel,
+                    hapticsViewModel
+                )
+            }
+
             is ScreenData.NewWorkout -> {
                 WorkoutForm(
                     onWorkoutUpsert = { newWorkout, schedules ->
@@ -636,6 +675,7 @@ fun MyWorkoutAssistantNavHost(
 
                 WorkoutDetailScreen(
                     appViewModel,
+                    workoutViewModel,
                     workoutHistoryDao,
                     workoutRecordDao,
                     setHistoryDao,
