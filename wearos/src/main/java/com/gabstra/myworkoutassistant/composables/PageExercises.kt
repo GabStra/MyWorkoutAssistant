@@ -136,11 +136,10 @@ fun PageExercises(
                 }
             }.joinToString(" | ")
 
-            Text(
+            ScalableText(
                 text = topLine,
                 style = captionStyle,
                 textAlign = TextAlign.Center,
-                maxLines = 1,
                 modifier = Modifier.basicMarquee()
             )
 

@@ -48,6 +48,7 @@ import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
+import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -280,11 +281,10 @@ fun ExerciseScreen(
                                         }
                                     }.joinToString(" | ")
 
-                                    Text(
+                                    ScalableText(
                                         text = topLine,
                                         style = captionStyle,
                                         textAlign = TextAlign.Center,
-                                        maxLines = 1,
                                         modifier = Modifier.basicMarquee()
                                     )
 
@@ -311,11 +311,10 @@ fun ExerciseScreen(
                                     }
 
                                     if (bottomLine.text.isNotEmpty()) {
-                                        Text(
-                                            text = bottomLine,
+                                        ScalableText(
+                                            text = bottomLine.text,
                                             style = captionStyle,
                                             textAlign = TextAlign.Center,
-                                            maxLines = 1,
                                             modifier = Modifier.basicMarquee()
                                         )
                                     }
