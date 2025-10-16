@@ -291,7 +291,7 @@ open class WorkoutViewModel : ViewModel() {
         return weightsByEquipment[equipment] ?: emptySet()
     }
 
-    val exerciseProgressionByExerciseId: MutableMap<UUID, Pair<DoubleProgressionHelper.Plan?, ProgressionState>> =
+    val exerciseProgressionByExerciseId: MutableMap<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>> =
         mutableMapOf()
 
     protected var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
@@ -560,7 +560,7 @@ open class WorkoutViewModel : ViewModel() {
                 isRestSet = { it is RestSet } // adapt if your rest set type differs
             )
 
-            val distributedSets = exerciseProgression!!.sets
+            val distributedSets = exerciseProgression.sets
             val newSets = mutableListOf<Set>()
 
             val exerciseSets = validSets.filter { it !is RestSet }
@@ -672,7 +672,7 @@ open class WorkoutViewModel : ViewModel() {
     // Helper function to process a single exercise
     private suspend fun processExercise(
         exercise: Exercise,
-    ): Pair<UUID, Pair<DoubleProgressionHelper.Plan?, ProgressionState>>? {
+    ): Pair<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>? {
         val repsRange = IntRange(
                 exercise.minReps,
                 exercise.maxReps
@@ -695,14 +695,8 @@ open class WorkoutViewModel : ViewModel() {
 
         val sessionDecision = computeSessionDecision(exercise.id)
 
-        val setsToUse =
-            if (sessionDecision.shouldLoadLastSuccessfulSession)
-                sessionDecision.lastSuccessfulSession.map { getNewSetFromSetHistory(it) }
-            else
-                exercise.sets
-
         val validSets = removeRestAndRestPause(
-            sets = setsToUse,
+            sets = exercise.sets,
             isRestPause = {
                 when (it) {
                     is BodyWeightSet -> it.isRestPause
@@ -758,72 +752,67 @@ open class WorkoutViewModel : ViewModel() {
 
         val previousVolume = previousSets.sumOf { it.weight * it.reps }
 
-        var exerciseProgression: DoubleProgressionHelper.Plan? = null
-
-
-        when(sessionDecision.progressionState) {
-            ProgressionState.DELOAD -> {
+        val exerciseProgression = when {
+            sessionDecision.progressionState ==  ProgressionState.DELOAD -> {
                 Log.d("WorkoutViewModel", "Deload")
 
-                exerciseProgression = DoubleProgressionHelper.planDeloadSession(
+                DoubleProgressionHelper.planDeloadSession(
                     previousSets = previousSets,
                     availableWeights = availableWeights,
                     repsRange = repsRange
                 )
             }
-
-            ProgressionState.RETRY -> {
+            sessionDecision.progressionState ==ProgressionState.RETRY -> {
                 Log.d("WorkoutViewModel", "Retrying")
-                exerciseProgression = DoubleProgressionHelper.Plan(
+                DoubleProgressionHelper.Plan(
                     previousSets,
                     previousVolume,
                     previousVolume
                 )
             }
 
-            ProgressionState.PROGRESS -> {
+            sessionDecision.progressionState == ProgressionState.PROGRESS -> {
                 val jumpPolicy = DoubleProgressionHelper.LoadJumpPolicy(
                     defaultPct = exercise.loadJumpDefaultPct ?: 0.025,
                     maxPct = exercise.loadJumpMaxPct ?: 0.5,
                     overcapUntil = exercise.loadJumpOvercapUntil ?: 2
                 )
 
-                exerciseProgression = DoubleProgressionHelper.planNextSession(
+                DoubleProgressionHelper.planNextSession(
                     previousSets = previousSets,
                     availableWeights = availableWeights,
                     repsRange = repsRange,
                     jumpPolicy = jumpPolicy
                 )
             }
-        }
-
-        if (exerciseProgression != null) {
-            val newSets = exerciseProgression.sets.mapIndexed { index, set ->
-                if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
-                    val relativeBodyWeight =
-                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    "${set.weight} kg x ${set.reps} (${relativeBodyWeight} kg + ${set.weight - relativeBodyWeight} kg)"
-                } else {
-                    "${set.weight} kg x ${set.reps}"
-                }
+            else -> {
+                throw IllegalStateException("Unknown progression state")
             }
-
-            Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")}")
-
-            val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
-
-            Log.d(
-                "WorkoutViewModel",
-                "Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)")
-
-        }else{
-            Log.d("WorkoutViewModel", "No valid progression found for ${exercise.name}")
         }
 
-        val progressionState = if(sessionDecision.progressionState ==  ProgressionState.PROGRESS && exerciseProgression.previousVolume.round(2) == exerciseProgression.newVolume.round(2))
-            ProgressionState.RETRY
-        else
-            sessionDecision.progressionState
+        val newSets = exerciseProgression.sets.mapIndexed { index, set ->
+            if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+                val relativeBodyWeight =
+                    bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                "${set.weight} kg x ${set.reps} (${relativeBodyWeight} kg + ${set.weight - relativeBodyWeight} kg)"
+            } else {
+                "${set.weight} kg x ${set.reps}"
+            }
+        }
+
+        Log.d("WorkoutViewModel", "New sets: ${newSets.joinToString(", ")}")
+
+        val progressIncrease = ((exerciseProgression.newVolume - exerciseProgression.previousVolume) / exerciseProgression.previousVolume) * 100
+
+        Log.d(
+            "WorkoutViewModel",
+            "Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)")
+
+
+        val couldNotFindProgression = sessionDecision.progressionState == ProgressionState.PROGRESS &&
+                exerciseProgression.previousVolume.round(2) == exerciseProgression.newVolume.round(2)
+
+        val progressionState = if(couldNotFindProgression) ProgressionState.FAILED else sessionDecision.progressionState
 
         return exercise.id to (exerciseProgression to progressionState)
     }
@@ -1107,6 +1096,10 @@ open class WorkoutViewModel : ViewModel() {
 
             _isRefreshing.value = false
         }
+    }
+
+    suspend fun getExerciseInfoByExerciseId(exerciseId: UUID): ExerciseInfo? {
+        return exerciseInfoDao.getExerciseInfoById(exerciseId)
     }
 
     open fun pushAndStoreWorkoutData(

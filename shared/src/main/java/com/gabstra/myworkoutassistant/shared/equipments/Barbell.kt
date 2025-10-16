@@ -24,7 +24,7 @@ class Barbell(
         return generateRecursiveValidSubsets(availablePlates)
     }
 
-    override fun formatWeight(weight: Double): String {
+/*    override fun formatWeight(weight: Double): String {
         val sideWeight = (weight - barWeight) / 2
 
         if(sideWeight == 0.0){
@@ -32,5 +32,9 @@ class Barbell(
         }
 
         return "${com.gabstra.myworkoutassistant.shared.formatWeight(sideWeight)} x 2"
+    }*/
+
+    override fun formatWeight(weight: Double): String {
+        return "${com.gabstra.myworkoutassistant.shared.formatWeight(weight)}"
     }
 }

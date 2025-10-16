@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,16 +29,16 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import java.util.UUID
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PageExercises(
+    selectedExercise : Exercise,
     currentStateSet: WorkoutState.Set,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
-    onExerciseSelected: (UUID) -> Unit
+    onExerciseSelected: (Exercise) -> Unit
 ) {
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
     val exerciseOrSupersetIds = remember {
@@ -55,9 +53,7 @@ fun PageExercises(
         if (viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
     val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(currentExerciseOrSupersetId)
 
-    var selectedExercise by remember { mutableStateOf(currentExercise) }
-
-    val captionStyle = MaterialTheme.typography.bodyExtraSmall
+    val captionStyle = MaterialTheme.typography.labelSmall
 
     val isSuperset = remember(currentExerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
@@ -90,131 +86,90 @@ fun PageExercises(
             exerciseOrSupersetIds.indexOf(selectedExerciseOrSupersetId)
         }
 
-        LaunchedEffect(selectedExercise) {
-            onExerciseSelected(selectedExercise.id)
-        }
-
         val isSuperset = remember(selectedExerciseOrSupersetId) {
             viewModel.exercisesBySupersetId.containsKey(selectedExerciseOrSupersetId)
         }
-        
+
         val currentIndex = remember(selectedExercise) { exerciseIds.indexOf(selectedExercise.id) }
 
-        Row(
+        Column(
             modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.5.dp)
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
+            Text(
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 25.dp)
-                        .clickable {
-                            marqueeEnabled = !marqueeEnabled
-                            hapticsViewModel.doGentleVibration()
-                        }
-                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    text = selectedExercise.name,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Chip {
-                        val label = if (isSuperset) "Superset" else "Exercise"
-                        Text(
-                            textAlign = TextAlign.Center,
-                            text = "${label}: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                            style = captionStyle
-                        )
+                    .fillMaxWidth()
+                    .padding(horizontal = 25.dp)
+                    .clickable {
+                        marqueeEnabled = !marqueeEnabled
+                        hapticsViewModel.doGentleVibration()
                     }
-                    if (isSuperset) {
-                        val supersetExercises =
-                            remember(selectedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
-                        val supersetIndex =
-                            remember(
-                                supersetExercises,
-                                selectedExercise
-                            ) { supersetExercises.indexOf(selectedExercise) }
-                        Chip {
-                            Text(
-                                textAlign = TextAlign.Center,
-                                text = "Exercise: ${supersetIndex + 1}/${supersetExercises.size}",
-                                style = captionStyle
-                            )
-                        }
-                    }
+                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                text = selectedExercise.name,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
 
-/*                    if(currentExercise == selectedExercise){
-                        if(currentExerciseSetIds.size > 1){
-                            val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
-                            Chip{
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text =  "Set: ${setIndex + 1}/${currentExerciseSetIds.size}",
-                                    style = captionStyle,
-                                )
-                            }
-                        }
+            val topLine = buildList {
+                val label = if (isSuperset) "Superset" else "Exercise"
+                add("$label: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
 
-                        if(currentStateSet.isUnilateral){
-                            Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text = "Unilateral",
-                                    style = captionStyle,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-
-                        if(currentStateSet.isWarmupSet){
-                            Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                Text(
-                                    text = "Warm-up",
-                                    style = captionStyle,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }*/
+                if (isSuperset) {
+                    val supersetExercises =
+                        remember(selectedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
+                    val supersetIndex =
+                        remember(
+                            supersetExercises,
+                            selectedExercise
+                        ) { supersetExercises.indexOf(selectedExercise) }
+                    add("Exercise: ${supersetIndex + 1}/${supersetExercises.size}")
                 }
 
-                ExerciseSetsViewer(
-                    modifier = Modifier
-                        .fillMaxSize().padding(horizontal = 10.dp),
-                    viewModel = viewModel,
-                    hapticsViewModel = hapticsViewModel,
-                    exercise = selectedExercise,
-                    currentSet = currentStateSet.set,
-                    customMarkAsDone = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> true
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> false
-                        else -> null
-                    },
-                    customColor = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurfaceVariant
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurface
-                        else -> null
-                    },
-                    overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
-                        overrideSetIndex
-                    } else null
-                )
-            }
+                if(currentExercise == selectedExercise) {
+                    if (currentExerciseSetIds.size > 1) {
+                        val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
+                        add("Set: ${setIndex + 1}/${currentExerciseSetIds.size}")
+                    }
+                }
+            }.joinToString(" | ")
+
+            Text(
+                text = topLine,
+                style = captionStyle,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier.basicMarquee()
+            )
+
+            ExerciseSetsViewer(
+                modifier = Modifier
+                    .weight(1f),
+                viewModel = viewModel,
+                hapticsViewModel = hapticsViewModel,
+                exercise = selectedExercise,
+                currentSet = currentStateSet.set,
+                customMarkAsDone = when {
+                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> true
+                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> false
+                    else -> null
+                },
+                customBackgroundColor = when {
+                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary.copy(0.65f)
+                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.surfaceContainer
+                    else -> null
+                },
+                customTextColor = when {
+                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.background.copy(0.75f)
+                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurface
+                    else -> null
+                },
+                overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                    overrideSetIndex
+                } else null
+            )
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -231,8 +186,7 @@ fun PageExercises(
                         ) {
                             hapticsViewModel.doGentleVibration()
                             val newIndex = currentIndex - 1
-                            selectedExercise =
-                                viewModel.exercisesById[exerciseIds[newIndex]]!!
+                            onExerciseSelected(viewModel.exercisesById[exerciseIds[newIndex]]!!)
                         }
                         .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
                     verticalAlignment = Alignment.CenterVertically,
@@ -259,8 +213,7 @@ fun PageExercises(
                         ) {
                             hapticsViewModel.doGentleVibration()
                             val newIndex = currentIndex + 1
-                            selectedExercise =
-                                viewModel.exercisesById[exerciseIds[newIndex]]!!
+                            onExerciseSelected(viewModel.exercisesById[exerciseIds[newIndex]]!!)
                         }
                         .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
                     verticalAlignment = Alignment.CenterVertically,

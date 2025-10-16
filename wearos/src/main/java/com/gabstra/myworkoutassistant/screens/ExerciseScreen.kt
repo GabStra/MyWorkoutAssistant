@@ -10,8 +10,8 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,13 +30,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.composables.Chip
 import com.gabstra.myworkoutassistant.composables.CircularEndsPillShape
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
@@ -54,7 +56,6 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 enum class PageType {
     PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS
@@ -148,7 +149,7 @@ fun ExerciseScreen(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-    val captionStyle = MaterialTheme.typography.bodyExtraSmall
+    val captionStyle = MaterialTheme.typography.labelSmall
 
     val exerciseOrSupersetIds = remember {
         viewModel.setsByExerciseId.keys.toList()
@@ -163,7 +164,7 @@ fun ExerciseScreen(
         viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId)
     }
 
-    var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
+    var selectedExercise by remember { mutableStateOf(exercise) }
 
     val context = LocalContext.current
 
@@ -176,8 +177,9 @@ fun ExerciseScreen(
             viewModel.reEvaluateDimmingForCurrentState()
         }
 
-        if (pagerState.currentPage != exercisesPageIndex) {
-            selectedExerciseId = null
+        val isOnExercisesPage = pagerState.currentPage == exercisesPageIndex
+        if (!isOnExercisesPage) {
+            selectedExercise = exercise
         }
     }
 
@@ -207,7 +209,7 @@ fun ExerciseScreen(
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     text = exercise.name,
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -254,71 +256,68 @@ fun ExerciseScreen(
                             onTimerDisabled = { },
                             onTimerEnabled = { },
                             extraInfo = { _ ->
-                                FlowRow(
+                                Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(
-                                        5.dp,
-                                        Alignment.CenterHorizontally
-                                    ),
-                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
                                 ) {
-                                    Chip {
+                                    val topLine = buildList {
                                         val label = if (isSuperset) "Superset" else "Exercise"
+                                        add("$label: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+
+                                        if (isSuperset) {
+                                            val supersetExercises = remember(exerciseOrSupersetId) {
+                                                viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
+                                            }
+                                            val supersetIndex = remember(supersetExercises, exercise) {
+                                                supersetExercises.indexOf(exercise)
+                                            }
+                                            add("Exercise: ${supersetIndex + 1}/${supersetExercises.size}")
+                                        }
+
+                                        if (exerciseSetIds.size > 1) {
+                                            add("Set: ${setIndex + 1}/${exerciseSetIds.size}")
+                                        }
+                                    }.joinToString(" | ")
+
+                                    Text(
+                                        text = topLine,
+                                        style = captionStyle,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        modifier = Modifier.basicMarquee()
+                                    )
+
+                                    val bottomLine = buildAnnotatedString {
+                                        var first = true
+                                        fun sep() { if (!first) append(" | "); first = false }
+
+                                        if (equipment != null) {
+                                            sep()
+                                            append(equipment.name)
+                                        }
+                                        if (updatedState.isWarmupSet) {
+                                            sep()
+                                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                                append("Warm-up")
+                                            }
+                                        }
+                                        if (updatedState.isUnilateral) {
+                                            sep()
+                                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                                append("Unilateral")
+                                            }
+                                        }
+                                    }
+
+                                    if (bottomLine.text.isNotEmpty()) {
                                         Text(
-                                            textAlign = TextAlign.Center,
-                                            text = "${label}: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
+                                            text = bottomLine,
                                             style = captionStyle,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            modifier = Modifier.basicMarquee()
                                         )
-                                    }
-
-                                    if (isSuperset) {
-                                        val supersetExercises = remember(exerciseOrSupersetId) {
-                                            viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                                        }
-                                        val supersetIndex =
-                                            remember(
-                                                supersetExercises,
-                                                exercise
-                                            ) { supersetExercises.indexOf(exercise) }
-
-                                        Chip {
-                                            Text(
-                                                textAlign = TextAlign.Center,
-                                                text = "Exercise: ${supersetIndex + 1}/${supersetExercises.size}",
-                                                style = captionStyle
-                                            )
-                                        }
-                                    }
-
-                                    if (exerciseSetIds.size > 1) {
-                                        Chip {
-                                            Text(
-                                                textAlign = TextAlign.Center,
-                                                text = "Set: ${setIndex + 1}/${exerciseSetIds.size}",
-                                                style = captionStyle,
-                                            )
-                                        }
-                                    }
-
-                                    if (updatedState.isUnilateral) {
-                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                            Text(
-                                                textAlign = TextAlign.Center,
-                                                text = "Unilateral",
-                                                style = captionStyle,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-
-                                    if (updatedState.isWarmupSet) {
-                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                            Text(
-                                                text = "Warm-up",
-                                                style = captionStyle,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
                                     }
                                 }
                             },
@@ -330,11 +329,12 @@ fun ExerciseScreen(
                         )
 
                         PageType.EXERCISES -> PageExercises(
+                            selectedExercise,
                             updatedState,
                             viewModel, hapticsViewModel,
                             exercise,
                             onExerciseSelected = {
-                                selectedExerciseId = it
+                                selectedExercise = it
                             })
 
                         PageType.NOTES -> PageNotes(exercise.notes)
@@ -390,7 +390,7 @@ fun ExerciseScreen(
             ExerciseIndicator(
                 viewModel,
                 updatedState,
-                selectedExerciseId
+                selectedExercise.id
             )
 
             hearthRateChart()

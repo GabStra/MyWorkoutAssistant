@@ -10,7 +10,7 @@ import java.time.LocalDateTime
 import java.util.UUID
 
 enum class ProgressionState {
-    DELOAD, RETRY, PROGRESS
+    DELOAD, RETRY, PROGRESS, FAILED
 }
 
 sealed class WorkoutState {

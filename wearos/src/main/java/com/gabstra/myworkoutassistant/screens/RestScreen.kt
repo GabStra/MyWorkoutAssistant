@@ -57,7 +57,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
-import java.util.UUID
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
 @Composable
@@ -129,22 +128,18 @@ fun RestScreen(
         pageTypes.indexOf(PageType.EXERCISES)
     }
 
-    val exerciseDetailPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.EXERCISES)
-    }
-
     val platesPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.PLATES)
     }
 
     val pagerState = rememberPagerState(
-        initialPage = exerciseDetailPageIndex,
+        initialPage = exercisesPageIndex,
         pageCount = {
             pageTypes.size
         }
     )
 
-    var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
+    var selectedExercise by remember { mutableStateOf(exercise) }
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()
@@ -164,8 +159,9 @@ fun RestScreen(
             viewModel.reEvaluateDimmingForCurrentState()
         }
 
-        if(pagerState.currentPage != exercisesPageIndex){
-            selectedExerciseId = null
+        val isOnExercisesPage = pagerState.currentPage == exercisesPageIndex
+        if (!isOnExercisesPage) {
+            selectedExercise = exercise
         }
     }
 
@@ -346,12 +342,13 @@ fun RestScreen(
                             PageType.EXERCISE_DETAIL -> {}
                             PageType.EXERCISES -> {
                                 PageExercises(
+                                    selectedExercise,
                                     state.nextStateSets.first(),
                                     viewModel,
                                     hapticsViewModel,
                                     exercise,
                                     onExerciseSelected = {
-                                        selectedExerciseId = it
+                                        selectedExercise = it
                                     }
                                 )
                             }
@@ -379,7 +376,7 @@ fun RestScreen(
         ExerciseIndicator(
             viewModel,
             state.nextStateSets.first(),
-            selectedExerciseId
+            selectedExercise.id
         )
 
         SegmentedProgressIndicator(

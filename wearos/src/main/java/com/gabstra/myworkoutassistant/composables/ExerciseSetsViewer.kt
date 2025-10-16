@@ -57,7 +57,7 @@ fun SetTableRow(
     index: Int?,
     isCurrentSet: Boolean,
     markAsDone: Boolean,
-    color: Color = MaterialTheme.colorScheme.onBackground,
+    textColor: Color = MaterialTheme.colorScheme.onBackground,
 ){
     val captionStyle = MaterialTheme.typography.bodySmall
     val itemStyle = MaterialTheme.typography.numeralSmall
@@ -70,7 +70,7 @@ fun SetTableRow(
                 text = "W",
                 style = captionStyle,
                 textAlign = TextAlign.Center,
-                color = color
+                color = textColor
             )
         }
     }
@@ -96,14 +96,14 @@ fun SetTableRow(
                         text = equipment!!.formatWeight(weightSetData.actualWeight),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = textColor
                     )
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = "${weightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = textColor
                     )
                 }
 
@@ -121,14 +121,14 @@ fun SetTableRow(
                         text = weightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = textColor
                     )
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = "${bodyWeightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = textColor
                     )
                 }
 
@@ -140,7 +140,7 @@ fun SetTableRow(
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = textColor
                     )
                     Spacer(modifier = Modifier.width(18.dp))
                 }
@@ -153,7 +153,7 @@ fun SetTableRow(
                         text = FormatTime(enduranceSetData.startTimer / 1000),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = textColor
                     )
                     Spacer(modifier = Modifier.width(18.dp))
                 }
@@ -169,7 +169,7 @@ fun SetTableRow(
                     .fillMaxWidth()
                     .padding(horizontal = 2.5.dp)
                     .height(1.dp)
-                    .background(color)
+                    .background(textColor)
             )
         }
     }
@@ -183,7 +183,8 @@ fun ExerciseSetsViewer(
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
     customMarkAsDone: Boolean? = null,
-    customColor: Color? = null,
+    customBackgroundColor: Color? = null,
+    customTextColor: Color? = null,
     overrideSetIndex: Int? = null
 ){
     val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
@@ -229,10 +230,11 @@ fun ExerciseSetsViewer(
         setStateForThisRow:  WorkoutState.Set,
         rowIndex: Int,
     ) {
-        val backgroundColor = if(rowIndex == setIndex)
-            MaterialTheme.colorScheme.primary
-        else
-            MaterialTheme.colorScheme.surfaceContainer
+        val backgroundColor = customBackgroundColor ?: when{
+            rowIndex < setIndex -> MaterialTheme.colorScheme.primary.copy(0.65f)
+            rowIndex == setIndex ->  MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.surfaceContainer
+        }
 
         Row(
             modifier = Modifier
@@ -263,10 +265,10 @@ fun ExerciseSetsViewer(
                 setState = setStateForThisRow,
                 index = rowIndex, // This 'index' prop for SetTableRow might refer to its position in the overall exercise
                 isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
-                markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
-                color = customColor
+                markAsDone = false, //customMarkAsDone ?: (rowIndex < setIndex),
+                textColor = customTextColor
                     ?: when {
-                        rowIndex < setIndex -> MaterialTheme.colorScheme.onSurfaceVariant// MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
+                        rowIndex < setIndex -> MaterialTheme.colorScheme.background.copy(0.75f)// MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
                         rowIndex == setIndex -> MaterialTheme.colorScheme.background
                         else -> MaterialTheme.colorScheme.onSurface
                     }
@@ -279,12 +281,15 @@ fun ExerciseSetsViewer(
     }
 
     Column(
-        verticalArrangement = Arrangement.spacedBy(2.5.dp),
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(2.5.dp)
     ) {
         if (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.Bottom
             ) {
                 Spacer(modifier= Modifier.width(18.dp))
                 Text(
@@ -327,7 +332,9 @@ fun ExerciseSetsViewer(
 
         if (exercise.exerciseType == ExerciseType.COUNTUP || exercise.exerciseType == ExerciseType.COUNTDOWN) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Spacer(modifier= Modifier.width(18.dp))

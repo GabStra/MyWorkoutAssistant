@@ -46,8 +46,8 @@ fun DynamicHeightColumn(
                 )
             )
 
-        // 5. Set the layout size and place the content.
-        layout(contentPlaceable.width, columnHeight) {
+        val layoutHeight = constraints.maxHeight
+        layout(contentPlaceable.width, layoutHeight) {
             contentPlaceable.placeRelative(0, 0)
         }
     }
