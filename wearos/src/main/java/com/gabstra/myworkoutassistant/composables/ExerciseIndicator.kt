@@ -75,6 +75,7 @@ fun ExerciseIndicator(
                         strokeWidth = 4.dp,
                         startAngle = startAngle,
                         endAngle = endAngle,
+                        gapSize = 0.dp
                     )
                 }
             }else{
@@ -105,6 +106,7 @@ fun ExerciseIndicator(
                     strokeWidth = 4.dp,
                     startAngle = startAngle,
                     endAngle = endAngle,
+                    gapSize = 0.dp
                 )
             }
         }

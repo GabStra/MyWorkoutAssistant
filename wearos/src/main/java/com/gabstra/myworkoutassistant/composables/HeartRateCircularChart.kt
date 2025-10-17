@@ -376,6 +376,7 @@ private fun ZoneSegment(
         strokeWidth = 4.dp,
         startAngle = startAngle,
         endAngle = endAngle,
+        gapSize = 0.dp
     )
 }
 

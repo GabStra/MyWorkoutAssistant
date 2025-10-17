@@ -39,7 +39,7 @@ fun LoadingText(
     LaunchedEffect(Unit) {
         while (true) {
             delay(500)
-            dotCount.intValue = (dotCount.intValue + 1) % 4
+            dotCount.intValue = (dotCount.intValue % 3) + 1  // cycles 1→2→3→1
         }
     }
 

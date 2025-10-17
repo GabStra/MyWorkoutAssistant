@@ -6,11 +6,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.media.RingtoneManager
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
-import com.gabstra.myworkoutassistant.MainActivity
 import com.gabstra.myworkoutassistant.R
+import com.gabstra.myworkoutassistant.WorkoutAlarmActivity
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 
@@ -38,31 +37,31 @@ class WorkoutNotificationHelper(private val context: Context) {
     }
     
     fun buildWorkoutNotification(schedule: WorkoutSchedule, workout: Workout): Notification {
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        val fullScreenIntent = Intent(context, WorkoutAlarmActivity::class.java).apply {
             putExtra("WORKOUT_ID", schedule.workoutId.toString())
             putExtra("SCHEDULE_ID", schedule.id.toString())
         }
-        
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            schedule.id.hashCode(),
-            intent, 
+
+        if (schedule.label.isNotEmpty()){
+            fullScreenIntent.putExtra("LABEL", schedule.label)
+        }
+
+
+        val fullScreenPI = PendingIntent.getActivity(
+            context, schedule.id.hashCode(), fullScreenIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_workout_icon)
             .setContentTitle(workout.name)
             .setContentText(if (schedule.label.isNotEmpty()) schedule.label else "Time for your workout!")
-            .setContentIntent(pendingIntent)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setFullScreenIntent(pendingIntent, true)
-            .setAutoCancel(true)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
+            .setCategory(NotificationCompat.CATEGORY_ALARM)          // <- alarm category
             .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setOngoing(true)                                        // keep it ongoing in shade
+            .setAutoCancel(false)                                    // don’t auto-dismiss on tap
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setFullScreenIntent(fullScreenPI, true)                 // <- launches alarm UI
 
         return builder.build()
     }

@@ -19,7 +19,7 @@ class WorkoutAlarmScheduler(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO)
 
 
-    fun GetWorkoutSchedulePendingIntent(schedule: WorkoutSchedule, flags : Int) : PendingIntent? {
+    fun getWorkoutSchedulePendingIntent(schedule: WorkoutSchedule, flags : Int) : PendingIntent? {
         val intent = Intent(context, WorkoutAlarmReceiver::class.java).apply {
             data = "myworkout://alarm/${schedule.id}".toUri()
             putExtra("SCHEDULE_ID", schedule.id.toString())
@@ -35,7 +35,7 @@ class WorkoutAlarmScheduler(private val context: Context) {
     @SuppressLint("ScheduleExactAlarm")
     fun scheduleWorkout(schedule: WorkoutSchedule) {
 
-        val pendingIntent = GetWorkoutSchedulePendingIntent(schedule,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
+        val pendingIntent = getWorkoutSchedulePendingIntent(schedule,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
 
         // Calculate next alarm time
         val calendar = Calendar.getInstance().apply {
@@ -88,7 +88,7 @@ class WorkoutAlarmScheduler(private val context: Context) {
     }
 
     fun cancelSchedule(schedule: WorkoutSchedule) {
-        val pendingIntent = GetWorkoutSchedulePendingIntent(schedule,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
+        val pendingIntent = getWorkoutSchedulePendingIntent(schedule,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
         alarmManager.cancel(pendingIntent)
     }
     
