@@ -168,8 +168,9 @@ fun SetTableRow(
                     .align(Alignment.Center)
                     .fillMaxWidth()
                     .padding(horizontal = 2.5.dp)
-                    .height(1.dp)
+                    .height(2.dp)
                     .background(textColor)
+                    .clip(RoundedCornerShape(50))
             )
         }
     }
@@ -265,10 +266,10 @@ fun ExerciseSetsViewer(
                 setState = setStateForThisRow,
                 index = rowIndex, // This 'index' prop for SetTableRow might refer to its position in the overall exercise
                 isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
-                markAsDone = false, //customMarkAsDone ?: (rowIndex < setIndex),
+                markAsDone = false, // customMarkAsDone ?: (rowIndex < setIndex),
                 textColor = customTextColor
                     ?: when {
-                        rowIndex < setIndex -> MaterialTheme.colorScheme.background.copy(0.75f)// MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
+                        rowIndex < setIndex -> MaterialTheme.colorScheme.background //.background.copy(0.75f)// MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
                         rowIndex == setIndex -> MaterialTheme.colorScheme.background
                         else -> MaterialTheme.colorScheme.onSurface
                     }

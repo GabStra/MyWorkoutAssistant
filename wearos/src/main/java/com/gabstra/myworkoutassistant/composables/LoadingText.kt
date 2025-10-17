@@ -34,7 +34,7 @@ fun LoadingText(
         }
     }
 
-    val dotCount = remember { mutableIntStateOf(0) }
+    val dotCount = remember { mutableIntStateOf(1) }
 
     LaunchedEffect(Unit) {
         while (true) {

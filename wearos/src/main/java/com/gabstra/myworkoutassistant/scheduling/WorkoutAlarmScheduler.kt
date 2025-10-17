@@ -5,6 +5,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import androidx.core.net.toUri
 import com.gabstra.myworkoutassistant.receivers.WorkoutAlarmReceiver
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -20,11 +21,12 @@ class WorkoutAlarmScheduler(private val context: Context) {
 
     fun GetWorkoutSchedulePendingIntent(schedule: WorkoutSchedule, flags : Int) : PendingIntent? {
         val intent = Intent(context, WorkoutAlarmReceiver::class.java).apply {
+            data = "myworkout://alarm/${schedule.id}".toUri()
             putExtra("SCHEDULE_ID", schedule.id.toString())
         }
         return PendingIntent.getBroadcast(
             context,
-            schedule.id.hashCode(),
+            0,
             intent,
             flags
         )

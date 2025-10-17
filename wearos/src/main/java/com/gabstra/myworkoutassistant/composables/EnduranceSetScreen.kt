@@ -47,7 +47,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.time.Duration
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -104,10 +106,10 @@ fun EnduranceSetScreen (
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (SystemClock.elapsedRealtime() - lastInteractionTime > 2000) {
+            if (System.currentTimeMillis() - lastInteractionTime > 2000) {
                 isTimerInEditMode = false
             }
-            delay(1000)
+            delay(1000) // Check every second
         }
     }
 
@@ -117,6 +119,7 @@ fun EnduranceSetScreen (
 
     var currentMillis by remember(set.id) { mutableIntStateOf(0) }
     var showStopDialog by remember { mutableStateOf(false) }
+
 
     suspend fun showCountDownIfEnabled(){
         if(exercise.showCountDownTimer){
@@ -194,12 +197,11 @@ fun EnduranceSetScreen (
             onTimerEnabled()
 
             var finishedNaturally = false
-            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP
 
             while (isActive) {
-                val now = SystemClock.elapsedRealtime()
-                val waitTime = (nextExecutionTime - now).coerceAtLeast(0)
-                delay(waitTime)
+                val now = LocalDateTime.now()
+                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+                delay(Duration.between(now, nextSecond).toMillis())
 
                 if (!isActive) break // cooperative cancel after delay
 
@@ -216,8 +218,6 @@ fun EnduranceSetScreen (
                         isOverLimit = true
                     }
                 }
-
-                nextExecutionTime += 1000
             }
 
             if (finishedNaturally) {
@@ -260,7 +260,6 @@ fun EnduranceSetScreen (
 
         if (set.autoStart && !isPaused) {
             delay(500)
-
             showCountDownIfEnabled()
 
             if (state.startTime == null) {
@@ -289,7 +288,7 @@ fun EnduranceSetScreen (
                     verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
                     Text(
-                        text = "TIME",
+                        text = "TIMER",
                         style = headerStyle,
                         textAlign = TextAlign.Center,
                     )

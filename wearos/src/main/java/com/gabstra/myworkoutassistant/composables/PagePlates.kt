@@ -40,9 +40,9 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         Text(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 25.dp),
+                .padding(horizontal = 20.dp),
             text = "Loading Guide",
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(10.dp))
@@ -50,7 +50,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
                 text = "Not available",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.labelSmall,
                 textAlign = TextAlign.Center
             )
         } else {
@@ -58,12 +58,12 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 Text(
                     text = "No changes required",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground
                 )
             } else {
-                val headerStyle = MaterialTheme.typography.bodyExtraSmall
+                val headerStyle = MaterialTheme.typography.labelSmall
 
                 Column(
                     modifier = Modifier

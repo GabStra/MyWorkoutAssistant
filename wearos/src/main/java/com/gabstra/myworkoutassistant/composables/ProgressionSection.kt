@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingFlat
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,6 +34,7 @@ import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -46,9 +48,64 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-enum class ProgressStatus { PROGRESSED, EQUAL, WORSE }
+enum class Ternary { BELOW, EQUAL, ABOVE, MIXED }
+data class ProgressionInfo(
+    val exerciseName: String,
+    val vsExpected: Ternary,
+    val vsLast: Ternary
+)
 
-data class ProgressionInfo(val exerciseName: String, val progressStatus: ProgressStatus)
+private val simpleSetComparator =
+    compareBy<SimpleSet>({ it.weight.round(2) }, { it.reps })
+
+private fun normalizeSets(list: List<SimpleSet>): List<SimpleSet> =
+    list.sortedWith(simpleSetComparator)
+
+// ---- 2) Order-insensitive equality (for "same as original") ----
+private fun listsEqualUnordered(a: List<SimpleSet>, b: List<SimpleSet>): Boolean =
+    a.size == b.size && normalizeSets(a) == normalizeSets(b)
+
+// ---- 3) Order-insensitive ternary compare (for vs expected / vs last) ----
+private fun compareSets(a: SimpleSet, b: SimpleSet): Int = when {
+    a.weight.round(2) > b.weight.round(2) ||
+            (a.weight.round(2) == b.weight.round(2) && a.reps > b.reps) -> 1
+    a.weight.round(2) == b.weight.round(2) && a.reps == b.reps -> 0
+    else -> -1
+}
+
+private fun compareSetListsUnordered(a: List<SimpleSet>, b: List<SimpleSet>): Ternary {
+    if (a.size != b.size) return Ternary.MIXED
+    val A = normalizeSets(a)
+    val B = normalizeSets(b)
+
+    var pos = 0
+    var neg = 0
+    for (i in A.indices) {
+        when (compareSets(A[i], B[i])) {
+            1  -> pos++
+            -1 -> neg++
+            // 0 (equal) is ignored
+        }
+    }
+
+    return when {
+        pos > 0 && neg == 0 -> Ternary.ABOVE   // some improved, rest equal
+        neg > 0 && pos == 0 -> Ternary.BELOW   // some worse, rest equal
+        pos == 0 && neg == 0 -> Ternary.EQUAL  // all equal
+        else -> Ternary.MIXED                  // both improved and worse present
+    }
+}
+
+@Composable
+private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modifier) {
+    val (icon, tint) = when (status) {
+        Ternary.ABOVE -> Icons.AutoMirrored.Filled.TrendingUp to Green
+        Ternary.EQUAL -> Icons.AutoMirrored.Filled.TrendingFlat to MaterialTheme.colorScheme.onBackground
+        Ternary.BELOW -> Icons.AutoMirrored.Filled.TrendingDown to Red
+        Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
+    }
+    Icon(imageVector = icon, contentDescription = label, tint = tint)
+}
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -56,52 +113,18 @@ private fun ProgressionRow(
     info: ProgressionInfo,
     modifier: Modifier = Modifier
 ) {
-
-    val progressionColor = when(info.progressStatus) {
-        ProgressStatus.PROGRESSED -> Green
-        ProgressStatus.EQUAL -> MaterialTheme.colorScheme.onBackground
-        ProgressStatus.WORSE -> Red
-    }
-
     Row(
         modifier = modifier.height(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         ScalableText(
-            modifier = Modifier
-                .weight(2f)
-                .basicMarquee(iterations = Int.MAX_VALUE),
+            modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
             text = info.exerciseName,
             style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            color = progressionColor
+            textAlign = TextAlign.Center
         )
-        when(info.progressStatus){
-            ProgressStatus.PROGRESSED -> {
-                Icon(
-                    modifier = Modifier.weight(1f),
-                    imageVector =Icons.AutoMirrored.Filled.TrendingUp,
-                    contentDescription = "Trending Up",
-                    tint = progressionColor
-                )
-            }
-            ProgressStatus.EQUAL -> {
-                Icon(
-                    modifier = Modifier.weight(1f),
-                    imageVector = Icons.AutoMirrored.Filled.TrendingFlat,
-                    contentDescription = "Trending Flat",
-                    tint = progressionColor
-                )
-            }
-            ProgressStatus.WORSE -> {
-                Icon(
-                    modifier = Modifier.weight(1f),
-                    imageVector =Icons.AutoMirrored.Filled.TrendingDown,
-                    contentDescription = "Trending Down",
-                    tint = progressionColor
-                )
-            }
-        }
+        StatusIcon(label = "EXP", status = info.vsExpected, modifier = Modifier.weight(1f))
+        StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
     }
 }
 
@@ -159,11 +182,11 @@ fun ProgressionSection(
 
                 if(progressionState == ProgressionState.DELOAD || progressionState == ProgressionState.FAILED) return@mapNotNull null
 
-                val originalExercise = (viewModel.originalWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
-                        viewModel.originalWorkout!!.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises })
+                val lastSessionExercise = (viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
+                        viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises })
                     .find { it.id == exerciseId }
 
-                val originalSets = originalExercise!!.sets
+                val lastSessionSets = lastSessionExercise!!.sets
                     .filter { it !is RestSet &&
                             (it is WeightSet && !it.isWarmupSet && !it.isRestPause) ||
                             (it is BodyWeightSet && !it.isWarmupSet&& !it.isRestPause)
@@ -175,7 +198,7 @@ fun ProgressionSection(
                             }
                             is BodyWeightSet -> {
                                 val bodyWeight = viewModel.bodyWeight.value
-                                val bodyWeightPercentage = originalExercise.bodyWeightPercentage ?: 100.0
+                                val bodyWeightPercentage = lastSessionExercise.bodyWeightPercentage ?: 100.0
                                 val relativeBodyWeight = bodyWeight * (bodyWeightPercentage / 100.0)
                                 set.getWeight(relativeBodyWeight) * set.reps
                                 SimpleSet(  set.getWeight(relativeBodyWeight),set.reps)
@@ -184,26 +207,10 @@ fun ProgressionSection(
                         }
                     }
 
-                val hasProgressed = executedSets.indices.all { i ->
-                    val executedSet = executedSets[i]
-                    val expectedSet = expectedSets[i]
+                val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
+                val vsLast     = compareSetListsUnordered(executedSets, lastSessionSets)
 
-                    executedSet.weight >= expectedSet.weight && executedSet.reps >= expectedSet.reps
-                }
-
-                val isEqualToOriginal = executedSets.indices.all { i ->
-                    val originalSet = originalSets[i]
-                    val executedSet = executedSets[i]
-                    executedSet == originalSet
-                }
-
-                val progressStatus = when {
-                    hasProgressed -> ProgressStatus.PROGRESSED
-                    isEqualToOriginal -> ProgressStatus.EQUAL
-                    else -> ProgressStatus.WORSE
-                }
-
-                ProgressionInfo(exercise.name, progressStatus)
+                ProgressionInfo(exercise.name, vsExpected, vsLast)
             }
         }
     }
@@ -215,7 +222,7 @@ fun ProgressionSection(
     // A sample item for DynamicHeightColumn to measure.
     val prototypeItem = @Composable {
         ProgressionRow(
-            info = ProgressionInfo("Sample Exercise", ProgressStatus.PROGRESSED)
+            info = ProgressionInfo("Sample Exercise", Ternary.EQUAL, Ternary.EQUAL)
         )
     }
 
@@ -228,18 +235,9 @@ fun ProgressionSection(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    modifier = Modifier.weight(2f),
-                    text = "EXERCISE",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "PROGRESS",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
+                Text(modifier = Modifier.weight(2f), text = "EXERCISE", style = headerStyle, textAlign = TextAlign.Center)
+                Text(modifier =Modifier.weight(1f), text = "VS EXP", style = headerStyle, textAlign = TextAlign.Center)
+                Text(modifier =Modifier.weight(1f), text = "VS LAST", style = headerStyle, textAlign = TextAlign.Center)
             }
 
             DynamicHeightColumn(

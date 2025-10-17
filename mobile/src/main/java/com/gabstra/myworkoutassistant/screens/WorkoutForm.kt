@@ -92,7 +92,7 @@ fun WorkoutForm(
     val selectedWorkoutType = rememberSaveable { mutableStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING) }
     var workoutTypeExpanded by rememberSaveable { mutableStateOf(false) }
 
-    val schedules = remember { mutableStateOf(existingSchedules.toMutableList()) }
+    val schedules = remember(existingSchedules) { mutableStateOf(existingSchedules.toMutableList()) }
     val showScheduleDialog = remember { mutableStateOf(false) }
     val currentEditingSchedule = remember { mutableStateOf<WorkoutSchedule?>(null) }
 

@@ -71,6 +71,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -139,7 +140,7 @@ open class WorkoutViewModel : ViewModel() {
         )
     )
 
-    var originalWorkout by mutableStateOf<Workout?>(null)
+    var lastSessionWorkout by mutableStateOf<Workout?>(null)
 
     fun getEquipmentById(id: UUID): WeightLoadedEquipment? {
         return workoutStore.equipments.find { it.id == id }
@@ -536,7 +537,7 @@ open class WorkoutViewModel : ViewModel() {
             updateWorkout(exercise,exercise.copy(sets = setsToUse))
         }
 
-        originalWorkout = _selectedWorkout.value.copy()
+        lastSessionWorkout = _selectedWorkout.value.copy()
     }
 
     private fun applyProgressions() {
@@ -672,7 +673,7 @@ open class WorkoutViewModel : ViewModel() {
     // Helper function to process a single exercise
     private suspend fun processExercise(
         exercise: Exercise,
-    ): Pair<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>? {
+    ): Pair<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>> {
         val repsRange = IntRange(
                 exercise.minReps,
                 exercise.maxReps
@@ -762,7 +763,7 @@ open class WorkoutViewModel : ViewModel() {
                     repsRange = repsRange
                 )
             }
-            sessionDecision.progressionState ==ProgressionState.RETRY -> {
+            sessionDecision.progressionState == ProgressionState.RETRY -> {
                 Log.d("WorkoutViewModel", "Retrying")
                 DoubleProgressionHelper.Plan(
                     previousSets,
@@ -1096,10 +1097,6 @@ open class WorkoutViewModel : ViewModel() {
 
             _isRefreshing.value = false
         }
-    }
-
-    suspend fun getExerciseInfoByExerciseId(exerciseId: UUID): ExerciseInfo? {
-        return exerciseInfoDao.getExerciseInfoById(exerciseId)
     }
 
     open fun pushAndStoreWorkoutData(
@@ -1673,7 +1670,12 @@ open class WorkoutViewModel : ViewModel() {
             ): List<Pair<Double, Int>> {
                 if (workWeight <= 0.0 || workReps <= 0) return emptyList()
 
-                val choices = availableWeights.filter { it > 0.0 && it < workWeight }.sorted()
+                val choices = availableWeights
+                    .filter { it > 0.0 && it < workWeight }
+                    .map { it.round(2) }
+                    .distinct()
+                    .sorted()
+
                 if (choices.isEmpty()) return emptyList()
 
                 val est1RM = OneRM.calculateOneRepMax(workWeight, workReps)
@@ -1684,7 +1686,7 @@ open class WorkoutViewModel : ViewModel() {
                     workP < 0.55 -> 2
                     workP < 0.70 -> 3
                     workP < 0.80 -> 4
-                    workP < 0.88 -> 5
+                    workP < 0.90 -> 5
                     else         -> 6
                 }
 
@@ -1727,9 +1729,26 @@ open class WorkoutViewModel : ViewModel() {
                 val out = mutableListOf<Pair<Double, Int>>()
                 for ((t, r) in targets) {
                     val c = roundDown(t, out.lastOrNull()?.first) ?: continue
-                    val w = max(c, out.lastOrNull()?.first ?: 0.0)
-                    if (w >= workWeight) continue
+                    val w = max(c, out.lastOrNull()?.first ?: 0.0).round(2)
+                    if (w >= workWeight.round(2)) continue
                     if (out.isEmpty() || out.last().first != w || out.last().second != r) out += w to r
+                }
+
+                if (out.isEmpty()) {
+                    val minWeight = choices.minOrNull()!!
+
+                    val minWeightP = (minWeight / est1RM).coerceIn(0.0, 1.0)
+
+                    val maxReps = OneRM.maxRepsForWeight(minWeight, est1RM).roundToInt()
+
+                    val repToUse = min(repsAt(minWeightP),maxReps)
+
+                    val fallbackSets = (0 until steps).map { i ->
+                        val reps = max(1, repToUse)
+                        minWeight to reps
+                    }
+
+                    out += fallbackSets
                 }
 
                 // optional cap: ≤25 total warm-up reps

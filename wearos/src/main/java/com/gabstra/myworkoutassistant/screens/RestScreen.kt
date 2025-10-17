@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -56,7 +55,9 @@ import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Duration
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
 @Composable
@@ -193,11 +194,10 @@ fun RestScreen(
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-            // Calculate the next second boundary
-            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP
             while (currentSeconds > 0) {
-                val waitTime = (nextExecutionTime - SystemClock.elapsedRealtime()).coerceAtLeast(0)
-                delay(waitTime)
+                val now = LocalDateTime.now()
+                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+                delay(Duration.between(now, nextSecond).toMillis())
 
                 currentSeconds -= 1
 
@@ -208,8 +208,6 @@ fun RestScreen(
                 currentSetData = currentSetData.copy(
                     endTimer = currentSeconds
                 )
-
-                nextExecutionTime += 1000 // Schedule next second
             }
 
             state.currentSetData = currentSetData.copy(

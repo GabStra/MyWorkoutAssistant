@@ -140,7 +140,7 @@ fun PageExercises(
                 text = topLine,
                 style = captionStyle,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.basicMarquee()
+                modifier = Modifier.basicMarquee().padding(vertical = 2.5.dp)
             )
 
             ExerciseSetsViewer(
@@ -161,7 +161,7 @@ fun PageExercises(
                     else -> null
                 },
                 customTextColor = when {
-                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.background.copy(0.75f)
+                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.background //background.copy(0.75f)
                     selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurface
                     else -> null
                 },

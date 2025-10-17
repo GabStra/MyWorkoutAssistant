@@ -89,7 +89,7 @@ fun PreparingStandardScreen(
         contentAlignment = Alignment.CenterStart
     ){
         Column(horizontalAlignment = Alignment.CenterHorizontally){
-            Text(modifier = Modifier.fillMaxWidth(), text = "Preparing HR Sensor", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            Text(modifier = Modifier.fillMaxWidth(), text = "Preparing HR Sensor", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(15.dp))
             Row (modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
                 LoadingText(baseText = "Please wait")

@@ -258,9 +258,9 @@ fun ExerciseScreen(
                             onTimerEnabled = { },
                             extraInfo = { _ ->
                                 Column(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.5.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                                    verticalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     val topLine = buildList {
                                         val label = if (isSuperset) "Superset" else "Exercise"

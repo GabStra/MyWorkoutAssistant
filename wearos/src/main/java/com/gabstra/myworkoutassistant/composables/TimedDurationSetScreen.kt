@@ -47,7 +47,9 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Duration
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -101,10 +103,10 @@ fun TimedDurationSetScreen(
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (SystemClock.elapsedRealtime() - lastInteractionTime > 2000) {
+            if (System.currentTimeMillis() - lastInteractionTime > 2000) {
                 isTimerInEditMode = false
             }
-            delay(1000)
+            delay(1000) // Check every second
         }
     }
 
@@ -114,6 +116,8 @@ fun TimedDurationSetScreen(
 
     var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
+
+
 
     suspend fun showCountDownIfEnabled(){
         if(exercise.showCountDownTimer){
@@ -155,13 +159,13 @@ fun TimedDurationSetScreen(
         timerJob = scope.launch {
             onTimerEnabled()
 
-            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP
             while (currentMillis > 0) {
-                val waitTime = (nextExecutionTime - SystemClock.elapsedRealtime()).coerceAtLeast(0)
-                delay(waitTime)
+                val now = LocalDateTime.now()
+                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+                delay(Duration.between(now, nextSecond).toMillis())
+
                 currentMillis = (currentMillis - 1000).coerceAtLeast(0)
                 currentSet = currentSet.copy(endTimer = currentMillis)
-                nextExecutionTime += 1000
             }
 
             state.currentSetData = currentSet.copy(
@@ -198,6 +202,8 @@ fun TimedDurationSetScreen(
         if (set.autoStart && !isPaused) {
             delay(500)
             showCountDownIfEnabled()
+
+
             state.startTime = LocalDateTime.now()
             hapticsViewModel.doHardVibrationTwice()
             startTimerJob()
@@ -257,7 +263,7 @@ fun TimedDurationSetScreen(
                     verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
                     Text(
-                        text = "TIME",
+                        text = "TIMER",
                         style = headerStyle,
                         textAlign = TextAlign.Center,
                     )

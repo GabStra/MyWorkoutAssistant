@@ -56,7 +56,6 @@ import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
@@ -620,7 +619,7 @@ fun MyWorkoutAssistantNavHost(
                 val workouts by appViewModel.workoutsFlow.collectAsState()
                 val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
 
-                val existingSchedules by produceState<List<WorkoutSchedule>>(
+                val existingSchedules by produceState(
                     initialValue = emptyList(),
                     key1 = selectedWorkout.globalId
                 ) {

@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
@@ -16,8 +15,8 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -29,16 +28,12 @@ fun CurrentTime() {
     val captionStyle =  MaterialTheme.typography.labelSmall
 
     LaunchedEffect(Unit) {
-        var nextTick = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP to next second
-        while (isActive) {
-            val wait = (nextTick - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
-            delay(wait)
-
-            // update UI state on each tick
-            currentTime = LocalDateTime.now()  // for display
+        while (true) {
+            val now = LocalDateTime.now()
+            currentTime = now
             showDots = !showDots
-
-            nextTick += 1000
+            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+            delay(java.time.Duration.between(now, nextSecond).toMillis())
         }
     }
 

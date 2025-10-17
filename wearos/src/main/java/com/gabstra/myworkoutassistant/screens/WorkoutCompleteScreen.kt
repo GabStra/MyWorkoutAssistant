@@ -42,6 +42,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Duration
+import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
@@ -58,13 +60,8 @@ fun WorkoutCompleteScreen(
     val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 
-    val duration = remember {
-        Duration.between(state.startWorkoutTime, state.endWorkoutTime)
-    }
-
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
-
-    val countDownTimer = remember { mutableIntStateOf(15) }
+    val countDownTimer = remember { mutableIntStateOf(10) }
 
     val headerStyle = MaterialTheme.typography.labelSmall
 
@@ -76,18 +73,13 @@ fun WorkoutCompleteScreen(
         closeJob = scope.launch {
             var remaining = countDownTimer.intValue
 
-            // schedule first tick on the next second boundary
-            var nextExecutionTime = System.currentTimeMillis() + 1000
-            nextExecutionTime = (nextExecutionTime / 1000) * 1000
-
             while (remaining > 0 && isActive) {
-                val waitTime = maxOf(0, nextExecutionTime - System.currentTimeMillis())
-                delay(waitTime)
+                val now = LocalDateTime.now()
+                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+                delay(Duration.between(now, nextSecond).toMillis())
 
                 remaining--
                 countDownTimer.intValue = remaining
-
-                nextExecutionTime += 1000
             }
 
             if (isActive) {
@@ -119,14 +111,14 @@ fun WorkoutCompleteScreen(
     }
 
     Column(
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxSize()
             .padding(30.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 2.5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
@@ -141,11 +133,11 @@ fun WorkoutCompleteScreen(
             )
         }
         ProgressionSection(
-            modifier = Modifier.weight(1f).padding(top = 5.dp),
+            modifier = Modifier.weight(1f),
             viewModel = viewModel
         )
         Text(
-            modifier = Modifier.padding(top = 5.dp),
+            modifier = Modifier.padding(top = 2.5.dp),
             text = "Closing in: ${countDownTimer.intValue}",
             style = headerStyle,
             textAlign = TextAlign.Center,
