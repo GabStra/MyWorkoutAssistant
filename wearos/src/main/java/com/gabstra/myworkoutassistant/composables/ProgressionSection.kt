@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
@@ -23,7 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
@@ -114,17 +116,29 @@ private fun ProgressionRow(
     modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = modifier.height(20.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(25.dp)
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ScalableText(
-            modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
-            text = info.exerciseName,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center
-        )
-        StatusIcon(label = "EXP", status = info.vsExpected, modifier = Modifier.weight(1f))
-        StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
+        Row(
+            modifier = Modifier
+                .height(22.5.dp)
+                .padding(bottom = 2.5.dp)
+                .clip(RoundedCornerShape(25))
+                .background(MaterialTheme.colorScheme.surfaceContainer),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ScalableText(
+                modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
+                text = info.exerciseName,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center
+            )
+            StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
+            StatusIcon(label = "EXP", status = info.vsExpected, modifier = Modifier.weight(1f))
+        }
     }
 }
 
@@ -232,12 +246,15 @@ fun ProgressionSection(
             verticalArrangement = Arrangement.spacedBy(2.5.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(modifier = Modifier.weight(2f), text = "EXERCISE", style = headerStyle, textAlign = TextAlign.Center)
-                Text(modifier =Modifier.weight(1f), text = "VS EXP", style = headerStyle, textAlign = TextAlign.Center)
                 Text(modifier =Modifier.weight(1f), text = "VS LAST", style = headerStyle, textAlign = TextAlign.Center)
+                Text(modifier =Modifier.weight(1f), text = "VS EXP", style = headerStyle, textAlign = TextAlign.Center)
+
             }
 
             DynamicHeightColumn(
@@ -258,17 +275,7 @@ fun ProgressionSection(
                         .verticalScroll(scrollState),
                 ) {
                     progressionData?.forEachIndexed { index, info ->
-                        val backgroundColor = if (index % 2 == 0) {
-                            MaterialTheme.colorScheme.surfaceContainer
-                        } else {
-                            Color.Transparent
-                        }
-                        ProgressionRow(
-                            info = info,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(backgroundColor)
-                        )
+                       ProgressionRow(info = info,)
                     }
                 }
             }

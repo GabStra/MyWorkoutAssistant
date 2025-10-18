@@ -21,6 +21,7 @@ class PlateCalculator {
 
         data class PlateChangeResult(
             val change: PlateChange,
+            val previousPlates: List<Double>,
             val currentPlates: List<Double> // Plates on one side of the bar
         )
 
@@ -125,7 +126,8 @@ class PlateCalculator {
                             to = sets[i],
                             steps = physicalSteps
                         ),
-                        targetPlates
+                        previousPlates = currentPlates,
+                        currentPlates = targetPlates
                     )
                 )
                 currentPlates = targetPlates

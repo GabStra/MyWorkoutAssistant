@@ -290,7 +290,7 @@ fun ExerciseSetsViewer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.Bottom
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Spacer(modifier= Modifier.width(18.dp))
                 Text(

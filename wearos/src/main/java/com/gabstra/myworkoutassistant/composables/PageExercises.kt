@@ -20,8 +20,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -48,12 +53,11 @@ fun PageExercises(
     }
 
     var marqueeEnabled by remember { mutableStateOf(false) }
+    var headerMarqueeEnabled by remember { mutableStateOf(false) }
 
     val currentExerciseOrSupersetId =
         if (viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
     val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(currentExerciseOrSupersetId)
-
-    val captionStyle = MaterialTheme.typography.labelSmall
 
     val isSuperset = remember(currentExerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
@@ -113,34 +117,81 @@ fun PageExercises(
                 overflow = TextOverflow.Ellipsis
             )
 
-            val topLine = buildList {
-                val label = if (isSuperset) "Superset" else "Exercise"
-                add("$label: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+            val topLine = buildAnnotatedString {
+                fun pipe() { append(" • ") }
+                fun separator() {
+                    withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
+                        append( "↔")
+                    }
+                }
+
+                append("Ex: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
 
                 if (isSuperset) {
+                    pipe()
                     val supersetExercises =
                         remember(selectedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
-                    val supersetIndex =
-                        remember(
-                            supersetExercises,
-                            selectedExercise
-                        ) { supersetExercises.indexOf(selectedExercise) }
-                    add("Exercise: ${supersetIndex + 1}/${supersetExercises.size}")
+
+                    val currentIdx = remember(supersetExercises, selectedExercise) {
+                        supersetExercises.indexOf(selectedExercise)
+                    }
+
+                    supersetExercises.indices.forEach { i ->
+                        if (i > 0) { separator() }
+                        withStyle(
+                            SpanStyle(
+                                color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                        ) {
+                            append(('A' + i).toString())
+                        }
+                    }
                 }
 
                 if(currentExercise == selectedExercise) {
                     if (currentExerciseSetIds.size > 1) {
+                        pipe()
                         val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
-                        add("Set: ${setIndex + 1}/${currentExerciseSetIds.size}")
+                        append("Set: ${setIndex + 1}/${currentExerciseSetIds.size}")
+                    }
+
+
+                    if (currentStateSet.intraSetTotal != null){
+                        pipe()
+
+                        withStyle(
+                            SpanStyle(
+                                color = if (currentStateSet.intraSetCounter == 1u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                        ) {
+                            append("①")
+                        }
+                        separator()
+                        withStyle(
+                            SpanStyle(
+                                color = if (currentStateSet.intraSetCounter == 2u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                        ) {
+                            append("②")
+                        }
                     }
                 }
-            }.joinToString(" | ")
+            }
 
-            ScalableText(
+            Text(
                 text = topLine,
-                style = captionStyle,
+                style = MaterialTheme.typography.labelSmall,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.basicMarquee().padding(vertical = 2.5.dp)
+                maxLines = 1,
+                modifier = Modifier.clickable {
+                    headerMarqueeEnabled = !headerMarqueeEnabled
+                    hapticsViewModel.doGentleVibration()
+                }
+                .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
+                .padding(vertical = 5.dp)
             )
 
             ExerciseSetsViewer(

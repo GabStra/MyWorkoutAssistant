@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -48,7 +51,6 @@ import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
-import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -149,8 +151,7 @@ fun ExerciseScreen(
     }
 
     var marqueeEnabled by remember { mutableStateOf(false) }
-
-    val captionStyle = MaterialTheme.typography.labelSmall
+    var headerMarqueeEnabled by remember { mutableStateOf(false) }
 
     val exerciseOrSupersetIds = remember {
         viewModel.setsByExerciseId.keys.toList()
@@ -248,7 +249,7 @@ fun ExerciseScreen(
                         .padding(horizontal = 15.dp)
                 ) {
                     when (pageType) {
-                        PageType.PLATES -> PagePlates(updatedState, equipment)
+                        PageType.PLATES -> PagePlates(updatedState, equipment, hapticsViewModel)
                         PageType.EXERCISE_DETAIL -> ExerciseDetail(
                             updatedState = updatedState,
                             viewModel = viewModel,
@@ -258,64 +259,116 @@ fun ExerciseScreen(
                             onTimerEnabled = { },
                             extraInfo = { _ ->
                                 Column(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.5.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
-                                    val topLine = buildList {
-                                        val label = if (isSuperset) "Superset" else "Exercise"
-                                        add("$label: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+
+                                    val topLine = buildAnnotatedString {
+                                        fun pipe() { append(" • ") }
+                                        fun separator() {
+                                            withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
+                                                append( "↔")
+                                            }
+                                        }
+
+                                        append("Ex: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+
+                                        if (exerciseSetIds.size > 1) {
+                                            pipe()
+                                            append("Set: ${setIndex + 1}/${exerciseSetIds.size}")
+                                        }
 
                                         if (isSuperset) {
+                                            pipe()
+
                                             val supersetExercises = remember(exerciseOrSupersetId) {
                                                 viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
                                             }
-                                            val supersetIndex = remember(supersetExercises, exercise) {
+                                            val currentIdx = remember(supersetExercises, exercise) {
                                                 supersetExercises.indexOf(exercise)
                                             }
-                                            add("Exercise: ${supersetIndex + 1}/${supersetExercises.size}")
+
+                                            supersetExercises.indices.forEach { i ->
+                                                if (i > 0) { separator() }
+                                                withStyle(
+                                                    SpanStyle(
+                                                        color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                ) {
+                                                    append(('A' + i).toString())
+                                                }
+                                            }
                                         }
 
-                                        if (exerciseSetIds.size > 1) {
-                                            add("Set: ${setIndex + 1}/${exerciseSetIds.size}")
-                                        }
-                                    }.joinToString(" | ")
+                                        if (updatedState.intraSetTotal != null){
+                                            pipe()
 
-                                    ScalableText(
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = if (updatedState.intraSetCounter == 1u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            ) {
+                                                append("①")
+                                            }
+                                            separator()
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = if (updatedState.intraSetCounter == 2u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            ) {
+                                                append("②")
+                                            }
+                                        }
+                                    }
+
+                                    Text(
                                         text = topLine,
-                                        style = captionStyle,
+                                        style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
-                                        modifier = Modifier.basicMarquee()
+                                        maxLines = 1,
+                                        modifier = Modifier.clickable {
+                                            headerMarqueeEnabled = !headerMarqueeEnabled
+                                            hapticsViewModel.doGentleVibration()
+                                        }
+                                        .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
                                     )
 
                                     val bottomLine = buildAnnotatedString {
                                         var first = true
-                                        fun sep() { if (!first) append(" | "); first = false }
+                                        fun sep() { if (!first) append(" • "); first = false }
 
                                         if (equipment != null) {
                                             sep()
-                                            append(equipment.name)
+                                            append("Eq: ${equipment.name}")
                                         }
                                         if (updatedState.isWarmupSet) {
                                             sep()
-                                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) {
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            ) {
                                                 append("Warm-up")
-                                            }
-                                        }
-                                        if (updatedState.isUnilateral) {
-                                            sep()
-                                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) {
-                                                append("Unilateral")
                                             }
                                         }
                                     }
 
                                     if (bottomLine.text.isNotEmpty()) {
-                                        ScalableText(
-                                            text = bottomLine.text,
-                                            style = captionStyle,
+                                        Text(
+                                            text = bottomLine,
+                                            style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center,
-                                            modifier = Modifier.basicMarquee()
+                                            maxLines = 1,
+                                            modifier = Modifier.clickable {
+                                                headerMarqueeEnabled = !headerMarqueeEnabled
+                                                hapticsViewModel.doGentleVibration()
+                                            }
+                                            .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
                                         )
                                     }
                                 }

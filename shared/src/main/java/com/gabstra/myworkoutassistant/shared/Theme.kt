@@ -2,7 +2,7 @@ package com.gabstra.myworkoutassistant.shared
 
 import androidx.compose.ui.graphics.Color
 
-val Orange = Color(0xFFd96e26)
+val Orange = Color(0xFFFF6700)
 val DarkGray = Color(30, 30, 30)
 
 val MediumDarkerGray = Color(45, 45, 45)
