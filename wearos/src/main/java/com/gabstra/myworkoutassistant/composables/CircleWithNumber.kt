@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.composables.ScalableText
 import kotlin.math.cos
@@ -80,6 +81,7 @@ fun CircleWithNumber(
                         .fillMaxSize()
                         .padding(3.dp),
                     text = number.toString(),
+                    minTextSize = 6.sp,
                     style = MaterialTheme.typography.numeralMedium.copy(fontWeight = FontWeight.Bold),
                     textAlign = TextAlign.Center,
                 )

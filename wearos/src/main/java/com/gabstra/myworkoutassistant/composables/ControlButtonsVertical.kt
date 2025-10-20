@@ -42,7 +42,7 @@ fun ControlButtonsVertical(
     ) {
         Box(
             modifier = Modifier
-                .size(70.dp, 35.dp)
+                .size(50.dp)
                 .background(Color.Transparent)
                 .repeatActionOnLongPressOrTap(
                     coroutineScope,
@@ -55,12 +55,12 @@ fun ControlButtonsVertical(
         ) {
             Box(
                 modifier = Modifier
-                    .size(35.dp)
+                    .size(50.dp)
                     .clip(CircleShape)
                     .background(Green),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
+                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
             }
         }
         Box(
@@ -71,7 +71,7 @@ fun ControlButtonsVertical(
         }
         Box(
             modifier = Modifier
-                .size(70.dp, 35.dp)
+                .size(50.dp)
                 .background(Color.Transparent)
                 .repeatActionOnLongPressOrTap(
                     coroutineScope,
@@ -84,12 +84,12 @@ fun ControlButtonsVertical(
         ) {
             Box(
                 modifier = Modifier
-                    .size(35.dp)
+                    .size(50.dp)
                     .clip(CircleShape)
                     .background(Red),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
+                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
             }
         }
 

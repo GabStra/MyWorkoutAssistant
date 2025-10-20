@@ -259,7 +259,7 @@ fun ExerciseScreen(
                             onTimerEnabled = { },
                             extraInfo = { _ ->
                                 Column(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {

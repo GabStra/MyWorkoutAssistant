@@ -174,22 +174,21 @@ fun CustomDialogYesOnLongPress(
                             .fillMaxWidth()
                     ) {
                         EnhancedIconButton(
-                            buttonSize = 35.dp,
-                            hitBoxScale = 2f,
+                            buttonSize = 50.dp,
+                            hitBoxScale = 1.5f,
                             onClick = {
                                 closeDialogJob?.cancel()
                                 handleNoClick()
                             },
                             buttonModifier = Modifier
-                                .size(35.dp)
                                 .clip(CircleShape),
                         ) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close",tint = contentColor)
+                            Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Close, contentDescription = "Close",tint = contentColor)
                         }
                         Spacer(modifier = Modifier.width(5.dp))
                         Box(
                             modifier = Modifier
-                                .size(70.dp)
+                                .size(75.dp)
                                 .repeatActionOnLongPress(
                                     longPressCoroutineScope,
                                     thresholdMillis = 10,
@@ -203,12 +202,12 @@ fun CustomDialogYesOnLongPress(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(35.dp)
+                                    .size(50.dp)
                                     .clip(CircleShape)
                                     .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ){
-                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.onPrimary)
+                                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }

@@ -1,9 +1,11 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.R.attr.digits
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -13,7 +15,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -46,6 +50,12 @@ fun TimeViewer(
         }
     }
 
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val twoDigitWidth = remember(digits, density) {
+        with(density) { measurer.measure("00", style = style).size.width.toDp() }
+    }
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
@@ -54,43 +64,42 @@ fun TimeViewer(
 
         if(hours > 0){
             Text(
-                modifier = Modifier,
+                modifier = Modifier.width(twoDigitWidth),
                 text = String.format("%02d", hours),
                 style = style,
-                textAlign = TextAlign.Center,
-                color =  color,
+                color = color,
+                textAlign = TextAlign.Center
             )
 
             Text(
                 text = ":",
                 style = style,
                 color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
-                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 3.dp),
             )
         }
 
         Text(
-            modifier = Modifier,
+            modifier = Modifier.width(twoDigitWidth),
             text = String.format("%02d", minutes),
             style = style,
-            textAlign = TextAlign.Center,
-            color =  color,
+            color = color,
+            textAlign = TextAlign.Center
         )
 
         Text(
             text = ":",
             style = style,
             color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
-            textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 3.dp),
         )
 
         Text(
-            modifier = Modifier,
+            modifier = Modifier.width(twoDigitWidth),
             text = String.format("%02d", remainingSeconds),
             style = style,
-            textAlign = TextAlign.Center,
-            color =  color,
+            color = color,
+            textAlign = TextAlign.Center
         )
     }
 }

@@ -191,7 +191,6 @@ fun PageExercises(
                     hapticsViewModel.doGentleVibration()
                 }
                 .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
-                .padding(vertical = 5.dp)
             )
 
             ExerciseSetsViewer(

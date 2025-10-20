@@ -461,9 +461,9 @@ private fun HeartRateView(
     }
 
     val zoneCount = colorsByZone.size - 1
-    val totalStartAngle = 130f
-    val totalEndAngle = 230f
-    val paddingAngle = 1f
+    val totalStartAngle = 120f
+    val totalEndAngle = 240f
+    val paddingAngle = 2f
 
     val totalArcAngle by remember { derivedStateOf { totalEndAngle - totalStartAngle } }
     val segmentArcAngle by remember(zoneCount, totalArcAngle, paddingAngle) {
