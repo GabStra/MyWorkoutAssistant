@@ -1,28 +1,60 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
-import com.google.android.horologist.composables.ProgressIndicatorSegment
-import com.google.android.horologist.composables.SegmentedProgressIndicator
 import java.util.UUID
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
+
+private fun computeEdgeDotsReserveDeg(
+    ringRadiusPx: Float,
+    dotDiameterPx: Float,
+    gapDeg: Float,
+    paddingDeg: Float,
+    arcStrokeWidthPx: Float = 0f,
+    includePadding: Boolean = true,
+    includeStrokeClearance: Boolean = false
+): Float {
+    if (ringRadiusPx <= 0f) return 0f
+    val x = (dotDiameterPx / (4f * ringRadiusPx)).coerceIn(0f, 1f)
+    val halfDotDeg = Math.toDegrees(2.0 * kotlin.math.asin(x.toDouble())).toFloat()
+    val strokeHalfDeg = if (includeStrokeClearance && arcStrokeWidthPx > 0f) {
+        Math.toDegrees(kotlin.math.atan2(arcStrokeWidthPx / 2f, ringRadiusPx).toDouble()).toFloat()
+    } else 0f
+    val padding = if (includePadding) paddingDeg else 0f
+    return 3f * gapDeg + padding + 2f * halfDotDeg + 2f * strokeHalfDeg
+}
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
@@ -31,27 +63,40 @@ fun ExerciseIndicator(
     set: WorkoutState.Set,
     selectedExerciseId: UUID? = null
 ) {
-    // --- Data & grouping ---
+    // --- Flattened order: every exercise once; supersets kept contiguous ---
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
-    val exerciseOrSupersetIds = remember {
-        exerciseIds.map { id -> viewModel.supersetIdByExerciseId[id] ?: id }.distinct()
+    val flatExerciseOrder = remember(exerciseIds, viewModel.supersetIdByExerciseId) {
+        val seenSupers = mutableSetOf<UUID>()
+        buildList {
+            exerciseIds.forEach { eid ->
+                val sid = viewModel.supersetIdByExerciseId[eid]
+                if (sid != null) {
+                    if (seenSupers.add(sid)) {
+                        addAll(exerciseIds.filter { viewModel.supersetIdByExerciseId[it] == sid })
+                    }
+                } else add(eid)
+            }
+        }
     }
-    val exerciseCount = exerciseOrSupersetIds.size
+    val globalIndexByExerciseId = remember(flatExerciseOrder) {
+        flatExerciseOrder.withIndex().associate { (i, eid) -> eid to i }
+    }
+    val exerciseCount = flatExerciseOrder.size
 
-    // Focus (for window + pointer) comes from selection when present
-    val selectedOrCurrentExerciseId = selectedExerciseId?.takeIf { exerciseIds.contains(it) } ?: set.exerciseId
-    val focusGroupId = viewModel.supersetIdByExerciseId[selectedOrCurrentExerciseId] ?: selectedOrCurrentExerciseId
-    val focusIdx = exerciseOrSupersetIds.indexOf(focusGroupId)
+    // Focus (by selected or current)
+    val focusId = selectedExerciseId?.takeIf { flatExerciseOrder.contains(it) } ?: set.exerciseId
+    val focusIdx = globalIndexByExerciseId[focusId] ?: 0
+    val currentGlobalIdx = globalIndexByExerciseId[set.exerciseId] ?: 0
 
-    // --- Sliding window (clamped, no wrap) over GROUPS ---
-    val maxVisible = 5
+    // --- Sliding window over FLAT list (no wrap) ---
+    val maxVisible = 10
     val visibleCount = minOf(exerciseCount, maxVisible)
     val half = visibleCount / 2
     val startIdx = maxOf(0, minOf(focusIdx - half, exerciseCount - visibleCount))
     val endIdx = startIdx + visibleCount - 1
     val visibleIndices = (startIdx..endIdx).toList()
 
-    // --- Edge overflow (dots) & angle reservation ---
+    // --- Edge overflow (dots) & angles ---
     val hiddenLeft = startIdx
     val hiddenRight = (exerciseCount - 1) - endIdx
     val showLeftDots = hiddenLeft > 0
@@ -61,7 +106,7 @@ fun ExerciseIndicator(
     val totalArcAngle = 120f
     val paddingAngle = 2f
 
-    val dotAngleGapDeg = 6f
+    val dotAngleGapDeg = 4f
     val dotSpan = 2 * dotAngleGapDeg
     val dotsReserve = dotSpan + dotAngleGapDeg + paddingAngle
 
@@ -72,189 +117,98 @@ fun ExerciseIndicator(
     val totalArcEffective = totalArcAngle - leftReserve - rightReserve
     val segmentArcAngle = (totalArcEffective - (visibleCount - 1) * paddingAngle) / visibleCount
 
-    // --- GLOBAL (per-exercise) highlighting order ---
-    val flatExerciseOrder = remember(exerciseOrSupersetIds, viewModel.supersetIdByExerciseId, exerciseIds) {
-        exerciseOrSupersetIds.flatMap { groupId ->
-            val isSuperset = viewModel.supersetIdByExerciseId.containsValue(groupId)
-            if (isSuperset) {
-                exerciseIds.filter { eid -> viewModel.supersetIdByExerciseId[eid] == groupId }
-            } else {
-                listOf(groupId) // here groupId is an exerciseId
-            }
+    @Composable
+    fun ShowRotatingIndicator(exerciseId: UUID) {
+        val idx = globalIndexByExerciseId[exerciseId] ?: return
+        val posInWindow = if (idx in startIdx..endIdx) idx - startIdx else -1
+        if (posInWindow >= 0) {
+            val baseStart = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
+            val mid = baseStart + segmentArcAngle / 2f
+            RotatingIndicator(mid, MaterialTheme.colorScheme.onBackground)
         }
     }
-    val globalIndexByExerciseId = remember(flatExerciseOrder) {
-        flatExerciseOrder.withIndex().associate { (i, eid) -> eid to i }
-    }
-    val currentGlobalIdx = remember( set.exerciseId) { globalIndexByExerciseId[ set.exerciseId] ?: 0 }
 
-    // --- Draw segments (window only) ---
+    Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
+        // --- OUTER RING for visible superset ranges (drawn first) ---
+        OuterSupersetOverlay(
+            visibleIndices = visibleIndices,
+            flatExerciseOrder = flatExerciseOrder,
+            supersetIdByExerciseId = viewModel.supersetIdByExerciseId,
+            startAngleEffective = startAngleEffective,
+            segmentArcAngle = segmentArcAngle,
+            paddingAngle = paddingAngle,
+            ringInset = 1.dp,
+            strokeWidth = 2.dp,
+            arcColor = MaterialTheme.colorScheme.onBackground,
+            badgeColor = MaterialTheme.colorScheme.onBackground
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
+        // --- INNER segments: every exercise gets same arc ---
         visibleIndices.forEachIndexed { posInWindow, globalIdx ->
-            val groupId = exerciseOrSupersetIds[globalIdx]
-            val isSuperset = remember(groupId) { viewModel.supersetIdByExerciseId.containsValue(groupId) }
+            val eid = flatExerciseOrder[globalIdx]
+            val eIdx = globalIndexByExerciseId[eid] ?: Int.MAX_VALUE
+            val isCurrent = eIdx == currentGlobalIdx
+            val isCompleted = eIdx < currentGlobalIdx
 
-            val startAngle = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
-            val endAngle = startAngle + segmentArcAngle
+            val indicatorColor =
+                if (isCurrent) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
 
-            if (isSuperset) {
-                val dotAngleGapDeg = 3f
-                val dotSpan = 2 * dotAngleGapDeg
-                val dotsReserve = dotSpan + dotAngleGapDeg + paddingAngle /2
+            val indicatorProgress = if (isCompleted || isCurrent) 1f else 0f
 
-                val supersetExerciseIds =
-                    exerciseIds.filter { eid -> viewModel.supersetIdByExerciseId[eid] == groupId }
-                val c = supersetExerciseIds.size
+            val startA = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
+            val endA = startA + segmentArcAngle
 
-                // ---- sub-window within the superset (with its own overflow dots) ----
-                val maxSubVisible = 3
-                val visibleSubCount = minOf(c, maxSubVisible)
-
-                val selectedOrCurrentInGroup: UUID? =
-                    when {
-                        selectedExerciseId != null && supersetExerciseIds.contains(selectedExerciseId) -> selectedExerciseId
-                        supersetExerciseIds.contains(set.exerciseId) -> set.exerciseId
-                        else -> null
-                    }
-
-                val focusSubIdx = selectedOrCurrentInGroup?.let { supersetExerciseIds.indexOf(it) } ?: 0
-                val halfSub = visibleSubCount / 2
-                val startSubIdx = maxOf(0, minOf(focusSubIdx - halfSub, c - visibleSubCount))
-                val endSubIdx = startSubIdx + visibleSubCount - 1
-
-                val showLeftSubDots = startSubIdx > 0
-                val showRightSubDots = endSubIdx < c - 1
-
-                val leftSubReserve = if (showLeftSubDots) dotsReserve else 0f
-                val rightSubReserve = if (showRightSubDots) dotsReserve else 0f
-
-                val subSweep =
-                    (segmentArcAngle - leftSubReserve - rightSubReserve - (visibleSubCount - 1) * paddingAngle) /
-                            visibleSubCount
-
-                // draw visible sub-segments inside the superset window
-                for (sub in startSubIdx..endSubIdx) {
-                    val subId = supersetExerciseIds[sub]
-                    val eIdx = globalIndexByExerciseId[subId] ?: Int.MAX_VALUE
-                    val isCurrent = eIdx == currentGlobalIdx
-                    val isCompleted = eIdx < currentGlobalIdx
-
-                    val indicatorColor =
-                        if (isCurrent) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
-
-                    val indicatorProgress = if (isCompleted || isCurrent) 1f else 0f
-
-                    val sA = startAngle + leftSubReserve + (sub - startSubIdx) * (subSweep + paddingAngle)
-                    val eA = sA + subSweep
-
-                    key(subId) {   // note: key by subId to avoid duplicate keys
-                        CircularProgressIndicator(
-                            colors = ProgressIndicatorDefaults.colors(indicatorColor = indicatorColor),
-                            progress = { indicatorProgress },
-                            modifier = Modifier.fillMaxSize(),
-                            strokeWidth = 4.dp,
-                            startAngle = sA,
-                            endAngle = eA,
-                            gapSize = 0.dp
-                        )
-                    }
-                }
-
-                // inner overflow dots at the superset's edges
-                EdgeOverflowDots(
-                    angleDeg = startAngle + dotsReserve / 2,
-                    show = showLeftSubDots,
-                    dotAngleGapDeg = dotAngleGapDeg
+            key(eid) {
+                CircularProgressIndicator(
+                    colors = ProgressIndicatorDefaults.colors(indicatorColor = indicatorColor),
+                    progress = { indicatorProgress },
+                    modifier = Modifier.fillMaxSize(),
+                    strokeWidth = 4.dp,
+                    startAngle = startA,
+                    endAngle = endA,
+                    gapSize = 0.dp
                 )
-                EdgeOverflowDots(
-                    angleDeg = endAngle - dotSpan + paddingAngle,
-                    show = showRightSubDots,
-                    dotAngleGapDeg = dotAngleGapDeg
-                )
-            } else {
-                // non-superset: groupId is the exerciseId
-                val eIdx = globalIndexByExerciseId[groupId] ?: Int.MAX_VALUE
-                val isCurrent = eIdx == currentGlobalIdx
-                val isCompleted = eIdx < currentGlobalIdx
-
-                val indicatorColor =
-                    if (isCurrent) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
-
-                val indicatorProgress = if (isCompleted || isCurrent) 1f else 0f
-
-                key(groupId) {
-                    CircularProgressIndicator(
-                        colors = ProgressIndicatorDefaults.colors(indicatorColor = indicatorColor),
-                        progress = { indicatorProgress },
-                        modifier = Modifier.fillMaxSize(),
-                        strokeWidth = 4.dp,
-                        startAngle = startAngle,
-                        endAngle = endAngle,
-                        gapSize = 0.dp
-                    )
-                }
             }
         }
 
+        // Edge dots (global)
         val minVisibleIndex = visibleIndices.first()
-
         EdgeOverflowDots(
-            angleDeg = startingAngle + dotsReserve / 2,
+            angleDeg = startingAngle + (dotsReserve / 2),
             show = showLeftDots,
             dotAngleGapDeg = dotAngleGapDeg,
             color = when {
                 minVisibleIndex > currentGlobalIdx -> MaterialTheme.colorScheme.primary
                 minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
-                else ->  MaterialTheme.colorScheme.surfaceContainer
+                else -> MaterialTheme.colorScheme.surfaceContainer
             }
         )
-
         EdgeOverflowDots(
-            angleDeg = startingAngle + totalArcAngle - dotSpan + paddingAngle,
+            angleDeg = startingAngle + totalArcAngle - (dotSpan + dotAngleGapDeg + paddingAngle) / 2f,
             show = showRightDots,
             dotAngleGapDeg = dotAngleGapDeg
         )
-    }
 
-    // --- Rotating pointer (uses the same effective angles & window) ---
-    @Composable
-    fun ShowRotatingIndicator(exerciseId: UUID) {
-        val isSuperset = remember(exerciseId) { viewModel.supersetIdByExerciseId.containsKey(exerciseId) }
-        val targetGroupId = if (isSuperset) viewModel.supersetIdByExerciseId[exerciseId]!! else exerciseId
-        val globalGroupIdx = exerciseOrSupersetIds.indexOf(targetGroupId)
-        val posInWindow = if (globalGroupIdx in startIdx..endIdx) globalGroupIdx - startIdx else -1
-        if (posInWindow >= 0) {
-            val baseStart = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
-            val mid = if (isSuperset) {
-                val supersetExerciseIds = exerciseIds.filter { viewModel.supersetIdByExerciseId[it] == targetGroupId }
-                val c = supersetExerciseIds.size
-                val sub = supersetExerciseIds.indexOf(exerciseId)
-                val subSweep = (segmentArcAngle - (c - 1) * paddingAngle) / c
-                baseStart + sub * (subSweep + paddingAngle) + subSweep / 2f
-            } else {
-                baseStart + segmentArcAngle / 2f
-            }
-            RotatingIndicator(mid, MaterialTheme.colorScheme.onBackground)
-        }
-    }
-
-    if (selectedExerciseId != null && exerciseIds.contains(selectedExerciseId)) {
-        ShowRotatingIndicator(selectedExerciseId)
-    } else {
-        ShowRotatingIndicator(set.exerciseId)
+/*        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId)) {
+            ShowRotatingIndicator(selectedExerciseId)
+        } else {
+            ShowRotatingIndicator(set.exerciseId)
+        }*/
     }
 }
 
-// --- helper: 3 small dots at a given arc end (keeps segments inside total arc) ---
+
+/* ===== Helpers ===== */
 @Composable
 private fun EdgeOverflowDots(
     angleDeg: Float,
     show: Boolean,
     ringInset: Dp = 2.dp,      // ≈ strokeWidth / 2 of your arcs
     radialGap: Dp = 0.dp,      // extra distance outside the ring
-    dotSize: Dp = 4.dp,        // dot diameter
+    dotSize: Dp = 3.dp,        // dot diameter
     dotAngleGapDeg: Float = 6f,
     color: Color = MaterialTheme.colorScheme.surfaceContainer
 ) {
@@ -274,81 +228,228 @@ private fun EdgeOverflowDots(
     }
 }
 
-@OptIn(ExperimentalHorologistApi::class)
 @Composable
-fun SetIndicator(
-    viewModel: AppViewModel,
-    set: WorkoutState.Set
+private fun OuterSupersetOverlay(
+    visibleIndices: List<Int>,
+    flatExerciseOrder: List<UUID>,
+    supersetIdByExerciseId: Map<UUID, UUID>,
+    startAngleEffective: Float,
+    segmentArcAngle: Float,
+    paddingAngle: Float,
+    ringInset: Dp,
+    strokeWidth: Dp,
+    arcColor: Color,
+    badgeColor: Color,
+    dotAngleGapDeg: Float = 4f
 ) {
-    val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
-    val exerciseOrSupersetIds = remember {
-        exerciseIds.map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }.distinct()
+    // Build contiguous ranges by superset (include singletons)
+    val ranges = remember(visibleIndices, flatExerciseOrder, supersetIdByExerciseId) {
+        val local = mutableListOf<Triple<Int, Int, UUID>>() // startLocal, endLocal, supersetId
+        val ids = visibleIndices.map { flatExerciseOrder[it] }
+        var i = 0
+        while (i < ids.size) {
+            val sid = supersetIdByExerciseId[ids[i]]
+            if (sid == null) { i++; continue }
+            var j = i
+            while (j + 1 < ids.size && supersetIdByExerciseId[ids[j + 1]] == sid) j++
+            local += Triple(i, j, sid) // NOTE: include singletons
+            i = j + 1
+        }
+        local.toList()
     }
-    val exerciseCount = exerciseOrSupersetIds.count()
+    if (ranges.isEmpty()) return
 
-    val exerciseOrSupersetId = if (viewModel.supersetIdByExerciseId.containsKey(set.exerciseId)) viewModel.supersetIdByExerciseId[set.exerciseId]!! else set.exerciseId
-    val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(exerciseOrSupersetId)
+    // Local dot sizing/reserve to keep (arc + dots) == raw group sweep
+    val dotSpan = 2f * dotAngleGapDeg
+    val dotsReserve = dotSpan + dotAngleGapDeg + paddingAngle
+    val dotsRingInsetForOverlay = ringInset + (strokeWidth / 2f) // place dots on overlay's arc centerline
 
-    val isSuperset = remember(exerciseOrSupersetId) { viewModel.supersetIdByExerciseId.containsValue(exerciseOrSupersetId) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val wPx = with(density) { maxWidth.toPx() }
+        val hPx = with(density) { maxHeight.toPx() }
+        val ringInsetPx = with(density) { ringInset.toPx() }
+        val strokePx = with(density) { strokeWidth.toPx() }
 
-    val sets: List<WorkoutState.Set> = remember(
-        isSuperset,
-        viewModel.allWorkoutStates,
-        exerciseOrSupersetId
-    ) {
-        val targetExerciseIds: Set<UUID> =
-            if (isSuperset) {
-                viewModel.exercisesBySupersetId[exerciseOrSupersetId]
-                    ?.map { it.id }
-                    ?.toSet()
-                    ?: emptySet()
-            } else {
-                setOf(exerciseOrSupersetId)   // here exerciseOrSupersetId is the exercise id
+        val cx = wPx / 2f
+        val cy = hPx / 2f
+        val baseR = min(wPx, hPx) / 2f - ringInsetPx
+        val r = baseR - strokePx / 2f
+
+        // 1) Draw the outer arcs (with truncation reserves for dots)
+        Canvas(Modifier.fillMaxSize()) {
+            ranges.forEach { (startLocal, endLocal, sid) ->
+                val segCount = (endLocal - startLocal + 1)
+
+                val globalStart = visibleIndices[startLocal]
+                val globalEnd = visibleIndices[endLocal]
+
+                val startsBeforeWindow =
+                    globalStart > 0 &&
+                            supersetIdByExerciseId[flatExerciseOrder[globalStart - 1]] == sid
+                val endsAfterWindow =
+                    globalEnd < flatExerciseOrder.lastIndex &&
+                            supersetIdByExerciseId[flatExerciseOrder[globalEnd + 1]] == sid
+
+                val groupStartRaw = startAngleEffective +
+                        (globalStart - visibleIndices.first()) * (segmentArcAngle + paddingAngle)
+                val groupSweepRaw =
+                    segCount * segmentArcAngle + (segCount - 1) * paddingAngle
+
+                val offset = .5f
+
+                val startA = groupStartRaw + offset
+                val sweep = groupSweepRaw.coerceAtLeast(0f) -(offset*2)
+
+                drawArc(
+                    color = arcColor,
+                    startAngle = startA,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    topLeft = Offset(cx - r, cy - r),
+                    size = Size(r * 2, r * 2),
+                    style = Stroke(width = strokePx, cap = StrokeCap.Butt)
+                )
+
+                val capSweepDeg = 0.5f // small sweep just to render a round cap
+
+                if (!startsBeforeWindow && sweep > 0f) {
+                    // round start
+                    drawArc(
+                        color = arcColor,
+                        startAngle = startA,
+                        sweepAngle = capSweepDeg,
+                        useCenter = false,
+                        topLeft = Offset(cx - r, cy - r),
+                        size = Size(r * 2, r * 2),
+                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                    )
+                }
+                if (!endsAfterWindow && sweep > 0f) {
+                    // round end
+                    drawArc(
+                        color = arcColor,
+                        startAngle = startA + sweep - capSweepDeg,
+                        sweepAngle = capSweepDeg,
+                        useCenter = false,
+                        topLeft = Offset(cx - r, cy - r),
+                        size = Size(r * 2, r * 2),
+                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                    )
+                }
             }
+        }
 
-        viewModel.allWorkoutStates
-            .asSequence()
-            .filterIsInstance<WorkoutState.Set>()
-            .filter { it.exerciseId in targetExerciseIds }
-            .toList()
-    }
+        // 2) Truncation dots at overlay edges (consume the same reserve we subtracted above)
+        ranges.forEach { (startLocal, endLocal, sid) ->
+            val segCount = (endLocal - startLocal + 1)
+            val globalStart = visibleIndices[startLocal]
+            val globalEnd = visibleIndices[endLocal]
 
-    val currentSetIndex = sets.indexOfFirst { it === set }
+            val startsBeforeWindow =
+                globalStart > 0 &&
+                        supersetIdByExerciseId[flatExerciseOrder[globalStart - 1]] == sid
+            val endsAfterWindow =
+                globalEnd < flatExerciseOrder.lastIndex &&
+                        supersetIdByExerciseId[flatExerciseOrder[globalEnd + 1]] == sid
 
-    val startingAngle = -50f
-    val totalArcAngle = 100f
-    val segmentArcAngle = (totalArcAngle - (exerciseCount - 1) * 2f) / exerciseCount
+            if (!startsBeforeWindow && !endsAfterWindow) return@forEach
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        sets.forEachIndexed { index, _ ->
-            val indicatorProgress = when {
-                index <= currentExerciseOrSupersetIndex -> 1.0f
-                else -> 0.0f
-            }
+            val groupStartRaw = startAngleEffective +
+                    (globalStart - visibleIndices.first()) * (segmentArcAngle + paddingAngle)
+            val groupSweepRaw =
+                segCount * segmentArcAngle + (segCount - 1) * paddingAngle
 
-            val trackSegment = ProgressIndicatorSegment(
-                weight = 1f,
-                indicatorColor = if (index != currentExerciseOrSupersetIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+
+            // Left overlay dots (centered within its reserve)
+            EdgeOverflowDots(
+                angleDeg = groupStartRaw + dotsReserve / 2f,
+                show = startsBeforeWindow,
+                ringInset = dotsRingInsetForOverlay,
+                dotAngleGapDeg = dotAngleGapDeg,
+                color = arcColor,
             )
 
-            val startAngle = startingAngle + index * (segmentArcAngle + 2f)
-            val endAngle = startAngle + segmentArcAngle
+            // Right overlay dots (mirrors global formula)
+            EdgeOverflowDots(
+                angleDeg = groupStartRaw + groupSweepRaw + (dotSpan + dotAngleGapDeg + paddingAngle) / 2f,
+                show = endsAfterWindow,
+                ringInset = dotsRingInsetForOverlay,
+                dotAngleGapDeg = dotAngleGapDeg,
+                color = arcColor,
+            )
+        }
 
-            SegmentedProgressIndicator(
-                trackSegments = listOf(trackSegment),
-                progress = indicatorProgress,
-                modifier = Modifier.fillMaxSize(),
-                strokeWidth = 4.dp,
-                paddingAngle = 0f,
-                startAngle = startAngle,
-                endAngle = endAngle,
-                trackColor = MaterialTheme.colorScheme.surfaceContainer
+        // 3) Superset badge at the first visible join (only if at least 2 visible in the block)
+        ranges.forEach { (startLocal, endLocal, _) ->
+            val segCount = (endLocal - startLocal + 1)
+            //if (segCount < 2) return@forEach
+
+            val globalStart = visibleIndices[startLocal]
+
+            val groupStartRaw = startAngleEffective +
+                    (globalStart - visibleIndices.first()) * (segmentArcAngle + paddingAngle)
+            val groupSweepRaw =
+                segCount * segmentArcAngle + (segCount - 1) * paddingAngle
+
+            val startA = groupStartRaw
+            val sweep = (groupSweepRaw).coerceAtLeast(0f)
+
+            val joinAngle = startA + (sweep / 2f)
+
+            SupersetBadge(
+                angleDeg = joinAngle,
+                outerRadius = r,
+                tint = badgeColor,
+                iconSize = 15.dp,
+                rotateClockwiseTangent = true
             )
         }
     }
+}
 
-    val startAngle = startingAngle + currentSetIndex * (segmentArcAngle + 2f)
-    val middleAngle = startAngle + (segmentArcAngle / 2f)
+@Composable
+private fun SupersetBadge(
+    angleDeg: Float,
+    outerRadius: Float,                    // in px (same as before)
+    iconSize: Dp = 15.dp,
+    tint: Color = Color.Unspecified,
+    rotateClockwiseTangent: Boolean = true // perpendicular to radius, along tangent
+) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val wPx = with(density) { maxWidth.toPx() }
+        val hPx = with(density) { maxHeight.toPx() }
+        val iconPx = with(density) { iconSize.toPx() +(1.dp.toPx())}
 
-    RotatingIndicator(middleAngle, MaterialTheme.colorScheme.onBackground)
+        val cx = wPx / 2f
+        val cy = hPx / 2f
+        val theta = Math.toRadians(angleDeg.toDouble())
+        val x = cx + outerRadius * cos(theta).toFloat()
+        val y = cy + outerRadius * sin(theta).toFloat()
+
+        val rotation = angleDeg + if (rotateClockwiseTangent) 90f else -90f
+
+        Box(modifier = Modifier
+            .graphicsLayer {
+                translationX = x - iconPx / 2f
+                translationY = y - iconPx / 2f
+            }
+            .size(iconSize + 1.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.baseline_link_24),
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier
+                    .size(iconSize)
+                    .graphicsLayer {
+                        rotationZ = rotation
+                    }
+            )
+        }
+    }
 }

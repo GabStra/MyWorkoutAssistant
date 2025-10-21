@@ -145,7 +145,7 @@ fun CustomDialogYesOnLongPress(
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.background)
                     .fillMaxSize()
-                    .padding(25.dp), contentAlignment = Alignment.Center
+                    .padding(20.dp), contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
