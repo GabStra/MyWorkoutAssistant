@@ -139,6 +139,8 @@ fun ExerciseIndicator(
             paddingAngle = paddingAngle,
             ringInset = 1.dp,
             strokeWidth = 2.dp,
+            tickWidth = 2.dp,
+            tickLength = 4.dp,
             arcColor = MaterialTheme.colorScheme.onBackground,
             badgeColor = MaterialTheme.colorScheme.onBackground
         )
@@ -192,12 +194,17 @@ fun ExerciseIndicator(
             dotAngleGapDeg = dotAngleGapDeg
         )
 
-/*        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId)) {
+
+    }
+
+    Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId)) {
             ShowRotatingIndicator(selectedExerciseId)
         } else {
             ShowRotatingIndicator(set.exerciseId)
-        }*/
+        }
     }
+
 }
 
 
@@ -238,6 +245,8 @@ private fun OuterSupersetOverlay(
     paddingAngle: Float,
     ringInset: Dp,
     strokeWidth: Dp,
+    tickWidth: Dp,
+    tickLength: Dp,
     arcColor: Color,
     badgeColor: Color,
     dotAngleGapDeg: Float = 4f
@@ -270,6 +279,8 @@ private fun OuterSupersetOverlay(
         val hPx = with(density) { maxHeight.toPx() }
         val ringInsetPx = with(density) { ringInset.toPx() }
         val strokePx = with(density) { strokeWidth.toPx() }
+        val tickPx = with(density) { tickWidth.toPx() }
+        val tickLengthPx = with(density) { tickLength.toPx() }
 
         val cx = wPx / 2f
         val cy = hPx / 2f
@@ -311,31 +322,32 @@ private fun OuterSupersetOverlay(
                     style = Stroke(width = strokePx, cap = StrokeCap.Butt)
                 )
 
-                val capSweepDeg = 0.5f // small sweep just to render a round cap
+                val tickLen = strokePx
+                val innerR = r - tickLen / 2f
+                val outerR = r + tickLen / 2f + tickLengthPx
 
-                if (!startsBeforeWindow && sweep > 0f) {
-                    // round start
-                    drawArc(
+                fun drawTick(atAngle: Float) {
+                    val rad = Math.toRadians(atAngle.toDouble())
+                    val sx = cx + innerR * cos(rad).toFloat()
+                    val sy = cy + innerR * sin(rad).toFloat()
+                    val ex = cx + outerR * cos(rad).toFloat()
+                    val ey = cy + outerR * sin(rad).toFloat()
+                    drawLine(
                         color = arcColor,
-                        startAngle = startA,
-                        sweepAngle = capSweepDeg,
-                        useCenter = false,
-                        topLeft = Offset(cx - r, cy - r),
-                        size = Size(r * 2, r * 2),
-                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                        start = Offset(sx, sy),
+                        end = Offset(ex, ey),
+                        strokeWidth = tickPx,
+                        cap = StrokeCap.Butt
                     )
                 }
+
+                if (!startsBeforeWindow && sweep > 0f) {
+                    // tick at group start (visible boundary)
+                    drawTick(startA)
+                }
                 if (!endsAfterWindow && sweep > 0f) {
-                    // round end
-                    drawArc(
-                        color = arcColor,
-                        startAngle = startA + sweep - capSweepDeg,
-                        sweepAngle = capSweepDeg,
-                        useCenter = false,
-                        topLeft = Offset(cx - r, cy - r),
-                        size = Size(r * 2, r * 2),
-                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
-                    )
+                    // tick at group end (visible boundary)
+                    drawTick(startA + sweep)
                 }
             }
         }

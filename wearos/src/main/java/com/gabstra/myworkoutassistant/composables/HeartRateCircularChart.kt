@@ -539,8 +539,10 @@ private fun HeartRateView(
 
             var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainer)
-            RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainer)
+            Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainer)
+                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainer)
+            }
         }
     }
 }
