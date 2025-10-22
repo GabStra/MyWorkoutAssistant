@@ -11,13 +11,17 @@ import com.polar.sdk.api.PolarBleApiCallback
 import com.polar.sdk.api.PolarBleApiDefaultImpl
 import com.polar.sdk.api.model.PolarDeviceInfo
 import com.polar.sdk.api.model.PolarHealthThermometerData
-import com.polar.sdk.api.model.PolarHrData
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
+import io.reactivex.rxjava3.core.Completable
+import io.reactivex.rxjava3.core.Flowable
 import io.reactivex.rxjava3.disposables.CompositeDisposable
+import io.reactivex.rxjava3.schedulers.Schedulers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 class PolarViewModel : ViewModel() {
     private lateinit var deviceId: String
@@ -83,6 +87,7 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
+                Toast.makeText(applicationContext, "Polar device disconnected", Toast.LENGTH_SHORT).show()
                 viewModelScope.launch {
                     _deviceConnectionState.value = null
                 }
@@ -103,7 +108,7 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun batteryLevelReceived(identifier: String, level: Int) {
-                Toast.makeText(applicationContext, "Connected to $deviceId - Battery level: $level", Toast.LENGTH_SHORT).show()
+                Toast.makeText(applicationContext, "Polar device connected - Battery level: $level%", Toast.LENGTH_SHORT).show()
                 viewModelScope.launch {
                     _batteryLevelState.value = level
                 }
@@ -136,19 +141,43 @@ class PolarViewModel : ViewModel() {
     private val _hrBpm = MutableStateFlow<Int?>(null)
     val hrBpm = _hrBpm.asStateFlow()
 
+    fun foregroundEntered() {
+        api.foregroundEntered()
+    }
+
     private fun startHrStreaming(deviceId: String) {
+        val staleSec = 15L
+
         viewModelScope.launch {
             try {
                 val disposable = api.startHrStreaming(deviceId)
-                    .observeOn(AndroidSchedulers.mainThread())
+                    .timeout(staleSec, TimeUnit.SECONDS)
+                    .retryWhen { errors ->
+                        errors.flatMap { t ->
+                            if (t is TimeoutException) {
+                                Log.w("MyApp", "HR stale > ${staleSec}s: reconnecting…")
+
+                            }
+
+                            Completable.fromAction {
+                                try { api.disconnectFromDevice(deviceId) } catch (_: Exception) {}
+                                api.connectToDevice(deviceId)
+                            }
+                            .andThen(api.waitForConnection(deviceId)
+                            .timeout(20, TimeUnit.SECONDS))
+                            .andThen(Flowable.timer(2, TimeUnit.SECONDS)) // small backoff
+                        }
+                    }
+                    .subscribeOn(Schedulers.io())
+                    .observeOn(AndroidSchedulers.mainThread())          // UI updates only
+                    .doOnNext { hrData ->
+                        _hrBpm.value = hrData.samples
+                            .map { if (it.correctedHr > 0) it.correctedHr else it.hr }
+                            .average().toInt()
+                    }
                     .subscribe(
-                        { hrData: PolarHrData ->
-                            _hrBpm.value =  hrData.samples.map { if(it.correctedHr > 0) it.correctedHr else it.hr }.average().toInt()
-                        },
-                        { error: Throwable ->
-                            Log.e("MyApp", "HR stream failed. Reason $error")
-                        },
-                        { Log.d("MyApp", "HR stream complete") }
+                        { /* handled in doOnNext */ },
+                        { e -> Log.e("MyApp", "HR stream error: $e") }
                     )
                 disposables.add(disposable)
             } catch (e: Exception) {

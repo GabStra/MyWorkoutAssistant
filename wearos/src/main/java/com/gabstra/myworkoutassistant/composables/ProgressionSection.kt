@@ -127,7 +127,7 @@ private fun ProgressionRow(
                 .height(22.5.dp)
                 .padding(bottom = 2.5.dp)
                 .clip(RoundedCornerShape(25))
-                .background(MaterialTheme.colorScheme.surfaceContainer),
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ScalableText(

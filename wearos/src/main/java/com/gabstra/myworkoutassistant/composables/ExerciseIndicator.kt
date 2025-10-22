@@ -65,6 +65,15 @@ fun ExerciseIndicator(
 ) {
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
+
+    val indicatorProgressByExerciseId = remember(exerciseIds,set) {
+        exerciseIds.associateWith { id ->
+            (viewModel.getAllExerciseCompletedSetsBefore(set).filter { it.exerciseId == id }.size) /
+            (viewModel.getAllExerciseWorkoutStates(id).size).toFloat()
+        }
+    }
+
+
     val flatExerciseOrder = remember(exerciseIds, viewModel.supersetIdByExerciseId) {
         val seenSupers = mutableSetOf<UUID>()
         buildList {
@@ -128,7 +137,7 @@ fun ExerciseIndicator(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
+    Box(modifier = Modifier.fillMaxSize()) {
         // --- OUTER RING for visible superset ranges (drawn first) ---
         OuterSupersetOverlay(
             visibleIndices = visibleIndices,
@@ -137,7 +146,7 @@ fun ExerciseIndicator(
             startAngleEffective = startAngleEffective,
             segmentArcAngle = segmentArcAngle,
             paddingAngle = paddingAngle,
-            ringInset = 1.dp,
+            ringInset = 12.dp,
             strokeWidth = 2.dp,
             tickWidth = 2.dp,
             tickLength = 4.dp,
@@ -152,20 +161,18 @@ fun ExerciseIndicator(
             val eid = flatExerciseOrder[globalIdx]
             val eIdx = globalIndexByExerciseId[eid] ?: Int.MAX_VALUE
             val isCurrent = eIdx == currentGlobalIdx
-            val isCompleted = eIdx < currentGlobalIdx
 
-            val indicatorColor =
-                if (isCurrent) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
-
-            val indicatorProgress = if (isCompleted || isCurrent) 1f else 0f
+            val indicatorProgress = indicatorProgressByExerciseId[eid]!!
 
             val startA = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
             val endA = startA + segmentArcAngle
 
             key(eid) {
                 CircularProgressIndicator(
-                    colors = ProgressIndicatorDefaults.colors(indicatorColor = indicatorColor),
+                    colors = ProgressIndicatorDefaults.colors(
+                        indicatorColor = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
                     progress = { indicatorProgress },
                     modifier = Modifier.fillMaxSize(),
                     strokeWidth = 4.dp,
@@ -183,9 +190,9 @@ fun ExerciseIndicator(
             show = showLeftDots,
             dotAngleGapDeg = dotAngleGapDeg,
             color = when {
-                minVisibleIndex > currentGlobalIdx -> MaterialTheme.colorScheme.primary
-                minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
-                else -> MaterialTheme.colorScheme.surfaceContainer
+                minVisibleIndex > currentGlobalIdx -> MaterialTheme.colorScheme.onBackground
+                minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh
             }
         )
         EdgeOverflowDots(
@@ -197,7 +204,7 @@ fun ExerciseIndicator(
 
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+    Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
         if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId)) {
             ShowRotatingIndicator(selectedExerciseId)
         } else {
@@ -217,7 +224,7 @@ private fun EdgeOverflowDots(
     radialGap: Dp = 0.dp,      // extra distance outside the ring
     dotSize: Dp = 3.dp,        // dot diameter
     dotAngleGapDeg: Float = 6f,
-    color: Color = MaterialTheme.colorScheme.surfaceContainer
+    color: Color = MaterialTheme.colorScheme.surfaceContainerHigh
 ) {
     if (!show) return
     Canvas(Modifier.fillMaxSize()) {

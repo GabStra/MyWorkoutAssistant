@@ -48,7 +48,7 @@ import kotlinx.coroutines.launch
 fun CustomDialogYesOnLongPress(
     show: Boolean = false,
     title: String = "Confirm Exit",
-    message: String = "Do you really want to exit?",
+    message: String = "Do you want to exit?",
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
     closeTimerInMillis: Long = 0,
@@ -233,7 +233,7 @@ fun CustomDialogYesOnLongPress(
                         //.graphicsLayer(alpha = progressBarAlpha),
                     strokeWidth = 4.dp,
                     indicatorColor = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceContainer,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 )
             }
         }

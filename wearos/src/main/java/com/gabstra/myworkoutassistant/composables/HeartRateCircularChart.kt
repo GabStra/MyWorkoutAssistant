@@ -123,7 +123,7 @@ fun HrStatusDialog(
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleMedium,
                     )
 
                     Text(
@@ -137,23 +137,23 @@ fun HrStatusDialog(
                         verticalAlignment = Alignment.Bottom,
                     ){
                         PulsingHeartWithBpm(
-                            modifier = Modifier.padding(bottom = 10.dp),
+                            modifier = Modifier.padding(bottom = 7.5.dp),
                             bpm = hr,
-                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainer else colorsByZone[currentZone],
-                            size = 30.dp
+                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainerHigh else colorsByZone[currentZone],
+                            size = 25.dp
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "$hr",
-                            style =  MaterialTheme.typography.numeralMedium,
-                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.onBackground
+                            style =  MaterialTheme.typography.numeralSmall,
+                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             modifier = Modifier.padding(bottom = 5.dp),
                             text = "bpm",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.onBackground
+                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
                         )
                     }
                 }
@@ -310,13 +310,13 @@ private fun HeartRateDisplay(
 
         PulsingHeartWithBpm(
             bpm = bpm,
-            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainer else colorsByZone[currentZone]
+            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainerHigh else colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
             style = MaterialTheme.typography.labelSmall,
-            color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.onBackground
+            color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.width(2.5.dp))
         if(bpm != 0 && displayMode == 0){
@@ -372,6 +372,7 @@ private fun ZoneSegment(
         modifier = modifier,
         colors = ProgressIndicatorDefaults.colors(
             indicatorColor = colorsByZone[index],
+            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
         ),
         strokeWidth = 4.dp,
         startAngle = startAngle,
@@ -539,9 +540,9 @@ private fun HeartRateView(
 
             var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
-                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainer)
-                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainer)
+            Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green.copy(0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red.copy(0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh)
             }
         }
     }

@@ -169,6 +169,7 @@ fun WorkoutScreen(
                 hrViewModel.startMeasuringHeartRate()
             }
             else if(hasPolarApiBeenInitialized){
+                polarViewModel.foregroundEntered()
                 polarViewModel.connectToDevice()
             }
         }

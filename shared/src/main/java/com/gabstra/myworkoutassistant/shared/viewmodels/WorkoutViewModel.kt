@@ -147,7 +147,7 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     private val _isPaused = mutableStateOf(false) // Private mutable state
-    open val isPaused: State<Boolean> = _isPaused // Public read-only State access
+    open val isPaused: State<Boolean> = _isPaused // read-only State access
 
     fun pauseWorkout() {
         _isPaused.value = true
@@ -267,7 +267,7 @@ open class WorkoutViewModel : ViewModel() {
         MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val nextWorkoutState = _nextWorkoutState.asStateFlow()
 
-    public val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
+    val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
 
     protected val heartBeatHistory: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
 
@@ -280,9 +280,9 @@ open class WorkoutViewModel : ViewModel() {
 
     protected val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
-    public val latestSetHistoriesByExerciseId: MutableMap<UUID, List<SetHistory>> = mutableMapOf()
+    val latestSetHistoriesByExerciseId: MutableMap<UUID, List<SetHistory>> = mutableMapOf()
 
-    public val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
+    val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
 
     protected val weightsByEquipment: MutableMap<WeightLoadedEquipment, kotlin.collections.Set<Double>> =
         mutableMapOf()
@@ -505,15 +505,29 @@ open class WorkoutViewModel : ViewModel() {
         }
     }
 
-    public fun getAllExerciseWorkoutStates(exerciseId: UUID): List<WorkoutState.Set> {
+    fun getAllExerciseWorkoutStates(exerciseId: UUID): List<WorkoutState.Set> {
         return allWorkoutStates.filterIsInstance<WorkoutState.Set>()
             .filter { it.exerciseId == exerciseId }
     }
-    public fun getAllExecutedSetsByExerciseId(exerciseId: UUID): List<SetHistory> {
+
+    fun getAllExerciseCompletedSetsBefore(target: WorkoutState.Set): List<WorkoutState.Set> {
+        val cutoff = allWorkoutStates.indexOfFirst {
+            it is WorkoutState.Set && it.set.id == target.set.id
+        }
+        if (cutoff <= 0) return emptyList()
+
+        return allWorkoutStates
+            .subList(0, cutoff)
+            .filterIsInstance<WorkoutState.Set>()
+        //.filter { it.set !is RestSet } // uncomment to exclude rest sets
+    }
+
+
+    fun getAllExecutedSetsByExerciseId(exerciseId: UUID): List<SetHistory> {
         return executedSetsHistory.filter { it.exerciseId == exerciseId }
     }
 
-    public fun getAllSetHistoriesByExerciseId(exerciseId: UUID): List<SetHistory> {
+    fun getAllSetHistoriesByExerciseId(exerciseId: UUID): List<SetHistory> {
         return latestSetHistoriesByExerciseId[exerciseId] ?: emptyList()
     }
 

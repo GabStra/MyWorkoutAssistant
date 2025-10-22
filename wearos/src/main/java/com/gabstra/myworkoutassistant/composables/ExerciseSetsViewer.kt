@@ -232,9 +232,9 @@ fun ExerciseSetsViewer(
         rowIndex: Int,
     ) {
         val backgroundColor = customBackgroundColor ?: when{
-            rowIndex < setIndex -> MaterialTheme.colorScheme.primary.copy(0.65f)
-            rowIndex == setIndex ->  MaterialTheme.colorScheme.primary
-            else -> MaterialTheme.colorScheme.surfaceContainer
+            rowIndex < setIndex -> MaterialTheme.colorScheme.primary
+            rowIndex == setIndex ->  MaterialTheme.colorScheme.onBackground
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
         Row(

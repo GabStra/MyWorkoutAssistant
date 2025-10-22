@@ -80,7 +80,7 @@ fun WorkoutStateHeader(
         if(displayMode == 0){
             Row(verticalAlignment = Alignment.CenterVertically){
                 CurrentBattery()
-                Spacer(modifier = Modifier.width(2.5.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 CurrentTime()
             }
         }else{

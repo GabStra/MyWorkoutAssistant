@@ -57,7 +57,7 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(50.dp)
                     .clip(CircleShape)
-                    .background(Green),
+                    .background(Green.copy(0.35f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
@@ -86,7 +86,7 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(50.dp)
                     .clip(CircleShape)
-                    .background(Red),
+                    .background(Red.copy(0.35f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")

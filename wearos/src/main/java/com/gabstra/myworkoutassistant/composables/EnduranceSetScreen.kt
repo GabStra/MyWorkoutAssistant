@@ -102,7 +102,7 @@ fun EnduranceSetScreen (
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle = remember(typography) { typography.numeralMedium.copy(fontWeight = W700) }
+    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = W700) }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
@@ -280,7 +280,7 @@ fun EnduranceSetScreen (
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                verticalArrangement = Arrangement.spacedBy(2.5.dp)
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -296,7 +296,7 @@ fun EnduranceSetScreen (
                 }
                 if (showStartButton) {
                     IconButton(
-                        modifier = Modifier.size(35.dp),
+                        modifier = Modifier.size(50.dp),
                         onClick = {
                             scope.launch {
                                 showCountDownIfEnabled()
@@ -313,11 +313,11 @@ fun EnduranceSetScreen (
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
                     ){
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(modifier = Modifier.size(25.dp), imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }else{
                     IconButton(
-                        modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
+                        modifier = Modifier.size(50.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             timerJob?.cancel()
@@ -325,7 +325,7 @@ fun EnduranceSetScreen (
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                     ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(modifier = Modifier.size(25.dp), imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
@@ -375,7 +375,7 @@ fun EnduranceSetScreen (
         CustomDialogYesOnLongPress(
             show = showStopDialog,
             title = "Stop Exercise",
-            message = "Do you want to stop this exercise?",
+            message = "Do you want to proceed?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
                 state.currentSetData = currentSet.copy(

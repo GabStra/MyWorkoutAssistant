@@ -74,7 +74,7 @@ fun TimeViewer(
             Text(
                 text = ":",
                 style = style,
-                color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
+                color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.padding(bottom = 3.dp),
             )
         }
@@ -90,7 +90,7 @@ fun TimeViewer(
         Text(
             text = ":",
             style = style,
-            color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
+            color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
             modifier = Modifier.padding(bottom = 3.dp),
         )
 

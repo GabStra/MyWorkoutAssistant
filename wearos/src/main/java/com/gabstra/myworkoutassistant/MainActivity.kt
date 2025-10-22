@@ -381,7 +381,7 @@ fun WearApp(
                                 .fillMaxSize(),
                             strokeWidth = 4.dp,
                             indicatorColor = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceContainer,
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         )
 
                         LoadingScreen(appViewModel,"Syncing with phone")

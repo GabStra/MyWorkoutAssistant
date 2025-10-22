@@ -140,7 +140,7 @@ fun PageExercises(
                         if (i > 0) { separator() }
                         withStyle(
                             SpanStyle(
-                                color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
                                 fontWeight = FontWeight.Bold
                             )
                         ) {
@@ -162,7 +162,7 @@ fun PageExercises(
 
                         withStyle(
                             SpanStyle(
-                                color = if (currentStateSet.intraSetCounter == 1u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                color = if (currentStateSet.intraSetCounter == 1u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
                                 fontWeight = FontWeight.Bold
                             )
                         ) {
@@ -171,7 +171,7 @@ fun PageExercises(
                         separator()
                         withStyle(
                             SpanStyle(
-                                color = if (currentStateSet.intraSetCounter == 2u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                color = if (currentStateSet.intraSetCounter == 2u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
                                 fontWeight = FontWeight.Bold
                             )
                         ) {
@@ -206,8 +206,8 @@ fun PageExercises(
                     else -> null
                 },
                 customBackgroundColor = when {
-                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary.copy(0.65f)
-                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.surfaceContainer
+                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary
+                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.surfaceContainerHigh
                     else -> null
                 },
                 customTextColor = when {

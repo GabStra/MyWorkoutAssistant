@@ -245,7 +245,7 @@ fun ExerciseScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = 5.dp)
+                        .padding(top = 2.5.dp)
                         .padding(horizontal = 15.dp)
                 ) {
                     when (pageType) {
@@ -293,7 +293,7 @@ fun ExerciseScreen(
                                                 if (i > 0) { separator() }
                                                 withStyle(
                                                     SpanStyle(
-                                                        color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                                        color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                 ) {
@@ -307,7 +307,7 @@ fun ExerciseScreen(
 
                                             withStyle(
                                                 SpanStyle(
-                                                    color = if (updatedState.intraSetCounter == 1u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                                    color = if (updatedState.intraSetCounter == 1u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             ) {
@@ -316,7 +316,7 @@ fun ExerciseScreen(
                                             separator()
                                             withStyle(
                                                 SpanStyle(
-                                                    color = if (updatedState.intraSetCounter == 2u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                                                    color = if (updatedState.intraSetCounter == 2u) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             ) {

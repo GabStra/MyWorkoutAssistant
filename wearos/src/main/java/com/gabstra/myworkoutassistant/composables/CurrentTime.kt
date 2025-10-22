@@ -62,7 +62,7 @@ fun CurrentTime() {
         Text(
             text = ":",
             style = captionStyle,
-            color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
+            color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
         )
 
         Text(

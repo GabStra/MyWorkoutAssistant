@@ -255,7 +255,7 @@ fun TimedDurationSetScreen(
         ){
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                verticalArrangement = Arrangement.spacedBy(2.5.dp)
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -271,7 +271,7 @@ fun TimedDurationSetScreen(
                 }
                 if (showStartButton) {
                     IconButton(
-                        modifier = Modifier.size(35.dp),
+                        modifier = Modifier.size(50.dp),
                         onClick = {
                             scope.launch {
                                 showCountDownIfEnabled()
@@ -288,11 +288,11 @@ fun TimedDurationSetScreen(
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
                     ){
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(modifier = Modifier.size(25.dp), imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }else{
                     IconButton(
-                        modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
+                        modifier = Modifier.size(50.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             timerJob?.cancel()
@@ -300,7 +300,7 @@ fun TimedDurationSetScreen(
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                     ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(modifier = Modifier.size(25.dp), imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
@@ -350,7 +350,7 @@ fun TimedDurationSetScreen(
         CustomDialogYesOnLongPress(
             show = showStopDialog,
             title = "Stop Exercise",
-            message = "Do you want to stop this exercise?",
+            message = "Do you want to proceed?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
                 state.currentSetData = currentSet.copy(

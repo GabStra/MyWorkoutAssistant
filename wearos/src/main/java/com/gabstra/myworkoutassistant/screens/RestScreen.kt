@@ -332,7 +332,7 @@ fun RestScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = 5.dp)
+                            .padding(top = 2.5.dp)
                             .padding(horizontal = 15.dp)
                     ) {
                         when (pageType) {
@@ -387,9 +387,9 @@ fun RestScreen(
             modifier = Modifier.fillMaxSize(),
             strokeWidth = 4.dp,
             paddingAngle = 0f,
-            startAngle = 130f,
-            endAngle = 230f,
-            trackColor = MaterialTheme.colorScheme.surfaceContainer
+            startAngle = 120f,
+            endAngle = 240f,
+            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
         )
 
         textComposable(
