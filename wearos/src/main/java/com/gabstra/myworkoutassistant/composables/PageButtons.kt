@@ -137,6 +137,19 @@ fun PageButtons(
                     )
                 }
             }
+            item{
+                ButtonWithText(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec).animateItem(),
+                    transformation = SurfaceTransformation(spec),
+                    text = "Go to next exercise",
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.goToNextExercise()
+                    }
+                )
+            }
         }
     }
 

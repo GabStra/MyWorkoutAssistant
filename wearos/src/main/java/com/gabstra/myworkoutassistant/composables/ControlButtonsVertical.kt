@@ -57,10 +57,10 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(50.dp)
                     .clip(CircleShape)
-                    .background(Green.copy(0.35f)),
+                    .background(Green),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
+                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
             }
         }
         Box(
@@ -86,10 +86,10 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(50.dp)
                     .clip(CircleShape)
-                    .background(Red.copy(0.35f)),
+                    .background(Red),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
+                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
             }
         }
 

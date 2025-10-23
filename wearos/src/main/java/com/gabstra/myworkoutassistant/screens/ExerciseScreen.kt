@@ -198,7 +198,7 @@ fun ExerciseScreen(
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 25.dp)
+                        .padding(horizontal = 27.5.dp)
                         .combinedClickable(
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
@@ -330,6 +330,7 @@ fun ExerciseScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.clickable {
                                             headerMarqueeEnabled = !headerMarqueeEnabled
                                             hapticsViewModel.doGentleVibration()
@@ -364,6 +365,7 @@ fun ExerciseScreen(
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center,
                                             maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.clickable {
                                                 headerMarqueeEnabled = !headerMarqueeEnabled
                                                 hapticsViewModel.doGentleVibration()

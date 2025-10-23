@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,9 +33,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.wear.compose.material.CircularProgressIndicator
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import kotlinx.coroutines.Job
@@ -64,11 +66,9 @@ fun CustomDialogYesOnLongPress(
 
     var currentMillis by remember { mutableLongStateOf(0) }
 
-    var showProgressBar by remember { mutableStateOf(false) }
-
     var hasBeenPressedLongEnough by remember { mutableStateOf(false) }
 
-    val progress = 1 - (currentMillis.toFloat() / holdTimeInMillis.toFloat()).coerceAtMost(1f)
+    val progress = (currentMillis.toFloat() / holdTimeInMillis.toFloat()).coerceAtMost(1f)
 
     var startTime by remember { mutableLongStateOf(0) }
 
@@ -104,7 +104,6 @@ fun CustomDialogYesOnLongPress(
             coroutineScope.launch {
                 delay(100)
                 handleYesClick()
-                showProgressBar = false
                 currentMillis = 0
             }
         }
@@ -113,7 +112,6 @@ fun CustomDialogYesOnLongPress(
     fun onBeforeLongPressRepeat() {
         closeDialogJob?.cancel()
         hasBeenPressedLongEnough = false
-        showProgressBar = true
         currentMillis = 0
 
         startTime = System.currentTimeMillis()
@@ -125,8 +123,6 @@ fun CustomDialogYesOnLongPress(
     }
 
     fun onRelease() {
-
-        showProgressBar = false
         currentMillis = 0
         startTime = 0
         hasBeenPressedLongEnough = false
@@ -183,7 +179,7 @@ fun CustomDialogYesOnLongPress(
                             buttonModifier = Modifier
                                 .clip(CircleShape),
                         ) {
-                            Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Close, contentDescription = "Close",tint = contentColor)
+                            Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Default.Close, contentDescription = "Close",tint = contentColor)
                         }
                         Spacer(modifier = Modifier.width(5.dp))
                         Box(
@@ -191,8 +187,8 @@ fun CustomDialogYesOnLongPress(
                                 .size(75.dp)
                                 .repeatActionOnLongPress(
                                     longPressCoroutineScope,
-                                    thresholdMillis = 10,
-                                    intervalMillis = 10,
+                                    thresholdMillis = 0,
+                                    intervalMillis = 16,
                                     onPressStart = { },
                                     onBeforeLongPressRepeat = { onBeforeLongPressRepeat() },
                                     onLongPressRepeat = { onLongPressRepeat() },
@@ -207,7 +203,7 @@ fun CustomDialogYesOnLongPress(
                                     .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ){
-                                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.onPrimary)
+                                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }
@@ -225,15 +221,15 @@ fun CustomDialogYesOnLongPress(
             )*/
 
 
-            if (showProgressBar) {
+            key(progress){
                 CircularProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier
-                        .fillMaxSize(),
-                        //.graphicsLayer(alpha = progressBarAlpha),
-                    strokeWidth = 4.dp,
-                    indicatorColor = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    progress =  { progress },
+                    modifier = Modifier.fillMaxSize(),
+                    colors = ProgressIndicatorDefaults.colors(
+                        indicatorColor = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
+                    strokeWidth = 4.dp
                 )
             }
         }

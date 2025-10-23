@@ -37,6 +37,8 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -90,45 +92,71 @@ fun SetTableRow(
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
+                    val previousWeightSetData = (setState.previousSetData as WeightSetData)
+
+                    val weightTextColor = when {
+                        weightSetData.actualWeight == previousWeightSetData.actualWeight -> textColor
+                        weightSetData.actualWeight < previousWeightSetData.actualWeight  -> Red
+                        else -> Green
+                    }
+
+                    val repsTextColor = when {
+                        weightSetData.actualReps == previousWeightSetData.actualReps -> textColor
+                        weightSetData.actualReps < previousWeightSetData.actualReps  -> Red
+                        else -> Green
+                    }
+
                     ScalableText(
-                        modifier = Modifier
-                            .weight(2f),
+                        modifier = Modifier.weight(2f),
                         text = equipment!!.formatWeight(weightSetData.actualWeight),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = textColor
+                        color = weightTextColor,
                     )
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = "${weightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = textColor
+                        color = repsTextColor,
                     )
                 }
 
                 is BodyWeightSetData -> {
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
+                    val previousBodyWeightSetData = (setState.previousSetData as BodyWeightSetData)
+
                     val weightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
                     }else {
                         "-"
                     }
 
+                    val weightTextColor = when {
+                        bodyWeightSetData.additionalWeight == previousBodyWeightSetData.additionalWeight -> textColor
+                        bodyWeightSetData.additionalWeight < previousBodyWeightSetData.additionalWeight  -> Red
+                        else -> Green
+                    }
+
+                    val repsTextColor = when {
+                        bodyWeightSetData.actualReps == previousBodyWeightSetData.actualReps -> textColor
+                        bodyWeightSetData.actualReps < previousBodyWeightSetData.actualReps  -> Red
+                        else -> Green
+                    }
+
                     ScalableText(
-                        modifier = Modifier
-                            .weight(2f),
+                        modifier = Modifier.weight(2f),
                         text = weightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = textColor
+                        color = weightTextColor
                     )
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = "${bodyWeightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = textColor
+                        color = repsTextColor
                     )
                 }
 

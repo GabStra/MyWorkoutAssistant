@@ -73,7 +73,6 @@ fun ExerciseIndicator(
         }
     }
 
-
     val flatExerciseOrder = remember(exerciseIds, viewModel.supersetIdByExerciseId) {
         val seenSupers = mutableSetOf<UUID>()
         buildList {
@@ -150,8 +149,8 @@ fun ExerciseIndicator(
             strokeWidth = 2.dp,
             tickWidth = 2.dp,
             tickLength = 4.dp,
-            arcColor = MaterialTheme.colorScheme.onBackground,
-            badgeColor = MaterialTheme.colorScheme.onBackground
+            arcColor = MaterialTheme.colorScheme.surfaceContainerHigh, //MaterialTheme.colorScheme.onBackground,
+            badgeColor = MaterialTheme.colorScheme.surfaceContainerHigh //MaterialTheme.colorScheme.onBackground
         )
     }
 
@@ -167,18 +166,17 @@ fun ExerciseIndicator(
             val startA = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
             val endA = startA + segmentArcAngle
 
-            key(eid) {
+            key(eid,indicatorProgress) {
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
                         indicatorColor = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        trackColor = if(isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh
                     ),
                     progress = { indicatorProgress },
                     modifier = Modifier.fillMaxSize(),
                     strokeWidth = 4.dp,
                     startAngle = startA,
-                    endAngle = endA,
-                    gapSize = 0.dp
+                    endAngle = endA
                 )
             }
         }

@@ -106,14 +106,13 @@ private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modi
         Ternary.BELOW -> Icons.AutoMirrored.Filled.TrendingDown to Red
         Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
     }
-    Icon(imageVector = icon, contentDescription = label, tint = tint)
+    Icon(modifier = modifier, imageVector = icon, contentDescription = label, tint = tint)
 }
 
 @SuppressLint("DefaultLocale")
 @Composable
 private fun ProgressionRow(
-    info: ProgressionInfo,
-    modifier: Modifier = Modifier
+    info: ProgressionInfo
 ) {
     Row(
         modifier = Modifier
@@ -275,7 +274,7 @@ fun ProgressionSection(
                         .verticalScroll(scrollState),
                 ) {
                     progressionData?.forEachIndexed { index, info ->
-                       ProgressionRow(info = info,)
+                       ProgressionRow(info = info)
                     }
                 }
             }

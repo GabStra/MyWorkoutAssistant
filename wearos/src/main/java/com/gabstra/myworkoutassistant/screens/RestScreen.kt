@@ -19,6 +19,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -32,7 +33,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.rememberPagerState
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.composables.CircularEndsPillShape
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -50,8 +53,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
-import com.google.android.horologist.composables.ProgressIndicatorSegment
-import com.google.android.horologist.composables.SegmentedProgressIndicator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -89,12 +90,18 @@ fun RestScreen(
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
-    val indicatorProgress = remember(currentSeconds,amountToWait,currentSecondsFreeze,amountToWaitFreeze,isTimerInEditMode) {
+    fun computeProgress(): Float  {
         if(isTimerInEditMode){
-            currentSecondsFreeze.toFloat() / amountToWaitFreeze.toFloat()
+            return currentSecondsFreeze.toFloat() / amountToWaitFreeze.toFloat()
         }else{
-            currentSeconds.toFloat() / amountToWait.toFloat()
+            return currentSeconds.toFloat() / amountToWait.toFloat()
         }
+    }
+
+    val indicatorProgress = remember { mutableFloatStateOf(computeProgress()) }
+
+    LaunchedEffect(currentSeconds,amountToWait,currentSecondsFreeze,amountToWaitFreeze,isTimerInEditMode) {
+        indicatorProgress.floatValue = computeProgress()
     }
 
 
@@ -377,19 +384,18 @@ fun RestScreen(
             selectedExercise.id
         )
 
-        SegmentedProgressIndicator(
-            trackSegments = listOf(ProgressIndicatorSegment(
-                weight = 1f,
-                indicatorColor = MaterialTheme.colorScheme.primary,
-
-            )),
-            progress = indicatorProgress,
+        CircularProgressIndicator(
+            progress = {
+                indicatorProgress.floatValue
+            },
             modifier = Modifier.fillMaxSize(),
+            colors = ProgressIndicatorDefaults.colors(
+                indicatorColor = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            ),
             strokeWidth = 4.dp,
-            paddingAngle = 0f,
             startAngle = 120f,
             endAngle = 240f,
-            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
         )
 
         textComposable(

@@ -183,9 +183,9 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
                                 val backgroundColor = if (step.action == PlateCalculator.Companion.Action.ADD) {
-                                    Green.copy(0.35f)
+                                    Green
                                 } else {
-                                    Red.copy(0.35f)
+                                    Red
                                 }
 
                                 Row(

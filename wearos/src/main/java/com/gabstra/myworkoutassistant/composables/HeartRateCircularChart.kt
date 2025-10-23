@@ -376,8 +376,7 @@ private fun ZoneSegment(
         ),
         strokeWidth = 4.dp,
         startAngle = startAngle,
-        endAngle = endAngle,
-        gapSize = 0.dp
+        endAngle = endAngle
     )
 }
 
@@ -541,8 +540,8 @@ private fun HeartRateView(
             var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
             Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green.copy(0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh)
-                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red.copy(0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh)
+                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainerHigh)
+                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainerHigh)
             }
         }
     }

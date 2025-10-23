@@ -104,7 +104,7 @@ fun PageExercises(
             Text(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 25.dp)
+                    .padding(horizontal = 27.5.dp)
                     .clickable {
                         marqueeEnabled = !marqueeEnabled
                         hapticsViewModel.doGentleVibration()
@@ -186,6 +186,7 @@ fun PageExercises(
                 style = MaterialTheme.typography.labelSmall,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.clickable {
                     headerMarqueeEnabled = !headerMarqueeEnabled
                     hapticsViewModel.doGentleVibration()
