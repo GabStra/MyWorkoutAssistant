@@ -22,6 +22,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -211,7 +212,7 @@ fun ExerciseScreen(
                         .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                     text = exercise.name,
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -245,8 +246,8 @@ fun ExerciseScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = 2.5.dp)
-                        .padding(horizontal = 15.dp)
+                        .padding(top = 5.dp)
+                        .padding(horizontal = 17.5.dp)
                 ) {
                     when (pageType) {
                         PageType.PLATES -> PagePlates(updatedState, equipment, hapticsViewModel)
@@ -382,14 +383,18 @@ fun ExerciseScreen(
                             }
                         )
 
-                        PageType.EXERCISES -> PageExercises(
-                            selectedExercise,
-                            updatedState,
-                            viewModel, hapticsViewModel,
-                            exercise,
-                            onExerciseSelected = {
-                                selectedExercise = it
-                            })
+                        PageType.EXERCISES -> {
+                            key(updatedState.currentSetData) {
+                                PageExercises(
+                                    selectedExercise,
+                                    updatedState,
+                                    viewModel, hapticsViewModel,
+                                    exercise,
+                                    onExerciseSelected = {
+                                        selectedExercise = it
+                                    })
+                            }
+                        }
 
                         PageType.NOTES -> PageNotes(exercise.notes)
                         PageType.BUTTONS -> PageButtons(updatedState, viewModel, hapticsViewModel)

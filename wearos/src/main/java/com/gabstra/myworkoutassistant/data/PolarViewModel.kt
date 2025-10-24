@@ -108,7 +108,7 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun batteryLevelReceived(identifier: String, level: Int) {
-                Toast.makeText(applicationContext, "Polar device connected - Battery level: $level%", Toast.LENGTH_SHORT).show()
+                Toast.makeText(applicationContext, "Polar device connected\nBattery level: $level%", Toast.LENGTH_SHORT).show()
                 viewModelScope.launch {
                     _batteryLevelState.value = level
                 }

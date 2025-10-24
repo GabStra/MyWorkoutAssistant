@@ -30,7 +30,7 @@ fun CurrentTime() {
 
     var showDots by remember { mutableStateOf(true) }
 
-    val captionStyle =  MaterialTheme.typography.labelSmall
+    val captionStyle =  MaterialTheme.typography.bodySmall
 
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current

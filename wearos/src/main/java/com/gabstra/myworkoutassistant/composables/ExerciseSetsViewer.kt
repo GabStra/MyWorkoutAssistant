@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -81,7 +83,7 @@ fun SetTableRow(
         modifier = modifier,
     ){
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().padding(1.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if(setState.isWarmupSet){
@@ -283,12 +285,14 @@ fun ExerciseSetsViewer(
             },
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val shape = RoundedCornerShape(25)
+
             SetTableRow(
                 modifier = Modifier
                     .height(22.5.dp)
                     .padding(bottom = 2.5.dp)
-                    .clip(RoundedCornerShape(25))
-                    .background(backgroundColor),
+                    .border(BorderStroke(1.dp, backgroundColor), shape)
+                    .clip(shape), // keep if you want content clipped to the rounded shape
                 hapticsViewModel = hapticsViewModel, // Accessed from ExerciseSetsViewer's scope
                 viewModel = viewModel,               // Accessed from ExerciseSetsViewer's scope
                 setState = setStateForThisRow,
@@ -297,9 +301,9 @@ fun ExerciseSetsViewer(
                 markAsDone = false, // customMarkAsDone ?: (rowIndex < setIndex),
                 textColor = customTextColor
                     ?: when {
-                        rowIndex < setIndex -> MaterialTheme.colorScheme.background //.background.copy(0.75f)// MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
-                        rowIndex == setIndex -> MaterialTheme.colorScheme.background
-                        else -> MaterialTheme.colorScheme.onSurface
+                        rowIndex < setIndex -> MaterialTheme.colorScheme.primary //.background.copy(0.75f)// MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
+                        rowIndex == setIndex -> MaterialTheme.colorScheme.onBackground
+                        else -> MaterialTheme.colorScheme.surfaceContainerHigh
                     }
             )
         }

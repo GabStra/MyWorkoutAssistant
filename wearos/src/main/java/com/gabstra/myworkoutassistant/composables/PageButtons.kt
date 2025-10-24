@@ -137,7 +137,7 @@ fun PageButtons(
                     )
                 }
             }
-            item{
+/*            item{
                 ButtonWithText(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -149,7 +149,7 @@ fun PageButtons(
                         viewModel.goToNextExercise()
                     }
                 )
-            }
+            }*/
         }
     }
 

@@ -1,8 +1,9 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -114,6 +115,8 @@ private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modi
 private fun ProgressionRow(
     info: ProgressionInfo
 ) {
+    val shape = RoundedCornerShape(25)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -125,8 +128,8 @@ private fun ProgressionRow(
             modifier = Modifier
                 .height(22.5.dp)
                 .padding(bottom = 2.5.dp)
-                .clip(RoundedCornerShape(25))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                .border(BorderStroke(1.dp,  MaterialTheme.colorScheme.onBackground), shape)
+                .clip(shape), // keep if you want content clipped to the rounded shape
             verticalAlignment = Alignment.CenterVertically
         ) {
             ScalableText(

@@ -1,8 +1,9 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -58,7 +59,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
             text = "Loading Guide",
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             textAlign = TextAlign.Center
         )
 
@@ -182,7 +183,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
-                                val backgroundColor = if (step.action == PlateCalculator.Companion.Action.ADD) {
+                                val color = if (step.action == PlateCalculator.Companion.Action.ADD) {
                                     Green
                                 } else {
                                     Red
@@ -204,12 +205,14 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                             "-"
                                         }
 
+                                    val shape = RoundedCornerShape(25)
+
                                     Row(
                                         modifier = Modifier
                                             .height(22.5.dp)
                                             .padding(bottom = 2.5.dp)
-                                            .clip(RoundedCornerShape(25))
-                                            .background( backgroundColor),
+                                            .border(BorderStroke(1.dp, color), shape)
+                                            .clip(shape), // keep if you want content clipped to the rounded shape
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         ScalableText(
@@ -217,7 +220,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                             text = "$actionText $weightText",
                                             style = style,
                                             textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onBackground
+                                            color = color
                                         )
                                     }
                                 }

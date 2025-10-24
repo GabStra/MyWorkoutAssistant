@@ -86,7 +86,7 @@ fun WorkoutStateHeader(
         }else{
             val measurer = rememberTextMeasurer()
             val density = LocalDensity.current
-            val captionStyle = MaterialTheme.typography.labelSmall
+            val captionStyle = MaterialTheme.typography.bodySmall
             val twoDigitWidth = remember(digits, density) {
                 with(density) { measurer.measure("00", style =captionStyle).size.width.toDp() }
             }
@@ -100,7 +100,7 @@ fun WorkoutStateHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    modifier = Modifier.size(12.5.dp).padding(bottom = 1.dp),
+                    modifier = Modifier.size(12.5.dp),
                     imageVector = Icons.Filled.AccessTimeFilled,
                     contentDescription = "clock",
                 )

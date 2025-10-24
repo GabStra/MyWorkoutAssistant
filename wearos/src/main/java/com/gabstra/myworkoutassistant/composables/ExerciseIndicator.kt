@@ -66,10 +66,13 @@ fun ExerciseIndicator(
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
 
-    val indicatorProgressByExerciseId = remember(exerciseIds,set) {
+    val indicatorProgressByExerciseId = remember(exerciseIds, set) {
         exerciseIds.associateWith { id ->
-            (viewModel.getAllExerciseCompletedSetsBefore(set).filter { it.exerciseId == id }.size) /
-            (viewModel.getAllExerciseWorkoutStates(id).size).toFloat()
+            val completed = viewModel.getAllExerciseCompletedSetsBefore(set)
+                .count { it.exerciseId == id }
+            val total = viewModel.getAllExerciseWorkoutStates(id).size
+
+            completed.toFloat() / total.toFloat()
         }
     }
 
@@ -126,17 +129,17 @@ fun ExerciseIndicator(
     val segmentArcAngle = (totalArcEffective - (visibleCount - 1) * paddingAngle) / visibleCount
 
     @Composable
-    fun ShowRotatingIndicator(exerciseId: UUID) {
+    fun ShowRotatingIndicator(exerciseId: UUID, color: Color = MaterialTheme.colorScheme.onBackground) {
         val idx = globalIndexByExerciseId[exerciseId] ?: return
         val posInWindow = if (idx in startIdx..endIdx) idx - startIdx else -1
         if (posInWindow >= 0) {
             val baseStart = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
             val mid = baseStart + segmentArcAngle / 2f
-            RotatingIndicator(mid, MaterialTheme.colorScheme.onBackground)
+            RotatingIndicator(mid, color)
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().padding(3.dp)) {
         // --- OUTER RING for visible superset ranges (drawn first) ---
         OuterSupersetOverlay(
             visibleIndices = visibleIndices,
@@ -145,21 +148,20 @@ fun ExerciseIndicator(
             startAngleEffective = startAngleEffective,
             segmentArcAngle = segmentArcAngle,
             paddingAngle = paddingAngle,
-            ringInset = 12.dp,
-            strokeWidth = 2.dp,
-            tickWidth = 2.dp,
-            tickLength = 4.dp,
-            arcColor = MaterialTheme.colorScheme.surfaceContainerHigh, //MaterialTheme.colorScheme.onBackground,
-            badgeColor = MaterialTheme.colorScheme.surfaceContainerHigh //MaterialTheme.colorScheme.onBackground
+            ringInset = 0.dp, //ringInset = 12.dp,
+            strokeWidth = 1.dp,
+            tickWidth = 1.dp,
+            tickLength = 3.dp,
+            arcColor = MaterialTheme.colorScheme.onBackground,
+            badgeColor = MaterialTheme.colorScheme.onBackground
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
         // --- INNER segments: every exercise gets same arc ---
         visibleIndices.forEachIndexed { posInWindow, globalIdx ->
             val eid = flatExerciseOrder[globalIdx]
             val eIdx = globalIndexByExerciseId[eid] ?: Int.MAX_VALUE
-            val isCurrent = eIdx == currentGlobalIdx
 
             val indicatorProgress = indicatorProgressByExerciseId[eid]!!
 
@@ -170,7 +172,7 @@ fun ExerciseIndicator(
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
                         indicatorColor = MaterialTheme.colorScheme.primary,
-                        trackColor = if(isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ),
                     progress = { indicatorProgress },
                     modifier = Modifier.fillMaxSize(),
@@ -198,18 +200,16 @@ fun ExerciseIndicator(
             show = showRightDots,
             dotAngleGapDeg = dotAngleGapDeg
         )
-
-
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId)) {
+    Box(modifier = Modifier.fillMaxSize().padding(18.dp)) {
+        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && set.exerciseId != selectedExerciseId) {
             ShowRotatingIndicator(selectedExerciseId)
+            ShowRotatingIndicator(set.exerciseId,MaterialTheme.colorScheme.surfaceContainerHigh)
         } else {
             ShowRotatingIndicator(set.exerciseId)
         }
     }
-
 }
 
 
@@ -328,8 +328,8 @@ private fun OuterSupersetOverlay(
                 )
 
                 val tickLen = strokePx
-                val innerR = r - tickLen / 2f
-                val outerR = r + tickLen / 2f + tickLengthPx
+                val innerR = r - tickLen / 2f - tickLengthPx
+                val outerR = r + tickLen / 2f
 
                 fun drawTick(atAngle: Float) {
                     val rad = Math.toRadians(atAngle.toDouble())

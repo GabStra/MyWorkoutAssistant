@@ -27,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -315,7 +316,7 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = textToDisplay,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
             color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.width(2.5.dp))
@@ -431,6 +432,33 @@ fun extractRotationAngles(
     return Pair(foundLowerBoundRotationAngle, foundUpperBoundRotationAngle)
 }
 
+fun extractCurrentHrRotationAngle(
+    zoneCount: Int,
+    zoneRanges: Array<Pair<Float, Float>>,
+    mhrPercentage: Float?,
+    totalStartAngle: Float,
+    segmentArcAngle: Float,
+    paddingAngle: Float
+): Float? {
+    if (segmentArcAngle <= 0f || zoneCount <= 0 || mhrPercentage == null) return null
+
+    for (index in 0 until zoneCount) {
+        val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
+        val endAngle = startAngle + segmentArcAngle
+        val (lowerBound, upperBound) = zoneRanges[index + 1]
+
+        if (mhrPercentage >= lowerBound && mhrPercentage <= upperBound) {
+            val percentageInZone = if (upperBound > lowerBound) {
+                ((mhrPercentage - lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
+            } else 0f
+
+            return getValueInRange(startAngle, endAngle, percentageInZone)
+        }
+    }
+
+    return null
+}
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HeartRateView(
@@ -511,6 +539,15 @@ private fun HeartRateView(
             paddingAngle = paddingAngle
         )
 
+        val currentHrRotationAngle = extractCurrentHrRotationAngle(
+            zoneCount = zoneCount,
+            zoneRanges = zoneRanges,
+            mhrPercentage = mhrPercentage,
+            totalStartAngle = totalStartAngle,
+            segmentArcAngle = segmentArcAngle,
+            paddingAngle = paddingAngle
+        )
+
         if (segmentArcAngle > 0f && zoneCount > 0) {
             for (index in 0 until zoneCount) {
 
@@ -519,29 +556,36 @@ private fun HeartRateView(
 
                 val (lowerBound, upperBound) = zoneRanges[index + 1]
 
-                ZoneSegment(
-                    modifier = Modifier.fillMaxSize(),
-                    index = index + 1,
-                    currentZone = currentZone,
-                    hr = hr,
-                    mhrPercentage = mhrPercentage,
-                    zoneRanges = zoneRanges,
-                    colorsByZone = colorsByZone,
-                    startAngle = startAngle,
-                    endAngle = endAngle,
-                    lowerBound = lowerBound,
-                    upperBound = upperBound
-                )
+                key(hr){
+                    ZoneSegment(
+                        modifier = Modifier.fillMaxSize().padding(10.dp),
+                        index = index + 1,
+                        currentZone = currentZone,
+                        hr = hr,
+                        mhrPercentage = mhrPercentage,
+                        zoneRanges = zoneRanges,
+                        colorsByZone = colorsByZone,
+                        startAngle = startAngle,
+                        endAngle = endAngle,
+                        lowerBound = lowerBound,
+                        upperBound = upperBound
+                    )
+                }
             }
         }
 
         if(lowerBoundRotationAngle != null && upperBoundRotationAngle != null){
+            val inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            var inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
+            Box(modifier = Modifier.fillMaxSize()) {
+                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainerHigh, reverse = true, bubbleSize = 6.dp)
+                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainerHigh, reverse = true, bubbleSize = 6.dp)
+            }
+        }
 
-            Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainerHigh)
-                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainerHigh)
+        if(currentHrRotationAngle != null){
+            Box(modifier = Modifier.fillMaxSize().padding(18.dp)) {
+                RotatingIndicator(currentHrRotationAngle,  colorsByZone[currentZone])
             }
         }
     }

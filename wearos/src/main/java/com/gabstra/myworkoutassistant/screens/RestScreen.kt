@@ -339,8 +339,8 @@ fun RestScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = 2.5.dp)
-                            .padding(horizontal = 15.dp)
+                            .padding(top = 5.dp)
+                            .padding(horizontal = 17.5.dp)
                     ) {
                         when (pageType) {
                             PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment, hapticsViewModel)
@@ -401,7 +401,7 @@ fun RestScreen(
         textComposable(
             seconds = if(isTimerInEditMode) currentSecondsFreeze else currentSeconds,
             modifier = Modifier.align(Alignment.BottomCenter),
-            style = MaterialTheme.typography.labelSmall
+            style = MaterialTheme.typography.labelMedium
         )
     }
 

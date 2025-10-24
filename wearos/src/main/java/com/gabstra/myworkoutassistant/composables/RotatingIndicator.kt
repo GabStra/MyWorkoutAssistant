@@ -1,15 +1,12 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -18,18 +15,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material3.MaterialTheme
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @Composable
-fun RotatingIndicator(rotationAngle: Float, fillColor: Color) {
-    // Size of the circular background around the arrow
-    val bubbleSize = 12.dp
-
+fun RotatingIndicator(rotationAngle: Float, fillColor: Color, reverse: Boolean = false, bubbleSize: Dp = 8.dp) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val wPx = constraints.maxWidth.toFloat()
@@ -50,9 +44,9 @@ fun RotatingIndicator(rotationAngle: Float, fillColor: Color) {
                 .offset { IntOffset((x - bubblePx / 2f).roundToInt(), (y - bubblePx / 2f).roundToInt()) }
                 .size(bubbleSize)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.background)
+                //.background(MaterialTheme.colorScheme.background)
         ) {
-            Canvas(modifier = Modifier.fillMaxSize().padding(1.dp)) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
                 val r = size.minDimension * 0.35f
                 val c = Offset(size.width / 2f, size.height / 2f)
                 val dy = -r / 3f // shift up so centroid = c
@@ -64,7 +58,8 @@ fun RotatingIndicator(rotationAngle: Float, fillColor: Color) {
                     close()
                 }
 
-                rotate(degrees = rotationAngle + 90f, pivot = c) {
+                val extra = if (reverse) 180f else 0f
+                rotate(degrees = rotationAngle + 90f + extra, pivot = c) {
                     drawPath(path = triangle, color = fillColor)
                 }
             }
