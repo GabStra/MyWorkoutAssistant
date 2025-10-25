@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -132,14 +133,19 @@ private fun ProgressionRow(
                 .clip(shape), // keep if you want content clipped to the rounded shape
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ScalableText(
-                modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
-                text = info.exerciseName,
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center
-            )
-            StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
-            StatusIcon(label = "EXP", status = info.vsExpected, modifier = Modifier.weight(1f))
+            Row(
+                modifier = Modifier.fillMaxSize().padding(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ScalableText(
+                    modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
+                    text = info.exerciseName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+                StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
+                StatusIcon(label = "EXP", status = info.vsExpected, modifier = Modifier.weight(1f))
+            }
         }
     }
 }

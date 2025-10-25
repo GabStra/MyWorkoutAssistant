@@ -66,7 +66,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
                 text = "Not available",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center
             )
         } else {
@@ -89,7 +89,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
                     Text(
                         text = topLine,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier.clickable {
@@ -111,7 +111,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
                     Text(
                         text = topLine,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier.clickable {
@@ -127,12 +127,12 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 Text(
                     text = "No changes required",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground
                 )
             } else {
-                val headerStyle = MaterialTheme.typography.labelSmall
+                val headerStyle = MaterialTheme.typography.bodySmall
 
                 Column(
                     modifier = Modifier
@@ -216,7 +216,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         ScalableText(
-                                            modifier = Modifier.fillMaxSize(),
+                                            modifier = Modifier.fillMaxSize().padding(2.dp),
                                             text = "$actionText $weightText",
                                             style = style,
                                             textAlign = TextAlign.Center,

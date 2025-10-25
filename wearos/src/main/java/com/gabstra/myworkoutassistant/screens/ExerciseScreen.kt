@@ -221,7 +221,7 @@ fun ExerciseScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 25.dp, horizontal = 15.dp)
+                .padding(25.dp)
                 .clip(CircularEndsPillShape(straightWidth = 50.dp)),
         ) {
             CustomHorizontalPager(
@@ -247,7 +247,7 @@ fun ExerciseScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = 5.dp)
-                        .padding(horizontal = 17.5.dp)
+                        .padding(horizontal = 15.dp)
                 ) {
                     when (pageType) {
                         PageType.PLATES -> PagePlates(updatedState, equipment, hapticsViewModel)
@@ -328,7 +328,7 @@ fun ExerciseScreen(
 
                                     Text(
                                         text = topLine,
-                                        style = MaterialTheme.typography.labelSmall,
+                                        style = MaterialTheme.typography.bodySmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -363,7 +363,7 @@ fun ExerciseScreen(
                                     if (bottomLine.text.isNotEmpty()) {
                                         Text(
                                             text = bottomLine,
-                                            style = MaterialTheme.typography.labelSmall,
+                                            style = MaterialTheme.typography.bodySmall,
                                             textAlign = TextAlign.Center,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,

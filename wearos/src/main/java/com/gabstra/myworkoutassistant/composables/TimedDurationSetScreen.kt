@@ -98,7 +98,7 @@ fun TimedDurationSetScreen(
     val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
 
     val typography = MaterialTheme.typography
-    val headerStyle = MaterialTheme.typography.bodyExtraSmall
+    val headerStyle = MaterialTheme.typography.bodySmall
     val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = W700) }
 
     LaunchedEffect(isTimerInEditMode) {

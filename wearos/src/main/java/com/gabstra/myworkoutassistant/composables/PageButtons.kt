@@ -89,7 +89,7 @@ fun PageButtons(
                         .transformedHeight(this, spec).animateItem(),
                     transformation = SurfaceTransformation(spec),
                     label = { Text(
-                        text = "Keep screen on",
+                        text = "Keep on",
                         textAlign = TextAlign.Center
                     ) },
                     checked = keepScreenOn,

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -66,13 +67,19 @@ fun ExerciseIndicator(
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
 
+    Log.d("ExerciseIndicator","current exercise: ${set.exerciseId}")
+
     val indicatorProgressByExerciseId = remember(exerciseIds, set) {
         exerciseIds.associateWith { id ->
             val completed = viewModel.getAllExerciseCompletedSetsBefore(set)
                 .count { it.exerciseId == id }
             val total = viewModel.getAllExerciseWorkoutStates(id).size
 
-            completed.toFloat() / total.toFloat()
+            if(id == set.exerciseId){
+                (completed.toFloat() + 1) / total.toFloat()
+            }else{
+                completed.toFloat() / total.toFloat()
+            }
         }
     }
 
@@ -162,6 +169,7 @@ fun ExerciseIndicator(
         visibleIndices.forEachIndexed { posInWindow, globalIdx ->
             val eid = flatExerciseOrder[globalIdx]
             val eIdx = globalIndexByExerciseId[eid] ?: Int.MAX_VALUE
+            val isCurrent = eIdx == currentGlobalIdx
 
             val indicatorProgress = indicatorProgressByExerciseId[eid]!!
 
@@ -171,7 +179,7 @@ fun ExerciseIndicator(
             key(eid,indicatorProgress) {
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = if(isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ),
                     progress = { indicatorProgress },

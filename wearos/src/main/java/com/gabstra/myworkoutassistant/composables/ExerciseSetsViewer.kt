@@ -83,7 +83,7 @@ fun SetTableRow(
         modifier = modifier,
     ){
         Row(
-            modifier = Modifier.fillMaxSize().padding(1.dp),
+            modifier = Modifier.fillMaxSize().padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if(setState.isWarmupSet){

@@ -63,7 +63,7 @@ fun WorkoutCompleteScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val countDownTimer = remember { mutableIntStateOf(10) }
 
-    val headerStyle = MaterialTheme.typography.labelSmall
+    val headerStyle = MaterialTheme.typography.bodySmall
 
     val scope = rememberCoroutineScope()
     var closeJob by remember { mutableStateOf<Job?>(null) }
