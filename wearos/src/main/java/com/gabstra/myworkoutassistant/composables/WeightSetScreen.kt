@@ -319,11 +319,11 @@ fun WeightSetScreen(
     fun SetScreen(customModifier: Modifier) {
         Column (
             modifier = customModifier,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ){
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -390,14 +390,19 @@ fun WeightSetScreen(
             } else {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    exerciseTitleComposable()
-
-                    if (extraInfo != null) {
-                        //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                        extraInfo(state)
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
+                    ){
+                        exerciseTitleComposable()
+                        if (extraInfo != null) {
+                            //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            extraInfo(state)
+                        }
                     }
+
                     SetScreen(
                         customModifier = Modifier
                             .weight(1f)

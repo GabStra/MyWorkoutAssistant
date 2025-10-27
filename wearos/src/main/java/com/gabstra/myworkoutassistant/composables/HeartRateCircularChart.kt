@@ -558,7 +558,7 @@ private fun HeartRateView(
 
                 key(hr){
                     ZoneSegment(
-                        modifier = Modifier.fillMaxSize().padding(13.dp),
+                        modifier = Modifier.fillMaxSize(),
                         index = index + 1,
                         currentZone = currentZone,
                         hr = hr,
@@ -577,14 +577,14 @@ private fun HeartRateView(
         if(lowerBoundRotationAngle != null && upperBoundRotationAngle != null){
             val inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
 
-            Box(modifier = Modifier.fillMaxSize()) {
-                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainerHigh, reverse = true)
-                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainerHigh, reverse = true)
+            Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainerHigh)
+                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainerHigh)
             }
         }
 
         if(currentHrRotationAngle != null){
-            Box(modifier = Modifier.fillMaxSize().padding(21.dp)) {
+            Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                 RotatingIndicator(currentHrRotationAngle,  colorsByZone[currentZone])
             }
         }

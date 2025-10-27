@@ -98,7 +98,7 @@ fun PageExercises(
 
         Column(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp,Alignment.Bottom),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -118,14 +118,24 @@ fun PageExercises(
             )
 
             val topLine = buildAnnotatedString {
-                fun pipe() { append(" • ") }
+                @Composable
+                fun pipe() {
+                    withStyle(
+                        SpanStyle(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            fontWeight = FontWeight.Bold
+                        )
+                    ) {
+                        append(" • ")
+                    }
+                }
                 fun separator() {
                     withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
                         append( "↔")
                     }
                 }
 
-                append("${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+                append("Ex: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
 
                 if (isSuperset) {
                     pipe()
@@ -195,8 +205,6 @@ fun PageExercises(
             )
 
             ExerciseSetsViewer(
-                modifier = Modifier
-                    .weight(1f),
                 viewModel = viewModel,
                 hapticsViewModel = hapticsViewModel,
                 exercise = selectedExercise,

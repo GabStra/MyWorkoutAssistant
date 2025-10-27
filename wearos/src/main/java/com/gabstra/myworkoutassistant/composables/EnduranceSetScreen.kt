@@ -26,7 +26,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
@@ -275,58 +274,62 @@ fun EnduranceSetScreen (
 
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        Column (
+        Column(
             modifier = customModifier,
-        ){
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.5.dp)
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                ) {
-                    Text(
-                        text = "TIMER",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                    )
-                    textComposable()
-                }
-                if (showStartButton) {
-                    IconButton(
-                        modifier = Modifier.size(50.dp),
-                        onClick = {
-                            scope.launch {
-                                showCountDownIfEnabled()
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.5.dp, alignment = Alignment.Top)
+        ) {
+            Text(
+                text = "TIMER",
+                style = headerStyle,
+                textAlign = TextAlign.Center,
+            )
+            textComposable()
 
-                                if(state.startTime == null){
-                                    state.startTime = LocalDateTime.now()
-                                }
+            if (showStartButton) {
+                IconButton(
+                    modifier = Modifier.size(50.dp),
+                    onClick = {
+                        scope.launch {
+                            showCountDownIfEnabled()
 
-                                hapticsViewModel.doHardVibrationTwice()
-                                startTimerJob()
-
-                                showStartButton = false
+                            if (state.startTime == null) {
+                                state.startTime = LocalDateTime.now()
                             }
-                        },
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
-                    ){
-                        Icon(modifier = Modifier.size(30.dp), imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                }else{
-                    IconButton(
-                        modifier = Modifier.size(50.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            timerJob?.cancel()
-                            showStopDialog = true
-                        },
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
-                    ) {
-                        Icon(modifier = Modifier.size(30.dp), imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
-                    }
+
+                            hapticsViewModel.doHardVibrationTwice()
+                            startTimerJob()
+
+                            showStartButton = false
+                        }
+                    },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
+                ) {
+                    Icon(
+                        modifier = Modifier.size(30.dp),
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Start",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            if (timerJob?.isActive == true) {
+                IconButton(
+                    modifier = Modifier.size(50.dp),
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        timerJob?.cancel()
+                        showStopDialog = true
+                    },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
+                ) {
+                    Icon(
+                        modifier = Modifier.size(30.dp),
+                        imageVector = Icons.Default.Stop,
+                        contentDescription = "Stop",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
         }
@@ -358,14 +361,17 @@ fun EnduranceSetScreen (
                 )
             } else {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    exerciseTitleComposable()
-                    if (extraInfo != null) {
-                        //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                        extraInfo(state)
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
+                    ) {
+                        exerciseTitleComposable()
+                        if (extraInfo != null) {
+                            //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                            extraInfo(state)
+                        }
                     }
                     SetScreen(customModifier = Modifier.weight(1f))
                 }

@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.LocalTextConfiguration
 import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -33,9 +34,11 @@ import kotlin.math.abs
 fun ScalableText(
     text: String,
     modifier: Modifier = Modifier,
+    textModifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onBackground,
     style: TextStyle = LocalTextStyle.current,
     textAlign: TextAlign? = TextAlign.Center,
+    overflow: TextOverflow = LocalTextConfiguration.current.overflow,
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
     fadeInMillis: Int = 250,
@@ -115,7 +118,8 @@ fun ScalableText(
             color = color,
             maxLines = maxLines,
             textAlign = textAlign,
-            modifier = if(fadeInMillis > 200) Modifier.alpha(alpha) else Modifier.alpha(if (show) 1f else 0f)
+            overflow = overflow,
+            modifier = if(fadeInMillis > 200) Modifier.alpha(alpha).then(textModifier) else Modifier.alpha(if (show) 1f else 0f).then(textModifier)
         )
     }
 }

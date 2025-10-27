@@ -326,7 +326,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(25.dp)
+                    .padding(20.dp)
                     .clip(CircularEndsPillShape(straightWidth = 50.dp)),
             ) {
                 CustomHorizontalPager(
@@ -340,7 +340,7 @@ fun RestScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = 5.dp)
-                            .padding(horizontal = 12.5.dp)
+                            .padding(horizontal = 15.dp)
                     ) {
                         when (pageType) {
                             PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment, hapticsViewModel)
@@ -388,7 +388,7 @@ fun RestScreen(
             progress = {
                 indicatorProgress.floatValue
             },
-            modifier = Modifier.fillMaxSize().padding(10.dp),
+            modifier = Modifier.fillMaxSize(),
             colors = ProgressIndicatorDefaults.colors(
                 indicatorColor = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHigh

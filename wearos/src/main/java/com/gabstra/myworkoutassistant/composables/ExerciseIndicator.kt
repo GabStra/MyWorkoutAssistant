@@ -143,7 +143,7 @@ fun ExerciseIndicator(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+/*    Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
         // --- OUTER RING for visible superset ranges (drawn first) ---
         OuterSupersetOverlay(
             visibleIndices = visibleIndices,
@@ -159,9 +159,9 @@ fun ExerciseIndicator(
             arcColor = MaterialTheme.colorScheme.onBackground,
             badgeColor = MaterialTheme.colorScheme.onBackground
         )
-    }
+    }*/
 
-    Box(modifier = Modifier.fillMaxSize().padding(13.dp)) {
+    Box(modifier = Modifier.fillMaxSize()) {
         // --- INNER segments: every exercise gets same arc ---
         visibleIndices.forEachIndexed { posInWindow, globalIdx ->
             val eid = flatExerciseOrder[globalIdx]
@@ -207,7 +207,7 @@ fun ExerciseIndicator(
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(21.dp)) {
+    Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
         if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && set.exerciseId != selectedExerciseId) {
             ShowRotatingIndicator(selectedExerciseId)
             ShowRotatingIndicator(set.exerciseId,MaterialTheme.colorScheme.surfaceContainerHigh)

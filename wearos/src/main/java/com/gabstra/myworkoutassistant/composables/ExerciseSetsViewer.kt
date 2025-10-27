@@ -270,7 +270,7 @@ fun ExerciseSetsViewer(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(25.dp)
+                .height(30.dp)
                 .padding(horizontal = 10.dp)
                 .onGloballyPositioned { coordinates ->
                 val height = coordinates.size.height
@@ -289,7 +289,7 @@ fun ExerciseSetsViewer(
 
             SetTableRow(
                 modifier = Modifier
-                    .height(22.5.dp)
+                    .height(27.5.dp)
                     .padding(bottom = 2.5.dp)
                     .border(BorderStroke(1.dp, backgroundColor), shape)
                     .clip(shape), // keep if you want content clipped to the rounded shape

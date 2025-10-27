@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
@@ -82,10 +83,23 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 val currentWeightTotal = remember(equipment.barWeight,currentSideWeightTotal) { (equipment.barWeight + (currentSideWeightTotal*2)).round(2) }
 
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
-                    val topLine = buildList {
-                        add("Σ ${formatWeight(currentWeightTotal)}")
-                        add("Bar ${formatWeight(equipment.barWeight)}")
-                    }.joinToString(" • ")
+                    val topLine = buildAnnotatedString {
+                        @Composable
+                        fun pipe() {
+                            withStyle(
+                                SpanStyle(
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            ) {
+                                append(" • ")
+                            }
+                        }
+
+                        append("Σ ${formatWeight(currentWeightTotal)}")
+                        pipe()
+                        append("Bar ${formatWeight(equipment.barWeight)}")
+                    }
 
                     Text(
                         text = topLine,
@@ -100,12 +114,24 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     )
                 }else {
                     val topLine = buildAnnotatedString {
+                        @Composable
+                        fun pipe() {
+                            withStyle(
+                                SpanStyle(
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            ) {
+                                append(" • ")
+                            }
+                        }
+
                         append("Σ ${formatWeight(previousWeightTotal)}")
                         withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
                             append( " → ")
                         }
                         append("${formatWeight(currentWeightTotal)}")
-                        append(" • ")
+                        pipe()
                         append("Bar ${formatWeight(equipment.barWeight)}")
                     }
 
@@ -136,7 +162,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
                 Column(
                     modifier = Modifier
-                        .weight(1f).padding(horizontal = 10.dp),
+                        .weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.5.dp),
                 ) {
                     Row(
@@ -158,7 +184,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(25.dp)
+                                .height(30.dp)
                                 .padding(horizontal = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) { }
@@ -193,7 +219,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 10.dp)
-                                        .height(25.dp),
+                                        .height(30.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val weightText = String.format("%.2f", step.weight).replace(",", ".")
@@ -209,7 +235,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
                                     Row(
                                         modifier = Modifier
-                                            .height(22.5.dp)
+                                            .height(27.5.dp)
                                             .padding(bottom = 2.5.dp)
                                             .border(BorderStroke(1.dp, color), shape)
                                             .clip(shape), // keep if you want content clipped to the rounded shape

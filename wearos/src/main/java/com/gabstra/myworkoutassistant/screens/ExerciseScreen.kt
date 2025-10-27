@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
+import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -195,10 +196,10 @@ fun ExerciseScreen(
 
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
-                Text(
+                ScalableText(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 30.dp)
+                        .padding(horizontal = 15.dp)
                         .combinedClickable(
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
@@ -207,20 +208,19 @@ fun ExerciseScreen(
                             onLongClick = {
                                 providedOnLongClick.invoke()
                             }
-                        )
-                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                        ),
                     text = exercise.name,
+                    textModifier = if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.displaySmall,
                 )
             }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(25.dp)
+                .padding(20.dp)
                 .clip(CircularEndsPillShape(straightWidth = 50.dp)),
         ) {
             CustomHorizontalPager(
@@ -246,7 +246,7 @@ fun ExerciseScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = 5.dp)
-                        .padding(horizontal = 12.5.dp)
+                        .padding(horizontal = 15.dp)
                 ) {
                     when (pageType) {
                         PageType.PLATES -> PagePlates(updatedState, equipment, hapticsViewModel)
@@ -265,14 +265,24 @@ fun ExerciseScreen(
                                 ) {
 
                                     val topLine = buildAnnotatedString {
-                                        fun pipe() { append(" • ") }
+                                        @Composable
+                                        fun pipe() {
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            ) {
+                                                append(" • ")
+                                            }
+                                        }
                                         fun separator() {
                                             withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
                                                 append( "↔")
                                             }
                                         }
 
-                                        append("${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+                                        append("Ex: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
 
                                         if (exerciseSetIds.size > 1) {
                                             pipe()
@@ -331,7 +341,8 @@ fun ExerciseScreen(
                                         textAlign = TextAlign.Center,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.clickable {
+                                        modifier = Modifier
+                                            .clickable {
                                             headerMarqueeEnabled = !headerMarqueeEnabled
                                             hapticsViewModel.doGentleVibration()
                                         }
@@ -340,7 +351,21 @@ fun ExerciseScreen(
 
                                     val bottomLine = buildAnnotatedString {
                                         var first = true
-                                        fun sep() { if (!first) append(" • "); first = false }
+
+                                        @Composable
+                                        fun sep() {
+                                            if (!first){
+                                                withStyle(
+                                                    SpanStyle(
+                                                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                ) {
+                                                    append(" • ")
+                                                }
+                                            }
+                                            first = false
+                                        }
 
                                         if (equipment != null) {
                                             sep()
@@ -366,7 +391,8 @@ fun ExerciseScreen(
                                             textAlign = TextAlign.Center,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.clickable {
+                                            modifier = Modifier
+                                                .clickable {
                                                 headerMarqueeEnabled = !headerMarqueeEnabled
                                                 hapticsViewModel.doGentleVibration()
                                             }
