@@ -122,6 +122,7 @@ fun WorkoutStateHeader(
                     modifier = Modifier.width(twoDigitWidth),
                     text = String.format("%02d", minutes),
                     style = captionStyle,
+                    textAlign = TextAlign.Center,
                 )
 
                 Text(

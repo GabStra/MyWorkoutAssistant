@@ -61,7 +61,7 @@ fun WorkoutCompleteScreen(
     val context = LocalContext.current
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
-    val countDownTimer = remember { mutableIntStateOf(10) }
+    val countDownTimer = remember { mutableIntStateOf(30) }
 
     val headerStyle = MaterialTheme.typography.bodySmall
 

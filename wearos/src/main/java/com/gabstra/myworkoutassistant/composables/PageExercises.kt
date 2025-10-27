@@ -104,7 +104,7 @@ fun PageExercises(
             Text(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 27.5.dp)
+                    .padding(horizontal = 30.dp)
                     .clickable {
                         marqueeEnabled = !marqueeEnabled
                         hapticsViewModel.doGentleVibration()
@@ -125,7 +125,7 @@ fun PageExercises(
                     }
                 }
 
-                append("Ex: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+                append("${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
 
                 if (isSuperset) {
                     pipe()

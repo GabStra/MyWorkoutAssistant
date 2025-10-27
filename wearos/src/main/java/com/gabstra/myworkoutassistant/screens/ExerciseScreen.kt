@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -199,7 +198,7 @@ fun ExerciseScreen(
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 27.5.dp)
+                        .padding(horizontal = 30.dp)
                         .combinedClickable(
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
@@ -247,7 +246,7 @@ fun ExerciseScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = 5.dp)
-                        .padding(horizontal = 15.dp)
+                        .padding(horizontal = 12.5.dp)
                 ) {
                     when (pageType) {
                         PageType.PLATES -> PagePlates(updatedState, equipment, hapticsViewModel)
@@ -273,7 +272,7 @@ fun ExerciseScreen(
                                             }
                                         }
 
-                                        append("Ex: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+                                        append("${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
 
                                         if (exerciseSetIds.size > 1) {
                                             pipe()
@@ -345,7 +344,7 @@ fun ExerciseScreen(
 
                                         if (equipment != null) {
                                             sep()
-                                            append("Eq: ${equipment.name}")
+                                            append(equipment.name)
                                         }
                                         if (updatedState.isWarmupSet) {
                                             sep()
@@ -453,14 +452,6 @@ fun ExerciseScreen(
             )
 
             hearthRateChart()
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(vertical = 20.dp, horizontal = 20.dp)
-                .clip(CircleShape),
-        ) {
         }
     }
 

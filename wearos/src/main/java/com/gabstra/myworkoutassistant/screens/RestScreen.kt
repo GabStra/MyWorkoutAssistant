@@ -340,7 +340,7 @@ fun RestScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = 5.dp)
-                            .padding(horizontal = 15.dp)
+                            .padding(horizontal = 12.5.dp)
                     ) {
                         when (pageType) {
                             PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment, hapticsViewModel)

@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -66,8 +65,6 @@ fun ExerciseIndicator(
 ) {
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
-
-    Log.d("ExerciseIndicator","current exercise: ${set.exerciseId}")
 
     val indicatorProgressByExerciseId = remember(exerciseIds, set) {
         exerciseIds.associateWith { id ->
@@ -146,7 +143,7 @@ fun ExerciseIndicator(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(3.dp)) {
+    Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
         // --- OUTER RING for visible superset ranges (drawn first) ---
         OuterSupersetOverlay(
             visibleIndices = visibleIndices,
@@ -164,7 +161,7 @@ fun ExerciseIndicator(
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
+    Box(modifier = Modifier.fillMaxSize().padding(13.dp)) {
         // --- INNER segments: every exercise gets same arc ---
         visibleIndices.forEachIndexed { posInWindow, globalIdx ->
             val eid = flatExerciseOrder[globalIdx]
@@ -210,7 +207,7 @@ fun ExerciseIndicator(
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(18.dp)) {
+    Box(modifier = Modifier.fillMaxSize().padding(21.dp)) {
         if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && set.exerciseId != selectedExerciseId) {
             ShowRotatingIndicator(selectedExerciseId)
             ShowRotatingIndicator(set.exerciseId,MaterialTheme.colorScheme.surfaceContainerHigh)

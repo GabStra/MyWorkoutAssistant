@@ -63,6 +63,7 @@ fun CurrentTime() {
             text = ":",
             style = captionStyle,
             color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
+            textAlign = TextAlign.Center,
         )
 
         Text(

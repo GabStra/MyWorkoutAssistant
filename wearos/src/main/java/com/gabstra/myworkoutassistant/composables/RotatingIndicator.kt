@@ -15,7 +15,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.cos
@@ -23,7 +22,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @Composable
-fun RotatingIndicator(rotationAngle: Float, fillColor: Color, reverse: Boolean = false, bubbleSize: Dp = 8.dp) {
+fun RotatingIndicator(rotationAngle: Float, fillColor: Color, reverse: Boolean = false) {
+    val bubbleSize = 10.dp
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val wPx = constraints.maxWidth.toFloat()
