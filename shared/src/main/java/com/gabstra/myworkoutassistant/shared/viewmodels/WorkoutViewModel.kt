@@ -1448,12 +1448,12 @@ open class WorkoutViewModel : ViewModel() {
                     val restState = WorkoutState.Rest(
                         set = restSet,
                         order = index.toUInt(),
-                        currentSetData = initializeSetData(
+                        currentSetDataState = mutableStateOf(initializeSetData(
                             RestSet(
                                 workoutComponent.id,
                                 workoutComponent.timeInSeconds
                             )
-                        )
+                        ))
                     )
 
                     totalStates.add(restState)
@@ -1505,7 +1505,7 @@ open class WorkoutViewModel : ViewModel() {
                                     WorkoutState.Rest(
                                         set = restSet,
                                         order = (round + 1).toUInt(),
-                                        currentSetData = initializeSetData(restSet),
+                                        currentSetDataState = mutableStateOf(initializeSetData(restSet)),
                                         exerciseId = s.exerciseId
                                     )
                                 )
@@ -1802,7 +1802,7 @@ open class WorkoutViewModel : ViewModel() {
                 val restState = WorkoutState.Rest(
                     set = set,
                     order = index.toUInt(),
-                    currentSetData = initializeSetData(set),
+                    currentSetDataState = mutableStateOf(initializeSetData(set)),
                     exerciseId = exercise.id
                 )
                 states.add(restState)
@@ -1848,7 +1848,7 @@ open class WorkoutViewModel : ViewModel() {
                     set,
                     index.toUInt(),
                     previousSetData,
-                    currentSetData,
+                    currentSetDataState = mutableStateOf(currentSetData),
                     historySet == null,
                     startTime = null,
                     false,
@@ -1870,7 +1870,7 @@ open class WorkoutViewModel : ViewModel() {
                     val restState = WorkoutState.Rest(
                         set = restSet,
                         order = index.toUInt(),
-                        currentSetData = initializeSetData(restSet),
+                        currentSetDataState = mutableStateOf(initializeSetData(restSet)),
                         nextStateSets = listOf(setState),
                         exerciseId = exercise.id,
                         isIntraSetRest = true

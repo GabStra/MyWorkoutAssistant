@@ -213,7 +213,9 @@ fun ExerciseScreen(
                     textModifier = if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                     textAlign = TextAlign.Center,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.displaySmall.copy(
+                        fontWeight = FontWeight.SemiBold
+                    ),
                 )
             }
 
@@ -409,7 +411,7 @@ fun ExerciseScreen(
                         )
 
                         PageType.EXERCISES -> {
-                            key(updatedState.currentSetData) {
+                            key(pageType) {
                                 PageExercises(
                                     selectedExercise,
                                     updatedState,

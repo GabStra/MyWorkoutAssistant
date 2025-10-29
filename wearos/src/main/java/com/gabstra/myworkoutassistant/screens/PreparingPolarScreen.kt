@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.runtime.Composable
@@ -28,15 +29,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.composables.EnhancedIconButton
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -139,7 +140,9 @@ fun PreparingPolarScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Button(
+                        EnhancedIconButton(
+                            buttonSize = 50.dp,
+                            hitBoxScale = 1f,
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 viewModel.goToNextState()
@@ -147,13 +150,9 @@ fun PreparingPolarScreen(
                                 viewModel.setWorkoutStart()
                                 onReady()
                             },
-                            modifier = Modifier.size(35.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.background)
+                            buttonModifier = Modifier.clip(CircleShape),
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.DoubleArrow,
-                                contentDescription = "skip"
-                            )
+                            Icon(modifier = Modifier.size(30.dp), imageVector = Icons.Default.DoubleArrow, contentDescription = "Close",tint = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }

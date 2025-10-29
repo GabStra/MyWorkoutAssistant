@@ -104,7 +104,7 @@ fun PageExercises(
             Text(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 30.dp)
+                    .padding(horizontal = 20.dp)
                     .clickable {
                         marqueeEnabled = !marqueeEnabled
                         hapticsViewModel.doGentleVibration()
@@ -112,7 +112,9 @@ fun PageExercises(
                     .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                 text = selectedExercise.name,
                 textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.SemiBold
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

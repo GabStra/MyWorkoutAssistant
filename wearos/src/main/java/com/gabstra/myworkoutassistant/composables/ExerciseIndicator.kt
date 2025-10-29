@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -30,6 +32,8 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import java.util.UUID
@@ -66,16 +70,23 @@ fun ExerciseIndicator(
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
 
-    val indicatorProgressByExerciseId = remember(exerciseIds, set) {
-        exerciseIds.associateWith { id ->
-            val completed = viewModel.getAllExerciseCompletedSetsBefore(set)
-                .count { it.exerciseId == id }
-            val total = viewModel.getAllExerciseWorkoutStates(id).size
+    val indicatorProgressByExerciseId by remember(exerciseIds, set) {
+        derivedStateOf {
+            exerciseIds.associateWith { id ->
+                val completed = viewModel.getAllExerciseCompletedSetsBefore(set).count { it.exerciseId == id }
+                val total = viewModel.getAllExerciseWorkoutStates(id).size
 
-            if(id == set.exerciseId){
-                (completed.toFloat() + 1) / total.toFloat()
-            }else{
-                completed.toFloat() / total.toFloat()
+                if (id == set.exerciseId) {
+                    if (total == 1) {
+                        when (val d = set.currentSetData) { // reading snapshot state -> recomposes
+                            is EnduranceSetData     -> 1 - (d.endTimer / d.startTimer.toFloat())
+                            is TimedDurationSetData -> 1 - (d.endTimer / d.startTimer.toFloat())
+                            else -> (completed + 1f) / total.toFloat()
+                        }
+                    } else (completed + 1f) / total.toFloat()
+                } else {
+                    completed.toFloat() / total.toFloat()
+                }
             }
         }
     }

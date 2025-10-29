@@ -25,7 +25,7 @@ sealed class WorkoutState {
         var set: com.gabstra.myworkoutassistant.shared.sets.Set,
         val setIndex: UInt,
         val previousSetData: SetData?,
-        var currentSetData: SetData,
+        val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,        // constructor param
         val hasNoHistory: Boolean,
         var startTime : LocalDateTime? = null,
         var skipped: Boolean,
@@ -40,17 +40,21 @@ sealed class WorkoutState {
         val isUnilateral: Boolean = false,
         val intraSetTotal : UInt? = null,
         var intraSetCounter : UInt = 0u,
-    ) : WorkoutState()
+    ) : WorkoutState() {
+        var currentSetData by currentSetDataState // <-- observe changes
+    }
 
     data class Rest(
         var set: com.gabstra.myworkoutassistant.shared.sets.Set,
         val order: UInt,
-        var currentSetData: SetData,
+        val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
         val exerciseId: UUID? = null,
         var nextStateSets: List<WorkoutState.Set> = emptyList(),
         var startTime : LocalDateTime? = null,
         val isIntraSetRest : Boolean = false
-    ) : WorkoutState()
+    ) : WorkoutState() {
+        var currentSetData by currentSetDataState   // <- Compose-observed
+    }
 
     data class Completed(val startWorkoutTime: LocalDateTime) : WorkoutState()
     {
