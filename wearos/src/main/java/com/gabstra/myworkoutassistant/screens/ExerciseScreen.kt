@@ -357,7 +357,7 @@ fun ExerciseScreen(
                                             if (!first){
                                                 withStyle(
                                                     SpanStyle(
-                                                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                        //color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                 ) {

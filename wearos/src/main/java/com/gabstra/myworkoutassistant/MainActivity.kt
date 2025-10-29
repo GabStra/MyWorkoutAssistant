@@ -29,7 +29,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,9 +44,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.wear.compose.material3.CircularProgressIndicator
+import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -377,19 +375,14 @@ fun WearApp(
                     composable(Screen.Loading.route) {
                         val progress by appViewModel.backupProgress
 
-                        key(progress){
-                            CircularProgressIndicator(
-                                progress = { progress },
-                                modifier = Modifier
-                                    .fillMaxSize(),
-                                colors = ProgressIndicatorDefaults.colors(
-                                    indicatorColor = MaterialTheme.colorScheme.primary,
-                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                                ),
-                                strokeWidth = 4.dp
-                            )
-                        }
-
+                        CircularProgressIndicator(
+                            progress = progress,
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            strokeWidth = 4.dp,
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        )
 
                         LoadingScreen(appViewModel,"Syncing with phone")
                     }

@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,10 +32,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import kotlinx.coroutines.Job
@@ -221,18 +218,14 @@ fun CustomDialogYesOnLongPress(
             )*/
 
 
-            key(progress){
-                CircularProgressIndicator(
-                    progress =  { progress },
-                    modifier = Modifier.fillMaxSize(),
-                    colors = ProgressIndicatorDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                    ),
-                    strokeWidth = 4.dp,
-                    gapSize = 0.dp
-                )
-            }
+            androidx.wear.compose.material.CircularProgressIndicator(
+                progress = progress,
+                modifier = Modifier
+                    .fillMaxSize(),
+                strokeWidth = 4.dp,
+                indicatorColor = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            )
         }
     }
 }
