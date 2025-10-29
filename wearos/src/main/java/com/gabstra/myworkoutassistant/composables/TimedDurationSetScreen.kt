@@ -96,7 +96,7 @@ fun TimedDurationSetScreen(
     val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
 
     val typography = MaterialTheme.typography
-    val headerStyle = MaterialTheme.typography.bodySmall
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = W700) }
 
     LaunchedEffect(isTimerInEditMode) {
@@ -333,7 +333,7 @@ fun TimedDurationSetScreen(
             } else {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)

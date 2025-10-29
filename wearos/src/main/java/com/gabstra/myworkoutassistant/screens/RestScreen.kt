@@ -326,7 +326,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp)
+                    .padding(22.5.dp)
                     .clip(CircularEndsPillShape(straightWidth = 50.dp)),
             ) {
                 CustomHorizontalPager(

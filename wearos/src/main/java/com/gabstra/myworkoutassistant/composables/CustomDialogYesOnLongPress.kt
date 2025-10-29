@@ -229,7 +229,8 @@ fun CustomDialogYesOnLongPress(
                         indicatorColor = MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ),
-                    strokeWidth = 4.dp
+                    strokeWidth = 4.dp,
+                    gapSize = 0.dp
                 )
             }
         }

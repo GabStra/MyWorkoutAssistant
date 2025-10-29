@@ -49,7 +49,7 @@ fun CurrentBattery(){
     val context = LocalContext.current
     var batteryPercentage by remember { mutableIntStateOf(getInitialBatteryPercentage(context)) }
 
-    val captionStyle =  MaterialTheme.typography.bodySmall
+    val captionStyle =  MaterialTheme.typography.bodyMedium
 
     DisposableEffect(context) {
         val batteryReceiver = object : BroadcastReceiver() {

@@ -28,6 +28,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -43,6 +44,22 @@ import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+
+private fun Double.compact(): String {
+    val s = String.format("%.2f", this).replace(',', '.')
+    return s.trimEnd('0').trimEnd('.')
+}
+
+private fun buildPerSidePlatesLabel(plates: List<Double>): String {
+    if (plates.isEmpty()) return "—"
+    val counts = plates.groupingBy { it }.eachCount()
+    // Keep descending order by weight
+    return counts.keys.sortedDescending().joinToString(" - ") { w ->
+        val c = counts.getValue(w)
+        val ws = w.compact()
+        if (c == 1) ws else "${ws}x$c"
+    }
+}
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -67,7 +84,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
                 text = "Not available",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.titleSmall,
                 textAlign = TextAlign.Center
             )
         } else {
@@ -88,7 +105,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         fun pipe() {
                             withStyle(
                                 SpanStyle(
-                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    //color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     fontWeight = FontWeight.Bold
                                 )
                             ) {
@@ -118,7 +135,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         fun pipe() {
                             withStyle(
                                 SpanStyle(
-                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    //color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     fontWeight = FontWeight.Bold
                                 )
                             ) {
@@ -158,25 +175,26 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                     color = MaterialTheme.colorScheme.onBackground
                 )
             } else {
-                val headerStyle = MaterialTheme.typography.bodySmall
+                val headerStyle = MaterialTheme.typography.bodyExtraSmall
+
+                var platesMarqueeEnabled by remember { mutableStateOf(false) }
+
+                val perSideLabel = remember(updatedState.plateChangeResult!!.currentPlates) {
+                    buildPerSidePlatesLabel(updatedState.plateChangeResult!!.currentPlates)
+                }
 
                 Column(
                     modifier = Modifier
                         .weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.5.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "PLATES (KG/SIDE)",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "PLATE CHANGES (per side)",
+                        style = headerStyle,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
 
                     val style = MaterialTheme.typography.numeralSmall
 
@@ -253,7 +271,28 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             }
                         }
                     }
-
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "FINAL PLATES STACK",
+                        style = headerStyle,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp)
+                            .clickable {
+                                platesMarqueeEnabled = !platesMarqueeEnabled
+                                hapticsViewModel.doGentleVibration()
+                            }
+                            .then(if (platesMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                        text = perSideLabel,                       // e.g., "20 - 10 - 5x2 - 1.25 - 0.25"
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        overflow = TextOverflow.Ellipsis,
+                        maxLines = 1
+                    )
                 }
             }
         }

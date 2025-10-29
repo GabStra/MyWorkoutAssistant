@@ -213,14 +213,14 @@ fun ExerciseScreen(
                     textModifier = if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                     textAlign = TextAlign.Center,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.displaySmall,
+                    style = MaterialTheme.typography.titleLarge,
                 )
             }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(20.dp)
+                .padding(22.5.dp)
                 .clip(CircularEndsPillShape(straightWidth = 50.dp)),
         ) {
             CustomHorizontalPager(
@@ -269,7 +269,7 @@ fun ExerciseScreen(
                                         fun pipe() {
                                             withStyle(
                                                 SpanStyle(
-                                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                    //color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             ) {

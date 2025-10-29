@@ -73,9 +73,6 @@ class WorkoutAlarmActivity : ComponentActivity() {
         onStart: () -> Unit,
         onDismiss: () -> Unit
     ) {
-
-
-
         Box(
             modifier = Modifier
                 .fillMaxSize()

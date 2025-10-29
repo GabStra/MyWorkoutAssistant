@@ -145,13 +145,14 @@ fun HrStatusDialog(
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
+                            modifier = Modifier.alignByBaseline(),
                             text = "$hr",
                             style =  MaterialTheme.typography.numeralSmall,
                             color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            modifier = Modifier.padding(bottom = 5.dp),
+                            modifier = Modifier.alignByBaseline(),
                             text = "bpm",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
@@ -304,7 +305,6 @@ private fun HeartRateDisplay(
     displayMode: Int
 ) {
     Row(
-        verticalAlignment = Alignment.Bottom,
         modifier = modifier
     ) {
         Spacer(modifier = Modifier.weight(1f))
@@ -315,6 +315,7 @@ private fun HeartRateDisplay(
         )
         Spacer(modifier = Modifier.width(5.dp))
         Text(
+            modifier = Modifier.alignByBaseline(),
             text = textToDisplay,
             style = MaterialTheme.typography.labelMedium,
             color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
@@ -322,6 +323,7 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.width(2.5.dp))
         if(bpm != 0 && displayMode == 0){
             Text(
+                modifier = Modifier.alignByBaseline(),
                 text = "bpm",
                 style = MaterialTheme.typography.bodyExtraSmall,
                 color = MaterialTheme.colorScheme.onBackground
@@ -520,8 +522,7 @@ private fun HeartRateView(
             modifier = Modifier
                 .width(90.dp)
                 .height(20.dp)
-                .clickable(onClick = onSwitchClick, enabled = hr != 0)
-                .padding(bottom = 5.dp),
+                .clickable(onClick = onSwitchClick, enabled = hr != 0),
             bpm = hr,
             textToDisplay = textToDisplay,
             currentZone = currentZone,

@@ -122,7 +122,7 @@ fun PageExercises(
                 fun pipe() {
                     withStyle(
                         SpanStyle(
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            //color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             fontWeight = FontWeight.Bold
                         )
                     ) {
@@ -136,28 +136,6 @@ fun PageExercises(
                 }
 
                 append("Ex: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
-
-                if (isSuperset) {
-                    pipe()
-                    val supersetExercises =
-                        remember(selectedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
-
-                    val currentIdx = remember(supersetExercises, selectedExercise) {
-                        supersetExercises.indexOf(selectedExercise)
-                    }
-
-                    supersetExercises.indices.forEach { i ->
-                        if (i > 0) { separator() }
-                        withStyle(
-                            SpanStyle(
-                                color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                fontWeight = FontWeight.Bold
-                            )
-                        ) {
-                            append(('A' + i).toString())
-                        }
-                    }
-                }
 
                 if(currentExercise == selectedExercise) {
                     if (currentExerciseSetIds.size > 1) {
@@ -189,6 +167,30 @@ fun PageExercises(
                         }
                     }
                 }
+
+                if (isSuperset) {
+                    pipe()
+                    val supersetExercises =
+                        remember(selectedExerciseOrSupersetId) { viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!! }
+
+                    val currentIdx = remember(supersetExercises, selectedExercise) {
+                        supersetExercises.indexOf(selectedExercise)
+                    }
+
+                    supersetExercises.indices.forEach { i ->
+                        if (i > 0) { separator() }
+                        withStyle(
+                            SpanStyle(
+                                color = if (i == currentIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                fontWeight = FontWeight.Bold
+                            )
+                        ) {
+                            append(('A' + i).toString())
+                        }
+                    }
+                }
+
+
             }
 
             Text(

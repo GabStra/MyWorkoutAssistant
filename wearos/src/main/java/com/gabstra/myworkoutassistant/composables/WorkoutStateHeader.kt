@@ -86,7 +86,7 @@ fun WorkoutStateHeader(
         }else{
             val measurer = rememberTextMeasurer()
             val density = LocalDensity.current
-            val captionStyle = MaterialTheme.typography.bodySmall
+            val captionStyle = MaterialTheme.typography.bodyMedium
             val twoDigitWidth = remember(digits, density) {
                 with(density) { measurer.measure("00", style =captionStyle).size.width.toDp() }
             }
