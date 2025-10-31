@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -218,6 +219,7 @@ fun WeightSetScreen(
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
         Row(
             modifier = modifier
+                .height(40.dp)
                 .combinedClickable(
                     onClick = {
                     },
@@ -268,6 +270,7 @@ fun WeightSetScreen(
     fun WeightRow(modifier: Modifier = Modifier, style: TextStyle) {
         Row(
             modifier = modifier
+                .height(40.dp)
                 .combinedClickable(
                     onClick = {},
                     onLongClick = {
@@ -322,13 +325,13 @@ fun WeightSetScreen(
             verticalArrangement = Arrangement.Top
         ){
             Row(
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                 ) {
                     Text(
                         text = "WEIGHT (KG)",
@@ -342,7 +345,7 @@ fun WeightSetScreen(
                 Column(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                 ) {
                     Text(
                         text = "REPS",

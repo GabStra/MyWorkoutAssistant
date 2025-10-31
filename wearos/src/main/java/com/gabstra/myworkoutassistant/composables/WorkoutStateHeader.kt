@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -86,7 +87,7 @@ fun WorkoutStateHeader(
         }else{
             val measurer = rememberTextMeasurer()
             val density = LocalDensity.current
-            val captionStyle = MaterialTheme.typography.bodyMedium
+            val captionStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
             val twoDigitWidth = remember(digits, density) {
                 with(density) { measurer.measure("00", style =captionStyle).size.width.toDp() }
             }

@@ -117,14 +117,17 @@ class DataLayerListenerService : WearableListenerService() {
 
                                         workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
 
-                                        val validSetHistories = setHistories.filter { it ->
-                                            when(val setData = it.setData){
-                                                is BodyWeightSetData -> !setData.isRestPause
-                                                is WeightSetData -> !setData.isRestPause
-                                                is RestSetData -> !setData.isRestPause
-                                                else -> true
+                                        val validSetHistories = setHistories
+                                            .dropWhile { it.setData is RestSetData }
+                                            .dropLastWhile { it.setData is RestSetData }
+                                            .filter { it ->
+                                                when(val setData = it.setData){
+                                                    is BodyWeightSetData -> !setData.isRestPause
+                                                    is WeightSetData -> !setData.isRestPause
+                                                    is RestSetData -> !setData.isRestPause
+                                                    else -> true
+                                                }
                                             }
-                                        }
 
                                         for (setHistory in validSetHistories) {
                                             val newSet = getNewSetFromSetHistory(setHistory)

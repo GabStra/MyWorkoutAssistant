@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -30,7 +31,7 @@ fun CurrentTime() {
 
     var showDots by remember { mutableStateOf(true) }
 
-    val captionStyle =  MaterialTheme.typography.bodyMedium
+    val captionStyle =  MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
 
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current

@@ -540,15 +540,35 @@ open class WorkoutViewModel : ViewModel() {
         validExercises.forEach { exercise ->
             val sessionDecision = computeSessionDecision(exercise.id)
 
+            //Log.d("WorkoutViewModel", "Exercise: ${exercise.name} SessionDecision: ${sessionDecision.progressionState} should load last session: ${sessionDecision.shouldLoadLastSuccessfulSession}")
+
             val setsToUse =
                 if (sessionDecision.shouldLoadLastSuccessfulSession)
                     sessionDecision.lastSuccessfulSession.map { getNewSetFromSetHistory(it) }
-                else
-                    exercise.sets
+                else{
+                    if(exercise.doNotStoreHistory)  {
+                        exercise.sets
+                    }else{
+                        exercise.sets.map { set ->
+                            if(latestSetHistoryMap.containsKey(set.id)) {
+                                getNewSetFromSetHistory(latestSetHistoryMap[set.id]!!)
+                            }else{
+                                set
+                            }
+                        }
+                    }
+                }
 
-            exercise.copy(sets = setsToUse)
+            val validSets = setsToUse
+                .dropWhile { it is RestSet }
+                .dropLastWhile { it is RestSet }
 
-            updateWorkout(exercise,exercise.copy(sets = setsToUse))
+            /*
+            validSets.forEach { it ->
+                Log.d("WorkoutViewModel","${it}")
+            }*/
+
+            updateWorkout(exercise,exercise.copy(sets = validSets))
         }
 
         lastSessionWorkout = _selectedWorkout.value.copy()
@@ -1180,14 +1200,17 @@ open class WorkoutViewModel : ViewModel() {
 
                     val exerciseHistories = it.value
 
-                    val currentSession = exerciseHistories.filter { it ->
-                        when(val setData = it.setData){
-                            is BodyWeightSetData -> !setData.isRestPause
-                            is WeightSetData -> !setData.isRestPause
-                            is RestSetData -> !setData.isRestPause
-                            else -> true
+                    val currentSession = exerciseHistories
+                        .dropWhile { it.setData is RestSetData }
+                        .dropLastWhile { it.setData is RestSetData }
+                        .filter {
+                            when (val sd = it.setData) {
+                                is BodyWeightSetData -> !sd.isRestPause
+                                is WeightSetData     -> !sd.isRestPause
+                                is RestSetData       -> !sd.isRestPause
+                                else -> true
+                            }
                         }
-                    }
 
                     val exerciseInfo = exerciseInfoDao.getExerciseInfoById(it.key!!)
 
@@ -1326,7 +1349,10 @@ open class WorkoutViewModel : ViewModel() {
 
                     workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
 
-                    val validSetHistories = setHistories.filter { it ->
+                    val validSetHistories = setHistories
+                        .dropWhile { it.setData is RestSetData }
+                        .dropLastWhile { it.setData is RestSetData }
+                        .filter { it ->
                         when(val setData = it.setData){
                             is BodyWeightSetData -> !setData.isRestPause
                             is WeightSetData -> !setData.isRestPause
@@ -1351,8 +1377,8 @@ open class WorkoutViewModel : ViewModel() {
                         }
                     })
 
-                workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
                 updateWorkoutStore(newWorkoutStore)
+                workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
             }
 
             onEnd()

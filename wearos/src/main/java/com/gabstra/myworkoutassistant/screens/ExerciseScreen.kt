@@ -213,7 +213,8 @@ fun ExerciseScreen(
                     textModifier = if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                     textAlign = TextAlign.Center,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.displaySmall.copy(
+                    minTextSize = MaterialTheme.typography.titleLarge.fontSize,
+                    style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.SemiBold
                     ),
                 )

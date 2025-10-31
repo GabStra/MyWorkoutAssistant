@@ -170,7 +170,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 Text(
                     text = "No changes required",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.titleSmall,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -288,7 +288,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             }
                             .then(if (platesMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
                         text = perSideLabel,                       // e.g., "20 - 10 - 5x2 - 1.25 - 0.25"
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                         textAlign = TextAlign.Center,
                         overflow = TextOverflow.Ellipsis,
                         maxLines = 1

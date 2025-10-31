@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
@@ -140,7 +141,7 @@ private fun ProgressionRow(
                 ScalableText(
                     modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
                     text = info.exerciseName,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                     textAlign = TextAlign.Center
                 )
                 StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
