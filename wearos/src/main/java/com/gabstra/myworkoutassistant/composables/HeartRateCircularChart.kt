@@ -586,7 +586,7 @@ private fun HeartRateView(
 
         if(currentHrRotationAngle != null){
             Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-                RotatingIndicator(currentHrRotationAngle,  colorsByZone[currentZone])
+                RotatingIndicator(currentHrRotationAngle,  MaterialTheme.colorScheme.onBackground)
             }
         }
     }
