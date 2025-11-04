@@ -144,6 +144,7 @@ fun PreparingPolarScreen(
                             buttonSize = 50.dp,
                             hitBoxScale = 1f,
                             onClick = {
+                                hasTriggeredNextState = true
                                 hapticsViewModel.doGentleVibration()
                                 viewModel.goToNextState()
                                 viewModel.lightScreenUp()

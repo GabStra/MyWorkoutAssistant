@@ -19,15 +19,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 class WorkoutAlarmActivity : ComponentActivity() {
 
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
+
+    private var autoStopJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +49,11 @@ class WorkoutAlarmActivity : ComponentActivity() {
 
         // start alarm sound & vibration
         startAlert()
+
+        autoStopJob = lifecycleScope.launch {
+            delay(10_000)
+            stopAlertAndFinish()
+        }
 
         // block back press (must choose an action)
         onBackPressedDispatcher.addCallback(
@@ -165,6 +176,7 @@ class WorkoutAlarmActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        autoStopJob?.cancel()
         stopAlert()
     }
 }

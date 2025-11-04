@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -38,8 +40,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.min
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material3.CircularProgressIndicator
@@ -334,6 +339,27 @@ private fun HeartRateDisplay(
     }
 }
 
+@Composable
+private fun TargetRangeArc(
+    modifier: Modifier = Modifier,
+    startAngle: Float,
+    endAngle: Float,
+    color: Color,
+    strokeWidth: Dp
+) {
+    CircularProgressIndicator(
+        progress = { 1f },
+        modifier = modifier,
+        colors = ProgressIndicatorDefaults.colors(
+            indicatorColor = color,
+            trackColor = Color.Transparent
+        ),
+        strokeWidth = strokeWidth,
+        startAngle = startAngle,
+        endAngle = endAngle
+    )
+}
+
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
 private fun ZoneSegment(
@@ -559,7 +585,7 @@ private fun HeartRateView(
 
                 key(hr){
                     ZoneSegment(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().padding(2.dp),
                         index = index + 1,
                         currentZone = currentZone,
                         hr = hr,
@@ -575,17 +601,47 @@ private fun HeartRateView(
             }
         }
 
-        if(lowerBoundRotationAngle != null && upperBoundRotationAngle != null){
-            val inBounds = remember(mhrPercentage) { mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!! }
+        if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
+            val inBounds = remember(mhrPercentage) {
+                mhrPercentage in (lowerBoundMaxHRPercent ?: 0f)..(upperBoundMaxHRPercent ?: 0f)
+            }
 
-            Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-                RotatingIndicator(lowerBoundRotationAngle, if(inBounds) Green else MaterialTheme.colorScheme.surfaceContainerHigh)
-                RotatingIndicator(upperBoundRotationAngle, if(inBounds) Red else MaterialTheme.colorScheme.surfaceContainerHigh)
+            // Animate emphasis when inside the range
+            val targetAlpha by animateFloatAsState(
+                targetValue = if (inBounds) 0.55f else 0.25f,
+                animationSpec = spring(stiffness = 350f),
+                label = "targetArcAlpha"
+            )
+            val extraStrokeDp = 2.dp
+            val targetStrokeDp = 8.dp
+
+            androidx.compose.foundation.layout.BoxWithConstraints(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                val density = LocalDensity.current
+                // Use the smallest side as diameter and subtract padding + half the stroke to get radius
+                val diameterPx = with(density) { min(maxWidth, maxHeight).toPx() }
+                val radiusPx = with(density) {
+                    diameterPx / 2f - (2.dp.toPx() + (targetStrokeDp.toPx() / 2f))
+                }.coerceAtLeast(1f)
+
+                // Convert extraStrokeDp (linear) to degrees: θ(deg) = (s/r) * 180/π
+                val extraDeg = with(density) {
+                    (extraStrokeDp.toPx() / radiusPx) * (180f / Math.PI.toFloat())
+                }
+
+                TargetRangeArc(
+                    modifier = Modifier.matchParentSize(),
+                    startAngle = lowerBoundRotationAngle - extraDeg,
+                    endAngle = upperBoundRotationAngle + extraDeg,
+                    color = Green.copy(alpha = targetAlpha),
+                    strokeWidth = targetStrokeDp
+                )
             }
         }
 
         if(currentHrRotationAngle != null){
-            Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+            Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
                 RotatingIndicator(currentHrRotationAngle,  MaterialTheme.colorScheme.onBackground)
             }
         }

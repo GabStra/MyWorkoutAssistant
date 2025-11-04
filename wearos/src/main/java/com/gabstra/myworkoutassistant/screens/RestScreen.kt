@@ -388,7 +388,7 @@ fun RestScreen(
             progress = {
                 indicatorProgress.floatValue
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().padding(2.dp),
             colors = ProgressIndicatorDefaults.colors(
                 indicatorColor = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHigh

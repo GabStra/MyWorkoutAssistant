@@ -11,9 +11,9 @@ import com.polar.sdk.api.PolarBleApiCallback
 import com.polar.sdk.api.PolarBleApiDefaultImpl
 import com.polar.sdk.api.model.PolarDeviceInfo
 import com.polar.sdk.api.model.PolarHealthThermometerData
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Flowable
+import io.reactivex.rxjava3.core.Scheduler
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +22,61 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+
+interface HrBpmSource {
+    fun bpmStream(deviceId: String): Flowable<Int>
+}
+
+/** How to reconnect the device when stream goes stale. */
+interface ReconnectionActions {
+    fun onStale(deviceId: String): Completable
+}
+
+/** Adds stale-timeout detection + reconnect/backoff around a bpm stream. */
+class StaleRetryingBpmStream(
+    private val deviceId: String,
+    private val source: HrBpmSource,
+    private val reconnection: ReconnectionActions,
+    private val staleTimeoutSec: Long = 15,
+    private val backoffSec: Long = 2,
+    private val scheduler: Scheduler = Schedulers.computation()
+) {
+    fun stream(): Flowable<Int> {
+        return Flowable.defer {                // <-- build source per subscribe/retry
+            source.bpmStream(deviceId)
+        }
+            .timeout(staleTimeoutSec, TimeUnit.SECONDS, scheduler)
+            .retryWhen { errors ->
+                errors.flatMap { t ->
+                    if (t is TimeoutException) {
+                        reconnection.onStale(deviceId)
+                            .andThen(Flowable.timer(backoffSec, TimeUnit.SECONDS, scheduler))
+                    } else {
+                        Flowable.error(t)
+                    }
+                }
+            }
+    }
+}
+
+class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
+    override fun bpmStream(deviceId: String): Flowable<Int> =
+        api.startHrStreaming(deviceId)
+            .map { hrData ->
+                hrData.samples
+                    .map { if (it.correctedHr > 0) it.correctedHr else it.hr }
+                    .average()
+                    .toInt()
+            }
+}
+
+class PolarReconnector(private val api: PolarBleApi) : ReconnectionActions {
+    override fun onStale(deviceId: String): Completable {
+        return Completable.fromAction { runCatching { api.disconnectFromDevice(deviceId) } }
+            .andThen(Completable.fromAction { api.connectToDevice(deviceId) })
+            .andThen(api.waitForConnection(deviceId).timeout(20, TimeUnit.SECONDS))
+    }
+}
 
 class PolarViewModel : ViewModel() {
     private lateinit var deviceId: String
@@ -138,7 +193,7 @@ class PolarViewModel : ViewModel() {
         }
     }
 
-    private val _hrBpm = MutableStateFlow<Int?>(null)
+    private val _hrBpm = MutableStateFlow<Int?>(120)
     val hrBpm = _hrBpm.asStateFlow()
 
     fun foregroundEntered() {
@@ -146,44 +201,22 @@ class PolarViewModel : ViewModel() {
     }
 
     private fun startHrStreaming(deviceId: String) {
-        val staleSec = 15L
+        val stream = StaleRetryingBpmStream(
+            deviceId = deviceId,
+            source = PolarHrBpmSource(api),
+            reconnection = PolarReconnector(api),
+            staleTimeoutSec = 15,
+            backoffSec = 2
+        ).stream()
 
-        viewModelScope.launch {
-            try {
-                val disposable = api.startHrStreaming(deviceId)
-                    .timeout(staleSec, TimeUnit.SECONDS)
-                    .retryWhen { errors ->
-                        errors.flatMap { t ->
-                            if (t is TimeoutException) {
-                                Log.w("MyApp", "HR stale > ${staleSec}s: reconnecting…")
-
-                            }
-
-                            Completable.fromAction {
-                                try { api.disconnectFromDevice(deviceId) } catch (_: Exception) {}
-                                api.connectToDevice(deviceId)
-                            }
-                            .andThen(api.waitForConnection(deviceId)
-                            .timeout(20, TimeUnit.SECONDS))
-                            .andThen(Flowable.timer(2, TimeUnit.SECONDS)) // small backoff
-                        }
-                    }
-                    .subscribeOn(Schedulers.io())
-                    .observeOn(AndroidSchedulers.mainThread())          // UI updates only
-                    .doOnNext { hrData ->
-                        _hrBpm.value = hrData.samples
-                            .map { if (it.correctedHr > 0) it.correctedHr else it.hr }
-                            .average().toInt()
-                    }
-                    .subscribe(
-                        { /* handled in doOnNext */ },
-                        { e -> Log.e("MyApp", "HR stream error: $e") }
-                    )
-                disposables.add(disposable)
-            } catch (e: Exception) {
-                Log.e("MyApp", "Error starting HR streaming: $e")
-            }
-        }
+        val d = stream
+            .subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())
+            .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+            .subscribe(
+                { bpm -> _hrBpm.value = bpm },
+                { e -> android.util.Log.e("MyApp", "HR stream error: $e") }
+            )
+        disposables.add(d)
     }
 
     override fun onCleared() {
