@@ -42,13 +42,41 @@ class StaleRetryingBpmStream(
     private val scheduler: Scheduler = Schedulers.computation()
 ) {
     fun stream(): Flowable<Int> {
+        var lastValue: Int? = null
+        var lastChangeTime = System.currentTimeMillis()
+        
         return Flowable.defer {                // <-- build source per subscribe/retry
             source.bpmStream(deviceId)
         }
-            .timeout(staleTimeoutSec, TimeUnit.SECONDS, scheduler)
+            .map { current ->
+                val now = System.currentTimeMillis()
+                
+                if (lastValue != current) {
+                    // Value changed - reset timestamp
+                    lastValue = current
+                    lastChangeTime = now
+                    current
+                } else {
+                    // Same value - check if stale
+                    val elapsedSec = (now - lastChangeTime) / 1000
+                    if (elapsedSec >= staleTimeoutSec) {
+                        throw TimeoutException("Same HR value ($current) persisted for ${elapsedSec}s")
+                    }
+                    current
+                }
+            }
+            .timeout(
+                staleTimeoutSec, TimeUnit.SECONDS, 
+                scheduler,
+                Flowable.empty()  
+            )
             .retryWhen { errors ->
                 errors.flatMap { t ->
                     if (t is TimeoutException) {
+                        // Reset tracking on retry
+                        lastValue = null
+                        lastChangeTime = System.currentTimeMillis()
+                        
                         reconnection.onStale(deviceId)
                             .andThen(Flowable.timer(backoffSec, TimeUnit.SECONDS, scheduler))
                     } else {

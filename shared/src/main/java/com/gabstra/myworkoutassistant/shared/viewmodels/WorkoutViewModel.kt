@@ -510,6 +510,10 @@ open class WorkoutViewModel : ViewModel() {
             .filter { it.exerciseId == exerciseId }
     }
 
+    suspend fun createStatesFromExercise(exercise: Exercise): List<WorkoutState> {
+        return addStatesFromExercise(exercise)
+    }
+
     fun getAllExerciseCompletedSetsBefore(target: WorkoutState.Set): List<WorkoutState.Set> {
         val cutoff = allWorkoutStates.indexOfFirst {
             it is WorkoutState.Set && it.set.id == target.set.id

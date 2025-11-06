@@ -154,6 +154,10 @@ fun TimedDurationSetScreen(
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
+            val now = LocalDateTime.now()
+            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+            delay(java.time.Duration.between(now, nextSecond).toMillis())
+            
             onTimerEnabled()
 
             while (currentMillis > 0) {

@@ -20,7 +20,19 @@ fun DynamicHeightColumn(
 ) {
     SubcomposeLayout(modifier = modifier) { constraints ->
         // 1. Subcompose the prototype to measure it.
-        val itemPlaceable = subcompose("prototype", prototypeItem).first().measure(
+        val prototypePlaceables = subcompose("prototype", prototypeItem)
+        
+        // Handle empty prototype case
+        if (prototypePlaceables.isEmpty()) {
+            return@SubcomposeLayout layout(constraints.minWidth, constraints.minHeight) {
+                // Subcompose and place content even if prototype is empty
+                subcompose("content", content).forEach { placeable ->
+                    placeable.measure(constraints).placeRelative(0, 0)
+                }
+            }
+        }
+        
+        val itemPlaceable = prototypePlaceables.first().measure(
             constraints.copy(minHeight = 0)
         )
         val itemHeight = itemPlaceable.height

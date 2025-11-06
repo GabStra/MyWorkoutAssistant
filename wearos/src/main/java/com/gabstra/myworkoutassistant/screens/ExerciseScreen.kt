@@ -51,18 +51,20 @@ import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
+import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class PageType {
-    PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS
+    PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS, PROGRESSION_COMPARISON
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
@@ -99,12 +101,21 @@ fun ExerciseScreen(
         exercise.notes.isNotEmpty()
     }
 
-    val pageTypes = remember(showPlatesPage, showNotesPage) {
+    val showProgressionComparisonPage = remember(exercise) {
+        viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
+        viewModel.lastSessionWorkout != null &&
+        ((viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
+         viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset>()
+            .flatMap { it.exercises }).any { it.id == exercise.id })
+    }
+
+    val pageTypes = remember(showPlatesPage, showNotesPage, showProgressionComparisonPage) {
         mutableListOf<PageType>().apply {
-            if (showPlatesPage) add(PageType.PLATES)
             add(PageType.EXERCISE_DETAIL)
-            add(PageType.EXERCISES)
+            if (showPlatesPage) add(PageType.PLATES)
+            if (showProgressionComparisonPage) add(PageType.PROGRESSION_COMPARISON)
             if (showNotesPage) add(PageType.NOTES)
+            add(PageType.EXERCISES)
             add(PageType.BUTTONS)
         }
     }
@@ -422,6 +433,15 @@ fun ExerciseScreen(
                                         selectedExercise = it
                                     })
                             }
+                        }
+
+                        PageType.PROGRESSION_COMPARISON -> {
+                            PageProgressionComparison(
+                                viewModel = viewModel,
+                                hapticsViewModel = hapticsViewModel,
+                                exercise = exercise,
+                                state = updatedState
+                            )
                         }
 
                         PageType.NOTES -> PageNotes(exercise.notes)

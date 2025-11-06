@@ -126,8 +126,8 @@ fun RestScreen(
 
     val pageTypes = remember(showPlatesPage) {
         mutableListOf<PageType>().apply {
-            if (showPlatesPage) add(PageType.PLATES)
             add(PageType.EXERCISES)
+            if (showPlatesPage) add(PageType.PLATES)
             add(PageType.BUTTONS)
         }
     }
@@ -365,6 +365,7 @@ fun RestScreen(
                             )
 
                             PageType.NOTES -> TODO()
+                            PageType.PROGRESSION_COMPARISON -> TODO()
                         }
                     }
                 }

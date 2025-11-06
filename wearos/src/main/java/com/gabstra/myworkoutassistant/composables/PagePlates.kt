@@ -70,7 +70,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+        verticalArrangement = Arrangement.spacedBy(2.5.dp)
     ) {
         Text(
             modifier = Modifier
@@ -84,7 +84,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
                 text = "Not available",
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center
             )
         } else {
@@ -166,23 +166,22 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 }
             }
 
+            val headerStyle = MaterialTheme.typography.bodyExtraSmall
+            var platesMarqueeEnabled by remember { mutableStateOf(false) }
+
+            val perSideLabel = remember(updatedState.plateChangeResult!!.currentPlates) {
+                buildPerSidePlatesLabel(updatedState.plateChangeResult!!.currentPlates)
+            }
+
             if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
                 Text(
                     text = "No changes required",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground
                 )
             } else {
-                val headerStyle = MaterialTheme.typography.bodyExtraSmall
-
-                var platesMarqueeEnabled by remember { mutableStateOf(false) }
-
-                val perSideLabel = remember(updatedState.plateChangeResult!!.currentPlates) {
-                    buildPerSidePlatesLabel(updatedState.plateChangeResult!!.currentPlates)
-                }
-
                 Column(
                     modifier = Modifier
                         .weight(1f),
@@ -271,30 +270,31 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             }
                         }
                     }
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "FINAL PLATES STACK",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp)
-                            .clickable {
-                                platesMarqueeEnabled = !platesMarqueeEnabled
-                                hapticsViewModel.doGentleVibration()
-                            }
-                            .then(if (platesMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                        text = perSideLabel,                       // e.g., "20 - 10 - 5x2 - 1.25 - 0.25"
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        textAlign = TextAlign.Center,
-                        overflow = TextOverflow.Ellipsis,
-                        maxLines = 1
-                    )
                 }
             }
+
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = "PLATES STACK",
+                style = headerStyle,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp)
+                    .clickable {
+                        platesMarqueeEnabled = !platesMarqueeEnabled
+                        hapticsViewModel.doGentleVibration()
+                    }
+                    .then(if (platesMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                text = perSideLabel,                       // e.g., "20 - 10 - 5x2 - 1.25 - 0.25"
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                textAlign = TextAlign.Center,
+                overflow = TextOverflow.Ellipsis,
+                maxLines = 1
+            )
         }
     }
 }

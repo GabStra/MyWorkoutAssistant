@@ -42,11 +42,14 @@ fun TimeViewer(
 
     // Coroutine that updates the time every minute
     LaunchedEffect(Unit) {
+        val now = LocalDateTime.now()
+        val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+        delay(java.time.Duration.between(now, nextSecond).toMillis())
+        
+        // Now use fixed delay
         while (true) {
-            val now = LocalDateTime.now()
             showDots = !showDots
-            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-            delay(java.time.Duration.between(now, nextSecond).toMillis())
+            delay(1000)
         }
     }
 
