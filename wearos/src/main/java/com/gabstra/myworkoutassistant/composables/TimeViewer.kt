@@ -1,10 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.R.attr.digits
 import android.annotation.SuppressLint
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -12,14 +8,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.delay
@@ -34,77 +32,71 @@ fun TimeViewer(
     color: Color,
     style: TextStyle,
 ) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+
+    // Measure once for "baseText..."
+
+
+
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
+
+    val baseText = when{
+        hours > 0 -> "00:00:00"
+        else -> "00:00"
+    }
+
+    val fullWidthDp = remember(measurer, baseText, style, density) {
+        with(density) {
+            measurer
+                .measure(text = AnnotatedString(baseText), style = style, maxLines = 1)
+                .size.width
+                .toDp()
+        }
+    }
 
     var showDots by remember { mutableStateOf(true) }
 
     // Coroutine that updates the time every minute
     LaunchedEffect(Unit) {
-        val now = LocalDateTime.now()
-        val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-        delay(java.time.Duration.between(now, nextSecond).toMillis())
-        
-        // Now use fixed delay
         while (true) {
+            val now = LocalDateTime.now()
+            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
             showDots = !showDots
-            delay(1000)
+            delay(java.time.Duration.between(now, nextSecond).toMillis())
         }
     }
 
-    val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val twoDigitWidth = remember(digits, density) {
-        with(density) { measurer.measure("00", style = style).size.width.toDp() }
-    }
+    val colonColor = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh
 
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-
-        if(hours > 0){
-            Text(
-                modifier = Modifier.width(twoDigitWidth),
-                text = String.format("%02d", hours),
-                style = style,
-                color = color,
-                textAlign = TextAlign.Center
-            )
-
-            Text(
-                text = ":",
-                style = style,
-                color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.padding(bottom = 3.dp),
-                textAlign = TextAlign.Center
-            )
+    val annotatedText = remember(showDots, hours, minutes, remainingSeconds, color,colonColor) {
+        buildAnnotatedString {
+            if (hours > 0) {
+                withStyle(SpanStyle(color = color)) {
+                    append(String.format("%02d", hours))
+                }
+                withStyle(SpanStyle(color = colonColor)) {
+                    append(":")
+                }
+            }
+            withStyle(SpanStyle(color = color)) {
+                append(String.format("%02d", minutes))
+            }
+            withStyle(SpanStyle(color = colonColor)) {
+                append(":")
+            }
+            withStyle(SpanStyle(color = color)) {
+                append(String.format("%02d", remainingSeconds))
+            }
         }
-
-        Text(
-            modifier = Modifier.width(twoDigitWidth),
-            text = String.format("%02d", minutes),
-            style = style,
-            color = color,
-            textAlign = TextAlign.Center
-        )
-
-        Text(
-            text = ":",
-            style = style,
-            color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.padding(bottom = 3.dp),
-            textAlign = TextAlign.Center
-        )
-
-        Text(
-            modifier = Modifier.width(twoDigitWidth),
-            text = String.format("%02d", remainingSeconds),
-            style = style,
-            color = color,
-            textAlign = TextAlign.Center
-        )
     }
+
+    Text(
+        modifier = modifier.width(fullWidthDp),
+        text = annotatedText,
+        style = style,
+        textAlign = TextAlign.Start
+    )
 }

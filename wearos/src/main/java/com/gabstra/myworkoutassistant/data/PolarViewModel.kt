@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
@@ -15,6 +17,7 @@ import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Flowable
 import io.reactivex.rxjava3.core.Scheduler
 import io.reactivex.rxjava3.disposables.CompositeDisposable
+import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +25,8 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 interface HrBpmSource {
     fun bpmStream(deviceId: String): Flowable<Int>
@@ -42,23 +47,28 @@ class StaleRetryingBpmStream(
     private val scheduler: Scheduler = Schedulers.computation()
 ) {
     fun stream(): Flowable<Int> {
-        var lastValue: Int? = null
-        var lastChangeTime = System.currentTimeMillis()
+        val lastValue = AtomicReference<Int?>(null)
+        val lastChangeTime = AtomicReference<Long>(System.currentTimeMillis())
         
         return Flowable.defer {                // <-- build source per subscribe/retry
+            // Reset state tracking when stream starts fresh
+            lastValue.set(null)
+            lastChangeTime.set(System.currentTimeMillis())
+            
             source.bpmStream(deviceId)
         }
             .map { current ->
                 val now = System.currentTimeMillis()
+                val prevValue = lastValue.get()
                 
-                if (lastValue != current) {
+                if (prevValue != current) {
                     // Value changed - reset timestamp
-                    lastValue = current
-                    lastChangeTime = now
+                    lastValue.set(current)
+                    lastChangeTime.set(now)
                     current
                 } else {
                     // Same value - check if stale
-                    val elapsedSec = (now - lastChangeTime) / 1000
+                    val elapsedSec = (now - lastChangeTime.get()) / 1000
                     if (elapsedSec >= staleTimeoutSec) {
                         throw TimeoutException("Same HR value ($current) persisted for ${elapsedSec}s")
                     }
@@ -74,8 +84,8 @@ class StaleRetryingBpmStream(
                 errors.flatMap { t ->
                     if (t is TimeoutException) {
                         // Reset tracking on retry
-                        lastValue = null
-                        lastChangeTime = System.currentTimeMillis()
+                        lastValue.set(null)
+                        lastChangeTime.set(System.currentTimeMillis())
                         
                         reconnection.onStale(deviceId)
                             .andThen(Flowable.timer(backoffSec, TimeUnit.SECONDS, scheduler))
@@ -98,9 +108,13 @@ class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
             }
 }
 
-class PolarReconnector(private val api: PolarBleApi) : ReconnectionActions {
+class PolarReconnector(private val api: PolarBleApi, private val context: Context) : ReconnectionActions {
     override fun onStale(deviceId: String): Completable {
-        return Completable.fromAction { runCatching { api.disconnectFromDevice(deviceId) } }
+        // Show toast on main thread
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(context, "Reconnecting due to stale data...", Toast.LENGTH_SHORT).show()
+        }
+        return Completable.fromAction { api.foregroundEntered() }
             .andThen(Completable.fromAction { api.connectToDevice(deviceId) })
             .andThen(api.waitForConnection(deviceId).timeout(20, TimeUnit.SECONDS))
     }
@@ -110,6 +124,8 @@ class PolarViewModel : ViewModel() {
     private lateinit var deviceId: String
 
     private lateinit var api: PolarBleApi
+
+    private lateinit var applicationContext: Context
 
     private val _deviceConnectionState = MutableStateFlow<PolarDeviceInfo?>(null)
     val deviceConnectionState = _deviceConnectionState.asStateFlow()
@@ -121,6 +137,8 @@ class PolarViewModel : ViewModel() {
     val bluetoothEnabledState = _bluetoothEnabledState.asStateFlow()
 
     private val disposables = CompositeDisposable()
+    private var hrStreamDisposable: Disposable? = null
+    private val isHrStreamingActive = AtomicBoolean(false)
 
     private val _hasBeenInitialized = MutableStateFlow<Boolean>(false)
 
@@ -129,6 +147,7 @@ class PolarViewModel : ViewModel() {
     fun initialize(applicationContext: Context, deviceId: String){
         _hasBeenInitialized.value = true
 
+        this.applicationContext = applicationContext
         this.deviceId = deviceId
         api = PolarBleApiDefaultImpl.defaultImplementation(applicationContext,
             setOf(
@@ -160,7 +179,12 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun deviceConnected(polarDeviceInfo: PolarDeviceInfo) {
-                startHrStreaming(polarDeviceInfo.deviceId)
+                // Only start streaming if not already active (prevents race condition with retry mechanism)
+                if (!isHrStreamingActive.get()) {
+                    startHrStreaming(polarDeviceInfo.deviceId)
+                } else {
+                    Log.d("MyApp", "HR stream already active, skipping startHrStreaming from deviceConnected callback")
+                }
                 viewModelScope.launch {
                     _deviceConnectionState.value = polarDeviceInfo
                 }
@@ -170,10 +194,23 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
-                Toast.makeText(applicationContext, "Polar device disconnected", Toast.LENGTH_SHORT).show()
+                // Dispose HR stream subscription and reset state
+                hrStreamDisposable?.let {
+                    if (!it.isDisposed) {
+                        it.dispose()
+                        disposables.remove(it)
+                    }
+                }
+                hrStreamDisposable = null
+                isHrStreamingActive.set(false)
+                
+                // Reset HR state to indicate no valid data
                 viewModelScope.launch {
+                    _hrBpm.value = null
                     _deviceConnectionState.value = null
                 }
+                
+                Toast.makeText(applicationContext, "Polar device disconnected", Toast.LENGTH_SHORT).show()
             }
 
             override fun disInformationReceived(
@@ -229,10 +266,27 @@ class PolarViewModel : ViewModel() {
     }
 
     private fun startHrStreaming(deviceId: String) {
+        // Prevent duplicate stream creation
+        if (!isHrStreamingActive.compareAndSet(false, true)) {
+            Log.d("MyApp", "HR stream already active, skipping duplicate startHrStreaming call")
+            return
+        }
+        
+        // Clear existing HR stream subscription before creating a new one
+        hrStreamDisposable?.let {
+            if (!it.isDisposed) {
+                it.dispose()
+                disposables.remove(it)
+            }
+        }
+        hrStreamDisposable = null
+
+        Log.d("MyApp", "Starting HR stream for device: $deviceId")
+        
         val stream = StaleRetryingBpmStream(
             deviceId = deviceId,
             source = PolarHrBpmSource(api),
-            reconnection = PolarReconnector(api),
+            reconnection = PolarReconnector(api, applicationContext),
             staleTimeoutSec = 15,
             backoffSec = 2
         ).stream()
@@ -240,10 +294,27 @@ class PolarViewModel : ViewModel() {
         val d = stream
             .subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())
             .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+            .doOnTerminate {
+                // Reset flag when stream terminates
+                isHrStreamingActive.set(false)
+                Log.d("MyApp", "HR stream terminated")
+            }
+            .doFinally {
+                // Reset flag when stream is disposed or terminated
+                isHrStreamingActive.set(false)
+                Log.d("MyApp", "HR stream disposed")
+            }
             .subscribe(
-                { bpm -> _hrBpm.value = bpm },
-                { e -> android.util.Log.e("MyApp", "HR stream error: $e") }
+                { bpm -> 
+                    _hrBpm.value = bpm 
+                    Log.d("MyApp", "HR BPM received: $bpm")
+                },
+                { e -> 
+                    android.util.Log.e("MyApp", "HR stream error: $e")
+                    isHrStreamingActive.set(false)
+                }
             )
+        hrStreamDisposable = d
         disposables.add(d)
     }
 

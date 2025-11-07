@@ -6,6 +6,7 @@
 
 package com.gabstra.myworkoutassistant
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.KeyguardManager
@@ -43,6 +44,7 @@ import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
@@ -55,6 +57,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
@@ -339,6 +342,9 @@ fun WearApp(
                 //appViewModel.sendAll(localContext)
             }
         }
+
+        // Note: Swipe-to-dismiss prevention is handled in WorkoutScreen using BackHandler
+        // Programmatic control via reflection is not reliable across all Wear OS versions
 
         if(!initialized){
             LoadingScreen(appViewModel)

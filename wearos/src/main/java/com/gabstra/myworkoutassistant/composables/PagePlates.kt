@@ -26,7 +26,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -89,7 +88,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
             )
         } else {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -144,9 +143,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         }
 
                         append("Σ ${formatWeight(previousWeightTotal)}")
-                        withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
-                            append( " → ")
-                        }
+                        append( " → ")
                         append("${formatWeight(currentWeightTotal)}")
                         pipe()
                         append("Bar ${formatWeight(equipment.barWeight)}")

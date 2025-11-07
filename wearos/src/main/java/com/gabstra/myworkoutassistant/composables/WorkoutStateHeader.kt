@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.R.attr.digits
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -23,9 +22,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
@@ -85,19 +83,24 @@ fun WorkoutStateHeader(
                 CurrentTime()
             }
         }else{
-            val measurer = rememberTextMeasurer()
-            val density = LocalDensity.current
             val captionStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
-            val twoDigitWidth = remember(digits, density) {
-                with(density) { measurer.measure("00", style =captionStyle).size.width.toDp() }
-            }
 
             val hours = remember(duration) { duration.toHours() }
             val minutes = remember(duration) { duration.toMinutes() % 60 }
             val seconds = remember(duration) { duration.seconds % 60 }
 
+            val clockText = remember(hours, minutes, seconds) {
+                buildAnnotatedString {
+                    append(String.format("%02d", hours))
+                    append(":")
+                    append(String.format("%02d", minutes))
+                    append(":")
+                    append(String.format("%02d", seconds))
+                }
+            }
+
             Row(
-                horizontalArrangement = Arrangement.spacedBy(1.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
@@ -105,36 +108,8 @@ fun WorkoutStateHeader(
                     imageVector = Icons.Filled.AccessTimeFilled,
                     contentDescription = "clock",
                 )
-                Spacer(modifier = Modifier.width(2.dp))
                 Text(
-                    modifier = Modifier.width(twoDigitWidth),
-                    text = String.format("%02d", hours),
-                    style = captionStyle,
-                    textAlign = TextAlign.Center
-                )
-
-                Text(
-                    text = ":",
-                    style = captionStyle,
-                    textAlign = TextAlign.Center,
-                )
-
-                Text(
-                    modifier = Modifier.width(twoDigitWidth),
-                    text = String.format("%02d", minutes),
-                    style = captionStyle,
-                    textAlign = TextAlign.Center,
-                )
-
-                Text(
-                    text = ":",
-                    style = captionStyle,
-                    textAlign = TextAlign.Center,
-                )
-
-                Text(
-                    modifier = Modifier.width(twoDigitWidth),
-                    text = String.format("%02d", seconds),
+                    text = clockText,
                     style = captionStyle,
                     textAlign = TextAlign.Center
                 )

@@ -34,7 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight.Companion.W700
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
@@ -98,7 +98,7 @@ fun TimedDurationSetScreen(
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.titleSmall
-    val itemStyle = remember(typography) { typography.displayLarge.copy(fontWeight = W700) }
+    val itemStyle = remember(typography) { typography.displayLarge }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {

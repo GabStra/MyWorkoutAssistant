@@ -70,56 +70,62 @@ fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison 
     if (beforeSetData == null || afterSetData == null) {
         return SetComparison.EQUAL
     }
-    
+
     return when {
         beforeSetData is WeightSetData && afterSetData is WeightSetData -> {
             val beforeReps = beforeSetData.actualReps
             val beforeWeight = beforeSetData.actualWeight
             val afterReps = afterSetData.actualReps
             val afterWeight = afterSetData.actualWeight
-            
+
             when {
                 afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
                 (afterWeight == beforeWeight && afterReps > beforeReps) ||
-                (afterReps == beforeReps && afterWeight > beforeWeight) ||
-                (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
+                        (afterReps == beforeReps && afterWeight > beforeWeight) ||
+                        (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
+
                 else -> SetComparison.WORSE
             }
         }
+
         beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData -> {
             val beforeReps = beforeSetData.actualReps
             val beforeWeight = beforeSetData.getWeight()
             val afterReps = afterSetData.actualReps
             val afterWeight = afterSetData.getWeight()
-            
+
             when {
                 afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
                 (afterWeight == beforeWeight && afterReps > beforeReps) ||
-                (afterReps == beforeReps && afterWeight > beforeWeight) ||
-                (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
+                        (afterReps == beforeReps && afterWeight > beforeWeight) ||
+                        (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
+
                 else -> SetComparison.WORSE
             }
         }
+
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {
             val beforeDuration = beforeSetData.endTimer - beforeSetData.startTimer
             val afterDuration = afterSetData.endTimer - afterSetData.startTimer
-            
+
             when {
                 afterDuration == beforeDuration -> SetComparison.EQUAL
                 afterDuration > beforeDuration -> SetComparison.BETTER
                 else -> SetComparison.WORSE
             }
         }
+
         beforeSetData is TimedDurationSetData && afterSetData is TimedDurationSetData -> {
             val beforeDuration = beforeSetData.endTimer - beforeSetData.startTimer
             val afterDuration = afterSetData.endTimer - afterSetData.startTimer
-            
+
             when {
                 afterDuration == beforeDuration -> SetComparison.EQUAL
                 afterDuration > beforeDuration -> SetComparison.BETTER
                 else -> SetComparison.WORSE
             }
         }
+
         else -> SetComparison.EQUAL
     }
 }
@@ -132,12 +138,12 @@ fun calculateSetDifference(
     if (beforeSetData == null || afterSetData == null) {
         return "Equal"
     }
-    
+
     return when {
         beforeSetData is WeightSetData && afterSetData is WeightSetData -> {
             val weightDiff = afterSetData.actualWeight - beforeSetData.actualWeight
             val repsDiff = afterSetData.actualReps - beforeSetData.actualReps
-            
+
             val parts = mutableListOf<String>()
             if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
                 val sign = if (weightDiff > 0) "+" else ""
@@ -147,13 +153,14 @@ fun calculateSetDifference(
                 val sign = if (repsDiff > 0) "+" else ""
                 parts.add("$sign$repsDiff reps")
             }
-            
+
             if (parts.isEmpty()) "Equal" else parts.joinToString(", ")
         }
+
         beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData -> {
             val weightDiff = afterSetData.getWeight() - beforeSetData.getWeight()
             val repsDiff = afterSetData.actualReps - beforeSetData.actualReps
-            
+
             val parts = mutableListOf<String>()
             if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
                 val sign = if (weightDiff > 0) "+" else ""
@@ -163,14 +170,15 @@ fun calculateSetDifference(
                 val sign = if (repsDiff > 0) "+" else ""
                 parts.add("$sign$repsDiff reps")
             }
-            
+
             if (parts.isEmpty()) "Equal" else parts.joinToString(", ")
         }
+
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {
             val beforeDuration = (beforeSetData.endTimer - beforeSetData.startTimer) / 1000
             val afterDuration = (afterSetData.endTimer - afterSetData.startTimer) / 1000
             val durationDiff = afterDuration - beforeDuration
-            
+
             if (durationDiff == 0) {
                 "Equal"
             } else {
@@ -178,11 +186,12 @@ fun calculateSetDifference(
                 "$sign${FormatTime(durationDiff.toInt())}"
             }
         }
+
         beforeSetData is TimedDurationSetData && afterSetData is TimedDurationSetData -> {
             val beforeDuration = (beforeSetData.endTimer - beforeSetData.startTimer) / 1000
             val afterDuration = (afterSetData.endTimer - afterSetData.startTimer) / 1000
             val durationDiff = afterDuration - beforeDuration
-            
+
             if (durationDiff == 0) {
                 "Equal"
             } else {
@@ -190,6 +199,7 @@ fun calculateSetDifference(
                 "$sign${FormatTime(durationDiff.toInt())}"
             }
         }
+
         else -> "Equal"
     }
 }
@@ -204,7 +214,9 @@ fun PlaceholderSetRow(
 
     Box(modifier = modifier) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(2.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Spacer(modifier = Modifier.width(18.dp))
@@ -225,6 +237,7 @@ fun PlaceholderSetRow(
                         color = textColor
                     )
                 }
+
                 ExerciseType.COUNTUP, ExerciseType.COUNTDOWN -> {
                     ScalableText(
                         modifier = Modifier.weight(1f),
@@ -235,6 +248,7 @@ fun PlaceholderSetRow(
                     )
                     Spacer(modifier = Modifier.width(18.dp))
                 }
+
                 else -> {
                     ScalableText(
                         modifier = Modifier.weight(1f),
@@ -311,39 +325,44 @@ fun PageProgressionComparison(
 
     // Set index state for navigation
     var currentSetIndex by remember(exercise.id, setIndex) { mutableIntStateOf(setIndex) }
-    val maxSets = maxOf(previousSetStates.size, progressionSetStates.size)
+    val maxSets = remember(previousSetStates.size, progressionSetStates.size) {
+        maxOf(previousSetStates.size, progressionSetStates.size)
+    }
 
     // Reset index when exercise or setIndex changes
     LaunchedEffect(exercise.id, setIndex) {
         currentSetIndex = setIndex
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Title
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 4.dp),
-                text = "Session Comparison",
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontWeight = FontWeight.Bold
-                ),
-                textAlign = TextAlign.Center
-            )
+    val colorScheme = MaterialTheme.colorScheme
 
-            // Set number indicator (combined with Repeat if applicable)
-            if (maxSets > 0) {
-                val setIndicatorText = buildAnnotatedString {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Title
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 5.dp),
+            text = "Session Comparison",
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontWeight = FontWeight.Bold
+            ),
+            textAlign = TextAlign.Center
+        )
+
+        // Set number indicator (combined with Repeat if applicable)
+        if (maxSets > 0) {
+            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, colorScheme.primary) {
+                buildAnnotatedString {
                     if (isRetry) {
                         withStyle(
                             style = SpanStyle(
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = colorScheme.primary
                             )
                         ) {
                             append("Repeat")
@@ -352,237 +371,278 @@ fun PageProgressionComparison(
                     }
                     append("Set ${currentSetIndex + 1}/$maxSets")
                 }
-                
-                Text(
-                    text = setIndicatorText,
-                    style = MaterialTheme.typography.bodySmall,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
-                )
             }
 
-            // Calculate comparison data
-            val beforeSetData = if (currentSetIndex < previousSetStates.size) {
+            Text(
+                text = setIndicatorText,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp)
+            )
+        }
+
+        // Calculate comparison data
+        val beforeSetData = remember(currentSetIndex, previousSetStates) {
+            if (currentSetIndex < previousSetStates.size) {
                 previousSetStates[currentSetIndex].currentSetData
             } else null
-            
-            val afterSetData = if (currentSetIndex < progressionSetStates.size) {
+        }
+
+        val afterSetData = remember(currentSetIndex, progressionSetStates) {
+            if (currentSetIndex < progressionSetStates.size) {
                 progressionSetStates[currentSetIndex].currentSetData
             } else null
-            
-            val beforeSetState = if (currentSetIndex < previousSetStates.size) {
+        }
+
+        val beforeSetState = remember(currentSetIndex, previousSetStates) {
+            if (currentSetIndex < previousSetStates.size) {
                 previousSetStates[currentSetIndex]
             } else null
-            
-            val afterSetState = if (currentSetIndex < progressionSetStates.size) {
+        }
+
+        val afterSetState = remember(currentSetIndex, progressionSetStates) {
+            if (currentSetIndex < progressionSetStates.size) {
                 progressionSetStates[currentSetIndex]
             } else null
-            
-            val comparison = compareSets(beforeSetData, afterSetData)
-            val differenceText = calculateSetDifference(
+        }
+
+        val comparison = remember(beforeSetData, afterSetData) {
+            compareSets(beforeSetData, afterSetData)
+        }
+
+        val differenceText = remember(
+            beforeSetData,
+            afterSetData,
+            afterSetState?.equipment,
+            beforeSetState?.equipment
+        ) {
+            calculateSetDifference(
                 beforeSetData,
                 afterSetData,
                 afterSetState?.equipment ?: beforeSetState?.equipment
             )
-            
-            val rowIndex = currentSetIndex
-            val backgroundColor = when {
-                rowIndex < setIndex -> MaterialTheme.colorScheme.primary
-                rowIndex == setIndex -> MaterialTheme.colorScheme.onBackground
-                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+
+        val rowIndex = currentSetIndex
+        val backgroundColor = remember(
+            currentSetIndex,
+            setIndex,
+            colorScheme.primary,
+            colorScheme.onBackground,
+            colorScheme.surfaceContainerHigh
+        ) {
+            when {
+                rowIndex < setIndex -> colorScheme.primary
+                rowIndex == setIndex -> colorScheme.onBackground
+                else -> colorScheme.surfaceContainerHigh
             }
-            val textColor = when {
-                rowIndex < setIndex -> MaterialTheme.colorScheme.primary
-                rowIndex == setIndex -> MaterialTheme.colorScheme.onBackground
-                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+        val textColor = remember(
+            currentSetIndex,
+            setIndex,
+            colorScheme.primary,
+            colorScheme.onBackground,
+            colorScheme.surfaceContainerHigh
+        ) {
+            when {
+                rowIndex < setIndex -> colorScheme.primary
+                rowIndex == setIndex -> colorScheme.onBackground
+                else -> colorScheme.surfaceContainerHigh
             }
-            val shape = RoundedCornerShape(25)
+        }
+        val shape = remember { RoundedCornerShape(25) }
 
-            // Previous set row or placeholder
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(30.dp)
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (currentSetIndex < previousSetStates.size) {
-                    SetTableRow(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .height(27.5.dp)
-                            .padding(bottom = 2.5.dp)
-                            .border(BorderStroke(1.dp, backgroundColor), shape)
-                            .clip(shape),
-                        hapticsViewModel = hapticsViewModel,
-                        viewModel = viewModel,
-                        setState = previousSetStates[currentSetIndex],
-                        index = currentSetIndex,
-                        isCurrentSet = false,
-                        markAsDone = false,
-                        textColor = textColor
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .height(27.5.dp)
-                            .padding(bottom = 2.5.dp)
-                            .border(BorderStroke(1.dp, backgroundColor), shape)
-                            .clip(shape)
-                    ) {
-                        PlaceholderSetRow(
-                            modifier = Modifier.fillMaxSize(),
-                            exercise = exercise,
-                            textColor = textColor
-                        )
-                    }
-                }
-            }
-
-            // Comparison section
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 2.5.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val comparisonColor = when (comparison) {
-                    SetComparison.BETTER -> Green
-                    SetComparison.WORSE -> Red
-                    SetComparison.EQUAL -> MaterialTheme.colorScheme.onBackground
-                }
-
-                when (comparison) {
-                    SetComparison.EQUAL -> {
-                        Icon(
-                            imageVector = Icons.Filled.DragHandle,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .width(20.dp)
-                                .height(20.dp),
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                    SetComparison.BETTER -> {
-                        Icon(
-                            imageVector = Icons.Filled.ArrowUpward,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .width(20.dp)
-                                .height(20.dp),
-                            tint = Green
-                        )
-                    }
-                    SetComparison.WORSE -> {
-                        Icon(
-                            imageVector = Icons.Filled.ArrowDownward,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .width(20.dp)
-                                .height(20.dp),
-                            tint = Red
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(5.dp))
-
-                ScalableText(
-                    text = differenceText,
-                    style = MaterialTheme.typography.bodySmall,
-                    textAlign = TextAlign.Center,
-                    color = comparisonColor
+        // Previous set row or placeholder
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(30.dp)
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (currentSetIndex < previousSetStates.size) {
+                SetTableRow(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .height(27.5.dp)
+                        .padding(bottom = 2.5.dp)
+                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .clip(shape),
+                    hapticsViewModel = hapticsViewModel,
+                    viewModel = viewModel,
+                    setState = previousSetStates[currentSetIndex],
+                    index = currentSetIndex,
+                    isCurrentSet = false,
+                    markAsDone = false,
+                    textColor = textColor
                 )
-            }
-
-            // Current set row or placeholder
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(30.dp)
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (currentSetIndex < progressionSetStates.size) {
-                    SetTableRow(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .height(27.5.dp)
-                            .padding(bottom = 2.5.dp)
-                            .border(BorderStroke(1.dp, backgroundColor), shape)
-                            .clip(shape),
-                        hapticsViewModel = hapticsViewModel,
-                        viewModel = viewModel,
-                        setState = progressionSetStates[currentSetIndex],
-                        index = currentSetIndex,
-                        isCurrentSet = false,
-                        markAsDone = false,
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .height(27.5.dp)
+                        .padding(bottom = 2.5.dp)
+                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .clip(shape)
+                ) {
+                    PlaceholderSetRow(
+                        modifier = Modifier.fillMaxSize(),
+                        exercise = exercise,
                         textColor = textColor
                     )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .height(27.5.dp)
-                            .padding(bottom = 2.5.dp)
-                            .border(BorderStroke(1.dp, backgroundColor), shape)
-                            .clip(shape)
-                    ) {
-                        PlaceholderSetRow(
-                            modifier = Modifier.fillMaxSize(),
-                            exercise = exercise,
-                            textColor = textColor
-                        )
-                    }
                 }
             }
         }
 
-        // Edge click navigation overlay
+        // Comparison section
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 2.5.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f)
-                    .clickable(
-                        enabled = currentSetIndex > 0
-                    ) {
-                        hapticsViewModel.doGentleVibration()
-                        currentSetIndex--
-                    }
-                    .then(if (maxSets > 1) Modifier else Modifier.alpha(0f)),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                // Left edge - clickable for previous set
+            val comparisonColor = remember(comparison, colorScheme.onBackground) {
+                when (comparison) {
+                    SetComparison.BETTER -> Green
+                    SetComparison.WORSE -> Red
+                    SetComparison.EQUAL -> colorScheme.onBackground
+                }
             }
-            Spacer(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f)
+
+            when (comparison) {
+                SetComparison.EQUAL -> {
+                    Icon(
+                        imageVector = Icons.Filled.DragHandle,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .width(20.dp)
+                            .height(20.dp),
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+
+                SetComparison.BETTER -> {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowUpward,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .width(20.dp)
+                            .height(20.dp),
+                        tint = Green
+                    )
+                }
+
+                SetComparison.WORSE -> {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowDownward,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .width(20.dp)
+                            .height(20.dp),
+                        tint = Red
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(5.dp))
+
+            ScalableText(
+                text = differenceText,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                color = comparisonColor
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f)
-                    .clickable(
-                        enabled = currentSetIndex < maxSets - 1
-                    ) {
-                        hapticsViewModel.doGentleVibration()
-                        currentSetIndex++
-                    }
-                    .then(if (maxSets > 1) Modifier else Modifier.alpha(0f)),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                // Right edge - clickable for next set
+        }
+
+        // Current set row or placeholder
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(30.dp)
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (currentSetIndex < progressionSetStates.size) {
+                SetTableRow(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .height(27.5.dp)
+                        .padding(bottom = 2.5.dp)
+                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .clip(shape),
+                    hapticsViewModel = hapticsViewModel,
+                    viewModel = viewModel,
+                    setState = progressionSetStates[currentSetIndex],
+                    index = currentSetIndex,
+                    isCurrentSet = false,
+                    markAsDone = false,
+                    textColor = textColor
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .height(27.5.dp)
+                        .padding(bottom = 2.5.dp)
+                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .clip(shape)
+                ) {
+                    PlaceholderSetRow(
+                        modifier = Modifier.fillMaxSize(),
+                        exercise = exercise,
+                        textColor = textColor
+                    )
+                }
             }
         }
     }
+
+    // Edge click navigation overlay
+    Row(
+        modifier = Modifier.fillMaxSize(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .weight(1f)
+                .clickable(
+                    enabled = currentSetIndex > 0
+                ) {
+                    hapticsViewModel.doGentleVibration()
+                    currentSetIndex--
+                }
+                .then(if (maxSets > 1) Modifier else Modifier.alpha(0f)),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            // Left edge - clickable for previous set
+        }
+        Spacer(
+            modifier = Modifier
+                .fillMaxHeight()
+                .weight(1f)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .weight(1f)
+                .clickable(
+                    enabled = currentSetIndex < maxSets - 1
+                ) {
+                    hapticsViewModel.doGentleVibration()
+                    currentSetIndex++
+                }
+                .then(if (maxSets > 1) Modifier else Modifier.alpha(0f)),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            // Right edge - clickable for next set
+        }
+    }
+
 }
 
