@@ -133,7 +133,7 @@ fun PageExercises(
                 }
                 fun separator() {
                     withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
-
+                        append( "↔")
                     }
                 }
 
