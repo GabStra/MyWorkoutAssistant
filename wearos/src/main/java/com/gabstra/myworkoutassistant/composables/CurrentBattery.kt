@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -51,7 +52,10 @@ fun CurrentBattery(){
     val context = LocalContext.current
     var batteryPercentage by remember { mutableIntStateOf(getInitialBatteryPercentage(context)) }
 
-    val captionStyle =  MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
+    val captionStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.Monospace
+    )
 
     DisposableEffect(context) {
         val batteryReceiver = object : BroadcastReceiver() {

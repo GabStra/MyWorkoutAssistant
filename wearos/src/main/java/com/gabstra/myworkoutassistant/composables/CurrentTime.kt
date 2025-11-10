@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
@@ -25,7 +26,10 @@ fun CurrentTime() {
 
     var showDots by remember { mutableStateOf(true) }
 
-    val captionStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
+    val captionStyle = MaterialTheme.typography.bodyMedium.copy(
+        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.Monospace
+    )
 
     LaunchedEffect(Unit) {
         val now = LocalDateTime.now()

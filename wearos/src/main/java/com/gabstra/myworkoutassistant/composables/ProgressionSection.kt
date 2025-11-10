@@ -47,59 +47,19 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-enum class Ternary { BELOW, EQUAL, ABOVE, MIXED }
 data class ProgressionInfo(
     val exerciseName: String,
     val vsExpected: Ternary,
     val vsLast: Ternary
 )
-
-private val simpleSetComparator =
-    compareBy<SimpleSet>({ it.weight.round(2) }, { it.reps })
-
-private fun normalizeSets(list: List<SimpleSet>): List<SimpleSet> =
-    list.sortedWith(simpleSetComparator)
-
-// ---- 2) Order-insensitive equality (for "same as original") ----
-private fun listsEqualUnordered(a: List<SimpleSet>, b: List<SimpleSet>): Boolean =
-    a.size == b.size && normalizeSets(a) == normalizeSets(b)
-
-// ---- 3) Order-insensitive ternary compare (for vs expected / vs last) ----
-private fun compareSets(a: SimpleSet, b: SimpleSet): Int = when {
-    a.weight.round(2) > b.weight.round(2) ||
-            (a.weight.round(2) == b.weight.round(2) && a.reps > b.reps) -> 1
-    a.weight.round(2) == b.weight.round(2) && a.reps == b.reps -> 0
-    else -> -1
-}
-
-private fun compareSetListsUnordered(a: List<SimpleSet>, b: List<SimpleSet>): Ternary {
-    if (a.size != b.size) return Ternary.MIXED
-    val A = normalizeSets(a)
-    val B = normalizeSets(b)
-
-    var pos = 0
-    var neg = 0
-    for (i in A.indices) {
-        when (compareSets(A[i], B[i])) {
-            1  -> pos++
-            -1 -> neg++
-            // 0 (equal) is ignored
-        }
-    }
-
-    return when {
-        pos > 0 && neg == 0 -> Ternary.ABOVE   // some improved, rest equal
-        neg > 0 && pos == 0 -> Ternary.BELOW   // some worse, rest equal
-        pos == 0 && neg == 0 -> Ternary.EQUAL  // all equal
-        else -> Ternary.MIXED                  // both improved and worse present
-    }
-}
 
 @Composable
 private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modifier) {

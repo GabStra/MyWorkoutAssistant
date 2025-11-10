@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -34,6 +35,8 @@ fun TimeViewer(
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
+
+    val monospacedStyle = style.copy(fontFamily = FontFamily.Monospace)
 
     var showDots by remember { mutableStateOf(true) }
 
@@ -57,14 +60,14 @@ fun TimeViewer(
             Text(
                 modifier = Modifier,
                 text = String.format("%02d", hours),
-                style = style,
+                style = monospacedStyle,
                 textAlign = TextAlign.Center,
                 color =  color,
             )
 
             Text(
                 text = ":",
-                style = style,
+                style = monospacedStyle,
                 color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
                 textAlign = TextAlign.Center,
             )
@@ -73,14 +76,14 @@ fun TimeViewer(
         Text(
             modifier = Modifier,
             text = String.format("%02d", minutes),
-            style = style,
+            style = monospacedStyle,
             textAlign = TextAlign.Center,
             color =  color,
         )
 
         Text(
             text = ":",
-            style = style,
+            style = monospacedStyle,
             color = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainer,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(bottom = 3.dp),
@@ -89,7 +92,7 @@ fun TimeViewer(
         Text(
             modifier = Modifier,
             text = String.format("%02d", remainingSeconds),
-            style = style,
+            style = monospacedStyle,
             textAlign = TextAlign.Center,
             color =  color,
         )

@@ -26,7 +26,6 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 interface HrBpmSource {
     fun bpmStream(deviceId: String): Flowable<Int>
@@ -34,7 +33,7 @@ interface HrBpmSource {
 
 /** How to reconnect the device when stream goes stale. */
 interface ReconnectionActions {
-    fun onStale(deviceId: String): Completable
+    fun onStale(deviceId: String, onReconnecting: (() -> Unit)? = null): Completable
 }
 
 /** Adds stale-timeout detection + reconnect/backoff around a bpm stream. */
@@ -44,37 +43,13 @@ class StaleRetryingBpmStream(
     private val reconnection: ReconnectionActions,
     private val staleTimeoutSec: Long = 15,
     private val backoffSec: Long = 2,
-    private val scheduler: Scheduler = Schedulers.computation()
+    private val scheduler: Scheduler = Schedulers.computation(),
+    private val onReconnecting: (() -> Unit)? = null
 ) {
     fun stream(): Flowable<Int> {
-        val lastValue = AtomicReference<Int?>(null)
-        val lastChangeTime = AtomicReference<Long>(System.currentTimeMillis())
-        
         return Flowable.defer {                // <-- build source per subscribe/retry
-            // Reset state tracking when stream starts fresh
-            lastValue.set(null)
-            lastChangeTime.set(System.currentTimeMillis())
-            
             source.bpmStream(deviceId)
         }
-            .map { current ->
-                val now = System.currentTimeMillis()
-                val prevValue = lastValue.get()
-                
-                if (prevValue != current) {
-                    // Value changed - reset timestamp
-                    lastValue.set(current)
-                    lastChangeTime.set(now)
-                    current
-                } else {
-                    // Same value - check if stale
-                    val elapsedSec = (now - lastChangeTime.get()) / 1000
-                    if (elapsedSec >= staleTimeoutSec) {
-                        throw TimeoutException("Same HR value ($current) persisted for ${elapsedSec}s")
-                    }
-                    current
-                }
-            }
             .timeout(
                 staleTimeoutSec, TimeUnit.SECONDS, 
                 scheduler,
@@ -83,11 +58,7 @@ class StaleRetryingBpmStream(
             .retryWhen { errors ->
                 errors.flatMap { t ->
                     if (t is TimeoutException) {
-                        // Reset tracking on retry
-                        lastValue.set(null)
-                        lastChangeTime.set(System.currentTimeMillis())
-                        
-                        reconnection.onStale(deviceId)
+                        reconnection.onStale(deviceId, onReconnecting)
                             .andThen(Flowable.timer(backoffSec, TimeUnit.SECONDS, scheduler))
                     } else {
                         Flowable.error(t)
@@ -109,7 +80,10 @@ class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
 }
 
 class PolarReconnector(private val api: PolarBleApi, private val context: Context) : ReconnectionActions {
-    override fun onStale(deviceId: String): Completable {
+    override fun onStale(deviceId: String, onReconnecting: (() -> Unit)?): Completable {
+        // Call the reconnecting callback if provided
+        onReconnecting?.invoke()
+        
         // Show toast on main thread
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(context, "Reconnecting due to stale data...", Toast.LENGTH_SHORT).show()
@@ -258,7 +232,7 @@ class PolarViewModel : ViewModel() {
         }
     }
 
-    private val _hrBpm = MutableStateFlow<Int?>(120)
+    private val _hrBpm = MutableStateFlow<Int?>(null)
     val hrBpm = _hrBpm.asStateFlow()
 
     fun foregroundEntered() {
@@ -288,7 +262,13 @@ class PolarViewModel : ViewModel() {
             source = PolarHrBpmSource(api),
             reconnection = PolarReconnector(api, applicationContext),
             staleTimeoutSec = 15,
-            backoffSec = 2
+            backoffSec = 2,
+            onReconnecting = {
+                // Reset HR BPM when stale stream triggers reconnection
+                viewModelScope.launch {
+                    _hrBpm.value = null
+                }
+            }
         ).stream()
 
         val d = stream

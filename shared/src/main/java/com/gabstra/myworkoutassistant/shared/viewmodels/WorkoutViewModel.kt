@@ -48,6 +48,8 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -1257,37 +1259,52 @@ open class WorkoutViewModel : ViewModel() {
                         } else {
                             updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
 
-                            val currentVolume = currentSession.filter { it.setData !is RestSetData }.sumOf {
-                                when(it.setData){
-                                    is BodyWeightSetData -> it.setData.calculateVolume()
-                                    is WeightSetData -> it.setData.calculateVolume()
-                                    else -> throw IllegalArgumentException("Unknown set type")
+                            // Convert current session to SimpleSet list
+                            val executedSets = currentSession.mapNotNull { setHistory ->
+                                when (val setData = setHistory.setData) {
+                                    is WeightSetData -> {
+                                        if(setData.isRestPause) return@mapNotNull null
+                                        SimpleSet(setData.getWeight(), setData.actualReps)
+                                    }
+                                    is BodyWeightSetData -> {
+                                        if(setData.isRestPause) return@mapNotNull null
+                                        SimpleSet(setData.getWeight(), setData.actualReps)
+                                    }
+                                    else -> null
                                 }
-                            }.round(2)
+                            }
 
-                            val lastVolume = updatedInfo.lastSuccessfulSession.filter { it.setData !is RestSetData }.sumOf {
-                                when(it.setData){
-                                    is BodyWeightSetData -> it.setData.calculateVolume()
-                                    is WeightSetData -> it.setData.calculateVolume()
-                                    else -> throw IllegalArgumentException("Unknown set type")
+                            // Convert best session to SimpleSet list for comparison
+                            val bestSessionSets = updatedInfo.bestSession.mapNotNull { setHistory ->
+                                when (val setData = setHistory.setData) {
+                                    is WeightSetData -> {
+                                        if(setData.isRestPause) return@mapNotNull null
+                                        SimpleSet(setData.getWeight(), setData.actualReps)
+                                    }
+                                    is BodyWeightSetData -> {
+                                        if(setData.isRestPause) return@mapNotNull null
+                                        SimpleSet(setData.getWeight(), setData.actualReps)
+                                    }
+                                    else -> null
                                 }
-                            }.round(2)
+                            }
 
-                            val bestVolume = updatedInfo.bestSession.filter { it.setData !is RestSetData }.sumOf {
-                                when(it.setData){
-                                    is BodyWeightSetData -> it.setData.calculateVolume()
-                                    is WeightSetData -> it.setData.calculateVolume()
-                                    else -> throw IllegalArgumentException("Unknown set type")
-                                }
-                            }.round(2)
-
-                            if (currentVolume > bestVolume) {
+                            // Check if current session is better than best session
+                            val vsBest = compareSetListsUnordered(executedSets, bestSessionSets)
+                            if (vsBest == Ternary.ABOVE) {
                                 updatedInfo = updatedInfo.copy(bestSession = currentSession)
                             }
 
                             if(progressionState != null){
                                 if(progressionState == ProgressionState.PROGRESS){
-                                    updatedInfo = if (currentVolume > lastVolume) {
+                                    // Get expected sets from progression
+                                    val expectedSets = exerciseProgression!!.sets
+                                    val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
+                                    
+                                    // Success if executed sets are ABOVE or EQUAL to expected sets
+                                    val isSuccess = vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL
+                                    
+                                    updatedInfo = if (isSuccess) {
                                         updatedInfo.copy(
                                             lastSuccessfulSession = currentSession,
                                             successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
@@ -1301,23 +1318,52 @@ open class WorkoutViewModel : ViewModel() {
                                     }
                                 }else{
                                     // ProgressionState.RETRY as DELOAD was already handled
-                                    val targetVolume = exerciseProgression!!.newVolume.round(2)
-                                    if(currentVolume > targetVolume){
-                                        updatedInfo = updatedInfo.copy(
-                                            lastSuccessfulSession = currentSession,
-                                            successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
-                                            sessionFailedCounter = 0u
-                                        )
-                                    }else if(currentVolume == targetVolume){
-                                        updatedInfo = updatedInfo.copy(
-                                            lastSuccessfulSession = currentSession,
-                                            successfulSessionCounter = 0u,
-                                            sessionFailedCounter = 0u
-                                        )
+                                    val expectedSets = exerciseProgression!!.sets
+                                    val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
+                                    
+                                    when(vsExpected) {
+                                        Ternary.ABOVE -> {
+                                            // Exceeded retry target - success
+                                            updatedInfo = updatedInfo.copy(
+                                                lastSuccessfulSession = currentSession,
+                                                successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
+                                                sessionFailedCounter = 0u
+                                            )
+                                        }
+                                        Ternary.EQUAL -> {
+                                            // Met retry target exactly - complete retry, reset counters
+                                            updatedInfo = updatedInfo.copy(
+                                                lastSuccessfulSession = currentSession,
+                                                successfulSessionCounter = 0u,
+                                                sessionFailedCounter = 0u
+                                            )
+                                        }
+                                        Ternary.BELOW, Ternary.MIXED -> {
+                                            // Below retry target - session failed, don't update counters
+                                            // Counters remain unchanged (will be incremented elsewhere if needed)
+                                        }
                                     }
                                 }
                             }else{
-                                updatedInfo = if (currentVolume > lastVolume) {
+                                // No progression state - compare against last successful session
+                                val lastSessionSets = updatedInfo.lastSuccessfulSession.mapNotNull { setHistory ->
+                                    when (val setData = setHistory.setData) {
+                                        is WeightSetData -> {
+                                            if(setData.isRestPause) return@mapNotNull null
+                                            SimpleSet(setData.getWeight(), setData.actualReps)
+                                        }
+                                        is BodyWeightSetData -> {
+                                            if(setData.isRestPause) return@mapNotNull null
+                                            SimpleSet(setData.getWeight(), setData.actualReps)
+                                        }
+                                        else -> null
+                                    }
+                                }
+                                
+                                val vsLast = compareSetListsUnordered(executedSets, lastSessionSets)
+                                val isSuccess = vsLast == Ternary.ABOVE || vsLast == Ternary.EQUAL
+                                
+                                updatedInfo = if (isSuccess) {
                                     updatedInfo.copy(
                                         lastSuccessfulSession = currentSession,
                                         successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),

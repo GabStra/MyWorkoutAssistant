@@ -91,13 +91,18 @@ fun PreparingPolarScreen(
         }
     }
 
-    LaunchedEffect(deviceConnectionInfo, state.dataLoaded, currentMillis, hasWorkoutRecord) {
+    LaunchedEffect(deviceConnectionInfo, state.dataLoaded, currentMillis, hasWorkoutRecord, hasTriggeredNextState) {
         if (hasTriggeredNextState) {
             return@LaunchedEffect
         }
 
         val isReady = (deviceConnectionInfo != null) && state.dataLoaded && currentMillis >= 3000
         if (isReady) {
+            // Double-check to prevent race condition
+            if (hasTriggeredNextState) {
+                return@LaunchedEffect
+            }
+            
             hasTriggeredNextState = true
 
             viewModel.lightScreenUp()
@@ -130,7 +135,7 @@ fun PreparingPolarScreen(
 
 
             AnimatedVisibility(
-                visible = canSkip && deviceConnectionInfo == null && state.dataLoaded,
+                visible = canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState,
                 enter = fadeIn(animationSpec = tween(500)),
                 exit = fadeOut(animationSpec = tween(500))
             ) {
@@ -144,6 +149,7 @@ fun PreparingPolarScreen(
                             buttonSize = 50.dp,
                             hitBoxScale = 1f,
                             onClick = {
+                                if (hasTriggeredNextState) return@EnhancedIconButton
                                 hasTriggeredNextState = true
                                 hapticsViewModel.doGentleVibration()
                                 viewModel.goToNextState()

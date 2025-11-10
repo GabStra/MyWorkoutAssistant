@@ -1,8 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -11,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -37,8 +36,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -57,7 +62,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
-import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -66,6 +70,8 @@ import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
+import dev.shreyaspatil.capturable.capturable
+import dev.shreyaspatil.capturable.controller.rememberCaptureController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -339,25 +345,83 @@ private fun HeartRateDisplay(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun TargetRangeArc(
     modifier: Modifier = Modifier,
     startAngle: Float,
     endAngle: Float,
     color: Color,
-    strokeWidth: Dp
+    strokeWidth: Dp,
+    borderWidth: Dp
 ) {
-    CircularProgressIndicator(
-        progress = { 1f },
-        modifier = modifier,
-        colors = ProgressIndicatorDefaults.colors(
-            indicatorColor = color,
-            trackColor = Color.Transparent
-        ),
-        strokeWidth = strokeWidth,
-        startAngle = startAngle,
-        endAngle = endAngle
-    )
+    val controller = rememberCaptureController()
+    var mask: ImageBitmap? by remember { mutableStateOf(null) }
+    var shouldCapture by remember { mutableStateOf(true) }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                mask?.let {
+                    drawImage(it, blendMode = BlendMode.DstOut)
+                } // true alpha mask
+            }
+    ) {
+        val density = LocalDensity.current
+        // Use the smallest side as diameter and subtract padding + half the stroke to get radius
+        val diameterPx = with(density) { min(maxWidth, maxHeight).toPx() }
+        val radiusPx = with(density) {
+            diameterPx / 2f - (2.dp.toPx() + (strokeWidth.toPx() / 2f))
+        }.coerceAtLeast(1f)
+
+        // Convert extraStrokeDp (linear) to degrees: θ(deg) = (s/r) * 180/π
+        val extraDeg = with(density) {
+            (borderWidth.toPx() / radiusPx) * (180f / Math.PI.toFloat())
+        }
+
+        CircularProgressIndicator(
+            progress = { 1f },
+            modifier = modifier,
+            colors = ProgressIndicatorDefaults.colors(
+                indicatorColor = color,
+                trackColor = Color.Transparent
+            ),
+            strokeWidth = strokeWidth,
+            startAngle = startAngle - extraDeg,
+            endAngle = endAngle + extraDeg
+        )
+
+
+        if (shouldCapture) {
+            Box(
+                Modifier
+                    .capturable(controller)
+                    .fillMaxSize()
+                    .padding(borderWidth)
+            ) {
+                CircularProgressIndicator(
+                    progress = { 1f },
+                    modifier = Modifier.fillMaxSize(),
+                    colors = ProgressIndicatorDefaults.colors(
+                        indicatorColor = Color.White,
+                        trackColor = Color.Transparent
+                    ),
+                    strokeWidth = strokeWidth - borderWidth * 2,
+                    startAngle = startAngle,
+                    endAngle = endAngle
+                )
+            }
+
+            // Kick off capture once, then remove mask source
+            LaunchedEffect(Unit) {
+                mask = controller.captureAsync().await()
+                shouldCapture = false
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalHorologistApi::class)
@@ -585,7 +649,7 @@ private fun HeartRateView(
 
                 key(hr){
                     ZoneSegment(
-                        modifier = Modifier.fillMaxSize().padding(2.dp),
+                        modifier = Modifier.fillMaxSize().padding(3.dp),
                         index = index + 1,
                         currentZone = currentZone,
                         hr = hr,
@@ -606,38 +670,13 @@ private fun HeartRateView(
                 mhrPercentage in (lowerBoundMaxHRPercent ?: 0f)..(upperBoundMaxHRPercent ?: 0f)
             }
 
-            // Animate emphasis when inside the range
-            val targetAlpha by animateFloatAsState(
-                targetValue = if (inBounds) 0.55f else 0.25f,
-                animationSpec = spring(stiffness = 350f),
-                label = "targetArcAlpha"
+            TargetRangeArc(
+                startAngle = lowerBoundRotationAngle,
+                endAngle = upperBoundRotationAngle,
+                color = if (inBounds) Color(0xFF0f6b36) else Color(0xFF08361b),
+                strokeWidth = 10.dp,
+                borderWidth = 3.dp,
             )
-            val extraStrokeDp = 2.dp
-            val targetStrokeDp = 8.dp
-
-            androidx.compose.foundation.layout.BoxWithConstraints(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                val density = LocalDensity.current
-                // Use the smallest side as diameter and subtract padding + half the stroke to get radius
-                val diameterPx = with(density) { min(maxWidth, maxHeight).toPx() }
-                val radiusPx = with(density) {
-                    diameterPx / 2f - (2.dp.toPx() + (targetStrokeDp.toPx() / 2f))
-                }.coerceAtLeast(1f)
-
-                // Convert extraStrokeDp (linear) to degrees: θ(deg) = (s/r) * 180/π
-                val extraDeg = with(density) {
-                    (extraStrokeDp.toPx() / radiusPx) * (180f / Math.PI.toFloat())
-                }
-
-                TargetRangeArc(
-                    modifier = Modifier.matchParentSize(),
-                    startAngle = lowerBoundRotationAngle - extraDeg,
-                    endAngle = upperBoundRotationAngle + extraDeg,
-                    color = Green.copy(alpha = targetAlpha),
-                    strokeWidth = targetStrokeDp
-                )
-            }
         }
 
         if(currentHrRotationAngle != null){

@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -64,7 +65,7 @@ fun SetTableRow(
     textColor: Color = MaterialTheme.colorScheme.onBackground,
 ){
     val captionStyle = MaterialTheme.typography.bodySmall
-    val itemStyle = MaterialTheme.typography.numeralSmall
+    val itemStyle = MaterialTheme.typography.numeralSmall.copy(fontFamily = FontFamily.Monospace)
 
     val equipment = setState.equipment
 

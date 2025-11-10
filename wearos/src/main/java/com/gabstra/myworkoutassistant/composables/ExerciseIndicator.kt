@@ -172,7 +172,7 @@ fun ExerciseIndicator(
         )
     }*/
 
-    Box(modifier = Modifier.fillMaxSize().padding(2.dp)) {
+    Box(modifier = Modifier.fillMaxSize().padding(3.dp)) {
         // --- INNER segments: every exercise gets same arc ---
         visibleIndices.forEachIndexed { posInWindow, globalIdx ->
             val eid = flatExerciseOrder[globalIdx]

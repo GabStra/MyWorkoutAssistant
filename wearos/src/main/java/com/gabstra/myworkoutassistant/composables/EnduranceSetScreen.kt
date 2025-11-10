@@ -27,6 +27,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
@@ -100,7 +102,7 @@ fun EnduranceSetScreen (
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle = remember(typography) { typography.displayLarge }
+    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = W700, fontFamily = FontFamily.Monospace) }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {

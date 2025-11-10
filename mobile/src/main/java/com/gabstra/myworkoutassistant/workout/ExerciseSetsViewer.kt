@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -97,7 +98,7 @@ fun SetTableRow(
     val equipment = setState.equipment
 
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.displayLarge.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.displayLarge.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) }
 
 
     val warmupIndicatorComposable = @Composable{
