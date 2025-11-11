@@ -53,7 +53,7 @@ private fun buildPerSidePlatesLabel(plates: List<Double>): String {
     if (plates.isEmpty()) return "—"
     val counts = plates.groupingBy { it }.eachCount()
     // Keep descending order by weight
-    return counts.keys.sortedDescending().joinToString(" - ") { w ->
+    return counts.keys.sorted().joinToString(" - ") { w ->
         val c = counts.getValue(w)
         val ws = w.compact()
         if (c == 1) ws else "${ws}x$c"
@@ -172,7 +172,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
             if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
                 Text(
-                    text = "No changes required",
+                    text = "NO CHANGES REQUIRED",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center,
@@ -271,7 +271,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
             }
 
             Text(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
                 text = "PLATES STACK",
                 style = headerStyle,
                 textAlign = TextAlign.Center,

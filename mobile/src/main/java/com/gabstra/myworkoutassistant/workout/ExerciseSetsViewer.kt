@@ -98,7 +98,7 @@ fun SetTableRow(
     val equipment = setState.equipment
 
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.displayLarge.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) }
+    val itemStyle = remember(typography) { typography.displayLarge.copy(fontWeight = FontWeight.Bold) }
 
 
     val warmupIndicatorComposable = @Composable{
@@ -175,7 +175,7 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
-                        style = itemStyle,
+                        style = itemStyle.copy(fontFamily = FontFamily.Monospace),
                         textAlign = TextAlign.Center,
                         color = color
                     )
@@ -188,7 +188,7 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(enduranceSetData.startTimer / 1000),
-                        style = itemStyle,
+                        style = itemStyle.copy(fontFamily = FontFamily.Monospace),
                         textAlign = TextAlign.Center,
                         color = color
                     )

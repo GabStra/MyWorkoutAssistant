@@ -27,7 +27,7 @@ fun CurrentTime() {
     var showDots by remember { mutableStateOf(true) }
 
     val captionStyle = MaterialTheme.typography.bodyMedium.copy(
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.Bold,
         fontFamily = FontFamily.Monospace
     )
 

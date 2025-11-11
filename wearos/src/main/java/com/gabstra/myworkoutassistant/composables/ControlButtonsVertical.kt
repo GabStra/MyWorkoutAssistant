@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -60,7 +61,7 @@ fun ControlButtonsVertical(
                     .background(Green),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
+                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add", tint = MaterialTheme.colorScheme.background)
             }
         }
         Box(
@@ -89,7 +90,7 @@ fun ControlButtonsVertical(
                     .background(Red),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")
+                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract", tint = MaterialTheme.colorScheme.background)
             }
         }
 

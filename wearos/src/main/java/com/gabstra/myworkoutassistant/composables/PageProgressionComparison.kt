@@ -147,7 +147,7 @@ fun calculateSetDifference(
             val parts = mutableListOf<String>()
             if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
                 val sign = if (weightDiff > 0) "+" else ""
-                parts.add("$sign${equipment.formatWeight(weightDiff)}")
+                parts.add("$sign${equipment.formatWeight(weightDiff)} kg")
             }
             if (repsDiff != 0) {
                 val sign = if (repsDiff > 0) "+" else ""
@@ -164,14 +164,14 @@ fun calculateSetDifference(
             val parts = mutableListOf<String>()
             if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
                 val sign = if (weightDiff > 0) "+" else ""
-                parts.add("$sign${equipment.formatWeight(weightDiff)}")
+                parts.add("$sign${equipment.formatWeight(weightDiff)} kg")
             }
             if (repsDiff != 0) {
                 val sign = if (repsDiff > 0) "+" else ""
                 parts.add("$sign$repsDiff reps")
             }
 
-            if (parts.isEmpty()) "Equal" else parts.joinToString(", ")
+            if (parts.isEmpty()) "Equal" else parts.joinToString(" - ")
         }
 
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {

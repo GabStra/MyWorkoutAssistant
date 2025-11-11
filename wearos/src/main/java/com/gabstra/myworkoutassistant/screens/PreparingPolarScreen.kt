@@ -133,7 +133,6 @@ fun PreparingPolarScreen(
                 LoadingText(baseText = "Connecting")
             }
 
-
             AnimatedVisibility(
                 visible = canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState,
                 enter = fadeIn(animationSpec = tween(500)),
@@ -152,9 +151,16 @@ fun PreparingPolarScreen(
                                 if (hasTriggeredNextState) return@EnhancedIconButton
                                 hasTriggeredNextState = true
                                 hapticsViewModel.doGentleVibration()
-                                viewModel.goToNextState()
+
+                                if (hasWorkoutRecord) {
+                                    viewModel.resumeLastState()
+                                } else {
+                                    viewModel.goToNextState()
+                                    viewModel.setWorkoutStart()
+                                }
+
                                 viewModel.lightScreenUp()
-                                viewModel.setWorkoutStart()
+
                                 onReady()
                             },
                             buttonModifier = Modifier.clip(CircleShape),

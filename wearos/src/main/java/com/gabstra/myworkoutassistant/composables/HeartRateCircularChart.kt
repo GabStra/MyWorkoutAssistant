@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -44,9 +45,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Devices
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
@@ -58,6 +61,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
@@ -77,6 +81,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.PI
 
 enum class HeartRateStatus {
     HIGHER_THAN_TARGET,
@@ -353,11 +358,26 @@ private fun TargetRangeArc(
     endAngle: Float,
     color: Color,
     strokeWidth: Dp,
-    borderWidth: Dp
+    borderWidth: Dp,
+    innerBorderWidth: Dp,
 ) {
-    val controller = rememberCaptureController()
-    var mask: ImageBitmap? by remember { mutableStateOf(null) }
-    var shouldCapture by remember { mutableStateOf(true) }
+    val controller1 = rememberCaptureController()
+    val controller2 = rememberCaptureController()
+
+    var mask1: ImageBitmap? by remember { mutableStateOf(null) }
+    var mask2: ImageBitmap? by remember { mutableStateOf(null) }
+
+    var isLayoutReady1 by remember { mutableStateOf(false) }
+    var isLayoutReady2 by remember { mutableStateOf(false) }
+
+    var shouldCaptureMask1 by remember { mutableStateOf(true) }
+    var shouldCaptureMask2 by remember { mutableStateOf(true) }
+
+
+    fun dpToDegrees(gap: Dp, diameter: Dp): Float =
+        (gap.value / (PI * diameter.value).toFloat()) * 360f
+
+
 
     BoxWithConstraints(
         modifier = Modifier
@@ -365,28 +385,26 @@ private fun TargetRangeArc(
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
                 drawContent()
-                mask?.let {
-                    drawImage(it, blendMode = BlendMode.DstOut)
-                } // true alpha mask
+                mask1?.let { mask ->
+                    // Check if the ImageBitmap has valid dimensions before drawing
+                    if (mask.width > 0 && mask.height > 0) {
+                        try {
+                            drawImage(mask, blendMode = BlendMode.DstOut)
+                        } catch (e: Exception) {
+                            // Silently handle drawing failures (e.g., in preview mode)
+                        }
+                    }
+                }
             }
     ) {
-        val density = LocalDensity.current
-        // Use the smallest side as diameter and subtract padding + half the stroke to get radius
-        val diameterPx = with(density) { min(maxWidth, maxHeight).toPx() }
-        val radiusPx = with(density) {
-            diameterPx / 2f - (2.dp.toPx() + (strokeWidth.toPx() / 2f))
-        }.coerceAtLeast(1f)
-
-        // Convert extraStrokeDp (linear) to degrees: θ(deg) = (s/r) * 180/π
-        val extraDeg = with(density) {
-            (borderWidth.toPx() / radiusPx) * (180f / Math.PI.toFloat())
-        }
+        val diameter =  min(maxWidth, maxHeight)
+        val extraDeg = dpToDegrees(borderWidth,diameter) * 1.5f
 
         CircularProgressIndicator(
             progress = { 1f },
             modifier = modifier,
             colors = ProgressIndicatorDefaults.colors(
-                indicatorColor = color,
+                indicatorColor = MaterialTheme.colorScheme.background,
                 trackColor = Color.Transparent
             ),
             strokeWidth = strokeWidth,
@@ -394,13 +412,15 @@ private fun TargetRangeArc(
             endAngle = endAngle + extraDeg
         )
 
-
-        if (shouldCapture) {
+        if (shouldCaptureMask1) {
             Box(
                 Modifier
-                    .capturable(controller)
+                    .capturable(controller1)
                     .fillMaxSize()
                     .padding(borderWidth)
+                    .onGloballyPositioned {
+                        isLayoutReady1 = true
+                    }
             ) {
                 CircularProgressIndicator(
                     progress = { 1f },
@@ -415,13 +435,102 @@ private fun TargetRangeArc(
                 )
             }
 
-            // Kick off capture once, then remove mask source
-            LaunchedEffect(Unit) {
-                mask = controller.captureAsync().await()
-                shouldCapture = false
+            // Kick off capture after layout is ready and first frame is rendered
+            LaunchedEffect(isLayoutReady1) {
+                if (isLayoutReady1 && shouldCaptureMask1) {
+                    delay(20)
+                    mask1 = controller1.captureAsync().await()
+                    shouldCaptureMask1 = false
+                }
             }
         }
     }
+
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                mask1?.let { mask ->
+                    // Check if the ImageBitmap has valid dimensions before drawing
+                    if (mask.width > 0 && mask.height > 0) {
+                        try {
+                            drawImage(mask, blendMode = BlendMode.DstOut)
+                        } catch (e: Exception) {
+                            // Silently handle drawing failures (e.g., in preview mode)
+                        }
+                    }
+                }
+                mask2?.let { mask ->
+                    // Check if the ImageBitmap has valid dimensions before drawing
+                    if (mask.width > 0 && mask.height > 0) {
+                        try {
+                            drawImage(mask, blendMode = BlendMode.DstOut)
+                        } catch (e: Exception) {
+                            // Silently handle drawing failures (e.g., in preview mode)
+                        }
+                    }
+                }
+            }
+    ) {
+        val diameter =  min(maxWidth, maxHeight)
+        val extraDeg = dpToDegrees(borderWidth,diameter)
+
+        CircularProgressIndicator(
+            progress = { 1f },
+            modifier = modifier,
+            colors = ProgressIndicatorDefaults.colors(
+                indicatorColor = color,
+                trackColor = Color.Transparent
+            ),
+            strokeWidth = strokeWidth,
+            startAngle = startAngle - extraDeg,
+            endAngle = endAngle + extraDeg
+        )
+
+        if (shouldCaptureMask2) {
+            BoxWithConstraints(
+                Modifier
+                    .capturable(controller2)
+                    .fillMaxSize()
+                    .padding(borderWidth - innerBorderWidth)
+                    .onGloballyPositioned {
+                        isLayoutReady2 = true
+                    }
+            ) {
+
+                val newDiameter = min(maxWidth, maxHeight)
+
+                val newStrokeWidth =  strokeWidth - borderWidth * 2 + innerBorderWidth * 2
+                val newExtraDeg = dpToDegrees(innerBorderWidth,newDiameter)
+
+                CircularProgressIndicator(
+                    progress = { 1f },
+                    modifier = Modifier.fillMaxSize(),
+                    colors = ProgressIndicatorDefaults.colors(
+                        indicatorColor = Color.White,
+                        trackColor = Color.Transparent
+                    ),
+                    strokeWidth = newStrokeWidth,
+                    startAngle = startAngle - newExtraDeg,
+                    endAngle = endAngle + newExtraDeg
+                )
+            }
+
+            // Kick off capture after layout is ready and first frame is rendered
+            LaunchedEffect(isLayoutReady2) {
+                if (isLayoutReady2 && shouldCaptureMask2) {
+                    delay(20)
+                    mask2 = controller2.captureAsync().await()
+                    shouldCaptureMask2 = false
+                }
+            }
+        }
+    }
+
+
 }
 
 @OptIn(ExperimentalHorologistApi::class)
@@ -649,7 +758,7 @@ private fun HeartRateView(
 
                 key(hr){
                     ZoneSegment(
-                        modifier = Modifier.fillMaxSize().padding(3.dp),
+                        modifier = Modifier.fillMaxSize().padding(5.dp),
                         index = index + 1,
                         currentZone = currentZone,
                         hr = hr,
@@ -673,9 +782,10 @@ private fun HeartRateView(
             TargetRangeArc(
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) Color(0xFF0f6b36) else Color(0xFF08361b),
-                strokeWidth = 10.dp,
-                borderWidth = 3.dp,
+                color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
+                strokeWidth = 14.dp,
+                borderWidth = 5.dp,
+                innerBorderWidth = 3.dp
             )
         }
 
@@ -752,5 +862,32 @@ fun HeartRatePolar(
         age = userAge,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent
+    )
+}
+
+// Create ViewModels outside composable to avoid "Constructing a view model in a composable" warning
+private val previewAppViewModel = AppViewModel()
+private val previewHeartRateChangeViewModel = HeartRateChangeViewModel()
+
+// Helper function to create HapticsViewModel outside composable context
+private fun createPreviewHapticsViewModel(context: Context): HapticsViewModel {
+    return HapticsViewModel(HapticsHelper(context))
+}
+
+@Preview(device = Devices.WEAR_OS_SMALL_ROUND, showBackground = true)
+@Composable
+private fun HeartRateCircularChartPreview() {
+    val context = LocalContext.current
+    val hapticsViewModel = remember(context) { createPreviewHapticsViewModel(context) }
+    
+    HeartRateCircularChart(
+        modifier = Modifier.fillMaxSize(),
+        appViewModel = previewAppViewModel,
+        hapticsViewModel = hapticsViewModel,
+        heartRateChangeViewModel = previewHeartRateChangeViewModel,
+        hr = 150,
+        age = 30,
+        lowerBoundMaxHRPercent = 70f,
+        upperBoundMaxHRPercent = 80f
     )
 }

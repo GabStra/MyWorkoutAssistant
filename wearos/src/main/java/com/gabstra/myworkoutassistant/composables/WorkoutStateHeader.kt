@@ -85,7 +85,7 @@ fun WorkoutStateHeader(
             }
         }else{
             val captionStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
             )
 
