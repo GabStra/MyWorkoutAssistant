@@ -11,7 +11,7 @@ import androidx.wear.compose.material3.ColorScheme
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
@@ -25,35 +25,35 @@ val darkScheme = ColorScheme(
     primaryDim = Orange,
     primaryContainer = MediumDarkerGray,
     onPrimary = DarkGray,
-    onPrimaryContainer = LightGray,
+    onPrimaryContainer = LighterGray,
 
     secondary = Green,
     secondaryDim = Green,
     secondaryContainer = MediumDarkerGray,
     onSecondary = DarkGray,
-    onSecondaryContainer = LightGray,
+    onSecondaryContainer = LighterGray,
 
     tertiary = Yellow,
     tertiaryDim = Yellow,
     tertiaryContainer = MediumDarkerGray,
     onTertiary = DarkGray,
-    onTertiaryContainer = LightGray,
+    onTertiaryContainer = LighterGray,
 
     surfaceContainerLow = MediumDarkerGray,
     surfaceContainer = MediumDarkGray,
     surfaceContainerHigh = MediumGray,
-    onSurface =  LightGray, //Color(210, 210, 210),
+    onSurface =  LighterGray, //Color(210, 210, 210),
     onSurfaceVariant = MediumLightGray,
     outline = MediumGray,
     outlineVariant = MediumLightGray,
 
     background = Color.Black,
-    onBackground = LightGray,
+    onBackground = LighterGray,
 
     error = Red,
     errorDim = Red,
     errorContainer = MediumDarkerGray,
-    onError = LightGray,
+    onError = LighterGray,
     onErrorContainer = Red,
 )
 

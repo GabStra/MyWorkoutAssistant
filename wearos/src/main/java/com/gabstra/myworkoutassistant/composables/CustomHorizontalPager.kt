@@ -31,9 +31,6 @@ import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerState
 import androidx.wear.compose.material3.HorizontalPageIndicator
 import androidx.wear.compose.material3.HorizontalPagerScaffold
-import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.materialcore.screenHeightDp
-import androidx.wear.compose.materialcore.screenWidthDp
 import kotlin.math.absoluteValue
 
 
@@ -96,11 +93,16 @@ fun CustomAnimatedPage(
     val isReduceMotionEnabled = LocalReduceMotion.current
     val isRtlEnabled = LocalLayoutDirection.current == LayoutDirection.Rtl
     val orientation = remember(pagerState) { pagerState.layoutInfo.orientation }
-    val numberOfIntervals =
-        (if (orientation == Orientation.Horizontal) screenWidthDp() else screenHeightDp()) / 2
+    val configuration = LocalConfiguration.current
+    val screenDp = if (orientation == Orientation.Horizontal)
+        configuration.screenWidthDp
+    else
+        configuration.screenHeightDp
+
+    val numberOfIntervals = remember(orientation, screenDp) { screenDp / 2 }
 
     val currentPageOffsetFraction by
-    remember(pagerState) {
+    remember(pagerState, numberOfIntervals) {
         derivedStateOf {
             (pagerState.currentPageOffsetFraction * numberOfIntervals).toInt() /
                     numberOfIntervals.toFloat()

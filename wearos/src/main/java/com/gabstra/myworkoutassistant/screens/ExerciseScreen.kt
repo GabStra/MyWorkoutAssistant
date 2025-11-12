@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -167,13 +168,14 @@ fun ExerciseScreen(
 
     val exerciseOrSupersetIds = remember {
         viewModel.setsByExerciseId.keys.toList()
-            .map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
+            .mapNotNull { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
             .distinct()
     }
     val exerciseOrSupersetId =
         remember(state.exerciseId) { if (viewModel.supersetIdByExerciseId.containsKey(state.exerciseId)) viewModel.supersetIdByExerciseId[state.exerciseId] else state.exerciseId }
-    val currentExerciseOrSupersetIndex =
-        remember(exerciseOrSupersetId) { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
+    val currentExerciseOrSupersetIndex = remember(exerciseOrSupersetId, exerciseOrSupersetIds) {
+        derivedStateOf { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
+    }
     val isSuperset = remember(exerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId)
     }
@@ -200,10 +202,12 @@ fun ExerciseScreen(
     AnimatedContent(
         targetState = state,
         transitionSpec = {
-            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+            fadeIn(animationSpec = tween(250)) togetherWith fadeOut(animationSpec = tween(250))
         }, label = ""
     ) { updatedState ->
-        val setIndex = remember(updatedState.set.id) { exerciseSetIds.indexOf(updatedState.set.id) }
+        val setIndex = remember(updatedState.set.id, exerciseSetIds) {
+            derivedStateOf { exerciseSetIds.indexOf(updatedState.set.id) }
+        }
 
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
@@ -263,8 +267,14 @@ fun ExerciseScreen(
                         .padding(horizontal = 15.dp)
                 ) {
                     when (pageType) {
-                        PageType.PLATES -> PagePlates(updatedState, equipment, hapticsViewModel)
-                        PageType.EXERCISE_DETAIL -> ExerciseDetail(
+                        PageType.PLATES -> {
+                            key(pageType, pageIndex) {
+                                PagePlates(updatedState, equipment, hapticsViewModel)
+                            }
+                        }
+                        PageType.EXERCISE_DETAIL -> {
+                            key(pageType, pageIndex) {
+                                ExerciseDetail(
                             updatedState = updatedState,
                             viewModel = viewModel,
                             onEditModeDisabled = { allowHorizontalScrolling = true },
@@ -296,11 +306,11 @@ fun ExerciseScreen(
                                             }
                                         }
 
-                                        append("Ex: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+                                        append("Ex: ${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
 
                                         if (exerciseSetIds.size > 1) {
                                             pipe()
-                                            append("Set: ${setIndex + 1}/${exerciseSetIds.size}")
+                                            append("Set: ${setIndex.value + 1}/${exerciseSetIds.size}")
                                         }
 
                                         if (isSuperset) {
@@ -420,15 +430,18 @@ fun ExerciseScreen(
                             customComponentWrapper = { content ->
                                 content()
                             }
-                        )
+                            )
+                            }
+                        }
 
                         PageType.EXERCISES -> {
-                            key(pageType) {
+                            key(pageType, pageIndex) {
                                 PageExercises(
                                     selectedExercise,
                                     updatedState,
                                     viewModel, hapticsViewModel,
                                     exercise,
+                                    exerciseOrSupersetIds = exerciseOrSupersetIds,
                                     onExerciseSelected = {
                                         selectedExercise = it
                                     })
@@ -436,16 +449,26 @@ fun ExerciseScreen(
                         }
 
                         PageType.PROGRESSION_COMPARISON -> {
-                            PageProgressionComparison(
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                exercise = exercise,
-                                state = updatedState
-                            )
+                            key(pageType, pageIndex) {
+                                PageProgressionComparison(
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    exercise = exercise,
+                                    state = updatedState
+                                )
+                            }
                         }
 
-                        PageType.NOTES -> PageNotes(exercise.notes)
-                        PageType.BUTTONS -> PageButtons(updatedState, viewModel, hapticsViewModel)
+                        PageType.NOTES -> {
+                            key(pageType, pageIndex) {
+                                PageNotes(exercise.notes)
+                            }
+                        }
+                        PageType.BUTTONS -> {
+                            key(pageType, pageIndex) {
+                                PageButtons(updatedState, viewModel, hapticsViewModel)
+                            }
+                        }
                     }
                 }
             }

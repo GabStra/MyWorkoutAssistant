@@ -338,7 +338,6 @@ fun PageProgressionComparison(
 
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Title
@@ -369,7 +368,7 @@ fun PageProgressionComparison(
                         }
                         append(" • ")
                     }
-                    append("Set ${currentSetIndex + 1}/$maxSets")
+                    append("Set: ${currentSetIndex + 1}/$maxSets")
                 }
             }
 
@@ -488,7 +487,7 @@ fun PageProgressionComparison(
                         .clip(shape)
                 ) {
                     PlaceholderSetRow(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
                         textColor = textColor
                     )
@@ -591,7 +590,7 @@ fun PageProgressionComparison(
                         .clip(shape)
                 ) {
                     PlaceholderSetRow(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
                         textColor = textColor
                     )

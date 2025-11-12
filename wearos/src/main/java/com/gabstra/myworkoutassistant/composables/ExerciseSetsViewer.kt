@@ -65,13 +65,13 @@ fun SetTableRow(
     textColor: Color = MaterialTheme.colorScheme.onBackground,
 ){
     val captionStyle = MaterialTheme.typography.bodySmall
-    val itemStyle = MaterialTheme.typography.numeralSmall.copy(fontFamily = FontFamily.Monospace)
+    val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipment
 
     val warmupIndicatorComposable = @Composable{
         Box(modifier= Modifier.width(18.dp), contentAlignment = Alignment.Center){
-            Text(
+            ScalableText(
                 text = "W",
                 style = captionStyle,
                 textAlign = TextAlign.Center,
@@ -84,7 +84,7 @@ fun SetTableRow(
         modifier = modifier,
     ){
         Row(
-            modifier = Modifier.fillMaxSize().padding(2.dp),
+            modifier = Modifier.fillMaxSize().padding(3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if(setState.isWarmupSet){
@@ -169,7 +169,7 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
-                        style = itemStyle,
+                        style = itemStyle.copy(fontFamily = FontFamily.Monospace),
                         textAlign = TextAlign.Center,
                         color = textColor
                     )
@@ -182,7 +182,7 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(enduranceSetData.startTimer / 1000),
-                        style = itemStyle,
+                        style = itemStyle.copy(fontFamily = FontFamily.Monospace),
                         textAlign = TextAlign.Center,
                         color = textColor
                     )
@@ -293,11 +293,11 @@ fun ExerciseSetsViewer(
                     .height(27.5.dp)
                     .padding(bottom = 2.5.dp)
                     .border(BorderStroke(1.dp, backgroundColor), shape)
-                    .clip(shape), // keep if you want content clipped to the rounded shape
-                hapticsViewModel = hapticsViewModel, // Accessed from ExerciseSetsViewer's scope
-                viewModel = viewModel,               // Accessed from ExerciseSetsViewer's scope
+                    .clip(shape),
+                hapticsViewModel = hapticsViewModel,
+                viewModel = viewModel,
                 setState = setStateForThisRow,
-                index = rowIndex, // This 'index' prop for SetTableRow might refer to its position in the overall exercise
+                index = rowIndex,
                 isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
                 markAsDone = false, // customMarkAsDone ?: (rowIndex < setIndex),
                 textColor = customTextColor

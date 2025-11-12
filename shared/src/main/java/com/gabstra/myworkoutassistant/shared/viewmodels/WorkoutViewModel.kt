@@ -1663,12 +1663,6 @@ open class WorkoutViewModel : ViewModel() {
                     initialSetup,
                 )
 
-                Log.d("PlatesCalculator", "Plate changes calculated for: ${exercise.name}")
-
-                results.forEach {
-                    Log.d("PlatesCalculator", "$it")
-                }
-
                 plateChangeResults.addAll(results)
             } catch (e: Exception) {
                 Log.e("PlatesCalculator", "Error calculating plate changes", e)

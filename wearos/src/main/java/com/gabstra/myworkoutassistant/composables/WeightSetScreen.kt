@@ -99,7 +99,7 @@ fun WeightSetScreen(
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Medium) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData

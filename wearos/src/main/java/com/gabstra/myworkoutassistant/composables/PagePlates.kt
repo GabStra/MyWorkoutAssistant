@@ -256,7 +256,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         ScalableText(
-                                            modifier = Modifier.fillMaxSize().padding(2.dp),
+                                            modifier = Modifier.fillMaxSize().padding(3.dp),
                                             text = "$actionText $weightText",
                                             style = style,
                                             textAlign = TextAlign.Center,
@@ -271,7 +271,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
             }
 
             Text(
-                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                modifier = Modifier.fillMaxWidth(),
                 text = "PLATES STACK",
                 style = headerStyle,
                 textAlign = TextAlign.Center,

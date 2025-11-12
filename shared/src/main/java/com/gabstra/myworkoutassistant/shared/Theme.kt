@@ -9,6 +9,7 @@ val MediumDarkerGray = Color(45, 45, 45)
 val MediumDarkGray = Color(60, 60, 60)
 val MediumGray = Color(90, 90, 90)
 val MediumLightGray = Color(120, 120, 120)
+val LighterGray = Color(224, 224, 224, 255)
 val LightGray = Color(240, 240, 240)
 val White = Color(255, 255, 255)
 

@@ -104,6 +104,11 @@ fun RestScreen(
         indicatorProgress.floatValue = computeProgress()
     }
 
+    val exerciseOrSupersetIds = remember {
+        viewModel.setsByExerciseId.keys.toList()
+            .mapNotNull { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
+            .distinct()
+    }
 
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -352,6 +357,7 @@ fun RestScreen(
                                     viewModel,
                                     hapticsViewModel,
                                     exercise,
+                                    exerciseOrSupersetIds = exerciseOrSupersetIds,
                                     onExerciseSelected = {
                                         selectedExercise = it
                                     }
@@ -389,7 +395,9 @@ fun RestScreen(
             progress = {
                 indicatorProgress.floatValue
             },
-            modifier = Modifier.fillMaxSize().padding(3.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
             colors = ProgressIndicatorDefaults.colors(
                 indicatorColor = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHigh

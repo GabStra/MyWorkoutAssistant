@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,21 +44,21 @@ fun PageExercises(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
+    exerciseOrSupersetIds: List<java.util.UUID>,
     onExerciseSelected: (Exercise) -> Unit
 ) {
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
-    val exerciseOrSupersetIds = remember {
-        viewModel.setsByExerciseId.keys.toList()
-            .map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
-            .distinct()
-    }
 
     var marqueeEnabled by remember { mutableStateOf(false) }
     var headerMarqueeEnabled by remember { mutableStateOf(false) }
 
     val currentExerciseOrSupersetId =
-        if (viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
-    val currentExerciseOrSupersetIndex = exerciseOrSupersetIds.indexOf(currentExerciseOrSupersetId)
+        remember(currentExercise.id) {
+            if (viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
+        }
+    val currentExerciseOrSupersetIndex = remember(currentExerciseOrSupersetId, exerciseOrSupersetIds) {
+        derivedStateOf { exerciseOrSupersetIds.indexOf(currentExerciseOrSupersetId) }
+    }
 
     val isSuperset = remember(currentExerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
@@ -70,31 +71,26 @@ fun PageExercises(
         } else null
     }
 
-    val currentExerciseSetIds = remember(
-        currentExercise
-    ) {
-        viewModel.allWorkoutStates
-            .asSequence()
-            .filterIsInstance<WorkoutState.Set>()
-            .filter { it.exerciseId == currentExercise.id }
-            .map { it.set.id }
-            .toList()
-            .distinct()
+    // Optimize: Use setsByExerciseId which is already cached in viewModel instead of filtering allWorkoutStates
+    val currentExerciseSetIds = remember(currentExercise.id) {
+        viewModel.setsByExerciseId[currentExercise.id]?.map { it.set.id } ?: emptyList()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         val selectedExerciseOrSupersetId = remember(selectedExercise) {
             if (viewModel.supersetIdByExerciseId.containsKey(selectedExercise.id)) viewModel.supersetIdByExerciseId[selectedExercise.id]!! else selectedExercise.id
         }
-        val selectedExerciseOrSupersetIndex = remember(selectedExerciseOrSupersetId) {
-            exerciseOrSupersetIds.indexOf(selectedExerciseOrSupersetId)
+        val selectedExerciseOrSupersetIndex = remember(selectedExerciseOrSupersetId, exerciseOrSupersetIds) {
+            derivedStateOf { exerciseOrSupersetIds.indexOf(selectedExerciseOrSupersetId) }
         }
 
         val isSuperset = remember(selectedExerciseOrSupersetId) {
             viewModel.exercisesBySupersetId.containsKey(selectedExerciseOrSupersetId)
         }
 
-        val currentIndex = remember(selectedExercise) { exerciseIds.indexOf(selectedExercise.id) }
+        val currentIndex = remember(selectedExercise.id, exerciseIds) {
+            derivedStateOf { exerciseIds.indexOf(selectedExercise.id) }
+        }
 
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -137,7 +133,7 @@ fun PageExercises(
                     }
                 }
 
-                append("Ex: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}")
+                append("Ex: ${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
 
                 if(currentExercise == selectedExercise) {
                     if (currentExerciseSetIds.size > 1) {
@@ -214,21 +210,21 @@ fun PageExercises(
                 exercise = selectedExercise,
                 currentSet = currentStateSet.set,
                 customMarkAsDone = when {
-                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> true
-                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> false
+                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> true
+                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> false
                     else -> null
                 },
                 customBackgroundColor = when {
-                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary
-                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.primary
+                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
                     else -> null
                 },
                 customTextColor = when {
-                    selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.primary //background.copy(0.75f)
-                    selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.primary //background.copy(0.75f)
+                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
                     else -> null
                 },
-                overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {
                     overrideSetIndex
                 } else null
             )
@@ -244,10 +240,10 @@ fun PageExercises(
                         .fillMaxHeight()
                         .weight(1f)
                         .clickable(
-                            enabled = currentIndex > 0
+                            enabled = currentIndex.value > 0
                         ) {
                             hapticsViewModel.doGentleVibration()
-                            val newIndex = currentIndex - 1
+                            val newIndex = currentIndex.value - 1
                             onExerciseSelected(viewModel.exercisesById[exerciseIds[newIndex]]!!)
                         }
                         .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),
@@ -271,10 +267,10 @@ fun PageExercises(
                         .fillMaxHeight()
                         .weight(1f)
                         .clickable(
-                            enabled = currentIndex < exerciseIds.size - 1
+                            enabled = currentIndex.value < exerciseIds.size - 1
                         ) {
                             hapticsViewModel.doGentleVibration()
-                            val newIndex = currentIndex + 1
+                            val newIndex = currentIndex.value + 1
                             onExerciseSelected(viewModel.exercisesById[exerciseIds[newIndex]]!!)
                         }
                         .then(if (exerciseIds.size > 1) Modifier else Modifier.alpha(0f)),

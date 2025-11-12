@@ -324,20 +324,22 @@ private fun HeartRateDisplay(
         modifier = modifier
     ) {
         Spacer(modifier = Modifier.weight(1f))
-
         PulsingHeartWithBpm(
             bpm = bpm,
-            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainerHigh else colorsByZone[currentZone]
+            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size)
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            else
+                colorsByZone[currentZone]
         )
-        Spacer(modifier = Modifier.width(5.dp))
+        Spacer(modifier = Modifier.width(2.5.dp))
         Text(
             modifier = Modifier.alignByBaseline(),
             text = textToDisplay,
             style = MaterialTheme.typography.labelMedium,
             color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
         )
-        Spacer(modifier = Modifier.width(2.5.dp))
         if(bpm != 0 && displayMode == 0){
+            Spacer(modifier = Modifier.width(2.5.dp))
             Text(
                 modifier = Modifier.alignByBaseline(),
                 text = "bpm",
@@ -345,7 +347,6 @@ private fun HeartRateDisplay(
                 color = MaterialTheme.colorScheme.onBackground
             )
         }
-
         Spacer(modifier = Modifier.weight(1f))
     }
 }
@@ -377,160 +378,153 @@ private fun TargetRangeArc(
     fun dpToDegrees(gap: Dp, diameter: Dp): Float =
         (gap.value / (PI * diameter.value).toFloat()) * 360f
 
-
-
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithContent {
-                drawContent()
-                mask1?.let { mask ->
-                    // Check if the ImageBitmap has valid dimensions before drawing
-                    if (mask.width > 0 && mask.height > 0) {
-                        try {
-                            drawImage(mask, blendMode = BlendMode.DstOut)
-                        } catch (e: Exception) {
-                            // Silently handle drawing failures (e.g., in preview mode)
+        BoxWithConstraints(
+            modifier = modifier
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    mask1?.let { mask ->
+                        // Check if the ImageBitmap has valid dimensions before drawing
+                        if (mask.width > 0 && mask.height > 0) {
+                            try {
+                                drawImage(mask, blendMode = BlendMode.DstOut)
+                            } catch (e: Exception) {
+                                // Silently handle drawing failures (e.g., in preview mode)
+                            }
                         }
                     }
                 }
-            }
-    ) {
-        val diameter =  min(maxWidth, maxHeight)
-        val extraDeg = dpToDegrees(borderWidth,diameter) * 1.5f
+        ) {
+            val diameter =  min(maxWidth, maxHeight)
+            val extraDeg = dpToDegrees(borderWidth + 4.dp,diameter) + 1
 
-        CircularProgressIndicator(
-            progress = { 1f },
-            modifier = modifier,
-            colors = ProgressIndicatorDefaults.colors(
-                indicatorColor = MaterialTheme.colorScheme.background,
-                trackColor = Color.Transparent
-            ),
-            strokeWidth = strokeWidth,
-            startAngle = startAngle - extraDeg,
-            endAngle = endAngle + extraDeg
-        )
+            CircularProgressIndicator(
+                progress = { 1f },
+                modifier = Modifier.fillMaxSize(),
+                colors = ProgressIndicatorDefaults.colors(
+                    indicatorColor = MaterialTheme.colorScheme.background,
+                    trackColor = Color.Transparent
+                ),
+                strokeWidth = strokeWidth,
+                startAngle = startAngle - extraDeg,
+                endAngle = endAngle + extraDeg
+            )
 
-        if (shouldCaptureMask1) {
-            Box(
-                Modifier
-                    .capturable(controller1)
-                    .fillMaxSize()
-                    .padding(borderWidth)
-                    .onGloballyPositioned {
-                        isLayoutReady1 = true
+            if (shouldCaptureMask1) {
+                Box(
+                    Modifier
+                        .capturable(controller1)
+                        .fillMaxSize()
+                        .padding(borderWidth)
+                        .onGloballyPositioned {
+                            isLayoutReady1 = true
+                        }
+                ) {
+                    CircularProgressIndicator(
+                        progress = { 1f },
+                        modifier = Modifier.fillMaxSize(),
+                        colors = ProgressIndicatorDefaults.colors(
+                            indicatorColor = Color.White,
+                            trackColor = Color.Transparent
+                        ),
+                        strokeWidth = strokeWidth - borderWidth * 2,
+                        startAngle = startAngle,
+                        endAngle = endAngle
+                    )
+                }
+
+                // Kick off capture after layout is ready and first frame is rendered
+                LaunchedEffect(isLayoutReady1) {
+                    if (isLayoutReady1 && shouldCaptureMask1) {
+                        delay(20)
+                        mask1 = controller1.captureAsync().await()
+                        shouldCaptureMask1 = false
                     }
-            ) {
-                CircularProgressIndicator(
-                    progress = { 1f },
-                    modifier = Modifier.fillMaxSize(),
-                    colors = ProgressIndicatorDefaults.colors(
-                        indicatorColor = Color.White,
-                        trackColor = Color.Transparent
-                    ),
-                    strokeWidth = strokeWidth - borderWidth * 2,
-                    startAngle = startAngle,
-                    endAngle = endAngle
-                )
-            }
-
-            // Kick off capture after layout is ready and first frame is rendered
-            LaunchedEffect(isLayoutReady1) {
-                if (isLayoutReady1 && shouldCaptureMask1) {
-                    delay(20)
-                    mask1 = controller1.captureAsync().await()
-                    shouldCaptureMask1 = false
                 }
             }
         }
-    }
 
-
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithContent {
-                drawContent()
-                mask1?.let { mask ->
-                    // Check if the ImageBitmap has valid dimensions before drawing
-                    if (mask.width > 0 && mask.height > 0) {
-                        try {
-                            drawImage(mask, blendMode = BlendMode.DstOut)
-                        } catch (e: Exception) {
-                            // Silently handle drawing failures (e.g., in preview mode)
+        BoxWithConstraints(
+            modifier = modifier
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    mask1?.let { mask ->
+                        // Check if the ImageBitmap has valid dimensions before drawing
+                        if (mask.width > 0 && mask.height > 0) {
+                            try {
+                                drawImage(mask, blendMode = BlendMode.DstOut)
+                            } catch (e: Exception) {
+                                // Silently handle drawing failures (e.g., in preview mode)
+                            }
+                        }
+                    }
+                    mask2?.let { mask ->
+                        // Check if the ImageBitmap has valid dimensions before drawing
+                        if (mask.width > 0 && mask.height > 0) {
+                            try {
+                                drawImage(mask, blendMode = BlendMode.DstOut)
+                            } catch (e: Exception) {
+                                // Silently handle drawing failures (e.g., in preview mode)
+                            }
                         }
                     }
                 }
-                mask2?.let { mask ->
-                    // Check if the ImageBitmap has valid dimensions before drawing
-                    if (mask.width > 0 && mask.height > 0) {
-                        try {
-                            drawImage(mask, blendMode = BlendMode.DstOut)
-                        } catch (e: Exception) {
-                            // Silently handle drawing failures (e.g., in preview mode)
+        ) {
+            val diameter =  min(maxWidth, maxHeight)
+            val extraDeg = dpToDegrees(borderWidth,diameter) + 1
+
+            CircularProgressIndicator(
+                progress = { 1f },
+                modifier = Modifier.fillMaxSize(),
+                colors = ProgressIndicatorDefaults.colors(
+                    indicatorColor = color,
+                    trackColor = Color.Transparent
+                ),
+                strokeWidth = strokeWidth,
+                startAngle = startAngle - extraDeg,
+                endAngle = endAngle + extraDeg
+            )
+
+            if (shouldCaptureMask2) {
+                BoxWithConstraints(
+                    Modifier
+                        .capturable(controller2)
+                        .fillMaxSize()
+                        .padding(borderWidth - innerBorderWidth)
+                        .onGloballyPositioned {
+                            isLayoutReady2 = true
                         }
-                    }
+                ) {
+
+                    val newDiameter = min(maxWidth, maxHeight)
+
+                    val newStrokeWidth =  strokeWidth - borderWidth * 2 + innerBorderWidth * 2
+                    val newExtraDeg = dpToDegrees(innerBorderWidth,newDiameter) + 1
+
+                    CircularProgressIndicator(
+                        progress = { 1f },
+                        modifier = Modifier.fillMaxSize(),
+                        colors = ProgressIndicatorDefaults.colors(
+                            indicatorColor = Color.White,
+                            trackColor = Color.Transparent
+                        ),
+                        strokeWidth = newStrokeWidth,
+                        startAngle = startAngle - newExtraDeg,
+                        endAngle = endAngle + newExtraDeg
+                    )
                 }
-            }
-    ) {
-        val diameter =  min(maxWidth, maxHeight)
-        val extraDeg = dpToDegrees(borderWidth,diameter)
 
-        CircularProgressIndicator(
-            progress = { 1f },
-            modifier = modifier,
-            colors = ProgressIndicatorDefaults.colors(
-                indicatorColor = color,
-                trackColor = Color.Transparent
-            ),
-            strokeWidth = strokeWidth,
-            startAngle = startAngle - extraDeg,
-            endAngle = endAngle + extraDeg
-        )
-
-        if (shouldCaptureMask2) {
-            BoxWithConstraints(
-                Modifier
-                    .capturable(controller2)
-                    .fillMaxSize()
-                    .padding(borderWidth - innerBorderWidth)
-                    .onGloballyPositioned {
-                        isLayoutReady2 = true
+                // Kick off capture after layout is ready and first frame is rendered
+                LaunchedEffect(isLayoutReady2) {
+                    if (isLayoutReady2 && shouldCaptureMask2) {
+                        delay(20)
+                        mask2 = controller2.captureAsync().await()
+                        shouldCaptureMask2 = false
                     }
-            ) {
-
-                val newDiameter = min(maxWidth, maxHeight)
-
-                val newStrokeWidth =  strokeWidth - borderWidth * 2 + innerBorderWidth * 2
-                val newExtraDeg = dpToDegrees(innerBorderWidth,newDiameter)
-
-                CircularProgressIndicator(
-                    progress = { 1f },
-                    modifier = Modifier.fillMaxSize(),
-                    colors = ProgressIndicatorDefaults.colors(
-                        indicatorColor = Color.White,
-                        trackColor = Color.Transparent
-                    ),
-                    strokeWidth = newStrokeWidth,
-                    startAngle = startAngle - newExtraDeg,
-                    endAngle = endAngle + newExtraDeg
-                )
-            }
-
-            // Kick off capture after layout is ready and first frame is rendered
-            LaunchedEffect(isLayoutReady2) {
-                if (isLayoutReady2 && shouldCaptureMask2) {
-                    delay(20)
-                    mask2 = controller2.captureAsync().await()
-                    shouldCaptureMask2 = false
                 }
             }
         }
-    }
-
-
 }
 
 @OptIn(ExperimentalHorologistApi::class)
@@ -690,8 +684,8 @@ private fun HeartRateView(
     }
 
     val zoneCount = colorsByZone.size - 1
-    val totalStartAngle = 120f
-    val totalEndAngle = 240f
+    val totalStartAngle = 115f
+    val totalEndAngle = 235f
     val paddingAngle = 2f
 
     val totalArcAngle by remember { derivedStateOf { totalEndAngle - totalStartAngle } }
@@ -758,7 +752,7 @@ private fun HeartRateView(
 
                 key(hr){
                     ZoneSegment(
-                        modifier = Modifier.fillMaxSize().padding(5.dp),
+                        modifier = Modifier.fillMaxSize().padding(10.dp),
                         index = index + 1,
                         currentZone = currentZone,
                         hr = hr,
@@ -779,19 +773,20 @@ private fun HeartRateView(
                 mhrPercentage in (lowerBoundMaxHRPercent ?: 0f)..(upperBoundMaxHRPercent ?: 0f)
             }
 
-            TargetRangeArc(
+           TargetRangeArc(
+                modifier = Modifier.fillMaxSize().padding(2.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
                 color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
-                strokeWidth = 14.dp,
-                borderWidth = 5.dp,
-                innerBorderWidth = 3.dp
+                strokeWidth = 20.dp,
+                borderWidth = 8.dp,
+                innerBorderWidth = 6.dp
             )
         }
 
         if(currentHrRotationAngle != null){
-            Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
-                RotatingIndicator(currentHrRotationAngle,  MaterialTheme.colorScheme.onBackground)
+            Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+                AnimatedHeartRateIndicator(currentHrRotationAngle, MaterialTheme.colorScheme.onBackground)
             }
         }
     }

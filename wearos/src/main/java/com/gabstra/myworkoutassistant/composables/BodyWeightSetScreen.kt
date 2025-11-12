@@ -97,7 +97,7 @@ fun BodyWeightSetScreen(
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Bold) }
+    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Medium) }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -296,7 +296,6 @@ fun BodyWeightSetScreen(
             )
         }
     }
-
 
     @SuppressLint("DefaultLocale")
     @Composable
