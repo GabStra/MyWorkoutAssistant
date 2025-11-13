@@ -68,7 +68,10 @@ import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -350,6 +353,7 @@ fun WorkoutForm(
         ScheduleDialog(
             schedule = currentEditingSchedule.value,
             workoutId = newGlobalId,
+            existingSchedules = schedules.value,
             onDismiss = { showScheduleDialog.value = false },
             onSave = { newSchedule ->
                 val updated = schedules.value.toMutableList()
@@ -364,6 +368,7 @@ fun WorkoutForm(
     if (showBatchScheduleDialog.value) {
         BatchScheduleDialog(
             workoutId = newGlobalId,
+            existingSchedules = schedules.value,
             onDismiss = { showBatchScheduleDialog.value = false },
             onSave = { newSchedules ->
                 val updated = schedules.value.toMutableList()
@@ -380,9 +385,11 @@ fun WorkoutForm(
 fun ScheduleDialog(
     schedule: WorkoutSchedule?,
     workoutId: UUID,
+    existingSchedules: List<WorkoutSchedule>,
     onDismiss: () -> Unit,
     onSave: (WorkoutSchedule) -> Unit
 ) {
+    val context = LocalContext.current
     val isEditing = schedule != null
 
     val labelState = rememberSaveable { mutableStateOf(schedule?.label ?: "") }
@@ -500,19 +507,30 @@ fun ScheduleDialog(
                     }
                 } else null
 
-                onSave(
-                    WorkoutSchedule(
-                        id = schedule?.id ?: UUID.randomUUID(),
-                        workoutId = workoutId,
-                        label = labelState.value,
-                        hour = hourState.intValue,
-                        minute = minuteState.intValue,
-                        isEnabled = isEnabledState.value,
-                        daysOfWeek = if (useSpecificDate.value) 0 else daysOfWeekState.intValue,
-                        specificDate = specificDate,
-                        hasExecuted = schedule?.hasExecuted ?: false
-                    )
+                val newSchedule = WorkoutSchedule(
+                    id = schedule?.id ?: UUID.randomUUID(),
+                    workoutId = workoutId,
+                    label = labelState.value,
+                    hour = hourState.intValue,
+                    minute = minuteState.intValue,
+                    isEnabled = isEnabledState.value,
+                    daysOfWeek = if (useSpecificDate.value) 0 else daysOfWeekState.intValue,
+                    specificDate = specificDate,
+                    hasExecuted = schedule?.hasExecuted ?: false
                 )
+
+                // Check for conflicts
+                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                    newSchedules = listOf(newSchedule),
+                    existingSchedules = existingSchedules.filter { it.id != newSchedule.id }
+                )
+
+                if (conflicts.isNotEmpty()) {
+                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                } else {
+                    onSave(newSchedule)
+                }
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
@@ -654,9 +672,11 @@ fun ScheduleListItem(
 @Composable
 fun BatchScheduleDialog(
     workoutId: UUID,
+    existingSchedules: List<WorkoutSchedule>,
     onDismiss: () -> Unit,
     onSave: (List<WorkoutSchedule>) -> Unit
 ) {
+    val context = LocalContext.current
     val selectedTabIndex = rememberSaveable { mutableStateOf(0) }
 
     val labelPrefixState = rememberSaveable { mutableStateOf("Schedule") }
@@ -828,7 +848,19 @@ fun BatchScheduleDialog(
                     t += interval
                     count++
                 }
-                onSave(list)
+
+                // Check for conflicts
+                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                    newSchedules = list,
+                    existingSchedules = existingSchedules
+                )
+
+                if (conflicts.isNotEmpty()) {
+                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                } else {
+                    onSave(list)
+                }
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

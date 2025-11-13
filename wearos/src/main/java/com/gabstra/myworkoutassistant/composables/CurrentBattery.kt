@@ -75,7 +75,7 @@ fun CurrentBattery(){
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            modifier = Modifier.size(12.5.dp),
+            modifier = Modifier.size(15.dp),
             painter = painterResource(R.drawable.outline_battery_full_24),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onBackground

@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -69,7 +70,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         Text(
             modifier = Modifier
@@ -82,7 +83,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
-                text = "Not available",
+                text = "NOT AVAILABLE",
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center
             )
@@ -270,28 +271,33 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 }
             }
 
-            Text(
-                modifier = Modifier.fillMaxWidth(),
-                text = "PLATES STACK",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Text(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp)
-                    .clickable {
-                        platesMarqueeEnabled = !platesMarqueeEnabled
-                        hapticsViewModel.doGentleVibration()
-                    }
-                    .then(if (platesMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                text = perSideLabel,                       // e.g., "20 - 10 - 5x2 - 1.25 - 0.25"
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                textAlign = TextAlign.Center,
-                overflow = TextOverflow.Ellipsis,
-                maxLines = 1
-            )
+            Column{
+                Text(
+                    modifier = Modifier.fillMaxWidth(),
+                    text = "PLATES STACK",
+                    style = headerStyle,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(2.5.dp))
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp)
+                        .clickable {
+                            platesMarqueeEnabled = !platesMarqueeEnabled
+                            hapticsViewModel.doGentleVibration()
+                        }
+                        .then(if (platesMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                    text = perSideLabel,                       // e.g., "20 - 10 - 5x2 - 1.25 - 0.25"
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis,
+                    maxLines = 1
+                )
+            }
+
+
         }
     }
 }

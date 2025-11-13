@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.cos
@@ -73,10 +74,7 @@ fun RotatingIndicator(rotationAngle: Float, fillColor: Color, reverse: Boolean =
 }
 
 @Composable
-fun AnimatedHeartRateIndicator(rotationAngle: Float?, fillColor: Color) {
-    val bubbleSize = 12.dp
-    val borderWidth = 2.dp
-
+fun AnimatedHeartRateIndicator(rotationAngle: Float?, fillColor: Color, bubbleSize: Dp = 14.dp, borderWidth: Dp = 2.dp) {
     if (rotationAngle == null) return
 
     val animatedAngle by animateFloatAsState(

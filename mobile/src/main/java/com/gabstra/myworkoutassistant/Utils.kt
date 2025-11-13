@@ -308,136 +308,126 @@ suspend fun sendWorkoutsToHealthConnect(
 
     if (workoutHistories.isEmpty()) return
 
-    healthConnectClient.deleteRecords(
-        ExerciseSessionRecord::class,
-        clientRecordIdsList = workoutHistories.map { it.id.toString() },
-        recordIdsList = emptyList()
-    )
-
-    healthConnectClient.deleteRecords(
-        HeartRateRecord::class,
-        clientRecordIdsList = workoutHistories.map { it.id.toString() },
-        recordIdsList = emptyList()
-    )
-
-    healthConnectClient.deleteRecords(
-        TotalCaloriesBurnedRecord::class,
-        clientRecordIdsList = workoutHistories.map { it.id.toString() },
-        recordIdsList = emptyList()
-    )
-
-    /*healthConnectClient.deleteRecords(
-        WeightRecord::class,
-        clientRecordIdsList = listOf("MyWorkoutAssistantWeightRecord"),
-        recordIdsList = emptyList()
-    )*/
-
-    val exerciseSessionRecords = workoutHistories.map {
-        ExerciseSessionRecord(
-            startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
-            startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-            endTime = it.startTime.plusSeconds(it.duration.toLong())
-                .atZone(ZoneId.systemDefault()).toInstant(),
-
-            endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-            exerciseType = workoutsById[it.workoutId]!!.type,
-            title = workoutsById[it.workoutId]!!.name,
-            metadata = Metadata.activelyRecorded(
-                Device(type = Device.TYPE_WATCH),
-                clientRecordId = it.id.toString()
-            ),
+    // Process workout histories in batches of 5 to avoid exceeding Health Connect's 5MB chunk limit
+    val batchSize = 5
+    workoutHistories.chunked(batchSize).forEach { batch ->
+        // Delete existing records for this batch
+        healthConnectClient.deleteRecords(
+            ExerciseSessionRecord::class,
+            clientRecordIdsList = batch.map { it.id.toString() },
+            recordIdsList = emptyList()
         )
-    }
 
-    val heartRateRecords = workoutHistories
-        .filter { it.heartBeatRecords.isNotEmpty() }
-        .mapNotNull { workoutHistory ->
-            val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
-            val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
-            val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
+        healthConnectClient.deleteRecords(
+            HeartRateRecord::class,
+            clientRecordIdsList = batch.map { it.id.toString() },
+            recordIdsList = emptyList()
+        )
 
-            val samples = workoutHistory.heartBeatRecords.mapIndexedNotNull { index, bpm ->
-                val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 1000))
-                if (sampleTime.isAfter(endTime) || bpm <= 0) {
-                    null
-                } else {
-                    HeartRateRecord.Sample(
-                        time = sampleTime,
-                        beatsPerMinute = bpm.toLong()
-                    )
-                }
-            }
+        healthConnectClient.deleteRecords(
+            TotalCaloriesBurnedRecord::class,
+            clientRecordIdsList = batch.map { it.id.toString() },
+            recordIdsList = emptyList()
+        )
 
-            if(samples.isEmpty()) {
-                return@mapNotNull null
-            }
+        // Create records for this batch
+        val exerciseSessionRecords = batch.map {
+            ExerciseSessionRecord(
+                startTime = it.startTime.atZone(ZoneId.systemDefault()).toInstant(),
+                startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                endTime = it.startTime.plusSeconds(it.duration.toLong())
+                    .atZone(ZoneId.systemDefault()).toInstant(),
 
-            HeartRateRecord(
-                startTime = startTime,
-                endTime = endTime,
-                startZoneOffset = zoneOffset,
-                endZoneOffset = zoneOffset,
-                samples = samples,
+                endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
+                exerciseType = workoutsById[it.workoutId]!!.type,
+                title = workoutsById[it.workoutId]!!.name,
                 metadata = Metadata.activelyRecorded(
                     Device(type = Device.TYPE_WATCH),
-                    clientRecordId =   workoutHistory.id.toString()
-                )
+                    clientRecordId = it.id.toString()
+                ),
             )
         }
 
-    val totalCaloriesBurnedRecords = workoutHistories
-        .filter { it.heartBeatRecords.isNotEmpty() }
-        .mapNotNull { workoutHistory ->
-            val avgHeartRate = workoutHistory.heartBeatRecords.average()
+        val heartRateRecords = batch
+            .filter { it.heartBeatRecords.isNotEmpty() }
+            .mapNotNull { workoutHistory ->
+                val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
+                val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
+                val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
 
-            val durationMinutes = workoutHistory.duration.toDouble() / 60
-            val kiloCaloriesBurned = calculateKiloCaloriesBurned(
-                age = age,
-                weightKg = weightKg.toDouble(),
-                averageHeartRate = avgHeartRate,
-                durationMinutes = durationMinutes,
-                isMale = true
-            )
+                val samples = workoutHistory.heartBeatRecords.mapIndexedNotNull { index, bpm ->
+                    val sampleTime = startTime.plus(Duration.ofMillis(index.toLong() * 1000))
+                    if (sampleTime.isAfter(endTime) || bpm <= 0) {
+                        null
+                    } else {
+                        HeartRateRecord.Sample(
+                            time = sampleTime,
+                            beatsPerMinute = bpm.toLong()
+                        )
+                    }
+                }
 
-            if(kiloCaloriesBurned <= 0) {
-                return@mapNotNull null
+                if(samples.isEmpty()) {
+                    return@mapNotNull null
+                }
+
+                HeartRateRecord(
+                    startTime = startTime,
+                    endTime = endTime,
+                    startZoneOffset = zoneOffset,
+                    endZoneOffset = zoneOffset,
+                    samples = samples,
+                    metadata = Metadata.activelyRecorded(
+                        Device(type = Device.TYPE_WATCH),
+                        clientRecordId =   workoutHistory.id.toString()
+                    )
+                )
             }
 
-            val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
-            val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
-            val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
+        val totalCaloriesBurnedRecords = batch
+            .filter { it.heartBeatRecords.isNotEmpty() }
+            .mapNotNull { workoutHistory ->
+                val avgHeartRate = workoutHistory.heartBeatRecords.average()
 
-            androidx.health.connect.client.records.TotalCaloriesBurnedRecord(
-                startTime= startTime,
-                startZoneOffset = zoneOffset,
-                endTime = endTime,
-                endZoneOffset = zoneOffset,
-                energy = Energy.kilocalories(kiloCaloriesBurned),
-                metadata =  Metadata.activelyRecorded(
-                    Device(type = Device.TYPE_WATCH),
-                    clientRecordId = workoutHistory.id.toString()
+                val durationMinutes = workoutHistory.duration.toDouble() / 60
+                val kiloCaloriesBurned = calculateKiloCaloriesBurned(
+                    age = age,
+                    weightKg = weightKg.toDouble(),
+                    averageHeartRate = avgHeartRate,
+                    durationMinutes = durationMinutes,
+                    isMale = true
                 )
-            )
+
+                if(kiloCaloriesBurned <= 0) {
+                    return@mapNotNull null
+                }
+
+                val startTime = workoutHistory.startTime.atZone(ZoneId.systemDefault()).toInstant()
+                val endTime = workoutHistory.startTime.plusSeconds(workoutHistory.duration.toLong()).atZone(ZoneId.systemDefault()).toInstant()
+                val zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now())
+
+                androidx.health.connect.client.records.TotalCaloriesBurnedRecord(
+                    startTime= startTime,
+                    startZoneOffset = zoneOffset,
+                    endTime = endTime,
+                    endZoneOffset = zoneOffset,
+                    energy = Energy.kilocalories(kiloCaloriesBurned),
+                    metadata =  Metadata.activelyRecorded(
+                        Device(type = Device.TYPE_WATCH),
+                        clientRecordId = workoutHistory.id.toString()
+                    )
+                )
+            }
+
+        // Insert records for this batch
+        healthConnectClient.insertRecords(exerciseSessionRecords)
+        healthConnectClient.insertRecords(heartRateRecords)
+        healthConnectClient.insertRecords(totalCaloriesBurnedRecords)
+
+        // Update hasBeenSentToHealth flag for this batch
+        for (workoutHistory in batch) {
+            workoutHistoryDao.updateHasBeenSentToHealth(workoutHistory.id, true)
         }
-
-
-    val weightRecord = androidx.health.connect.client.records.WeightRecord(
-        time = Instant.now(),
-        zoneOffset = ZoneOffset.systemDefault().rules.getOffset(Instant.now()),
-        weight = Mass.kilograms(weightKg.toDouble()),
-        metadata = Metadata.activelyRecorded(
-            Device(type = Device.TYPE_WATCH),
-            clientRecordId = "MyWorkoutAssistantWeightRecord"
-        )
-    )
-
-    healthConnectClient.insertRecords(exerciseSessionRecords)
-    healthConnectClient.insertRecords(heartRateRecords)
-    healthConnectClient.insertRecords(totalCaloriesBurnedRecords)
-    //healthConnectClient.insertRecords(listOf(weightRecord))
-
-    for (workoutHistory in workoutHistories) {
-        workoutHistoryDao.updateHasBeenSentToHealth(workoutHistory.id, true)
     }
 }
 

@@ -214,7 +214,7 @@ fun ExerciseScreen(
                 ScalableText(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 15.dp)
+                        .padding(horizontal = 20.dp)
                         .combinedClickable(
                             onClick = {
                                 hapticsViewModel.doGentleVibration()

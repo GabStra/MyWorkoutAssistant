@@ -403,8 +403,8 @@ fun RestScreen(
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
             ),
             strokeWidth = 4.dp,
-            startAngle = 120f,
-            endAngle = 240f,
+            startAngle = 115f,
+            endAngle = 235f,
         )
 
         textComposable(

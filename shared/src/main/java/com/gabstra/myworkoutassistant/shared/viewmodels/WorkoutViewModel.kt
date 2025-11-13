@@ -14,7 +14,6 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.OneRM
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -49,6 +48,7 @@ import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -71,9 +71,6 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -1747,115 +1744,20 @@ open class WorkoutViewModel : ViewModel() {
                 }
             }
 
-            fun buildWarmupSets(
-                workWeight: Double,
-                workReps: Int,
-                availableWeights: Collection<Double>
-            ): List<Pair<Double, Int>> {
-                if (workWeight <= 0.0 || workReps <= 0) return emptyList()
+            val warmups: List<Pair<Double, Int>> =
+                WarmupPlanner.buildWarmupSetsBestStep(
+                    availableTotals = availableWeights,   // your totals list
+                    workWeight = workWeight,               // TOTAL already includes BW/bar/etc.
+                    workReps = workReps,                  // target reps of work set
+                    maxWarmups = 4,                       // or 2–4 as you prefer
+                    capTotalWarmupReps = 25
+                )
 
-                val choices = availableWeights
-                    .filter { it > 0.0 && it < workWeight }
-                    .map { it.round(2) }
-                    .distinct()
-                    .sorted()
-
-                if (choices.isEmpty()) return emptyList()
-
-                val est1RM = OneRM.calculateOneRepMax(workWeight, workReps)
-                val workP = (workWeight / est1RM).coerceIn(0.0, 1.0)
-
-                // number of steps based on work intensity
-                val steps = when {
-                    workP < 0.55 -> 2
-                    workP < 0.70 -> 3
-                    workP < 0.80 -> 4
-                    workP < 0.90 -> 5
-                    else         -> 6
-                }
-
-                // span from ~half the work intensity up to just below it (cap at ~92% e1RM)
-                val low  = max(0.25, workP * 0.50)
-                val high = min(0.92, workP * 0.95)
-                if (low >= high) return emptyList()
-
-                fun repsAt(p: Double) = when {
-                    p <= 0.50 -> 5
-                    p <= 0.70 -> 3
-                    p <= 0.80 -> 2
-                    else      -> 1
-                }
-
-                fun roundDown(target: Double, last: Double?): Double? =
-                    choices.lastOrNull { it <= target } ?: last
-
-                // even spacing between low..high (exclude endpoints)
-                var targets = (1..steps).map { i ->
-                    val p = low + (high - low) * i / (steps + 1)
-                    (p * est1RM) to repsAt(p)
-                }
-
-                if(equipment is Barbell){
-                    val availablePlatesPerSide = equipment.availablePlates.map { it.weight }.toList()
-                    val targetWeights = targets.map {  it.first }
-                    val usableChoices = choices
-
-                    val mostConvenientWeights = PlateCalculator.pickUniqueTotalsFromTotals(
-                        availablePlatesPerSide,
-                        usableChoices,
-                        targetWeights,
-                        equipment.barWeight
-                    )
-
-                    targets = mostConvenientWeights.map{ it to repsAt(it / est1RM) }
-                }
-
-                val out = mutableListOf<Pair<Double, Int>>()
-                for ((t, r) in targets) {
-                    val c = roundDown(t, out.lastOrNull()?.first) ?: continue
-                    val w = max(c, out.lastOrNull()?.first ?: 0.0).round(2)
-                    if (w >= workWeight.round(2)) continue
-                    if (out.isEmpty() || out.last().first != w || out.last().second != r) out += w to r
-                }
-
-                if (out.isEmpty()) {
-                    val minWeight = choices.minOrNull()!!
-
-                    val minWeightP = (minWeight / est1RM).coerceIn(0.0, 1.0)
-
-                    val maxReps = OneRM.maxRepsForWeight(minWeight, est1RM).roundToInt()
-
-                    val repToUse = min(repsAt(minWeightP),maxReps)
-
-                    val fallbackSets = (0 until steps).map { i ->
-                        val reps = max(1, repToUse)
-                        minWeight to reps
-                    }
-
-                    out += fallbackSets
-                }
-
-                // optional cap: ≤25 total warm-up reps
-                var total = out.sumOf { it.second }
-                var i = 0
-                while (i < out.size && total > 25) { total -= out[i].second; out.removeAt(i) }
-
-                return out
-            }
-
-            val actualWarmupSets = buildWarmupSets(
-                workWeight,
-                workReps,
-                availableWeights
-            )
-
-            actualWarmupSets.forEach {
-                val (weight, reps) = it
+            warmups.forEach { (weight, reps) ->
                 val setWeight = getSetWeight(weight)
-                val newSet = getNewSet(UUID.randomUUID(), setWeight, reps)
-                exerciseAllSets.add(newSet)
-                val newRestSet = RestSet(UUID.randomUUID(), 60, false)
-                exerciseAllSets.add(newRestSet)
+                val warmupSet = getNewSet(UUID.randomUUID(), setWeight, reps) // your existing factory
+                exerciseAllSets.add(warmupSet)
+                exerciseAllSets.add(RestSet(UUID.randomUUID(), 60))
             }
 
             exerciseAllSets.addAll(exerciseSets)

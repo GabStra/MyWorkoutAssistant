@@ -57,6 +57,7 @@ import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -602,13 +603,30 @@ fun MyWorkoutAssistantNavHost(
             is ScreenData.NewWorkout -> {
                 WorkoutForm(
                     onWorkoutUpsert = { newWorkout, schedules ->
-                        appViewModel.addNewWorkout(newWorkout)
-
                         scope.launch {
-                            workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                            // Check for conflicts before saving
+                            val allExistingSchedules = withContext(Dispatchers.IO) {
+                                workoutScheduleDao.getAllSchedules()
+                            }
+                            
+                            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                                newSchedules = schedules,
+                                existingSchedules = allExistingSchedules
+                            )
+                            
+                            if (conflicts.isNotEmpty()) {
+                                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                appViewModel.addNewWorkout(newWorkout)
+                                withContext(Dispatchers.IO) {
+                                    workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                                }
+                                appViewModel.goBack()
+                            }
                         }
-
-                        appViewModel.goBack()
                     },
                     onCancel = { appViewModel.goBack() },
                 )
@@ -628,12 +646,33 @@ fun MyWorkoutAssistantNavHost(
 
                 WorkoutForm(
                     onWorkoutUpsert = { updatedWorkout, schedules ->
-                        appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
                         scope.launch {
-                            workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
-                            workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                            // Check for conflicts before saving
+                            // Exclude schedules for this workout since we're replacing them
+                            val allExistingSchedules = withContext(Dispatchers.IO) {
+                                workoutScheduleDao.getAllSchedules()
+                                    .filter { it.workoutId != selectedWorkout.globalId }
+                            }
+                            
+                            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                                newSchedules = schedules,
+                                existingSchedules = allExistingSchedules
+                            )
+                            
+                            if (conflicts.isNotEmpty()) {
+                                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
+                                withContext(Dispatchers.IO) {
+                                    workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
+                                    workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                                }
+                                appViewModel.goBack()
+                            }
                         }
-                        appViewModel.goBack()
                     },
                     onCancel = {
                         appViewModel.goBack()

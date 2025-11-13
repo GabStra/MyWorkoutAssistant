@@ -104,11 +104,11 @@ fun WorkoutStateHeader(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    modifier = Modifier.size(12.5.dp),
+                    modifier = Modifier.size(15.dp),
                     imageVector = Icons.Filled.AccessTimeFilled,
                     contentDescription = "clock",
                 )
