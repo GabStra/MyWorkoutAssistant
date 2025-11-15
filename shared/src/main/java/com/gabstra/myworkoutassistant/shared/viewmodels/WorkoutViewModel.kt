@@ -557,22 +557,29 @@ open class WorkoutViewModel(
 
             //Log.d("WorkoutViewModel", "Exercise: ${exercise.name} SessionDecision: ${sessionDecision.progressionState} should load last session: ${sessionDecision.shouldLoadLastSuccessfulSession}")
 
-            val setsToUse =
-                if (sessionDecision.shouldLoadLastSuccessfulSession)
-                    sessionDecision.lastSuccessfulSession.map { getNewSetFromSetHistory(it) }
-                else{
-                    if(exercise.doNotStoreHistory)  {
-                        exercise.sets
-                    }else{
-                        exercise.sets.map { set ->
-                            if(latestSetHistoryMap.containsKey(set.id)) {
-                                getNewSetFromSetHistory(latestSetHistoryMap[set.id]!!)
-                            }else{
-                                set
-                            }
-                        }
+            val derivedSets = if (exercise.doNotStoreHistory) {
+                exercise.sets
+            } else {
+                exercise.sets.map { set ->
+                    if (latestSetHistoryMap.containsKey(set.id)) {
+                        getNewSetFromSetHistory(latestSetHistoryMap[set.id]!!)
+                    } else {
+                        set
                     }
                 }
+            }
+
+            val historySets = if (sessionDecision.shouldLoadLastSuccessfulSession) {
+                sessionDecision.lastSuccessfulSession.map { getNewSetFromSetHistory(it) }
+            } else {
+                emptyList()
+            }
+
+            val setsToUse = if (sessionDecision.shouldLoadLastSuccessfulSession) {
+                if (historySets.isNotEmpty()) historySets else derivedSets
+            } else {
+                derivedSets
+            }
 
             val validSets = setsToUse
                 .dropWhile { it is RestSet }
@@ -728,7 +735,7 @@ open class WorkoutViewModel(
                 exercise.maxReps
             )
 
-        val availableWeights = when (exercise.exerciseType) {
+        val baseAvailableWeights = when (exercise.exerciseType) {
             ExerciseType.WEIGHT -> exercise.equipmentId?.let { getWeightByEquipment(getEquipmentById(it)) }
                 ?: emptySet()
 
@@ -757,22 +764,67 @@ open class WorkoutViewModel(
             isRestSet = { it is RestSet } // adapt if your rest set type differs
         ).filter { it !is RestSet }
 
-        val previousSets = validSets.map { it ->
-            when (it) {
+        val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
+
+        val lastSuccessfulSessionSets = exerciseInfo?.lastSuccessfulSession?.mapNotNull { setHistory ->
+            when (val setData = setHistory.setData) {
+                is WeightSetData -> {
+                    if (setData.isRestPause) return@mapNotNull null
+                    SimpleSet(setData.getWeight(), setData.actualReps)
+                }
+
+                is BodyWeightSetData -> {
+                    if (setData.isRestPause) return@mapNotNull null
+                    SimpleSet(setData.getWeight(), setData.actualReps)
+                }
+
+                else -> null
+            }
+        } ?: emptyList()
+
+        val previousSets = if (lastSuccessfulSessionSets.isNotEmpty()) {
+            lastSuccessfulSessionSets
+        } else {
+            validSets.map { set ->
+                when (set) {
+                    is BodyWeightSet -> {
+                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                        val weight = set.getWeight(relativeBodyWeight)
+                        SimpleSet(weight, set.reps)
+                    }
+
+                    is WeightSet -> {
+                        SimpleSet(set.weight, set.reps)
+                    }
+
+                    else -> throw IllegalStateException("Unknown set type encountered after filtering.")
+                }
+            }
+        }
+
+        val plannedSets = validSets.map { set ->
+            when (set) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    val weight = it.getWeight(relativeBodyWeight)
-                    SimpleSet(weight, it.reps)
+                    val weight = set.getWeight(relativeBodyWeight)
+                    SimpleSet(weight, set.reps)
                 }
 
                 is WeightSet -> {
-                    SimpleSet(it.weight, it.reps)
+                    SimpleSet(set.weight, set.reps)
                 }
+
                 else -> throw IllegalStateException("Unknown set type encountered after filtering.")
             }
         }
 
-        val oldSets = previousSets.mapIndexed { index, set ->
+        val previousSetsForPlan = if (previousSets.isNotEmpty()) previousSets else plannedSets
+        val previousVolume = previousSetsForPlan.sumOf { it.weight * it.reps }
+        val plannedVolume = plannedSets.sumOf { it.weight * it.reps }
+
+        val availableWeights = (baseAvailableWeights + plannedSets.map { it.weight }).toSet()
+
+        val oldSets = previousSetsForPlan.mapIndexed { index, set ->
             if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                 val relativeBodyWeight =
                     bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
@@ -800,14 +852,12 @@ open class WorkoutViewModel(
 
         Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")}")
 
-        val previousVolume = previousSets.sumOf { it.weight * it.reps }
-
         val exerciseProgression = when {
             sessionDecision.progressionState ==  ProgressionState.DELOAD -> {
                 Log.d("WorkoutViewModel", "Deload")
 
                 DoubleProgressionHelper.planDeloadSession(
-                    previousSets = previousSets,
+                    previousSets = previousSetsForPlan,
                     availableWeights = availableWeights,
                     repsRange = repsRange
                 )
@@ -815,24 +865,17 @@ open class WorkoutViewModel(
             sessionDecision.progressionState == ProgressionState.RETRY -> {
                 Log.d("WorkoutViewModel", "Retrying")
                 DoubleProgressionHelper.Plan(
-                    previousSets,
+                    previousSetsForPlan,
                     previousVolume,
                     previousVolume
                 )
             }
 
             sessionDecision.progressionState == ProgressionState.PROGRESS -> {
-                val jumpPolicy = DoubleProgressionHelper.LoadJumpPolicy(
-                    defaultPct = exercise.loadJumpDefaultPct ?: 0.025,
-                    maxPct = exercise.loadJumpMaxPct ?: 0.5,
-                    overcapUntil = exercise.loadJumpOvercapUntil ?: 2
-                )
-
-                DoubleProgressionHelper.planNextSession(
-                    previousSets = previousSets,
-                    availableWeights = availableWeights,
-                    repsRange = repsRange,
-                    jumpPolicy = jumpPolicy
+                DoubleProgressionHelper.Plan(
+                    sets = plannedSets,
+                    newVolume = plannedVolume,
+                    previousVolume = previousVolume
                 )
             }
             else -> {
@@ -859,7 +902,9 @@ open class WorkoutViewModel(
             "Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)")
 
 
+        val hadHistoricalBaseline = exerciseInfo != null && lastSuccessfulSessionSets.isNotEmpty()
         val couldNotFindProgression = sessionDecision.progressionState == ProgressionState.PROGRESS &&
+                hadHistoricalBaseline &&
                 exerciseProgression.previousVolume.round(2) == exerciseProgression.newVolume.round(2)
 
         val progressionState = if(couldNotFindProgression) ProgressionState.FAILED else sessionDecision.progressionState
@@ -904,47 +949,64 @@ open class WorkoutViewModel(
     open fun startWorkout() {
         viewModelScope.launch(dispatchers.main) {
             withContext(dispatchers.io) {
-                _enableWorkoutNotificationFlow.value = null
-                _currentScreenDimmingState.value = false
+                try {
+                    _enableWorkoutNotificationFlow.value = null
+                    _currentScreenDimmingState.value = false
 
-                val preparingState = WorkoutState.Preparing(dataLoaded = false)
-                _workoutState.value = preparingState
+                    val preparingState = WorkoutState.Preparing(dataLoaded = false)
+                    _workoutState.value = preparingState
 
-                workoutStateQueue.clear()
-                workoutStateHistory.clear()
-                _isHistoryEmpty.value = workoutStateHistory.isEmpty()
-                setStates.clear()
-                allWorkoutStates.clear()
-                weightsByEquipment.clear()
-                executedSetsHistory.clear()
-                heartBeatHistory.clear()
-                startWorkoutTime = null
-                currentWorkoutHistory = null
-                _isPaused.value = false
+                    workoutStateQueue.clear()
+                    workoutStateHistory.clear()
+                    _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+                    setStates.clear()
+                    allWorkoutStates.clear()
+                    weightsByEquipment.clear()
+                    executedSetsHistory.clear()
+                    heartBeatHistory.clear()
+                    startWorkoutTime = null
+                    currentWorkoutHistory = null
+                    _isPaused.value = false
 
-                _selectedWorkout.value = _workouts.value.find { it.id == _selectedWorkoutId.value }!!
-
-
-                loadWorkoutHistory()
-
-                preProcessExercises()
-                generateProgressions()
-                applyProgressions()
-                val workoutStates = generateWorkoutStates()
-
-                workoutStates.forEachIndexed { index, it ->
-                    if (index == workoutStates.lastIndex && it is WorkoutState.Rest) {
-                        return@forEachIndexed
+                    val selectedWorkoutId = _selectedWorkoutId.value
+                    val foundWorkout = _workouts.value.find { it.id == selectedWorkoutId }
+                    
+                    if (foundWorkout == null) {
+                        Log.e("WorkoutViewModel", "Workout not found for id: $selectedWorkoutId")
+                        preparingState.dataLoaded = true
+                        return@withContext
                     }
-                    workoutStateQueue.addLast(it)
-                    allWorkoutStates.add(it)
-                    if(it is WorkoutState.Set){
-                        setStates.addLast(it)
+                    
+                    _selectedWorkout.value = foundWorkout
+
+                    loadWorkoutHistory()
+
+                    preProcessExercises()
+                    generateProgressions()
+                    applyProgressions()
+                    val workoutStates = generateWorkoutStates()
+
+                    workoutStates.forEachIndexed { index, it ->
+                        if (index == workoutStates.lastIndex && it is WorkoutState.Rest) {
+                            return@forEachIndexed
+                        }
+                        workoutStateQueue.addLast(it)
+                        allWorkoutStates.add(it)
+                        if(it is WorkoutState.Set){
+                            setStates.addLast(it)
+                        }
                     }
+
+                    preparingState.dataLoaded = true
+                    triggerWorkoutNotification()
+                } catch (e: Exception) {
+                    Log.e("WorkoutViewModel", "Error in startWorkout()", e)
+                    val currentState = _workoutState.value
+                    if (currentState is WorkoutState.Preparing) {
+                        currentState.dataLoaded = true
+                    }
+                    throw e
                 }
-
-                preparingState.dataLoaded = true
-                triggerWorkoutNotification()
             }
         }
     }
@@ -1202,8 +1264,9 @@ open class WorkoutViewModel(
                         return@forEach
                     }
 
-                    val isValidExercise = exercise.enableProgression && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
-                    if(!isValidExercise) return@forEach
+                    val isTrackableExercise = !exercise.doNotStoreHistory &&
+                            (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+                    if(!isTrackableExercise) return@forEach
 
                     val progressionData =
                         if (exerciseProgressionByExerciseId.containsKey(it.key)) exerciseProgressionByExerciseId[it.key] else null

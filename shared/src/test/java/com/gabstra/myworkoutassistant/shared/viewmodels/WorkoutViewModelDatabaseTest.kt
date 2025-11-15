@@ -14,9 +14,11 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -413,11 +415,17 @@ class WorkoutViewModelDatabaseTest {
                 // Update set data
                 val currentSetData = workoutState.currentSetData
                 if (currentSetData is WeightSetData) {
-                    val updatedSetData = currentSetData.copy(
-                        actualReps = currentSetData.actualReps,
-                        actualWeight = currentSetData.actualWeight,
-                        volume = currentSetData.calculateVolume()
-                    )
+                    val updatedSetData = if (workoutState.exerciseId == testExercise2Id) {
+                        val squatActualReps = 13
+                        currentSetData.copy(
+                            actualReps = squatActualReps,
+                            volume = currentSetData.actualWeight * squatActualReps
+                        )
+                    } else {
+                        currentSetData.copy(
+                            volume = currentSetData.calculateVolume()
+                        )
+                    }
                     workoutState.currentSetData = updatedSetData
                 }
                 
@@ -530,6 +538,16 @@ class WorkoutViewModelDatabaseTest {
         val exercise2Progression = progressions.firstOrNull { it.exerciseId == testExercise2Id && it.workoutHistoryId == workoutHistory.id }
         assertNotNull("ExerciseSessionProgression should exist for exercise2", exercise2Progression)
 
+        val benchProgression = exercise1Progression!!
+        val extraSetTemplate = benchProgression.expectedSets.firstOrNull() ?: SimpleSet(95.0, 10)
+        val mismatchExpectedSets = benchProgression.expectedSets + extraSetTemplate
+        val mismatchExpectedSetCount = mismatchExpectedSets.size
+        database.exerciseSessionProgressionDao().insert(benchProgression.copy(expectedSets = mismatchExpectedSets))
+
+        val benchExecutedSetCount = database.setHistoryDao()
+            .getSetHistoriesByWorkoutHistoryIdAndExerciseId(workoutHistory!!.id, testExercise1Id)
+            .count { it.setData !is RestSetData }
+
         // Phase 7: Verify Markdown Export Content
         val benchPress = viewModel.exercisesById[testExercise1Id]!!
         val benchResult = buildExerciseHistoryMarkdown(
@@ -586,21 +604,13 @@ class WorkoutViewModelDatabaseTest {
         
         // Verify executed sets are shown when available
         assertTrue("Progression should show executed sets", progressionSection.contains("- Executed:"))
-        
-        // Verify set differences are shown when expected and executed sets match in count
-        assertTrue("Progression should show set differences when sets match", progressionSection.contains("- Set Differences:"))
-        
-        // Verify set differences format includes weight diff (Δw), reps diff (Δr), volume diff (Δv)
-        assertTrue("Set differences should include weight diff", progressionSection.contains("Δw:"))
-        assertTrue("Set differences should include reps diff", progressionSection.contains("Δr:"))
-        assertTrue("Set differences should include volume diff", progressionSection.contains("Δv:"))
-        
-        // Verify volume differences are always shown (even when zero)
-        assertTrue("Progression should show volume differences", progressionSection.contains("- Vol Differences:"))
-        
-        // Verify volume differences include both kg and percentage
-        assertTrue("Volume differences should include kg", progressionSection.contains("kg"))
-        assertTrue("Volume differences should include percentage", progressionSection.contains("%"))
+
+        // Expect a clear note when expected vs executed set counts differ
+        val mismatchNote = "- Note: Expected $mismatchExpectedSetCount sets but executed $benchExecutedSetCount sets."
+        assertTrue("Progression should highlight set count mismatch", progressionSection.contains(mismatchNote))
+
+        // Set differences should not be shown when the counts differ
+        assertTrue("Progression should not show set differences when counts mismatch", !progressionSection.contains("- Set Differences:"))
         
         // Verify comparison icons (↑, =, ↓, ~) are present
         assertTrue("Progression should include comparison icons", 

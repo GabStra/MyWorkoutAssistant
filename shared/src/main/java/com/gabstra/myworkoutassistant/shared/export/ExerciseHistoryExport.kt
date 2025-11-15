@@ -15,11 +15,12 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import java.time.Duration
 import java.util.Calendar
+import kotlin.math.abs
 
 sealed class ExerciseHistoryMarkdownResult {
     data class Success(val markdown: String) : ExerciseHistoryMarkdownResult()
@@ -60,19 +61,24 @@ suspend fun buildExerciseHistoryMarkdown(
     val userAge = Calendar.getInstance().get(Calendar.YEAR) - workoutStore.birthDateYear
     val markdown = StringBuilder()
 
+    val equipment = exercise.equipmentId?.let { equipmentId ->
+        workoutStore.equipments.find { it.id == equipmentId }
+    }
+    val achievableWeights = equipment?.getWeightsCombinations()?.sorted()
+
     markdown.append("# ${exercise.name}\n")
     markdown.append("Type: ${exercise.exerciseType}")
 
-    exercise.equipmentId?.let { equipmentId ->
-        val equipment = workoutStore.equipments.find { it.id == equipmentId }
-        markdown.append(" | Equipment: ${equipment?.name ?: "Unknown"}")
-        if (exercise.exerciseType == ExerciseType.WEIGHT && equipment is WeightLoadedEquipment) {
-            val availableWeights = equipment.getWeightsCombinations().sorted()
-            if (availableWeights.isNotEmpty()) {
+    if (exercise.equipmentId != null) {
+        if (equipment != null) {
+            markdown.append(" | Equipment: ${equipment.name}")
+            if (exercise.exerciseType == ExerciseType.WEIGHT && !achievableWeights.isNullOrEmpty()) {
                 markdown.append(
-                    " | Weights: ${availableWeights.joinToString(",") { weight -> formatNumber(weight) }} kg"
+                    " | Weights: ${achievableWeights.joinToString(",") { weight -> formatNumber(weight) }} kg"
                 )
             }
+        } else {
+            markdown.append(" | Equipment: Unknown")
         }
     }
 
@@ -99,11 +105,13 @@ suspend fun buildExerciseHistoryMarkdown(
             exercise.id
         ).sortedBy { it.order }
 
-        if (setHistories.isEmpty()) {
+        val activeSetHistories = setHistories.filter { it.setData !is RestSetData }
+        
+        // Skip session if there are no active sets (only rest sets)
+        if (activeSetHistories.isEmpty()) {
             continue
         }
 
-        val activeSetHistories = setHistories.filter { it.setData !is RestSetData }
         val progressionData = exerciseSessionProgressionDao.getByWorkoutHistoryIdAndExerciseId(
             workoutHistory.id,
             exercise.id
@@ -129,7 +137,14 @@ suspend fun buildExerciseHistoryMarkdown(
             // Extract executed sets from activeSetHistories
             val executedSets = activeSetHistories.mapNotNull { setHistory ->
                 when (val setData = setHistory.setData) {
-                    is WeightSetData -> SimpleSet(setData.actualWeight, setData.actualReps)
+                    is WeightSetData -> {
+                        val (adjustedWeight, _) = adjustWeightAndVolume(
+                            setData.actualWeight,
+                            setData.actualReps,
+                            achievableWeights
+                        )
+                        SimpleSet(adjustedWeight, setData.actualReps)
+                    }
                     is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
                     else -> null
                 }
@@ -174,6 +189,12 @@ suspend fun buildExerciseHistoryMarkdown(
                 }
             }
 
+            val expectedSetCount = progression.expectedSets.size
+            val executedSetCount = executedSets.size
+            if (expectedSetCount != executedSetCount) {
+                markdown.append("- Note: Expected $expectedSetCount sets but executed $executedSetCount sets.\n")
+            }
+
             val vsExpectedIcon = when (progression.vsExpected) {
                 Ternary.ABOVE -> "↑"
                 Ternary.EQUAL -> "="
@@ -189,25 +210,6 @@ suspend fun buildExerciseHistoryMarkdown(
             markdown.append("- Comparison: vs Exp ${progression.vsExpected.name} $vsExpectedIcon | vs Prev ${progression.vsPrevious.name} $vsPreviousIcon\n")
             markdown.append("- Vol: Prev ${formatNumber(progression.previousSessionVolume)}kg | Exp ${formatNumber(progression.expectedVolume)}kg | Exec ${formatNumber(progression.executedVolume)}kg\n")
 
-            // Always show volume differences
-            val volumeDiffExpected = progression.executedVolume - progression.expectedVolume
-            val expectedPercentage = if (progression.expectedVolume > 0.0) {
-                formatNumber((volumeDiffExpected / progression.expectedVolume) * 100)
-            } else {
-                "0"
-            }
-            val expectedSign = if (volumeDiffExpected > 0) "+" else ""
-            markdown.append("- Vol Differences: vs Exp ${expectedSign}${formatNumber(volumeDiffExpected)}kg ($expectedPercentage%)")
-
-            val volumeDiffPrevious = progression.executedVolume - progression.previousSessionVolume
-            val previousPercentage = if (progression.previousSessionVolume > 0.0) {
-                formatNumber((volumeDiffPrevious / progression.previousSessionVolume) * 100)
-            } else {
-                "0"
-            }
-            val previousSign = if (volumeDiffPrevious > 0) "+" else ""
-            markdown.append(" | vs Prev ${previousSign}${formatNumber(volumeDiffPrevious)}kg ($previousPercentage%)\n")
-
             markdown.append("\n")
         }
 
@@ -218,9 +220,14 @@ suspend fun buildExerciseHistoryMarkdown(
             val setLine = StringBuilder("S${setIndex + 1}: ")
             when (val setData = setHistory.setData) {
                 is WeightSetData -> {
-                    setLine.append("${formatNumber(setData.actualWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
+                    val (adjustedWeight, adjustedVolume) = adjustWeightAndVolume(
+                        setData.actualWeight,
+                        setData.actualReps,
+                        achievableWeights
+                    )
+                    setLine.append("${formatNumber(adjustedWeight)}kg×${setData.actualReps} Vol:${formatNumber(adjustedVolume)}kg")
                     if (setData.isRestPause) setLine.append(" [RP]")
-                    totalVolume += setData.volume
+                    totalVolume += adjustedVolume
                 }
                 is BodyWeightSetData -> {
                     val totalWeight = setData.getWeight()
@@ -331,5 +338,26 @@ private fun formatDuration(seconds: Int): String {
     } else {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
+}
+
+private fun adjustWeightAndVolume(
+    actualWeight: Double,
+    reps: Int,
+    achievableWeights: List<Double>?
+): Pair<Double, Double> {
+    if (actualWeight <= 0.0 || reps <= 0) {
+        return actualWeight to (actualWeight * reps)
+    }
+
+    val adjustedWeight = findClosestAchievableWeight(actualWeight, achievableWeights)
+    return adjustedWeight to adjustedWeight * reps
+}
+
+private fun findClosestAchievableWeight(
+    targetWeight: Double,
+    achievableWeights: List<Double>?
+): Double {
+    if (achievableWeights.isNullOrEmpty()) return targetWeight
+    return achievableWeights.minByOrNull { achievable -> abs(achievable - targetWeight) } ?: targetWeight
 }
 
