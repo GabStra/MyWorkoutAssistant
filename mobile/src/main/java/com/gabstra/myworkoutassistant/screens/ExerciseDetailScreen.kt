@@ -283,7 +283,7 @@ fun ExerciseDetailScreen(
                                         setHistoryDao = setHistoryDao,
                                         exerciseSessionProgressionDao = exerciseSessionProgressionDao,
                                         workouts = workouts,
-                                        appViewModel = appViewModel
+                                        workoutStore = appViewModel.workoutStore
                                     )
                                 }
                             }

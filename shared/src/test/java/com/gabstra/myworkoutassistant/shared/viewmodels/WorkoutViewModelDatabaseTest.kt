@@ -12,6 +12,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.coroutines.TestDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
+import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -250,6 +252,7 @@ class WorkoutViewModelDatabaseTest {
     fun testWorkoutLifecycle_storesAllDataCorrectly() = runTest(testDispatcher) {
         // Phase 1: Setup
         val workoutStore = createTestWorkoutStore()
+        val testWorkout = workoutStore.workouts.first()
         viewModel.updateWorkoutStore(workoutStore)
         viewModel.setSelectedWorkoutId(testWorkoutId)
         
@@ -526,6 +529,100 @@ class WorkoutViewModelDatabaseTest {
         
         val exercise2Progression = progressions.firstOrNull { it.exerciseId == testExercise2Id && it.workoutHistoryId == workoutHistory.id }
         assertNotNull("ExerciseSessionProgression should exist for exercise2", exercise2Progression)
+
+        // Phase 7: Verify Markdown Export Content
+        val benchPress = viewModel.exercisesById[testExercise1Id]!!
+        val benchResult = buildExerciseHistoryMarkdown(
+            exercise = benchPress,
+            workoutHistoryDao = database.workoutHistoryDao(),
+            setHistoryDao = database.setHistoryDao(),
+            exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
+            workouts = listOf(testWorkout),
+            workoutStore = workoutStore
+        )
+        assertTrue("Bench press export should succeed", benchResult is ExerciseHistoryMarkdownResult.Success)
+        val benchMarkdown = (benchResult as ExerciseHistoryMarkdownResult.Success).markdown
+        assertTrue("Bench export should include header", benchMarkdown.contains("# Bench Press"))
+        assertTrue("Bench export should list available weights", benchMarkdown.contains("Weights:") && (benchMarkdown.contains("20,") || benchMarkdown.contains("20 kg") || benchMarkdown.contains("20.0 kg")))
+        assertTrue("Bench export should include first set", benchMarkdown.contains("S1: 97.5kg×10 Vol:975kg"))
+        assertTrue("Bench export should include second set", benchMarkdown.contains("S2: 97.5kg×8 Vol:780kg"))
+        assertTrue("Bench export should include total volume", benchMarkdown.contains("Total Vol: 1.76Kkg"))
+
+        val squats = viewModel.exercisesById[testExercise2Id]!!
+        val squatsResult = buildExerciseHistoryMarkdown(
+            exercise = squats,
+            workoutHistoryDao = database.workoutHistoryDao(),
+            setHistoryDao = database.setHistoryDao(),
+            exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
+            workouts = listOf(testWorkout),
+            workoutStore = workoutStore
+        )
+        assertTrue("Squats export should succeed", squatsResult is ExerciseHistoryMarkdownResult.Success)
+        val squatsMarkdown = (squatsResult as ExerciseHistoryMarkdownResult.Success).markdown
+        assertTrue("Squats export should include header", squatsMarkdown.contains("# Squats"))
+        assertTrue("Squats export should include set details", squatsMarkdown.contains("S1: 80kg×13 Vol:1.04Kkg"))
+        assertTrue("Squats export should include total volume", squatsMarkdown.contains("Total Vol: 1.04Kkg"))
+
+        // Phase 8: Verify Progression Markdown Format
+        // Verify progression section exists when progression data is present
+        assertTrue("Bench export should include progression section", benchMarkdown.contains("### Progression"))
+        
+        // Verify no bold formatting is used in progression section
+        val progressionSectionStart = benchMarkdown.indexOf("### Progression")
+        val progressionSectionEnd = benchMarkdown.indexOf("\n\n", progressionSectionStart)
+        val progressionSection = if (progressionSectionEnd != -1) {
+            benchMarkdown.substring(progressionSectionStart, progressionSectionEnd)
+        } else {
+            benchMarkdown.substring(progressionSectionStart)
+        }
+        assertTrue("Progression section should not contain bold formatting", !progressionSection.contains("**"))
+        
+        // Verify state is shown without bold formatting
+        assertTrue("Progression should show state without bold", progressionSection.contains("- State:"))
+        assertTrue("Progression should not show state with bold", !progressionSection.contains("**State**"))
+        
+        // Verify expected sets are shown
+        assertTrue("Progression should show expected sets", progressionSection.contains("- Expected:"))
+        
+        // Verify executed sets are shown when available
+        assertTrue("Progression should show executed sets", progressionSection.contains("- Executed:"))
+        
+        // Verify set differences are shown when expected and executed sets match in count
+        assertTrue("Progression should show set differences when sets match", progressionSection.contains("- Set Differences:"))
+        
+        // Verify set differences format includes weight diff (Δw), reps diff (Δr), volume diff (Δv)
+        assertTrue("Set differences should include weight diff", progressionSection.contains("Δw:"))
+        assertTrue("Set differences should include reps diff", progressionSection.contains("Δr:"))
+        assertTrue("Set differences should include volume diff", progressionSection.contains("Δv:"))
+        
+        // Verify volume differences are always shown (even when zero)
+        assertTrue("Progression should show volume differences", progressionSection.contains("- Vol Differences:"))
+        
+        // Verify volume differences include both kg and percentage
+        assertTrue("Volume differences should include kg", progressionSection.contains("kg"))
+        assertTrue("Volume differences should include percentage", progressionSection.contains("%"))
+        
+        // Verify comparison icons (↑, =, ↓, ~) are present
+        assertTrue("Progression should include comparison icons", 
+            progressionSection.contains("↑") || progressionSection.contains("=") || 
+            progressionSection.contains("↓") || progressionSection.contains("~"))
+        
+        // Verify labels use shortened format (e.g., "vs Exp" instead of "vs Expected")
+        assertTrue("Progression should use shortened label 'vs Exp'", progressionSection.contains("vs Exp"))
+        assertTrue("Progression should use shortened label 'vs Prev'", progressionSection.contains("vs Prev"))
+        assertTrue("Progression should use shortened label 'Vol'", progressionSection.contains("- Vol:"))
+        assertTrue("Progression should not use verbose label 'vs Expected'", !progressionSection.contains("vs Expected"))
+        assertTrue("Progression should not use verbose label 'vs Previous'", !progressionSection.contains("vs Previous"))
+        assertTrue("Progression should not use verbose label 'Volumes'", !progressionSection.contains("- Volumes:"))
+        
+        // Verify comparison line format
+        assertTrue("Progression should show comparison line", progressionSection.contains("- Comparison:"))
+        
+        // Verify volumes line format
+        assertTrue("Progression should show volumes line", progressionSection.contains("- Vol:"))
+        assertTrue("Progression volumes should include Prev", progressionSection.contains("Prev"))
+        assertTrue("Progression volumes should include Exp", progressionSection.contains("Exp"))
+        assertTrue("Progression volumes should include Exec", progressionSection.contains("Exec"))
     }
 }
 

@@ -35,31 +35,36 @@ import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.shared.AppBackup
+import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.ExerciseInfo
+import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
+import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
-import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
-import com.gabstra.myworkoutassistant.shared.utils.Ternary
-import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
-import com.gabstra.myworkoutassistant.shared.formatNumber
+import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
+import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
-import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
+import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -81,7 +86,6 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.temporal.TemporalAdjusters
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
@@ -834,300 +838,555 @@ suspend fun exportExerciseHistoryToMarkdown(
     setHistoryDao: SetHistoryDao,
     exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
     workouts: List<Workout>,
-    appViewModel: AppViewModel
+    workoutStore: WorkoutStore
 ) {
     try {
-        // Find all workouts that contain this exercise
-        val workoutsContainingExercise = workouts.filter { workout ->
-            workout.workoutComponents.any { component ->
-                when (component) {
-                    is Exercise -> component.id == exercise.id
-                    is Superset -> component.exercises.any { it.id == exercise.id }
-                    else -> false
+        when (val result = buildExerciseHistoryMarkdown(
+            exercise = exercise,
+            workoutHistoryDao = workoutHistoryDao,
+            setHistoryDao = setHistoryDao,
+            exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+            workouts = workouts,
+            workoutStore = workoutStore
+        )) {
+            is ExerciseHistoryMarkdownResult.Success -> {
+                val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                val timestamp = sdf.format(Date())
+                val sanitizedName = exercise.name.replace(Regex("[^a-zA-Z0-9]"), "_").take(50)
+                val filename = "exercise_history_${sanitizedName}_$timestamp.md"
+                writeMarkdownToDownloadsFolder(context, filename, result.markdown)
+            }
+            is ExerciseHistoryMarkdownResult.Failure -> {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
                 }
             }
         }
-
-        if (workoutsContainingExercise.isEmpty()) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "No workouts found containing this exercise", Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-
-        // Get all workout histories for these workouts
-        val allWorkoutHistories = workoutsContainingExercise.flatMap { workout ->
-            workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
-        }.filter { it.isDone }.sortedBy { it.date }
-
-        if (allWorkoutHistories.isEmpty()) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "No completed sessions found for this exercise", Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-
-        // Get user age for HR calculations
-        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-        val userAge = currentYear - appViewModel.workoutStore.birthDateYear
-
-        // Build markdown content
-        val markdown = StringBuilder()
-
-        // Header
-        markdown.append("# ${exercise.name}\n")
-        markdown.append("Type: ${exercise.exerciseType}")
-        if (exercise.equipmentId != null) {
-            val equipment = appViewModel.getEquipmentById(exercise.equipmentId!!)
-            markdown.append(" | Equipment: ${equipment?.name ?: "Unknown"}")
-            
-            // Add available weights for WEIGHT type exercises with equipment
-            if (exercise.exerciseType == ExerciseType.WEIGHT && equipment is WeightLoadedEquipment) {
-                val availableWeights = equipment.getWeightsCombinations().sorted()
-                if (availableWeights.isNotEmpty()) {
-                    val weightsList = availableWeights.joinToString(",") { formatNumber(it) }
-                    markdown.append(" | Weights: $weightsList kg")
-                }
-            }
-        }
-        
-        // Add current body weight for BODY_WEIGHT type exercises
-        if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
-            val currentBodyWeight = appViewModel.workoutStore.weightKg
-            markdown.append(" | BW: ${formatNumber(currentBodyWeight)} kg")
-        }
-        
-        if (exercise.notes.isNotEmpty()) {
-            markdown.append(" | Notes: ${exercise.notes}")
-        }
-        markdown.append("\n\n")
-
-        // Summary Statistics
-        val firstSession = allWorkoutHistories.first()
-        val lastSession = allWorkoutHistories.last()
-        markdown.append("Sessions: ${allWorkoutHistories.size} | Range: ${firstSession.date} to ${lastSession.date}\n\n")
-
-        // Session Details
-
-        for ((sessionIndex, workoutHistory) in allWorkoutHistories.withIndex()) {
-            val workout = workoutsContainingExercise.find { it.id == workoutHistory.workoutId }
-            val workoutName = workout?.name ?: "Unknown Workout"
-
-            // Get set histories for this exercise in this session
-            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-                workoutHistory.id,
-                exercise.id
-            ).sortedBy { it.order }
-
-            if (setHistories.isEmpty()) {
-                continue
-            }
-
-            // Filter out rest sets for main display
-            val activeSetHistories = setHistories.filter { it.setData !is RestSetData }
-
-            // Get progression data for this session
-            val progressionData = exerciseSessionProgressionDao.getByWorkoutHistoryIdAndExerciseId(
-                workoutHistory.id,
-                exercise.id
-            )
-
-            // Compact session header
-            markdown.append("## S${sessionIndex + 1}: ${workoutHistory.date} ${workoutHistory.time} | $workoutName | Dur: ${formatTime(workoutHistory.duration)}")
-            
-            // Heart Rate Session-Level Aggregation
-            if (workoutHistory.heartBeatRecords.isNotEmpty() && workoutHistory.heartBeatRecords.any { it > 0 }) {
-                val validHRRecords = workoutHistory.heartBeatRecords.filter { it > 0 }
-                val avgHR = validHRRecords.average().toInt()
-                val minHR = validHRRecords.minOrNull() ?: 0
-                val maxHR = validHRRecords.maxOrNull() ?: 0
-                markdown.append(" | HR: Avg ${avgHR} Min:${minHR} Max:${maxHR}")
-            }
-            markdown.append("\n")
-
-            // Add progression information if available
-            if (progressionData != null) {
-                val progressionInfo = StringBuilder()
-                progressionInfo.append("### Progression\n")
-                
-                // Progression State
-                progressionInfo.append("- **State**: ${progressionData.progressionState.name}\n")
-                
-                // Expected Sets
-                if (progressionData.expectedSets.isNotEmpty()) {
-                    val expectedSetsStr = progressionData.expectedSets.joinToString(", ") { 
-                        "${formatNumber(it.weight)}kg×${it.reps}" 
-                    }
-                    progressionInfo.append("- **Expected**: $expectedSetsStr\n")
-                }
-                
-                // Comparison indicators
-                val vsExpectedIcon = when (progressionData.vsExpected) {
-                    Ternary.ABOVE -> "↑"
-                    Ternary.EQUAL -> "="
-                    Ternary.BELOW -> "↓"
-                    Ternary.MIXED -> "~"
-                }
-                val vsPreviousIcon = when (progressionData.vsPrevious) {
-                    Ternary.ABOVE -> "↑"
-                    Ternary.EQUAL -> "="
-                    Ternary.BELOW -> "↓"
-                    Ternary.MIXED -> "~"
-                }
-                progressionInfo.append("- **vs Expected**: ${progressionData.vsExpected.name} $vsExpectedIcon | **vs Previous**: ${progressionData.vsPrevious.name} $vsPreviousIcon\n")
-                
-                // Volume comparisons
-                progressionInfo.append("- **Volumes**: Previous: ${formatNumber(progressionData.previousSessionVolume)}kg | Expected: ${formatNumber(progressionData.expectedVolume)}kg | Executed: ${formatNumber(progressionData.executedVolume)}kg\n")
-                
-                val volumeDiffExpected = progressionData.executedVolume - progressionData.expectedVolume
-                val volumeDiffPrevious = progressionData.executedVolume - progressionData.previousSessionVolume
-                if (volumeDiffExpected != 0.0 && progressionData.expectedVolume > 0.0) {
-                    val sign = if (volumeDiffExpected > 0) "+" else ""
-                    progressionInfo.append("- **vs Expected Volume**: ${sign}${formatNumber(volumeDiffExpected)}kg (${formatNumber((volumeDiffExpected / progressionData.expectedVolume) * 100)}%)\n")
-                }
-                if (volumeDiffPrevious != 0.0 && progressionData.previousSessionVolume > 0.0) {
-                    val sign = if (volumeDiffPrevious > 0) "+" else ""
-                    progressionInfo.append("- **vs Previous Volume**: ${sign}${formatNumber(volumeDiffPrevious)}kg (${formatNumber((volumeDiffPrevious / progressionData.previousSessionVolume) * 100)}%)\n")
-                }
-                
-                markdown.append(progressionInfo.toString()).append("\n")
-            }
-
-            var totalVolume = 0.0
-            var totalDuration = 0
-
-            for ((setIndex, setHistory) in activeSetHistories.withIndex()) {
-                val setLine = StringBuilder("S${setIndex + 1}: ")
-
-                when (val setData = setHistory.setData) {
-                    is WeightSetData -> {
-                        setLine.append("${formatNumber(setData.actualWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
-                        if (setData.isRestPause) {
-                            setLine.append(" [RP]")
-                        }
-                        totalVolume += setData.volume
-                    }
-                    is BodyWeightSetData -> {
-                        val totalWeight = setData.getWeight()
-                        setLine.append("${formatNumber(totalWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
-                        if (setData.isRestPause) {
-                            setLine.append(" [RP]")
-                        }
-                        totalVolume += setData.volume
-                    }
-                    is TimedDurationSetData -> {
-                        val durationSeconds = (setData.endTimer - setData.startTimer) / 1000
-                        setLine.append("Dur:${formatTime(durationSeconds)}")
-                        totalDuration += durationSeconds
-                    }
-                    is EnduranceSetData -> {
-                        val durationSeconds = setData.endTimer / 1000
-                        setLine.append("Dur:${formatTime(durationSeconds)}")
-                        totalDuration += durationSeconds
-                    }
-                    else -> {
-                        setLine.append("Rest/Other")
-                    }
-                }
-
-                // Set-Level Heart Rate Aggregation
-                if (workoutHistory.heartBeatRecords.isNotEmpty() && 
-                    setHistory.startTime != null && 
-                    setHistory.endTime != null) {
-                    
-                    val hrTimeOffset = Duration.between(
-                        workoutHistory.startTime,
-                        setHistory.startTime
-                    ).seconds.toInt()
-                    
-                    val setDuration = Duration.between(
-                        setHistory.startTime,
-                        setHistory.endTime
-                    ).seconds.toInt()
-
-                    // Calculate sample indices (2 samples per second)
-                    val startSampleIndex = hrTimeOffset * 2
-                    val endSampleIndex = (hrTimeOffset + setDuration) * 2
-
-                    if (startSampleIndex >= 0 && endSampleIndex < workoutHistory.heartBeatRecords.size) {
-                        val setHRRecords = workoutHistory.heartBeatRecords
-                            .subList(startSampleIndex, minOf(endSampleIndex, workoutHistory.heartBeatRecords.size))
-                            .filter { it > 0 }
-
-                        if (setHRRecords.isNotEmpty()) {
-                            val setAvgHR = setHRRecords.average().toInt()
-                            val setMinHR = setHRRecords.minOrNull() ?: 0
-                            val setMaxHR = setHRRecords.maxOrNull() ?: 0
-
-                            setLine.append(" HR:${setAvgHR}(${setMinHR}-${setMaxHR})")
-
-                            // HR Zone Analysis if applicable
-                            if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
-                                val lowHr = getHeartRateFromPercentage(exercise.lowerBoundMaxHRPercent!!, userAge)
-                                val highHr = getHeartRateFromPercentage(exercise.upperBoundMaxHRPercent!!, userAge)
-
-                                val hrInZoneCount = setHRRecords.count { it >= lowHr && it <= highHr }
-                                val zonePercentage = if (setHRRecords.isNotEmpty()) {
-                                    (hrInZoneCount.toFloat() / setHRRecords.size * 100).toInt()
-                                } else 0
-
-                                setLine.append(" Zone:${zonePercentage}%")
-                            }
-                        }
-                    }
-                }
-
-                markdown.append(setLine.toString()).append("\n")
-            }
-
-            // Session Totals
-            val totalsLine = StringBuilder()
-            if (totalVolume > 0) {
-                totalsLine.append("Total Vol: ${formatNumber(totalVolume)}kg")
-            }
-            if (totalDuration > 0) {
-                if (totalsLine.isNotEmpty()) totalsLine.append(" | ")
-                totalsLine.append("Total Dur: ${formatTime(totalDuration)}")
-            }
-
-            // Overall HR Zone Analysis for session
-            if (exercise.lowerBoundMaxHRPercent != null && 
-                exercise.upperBoundMaxHRPercent != null &&
-                workoutHistory.heartBeatRecords.isNotEmpty()) {
-                
-                val lowHr = getHeartRateFromPercentage(exercise.lowerBoundMaxHRPercent!!, userAge)
-                val highHr = getHeartRateFromPercentage(exercise.upperBoundMaxHRPercent!!, userAge)
-
-                val validHRRecords = workoutHistory.heartBeatRecords.filter { it > 0 }
-                val hrInZoneCount = validHRRecords.count { it >= lowHr && it <= highHr }
-                val zonePercentage = if (validHRRecords.isNotEmpty()) {
-                    (hrInZoneCount.toFloat() / validHRRecords.size * 100).toInt()
-                } else 0
-
-                if (totalsLine.isNotEmpty()) totalsLine.append(" | ")
-                totalsLine.append("HR Zone(${lowHr}-${highHr}): ${zonePercentage}%")
-            }
-
-            if (totalsLine.isNotEmpty()) {
-                markdown.append(totalsLine.toString()).append("\n")
-            }
-            markdown.append("\n")
-        }
-
-        // Generate filename
-        val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-        val timestamp = sdf.format(Date())
-        val sanitizedName = exercise.name.replace(Regex("[^a-zA-Z0-9]"), "_").take(50)
-        val filename = "exercise_history_${sanitizedName}_$timestamp.md"
-
-        // Save to downloads
-        writeMarkdownToDownloadsFolder(context, filename, markdown.toString())
-
     } catch (e: Exception) {
         Log.e("ExerciseExport", "Error exporting exercise history", e)
         withContext(Dispatchers.Main) {
             Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
+    }
+}
+
+suspend fun backfillExerciseSessionProgressions(
+    workoutStore: WorkoutStore,
+    workoutHistoryDao: WorkoutHistoryDao,
+    setHistoryDao: SetHistoryDao,
+    exerciseInfoDao: ExerciseInfoDao,
+    exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
+    db: AppDatabase
+) {
+    try {
+        Log.d("BackfillProgression", "Starting backfill of ExerciseSessionProgressions")
+        
+        // Get all completed workouts chronologically
+        val allWorkouts = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(isDone = true)
+            ?: emptyList()
+        
+        if (allWorkouts.isEmpty()) {
+            Log.d("BackfillProgression", "No completed workouts found, skipping backfill")
+            return
+        }
+        
+        val sortedWorkouts = allWorkouts.sortedWith(compareBy<WorkoutHistory> { it.date }.thenBy { it.time })
+        Log.d("BackfillProgression", "Processing ${sortedWorkouts.size} completed workouts")
+
+        // Build a map of workout ID to Workout for quick lookup
+        val workouts = workoutStore.workouts ?: emptyList()
+        val workoutMap = workouts.associateBy { it.id }
+        
+        // Build a map of exercise ID to Exercise for quick lookup
+        val exerciseMap = mutableMapOf<UUID, Exercise>()
+        workouts.forEach { workout ->
+            workout.workoutComponents?.forEach { component ->
+                when (component) {
+                    is Exercise -> exerciseMap[component.id] = component
+                    is Superset -> component.exercises?.forEach { exercise ->
+                        exerciseMap[exercise.id] = exercise
+                    }
+                    is Rest -> Unit
+                }
+            }
+        }
+
+        // Build equipment map
+        val equipments = workoutStore.equipments ?: emptyList()
+        val equipmentMap = equipments.associateBy { it.id }
+        
+        // Track ExerciseInfo state as we process workouts chronologically
+        // We start with empty state and build it up chronologically to ensure correctness
+        val exerciseInfoStateMap = mutableMapOf<UUID, ExerciseInfo>()
+
+        // Process each workout chronologically
+        for (workoutHistory in sortedWorkouts) {
+            val workout = workoutMap[workoutHistory.workoutId] ?: run {
+                Log.d("BackfillProgression", "Workout ${workoutHistory.workoutId} not found in workout store, skipping")
+                continue
+            }
+            
+            // Get all exercises from this workout that have enableProgression
+            val exercises = mutableListOf<Exercise>()
+            workout.workoutComponents?.forEach { component ->
+                when (component) {
+                    is Exercise -> {
+                        if (component.enableProgression && 
+                            (component.exerciseType == ExerciseType.WEIGHT || 
+                             component.exerciseType == ExerciseType.BODY_WEIGHT)) {
+                            exercises.add(component)
+                        }
+                    }
+                    is Superset -> {
+                        component.exercises?.forEach { exercise ->
+                            if (exercise.enableProgression && 
+                                (exercise.exerciseType == ExerciseType.WEIGHT || 
+                                 exercise.exerciseType == ExerciseType.BODY_WEIGHT)) {
+                                exercises.add(exercise)
+                            }
+                        }
+                    }
+                    is Rest -> Unit
+                }
+            }
+
+            // Get SetHistory entries for this workout
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+                ?.filter { it.exerciseId != null } ?: emptyList()
+
+            // Process each exercise
+            for (exercise in exercises) {
+                // Check if progression entry already exists
+                val existingProgression = exerciseSessionProgressionDao
+                    .getByWorkoutHistoryIdAndExerciseId(workoutHistory.id, exercise.id)
+                
+                if (existingProgression != null) {
+                    // Entry already exists, skip
+                    Log.d("BackfillProgression", "Progression entry already exists for exercise ${exercise.id} in workout ${workoutHistory.id}, skipping")
+                    continue
+                }
+
+                // Get SetHistory entries for this exercise in this workout
+                val exerciseSetHistories = setHistories
+                    .filter { it.exerciseId == exercise.id }
+                    .sortedBy { it.order }
+
+                if (exerciseSetHistories.isEmpty()) {
+                    // No sets for this exercise in this workout, skip
+                    continue
+                }
+
+                // Filter out rest sets and rest pause sets
+                val currentSession = exerciseSetHistories
+                    .dropWhile { it.setData is RestSetData }
+                    .dropLastWhile { it.setData is RestSetData }
+                    .filter {
+                        when (val setData = it.setData) {
+                            is BodyWeightSetData -> !setData.isRestPause
+                            is WeightSetData -> !setData.isRestPause
+                            is RestSetData -> !setData.isRestPause
+                            else -> true
+                        }
+                    }
+
+                if (currentSession.isEmpty()) {
+                    continue
+                }
+
+                // Convert executed sets to SimpleSet
+                val executedSets = currentSession.mapNotNull { setHistory ->
+                    when (val setData = setHistory.setData) {
+                        is WeightSetData -> {
+                            if (setData.isRestPause) null
+                            else SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        is BodyWeightSetData -> {
+                            if (setData.isRestPause) null
+                            else SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        else -> null
+                    }
+                }
+
+                if (executedSets.isEmpty()) {
+                    continue
+                }
+
+                // Get or reconstruct ExerciseInfo state as it would have been BEFORE this workout
+                val exerciseInfoBefore = exerciseInfoStateMap[exercise.id]
+
+                // Calculate expected sets and progression state
+                val (expectedSets, progressionState) = calculateExpectedSetsAndProgressionState(
+                    exercise = exercise,
+                    exerciseInfoBefore = exerciseInfoBefore,
+                    workoutStore = workoutStore,
+                    equipmentMap = equipmentMap,
+                    workoutHistoryDate = workoutHistory.date
+                )
+
+                // Handle first sessions (when expectedSets is null because there's no previous session)
+                val finalExpectedSets = expectedSets ?: executedSets
+                val finalProgressionState = progressionState ?: ProgressionState.PROGRESS
+                
+                if (finalExpectedSets.isEmpty()) {
+                    // No expected sets and no executed sets, skip
+                    Log.d("BackfillProgression", "Skipping exercise ${exercise.id} - no sets available")
+                    continue
+                }
+
+                // Calculate comparisons
+                val vsExpected = compareSetListsUnordered(executedSets, finalExpectedSets)
+                
+                val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
+                    when (val setData = setHistory.setData) {
+                        is WeightSetData -> {
+                            if (setData.isRestPause) null
+                            else SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        is BodyWeightSetData -> {
+                            if (setData.isRestPause) null
+                            else SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        else -> null
+                    }
+                } ?: emptyList()
+
+                val vsPrevious = if (previousSessionSets.isNotEmpty()) {
+                    compareSetListsUnordered(executedSets, previousSessionSets)
+                } else {
+                    Ternary.EQUAL
+                }
+
+                // Calculate volumes
+                val previousSessionVolume = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
+                    when (val setData = setHistory.setData) {
+                        is WeightSetData -> {
+                            if (setData.isRestPause) null
+                            else SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        is BodyWeightSetData -> {
+                            if (setData.isRestPause) null
+                            else SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        else -> null
+                    }
+                }?.sumOf { it.weight * it.reps } ?: 0.0
+
+                val expectedVolume = finalExpectedSets.sumOf { it.weight * it.reps }
+                val executedVolume = executedSets.sumOf { it.weight * it.reps }
+
+                // Create and insert ExerciseSessionProgression entry
+                val progressionEntry = ExerciseSessionProgression(
+                    id = UUID.randomUUID(),
+                    workoutHistoryId = workoutHistory.id,
+                    exerciseId = exercise.id,
+                    expectedSets = finalExpectedSets,
+                    progressionState = finalProgressionState,
+                    vsExpected = vsExpected,
+                    vsPrevious = vsPrevious,
+                    previousSessionVolume = previousSessionVolume,
+                    expectedVolume = expectedVolume,
+                    executedVolume = executedVolume
+                )
+
+                exerciseSessionProgressionDao.insert(progressionEntry)
+                Log.d("BackfillProgression", "Created progression entry for exercise ${exercise.id} in workout ${workoutHistory.id}")
+
+                // Update ExerciseInfo state for next iteration
+                updateExerciseInfoState(
+                    exerciseId = exercise.id,
+                    currentSession = currentSession,
+                    executedSets = executedSets,
+                    progressionState = progressionState,
+                    vsExpected = vsExpected,
+                    exerciseInfoBefore = exerciseInfoBefore,
+                    exerciseInfoStateMap = exerciseInfoStateMap,
+                    workoutHistoryDate = workoutHistory.date
+                )
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("BackfillProgression", "Error backfilling ExerciseSessionProgressions", e)
+    }
+}
+
+private suspend fun calculateExpectedSetsAndProgressionState(
+    exercise: Exercise,
+    exerciseInfoBefore: ExerciseInfo?,
+    workoutStore: WorkoutStore,
+    equipmentMap: Map<UUID, WeightLoadedEquipment>,
+    workoutHistoryDate: LocalDate?
+): Pair<List<SimpleSet>?, ProgressionState?> {
+    try {
+        // Get available weights
+        val availableWeights = when (exercise.exerciseType) {
+            ExerciseType.WEIGHT -> {
+                exercise.equipmentId?.let { equipmentMap[it]?.getWeightsCombinations() } ?: emptySet()
+            }
+            ExerciseType.BODY_WEIGHT -> {
+                val relativeBodyWeight = workoutStore.weightKg * (exercise.bodyWeightPercentage!! / 100)
+                (exercise.equipmentId?.let {
+                    equipmentMap[it]?.getWeightsCombinations()?.map { value -> relativeBodyWeight + value }!!.toSet()
+                } ?: emptySet()) + setOf(relativeBodyWeight)
+            }
+            else -> return Pair(null, null)
+        }
+
+        if (availableWeights.isEmpty()) {
+            return Pair(null, null)
+        }
+
+        // Get previous session sets
+        val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
+            when (val setData = setHistory.setData) {
+                is WeightSetData -> {
+                    if (setData.isRestPause) null
+                    else SimpleSet(setData.getWeight(), setData.actualReps)
+                }
+                is BodyWeightSetData -> {
+                    if (setData.isRestPause) null
+                    else SimpleSet(setData.getWeight(), setData.actualReps)
+                }
+                else -> null
+            }
+        } ?: emptyList()
+
+        if (previousSessionSets.isEmpty()) {
+            // No previous session, cannot calculate expected sets
+            return Pair(null, null)
+        }
+
+        // Compute progression state using the workout history date
+        val progressionState = computeProgressionState(exerciseInfoBefore, workoutHistoryDate = workoutHistoryDate)
+
+        // Calculate expected sets based on progression state
+        val repsRange = IntRange(exercise.minReps, exercise.maxReps)
+        val expectedSets = when (progressionState) {
+            ProgressionState.DELOAD -> {
+                DoubleProgressionHelper.planDeloadSession(
+                    previousSets = previousSessionSets,
+                    availableWeights = availableWeights,
+                    repsRange = repsRange
+                ).sets
+            }
+            ProgressionState.RETRY -> {
+                // For retry, expected sets are the same as previous
+                previousSessionSets
+            }
+            ProgressionState.PROGRESS -> {
+                val jumpPolicy = DoubleProgressionHelper.LoadJumpPolicy(
+                    defaultPct = exercise.loadJumpDefaultPct ?: 0.025,
+                    maxPct = exercise.loadJumpMaxPct ?: 0.5,
+                    overcapUntil = exercise.loadJumpOvercapUntil ?: 2
+                )
+                DoubleProgressionHelper.planNextSession(
+                    previousSets = previousSessionSets,
+                    availableWeights = availableWeights,
+                    repsRange = repsRange,
+                    jumpPolicy = jumpPolicy
+                ).sets
+            }
+            ProgressionState.FAILED -> {
+                // Should not happen during backfill, but handle it
+                previousSessionSets
+            }
+        }
+
+        return Pair(expectedSets, progressionState)
+    } catch (e: Exception) {
+        Log.e("BackfillProgression", "Error calculating expected sets", e)
+        return Pair(null, null)
+    }
+}
+
+private fun computeProgressionState(
+    exerciseInfo: ExerciseInfo?,
+    workoutHistoryDate: LocalDate?
+): ProgressionState {
+    val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
+    val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
+
+    // For backfill, we use the date from the workout history if available
+    val today = workoutHistoryDate ?: LocalDate.now()
+
+    var weeklyCount = 0
+    exerciseInfo?.weeklyCompletionUpdateDate?.let { lastUpdate ->
+        val startOfThisWeek = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        val startOfLastUpdateWeek = lastUpdate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        if (startOfThisWeek.isEqual(startOfLastUpdateWeek)) {
+            weeklyCount = exerciseInfo.timesCompletedInAWeek
+        }
+    }
+
+    val shouldDeload = false // temporarily disable deload: (fails >= 2) && !lastWasDeload
+    val shouldRetry = !lastWasDeload && (fails >= 1 || weeklyCount > 1)
+
+    return when {
+        shouldDeload -> ProgressionState.DELOAD
+        shouldRetry -> ProgressionState.RETRY
+        else -> ProgressionState.PROGRESS
+    }
+}
+
+private suspend fun updateExerciseInfoState(
+    exerciseId: UUID,
+    currentSession: List<SetHistory>,
+    executedSets: List<SimpleSet>,
+    progressionState: ProgressionState?,
+    vsExpected: Ternary,
+    exerciseInfoBefore: ExerciseInfo?,
+    exerciseInfoStateMap: MutableMap<UUID, ExerciseInfo>,
+    workoutHistoryDate: LocalDate
+) {
+    try {
+        val today = workoutHistoryDate
+
+        // Calculate weekly count
+        var weeklyCount = 0
+        if (exerciseInfoBefore != null) {
+            val lastUpdate = exerciseInfoBefore.weeklyCompletionUpdateDate
+            if (lastUpdate != null) {
+                val startOfThisWeek = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                val startOfLastUpdateWeek = lastUpdate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                if (startOfThisWeek.isEqual(startOfLastUpdateWeek)) {
+                    weeklyCount = exerciseInfoBefore.timesCompletedInAWeek
+                }
+            }
+        }
+        weeklyCount++
+
+        val isDeloadSession = progressionState == ProgressionState.DELOAD
+
+        val updatedInfo = if (exerciseInfoBefore == null) {
+            // First session for this exercise
+            ExerciseInfo(
+                id = exerciseId,
+                bestSession = currentSession,
+                lastSuccessfulSession = currentSession,
+                successfulSessionCounter = 1u,
+                sessionFailedCounter = 0u,
+                timesCompletedInAWeek = weeklyCount,
+                weeklyCompletionUpdateDate = today,
+                lastSessionWasDeload = false
+            )
+        } else {
+            var info = exerciseInfoBefore.copy(version = exerciseInfoBefore.version + 1u)
+
+            if (isDeloadSession) {
+                info = info.copy(
+                    sessionFailedCounter = 0u,
+                    successfulSessionCounter = 0u,
+                    lastSessionWasDeload = true
+                )
+            } else {
+                info = info.copy(lastSessionWasDeload = false)
+
+                // Convert best session to SimpleSet list for comparison
+                val bestSessionSets = info.bestSession.mapNotNull { setHistory ->
+                    when (val setData = setHistory.setData) {
+                        is WeightSetData -> {
+                            if (setData.isRestPause) return@mapNotNull null
+                            SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        is BodyWeightSetData -> {
+                            if (setData.isRestPause) return@mapNotNull null
+                            SimpleSet(setData.getWeight(), setData.actualReps)
+                        }
+                        else -> null
+                    }
+                }
+
+                // Check if current session is better than best session
+                val vsBest = compareSetListsUnordered(executedSets, bestSessionSets)
+                if (vsBest == Ternary.ABOVE) {
+                    info = info.copy(bestSession = currentSession)
+                }
+
+                if (progressionState != null) {
+                    if (progressionState == ProgressionState.PROGRESS) {
+                        // Success if executed sets are ABOVE or EQUAL to expected sets
+                        val isSuccess = vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL
+
+                        info = if (isSuccess) {
+                            info.copy(
+                                lastSuccessfulSession = currentSession,
+                                successfulSessionCounter = info.successfulSessionCounter.inc(),
+                                sessionFailedCounter = 0u
+                            )
+                        } else {
+                            info.copy(
+                                successfulSessionCounter = 0u,
+                                sessionFailedCounter = info.sessionFailedCounter.inc()
+                            )
+                        }
+                    } else {
+                        // ProgressionState.RETRY as DELOAD was already handled
+                        when (vsExpected) {
+                            Ternary.ABOVE -> {
+                                // Exceeded retry target - success
+                                info = info.copy(
+                                    lastSuccessfulSession = currentSession,
+                                    successfulSessionCounter = info.successfulSessionCounter.inc(),
+                                    sessionFailedCounter = 0u
+                                )
+                            }
+                            Ternary.EQUAL -> {
+                                // Met retry target exactly - complete retry, reset counters
+                                info = info.copy(
+                                    lastSuccessfulSession = currentSession,
+                                    successfulSessionCounter = 0u,
+                                    sessionFailedCounter = 0u
+                                )
+                            }
+                            Ternary.BELOW, Ternary.MIXED -> {
+                                // Below retry target - session failed, don't update counters
+                                // Counters remain unchanged (will be incremented elsewhere if needed)
+                            }
+                        }
+                    }
+                } else {
+                    // No progression state - compare against last successful session
+                    val lastSessionSets = info.lastSuccessfulSession.mapNotNull { setHistory ->
+                        when (val setData = setHistory.setData) {
+                            is WeightSetData -> {
+                                if (setData.isRestPause) return@mapNotNull null
+                                SimpleSet(setData.getWeight(), setData.actualReps)
+                            }
+                            is BodyWeightSetData -> {
+                                if (setData.isRestPause) return@mapNotNull null
+                                SimpleSet(setData.getWeight(), setData.actualReps)
+                            }
+                            else -> null
+                        }
+                    }
+
+                    val vsLast = compareSetListsUnordered(executedSets, lastSessionSets)
+                    val isSuccess = vsLast == Ternary.ABOVE || vsLast == Ternary.EQUAL
+
+                    info = if (isSuccess) {
+                        info.copy(
+                            lastSuccessfulSession = currentSession,
+                            successfulSessionCounter = info.successfulSessionCounter.inc(),
+                            sessionFailedCounter = 0u
+                        )
+                    } else {
+                        info.copy(
+                            successfulSessionCounter = 0u,
+                            sessionFailedCounter = info.sessionFailedCounter.inc()
+                        )
+                    }
+                }
+            }
+
+            info.copy(
+                timesCompletedInAWeek = weeklyCount,
+                weeklyCompletionUpdateDate = today
+            )
+        }
+
+        exerciseInfoStateMap[exerciseId] = updatedInfo
+    } catch (e: Exception) {
+        Log.e("BackfillProgression", "Error updating ExerciseInfo state", e)
     }
 }
 

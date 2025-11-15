@@ -40,13 +40,13 @@ interface WorkoutHistoryDao {
     suspend fun insertAll(vararg workoutHistories: WorkoutHistory)
 
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId")
-    fun getWorkoutsByWorkoutId(workoutId: UUID): List<WorkoutHistory>
+    suspend fun getWorkoutsByWorkoutId(workoutId: UUID): List<WorkoutHistory>
 
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId ORDER BY date")
-    fun getWorkoutsByWorkoutIdByDateAsc(workoutId: UUID): List<WorkoutHistory>
+    suspend fun getWorkoutsByWorkoutIdByDateAsc(workoutId: UUID): List<WorkoutHistory>
 
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId AND date = :date")
-    fun getWorkoutsByWorkoutIdAndDate(workoutId: UUID, date: LocalDate): List<WorkoutHistory>
+    suspend fun getWorkoutsByWorkoutIdAndDate(workoutId: UUID, date: LocalDate): List<WorkoutHistory>
 
     @Query("DELETE FROM workout_history WHERE id = :id")
     suspend fun deleteById(id: UUID)

@@ -57,7 +57,6 @@ import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -69,6 +68,7 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -297,7 +297,7 @@ fun MyWorkoutAssistantNavHost(
 
                         scope.launch {
                             val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
-                                workout.isActive || (!workout.isActive && appBackup.WorkoutHistories.any { it.workoutId == workout.id })
+                                workout.isActive || (!workout.isActive && (appBackup.WorkoutHistories ?: emptyList()).any { it.workoutId == workout.id })
                             }
 
                             val newWorkoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
@@ -319,13 +319,13 @@ fun MyWorkoutAssistantNavHost(
                                 workoutRecordDao.deleteAll()
                                 db.exerciseSessionProgressionDao().deleteAll()
 
-                                val validWorkoutHistories = appBackup.WorkoutHistories.filter { workoutHistory ->
+                                val validWorkoutHistories = (appBackup.WorkoutHistories ?: emptyList()).filter { workoutHistory ->
                                     allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
                                 }
 
                                 workoutHistoryDao.insertAll(*validWorkoutHistories.toTypedArray())
 
-                                val validSetHistories = appBackup.SetHistories.filter { setHistory ->
+                                val validSetHistories = (appBackup.SetHistories ?: emptyList()).filter { setHistory ->
                                     validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
                                 }
 
@@ -333,10 +333,10 @@ fun MyWorkoutAssistantNavHost(
 
                                 val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises } }
 
-                                val validExerciseInfos = appBackup.ExerciseInfos.filter { allExercises.any { exercise -> exercise.id == it.id } }
+                                val validExerciseInfos = (appBackup.ExerciseInfos ?: emptyList()).filter { allExercises.any { exercise -> exercise.id == it.id } }
                                 exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
 
-                                val validWorkoutSchedules = appBackup.WorkoutSchedules.filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
+                                val validWorkoutSchedules = (appBackup.WorkoutSchedules ?: emptyList()).filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
                                 workoutScheduleDao.insertAll(*validWorkoutSchedules.toTypedArray())
 
                                 if(appBackup.WorkoutRecords != null){
@@ -344,14 +344,26 @@ fun MyWorkoutAssistantNavHost(
                                     workoutRecordDao.insertAll(*validWorkoutRecords.toTypedArray())
                                 }
 
-                                val validExerciseSessionProgressions = appBackup.ExerciseSessionProgressions.filter { progression ->
+                                val validExerciseSessionProgressions = (appBackup.ExerciseSessionProgressions ?: emptyList()).filter { progression ->
                                     validWorkoutHistories.any { it.id == progression.workoutHistoryId }
                                 }
-                                db.exerciseSessionProgressionDao().insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                if (validExerciseSessionProgressions.isNotEmpty()) {
+                                    db.exerciseSessionProgressionDao().insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                }
                             }
 
                             // Wait for the delete and insert operations to complete
                             deleteAndInsertJob.join()
+
+                            // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
+/*                            backfillExerciseSessionProgressions(
+                                workoutStore = newWorkoutStore,
+                                workoutHistoryDao = workoutHistoryDao,
+                                setHistoryDao = setHistoryDao,
+                                exerciseInfoDao = exerciseInfoDao,
+                                exerciseSessionProgressionDao = db.exerciseSessionProgressionDao(),
+                                db = db
+                            )*/
 
                             appViewModel.updateWorkoutStore(newWorkoutStore)
                             workoutViewModel.updateWorkoutStore(newWorkoutStore)
