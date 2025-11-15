@@ -175,7 +175,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 Text(
                     text = "NO CHANGES REQUIRED",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = headerStyle,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -199,7 +199,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(30.dp)
+                                .height(25.dp)
                                 .padding(horizontal = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) { }
@@ -234,7 +234,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 10.dp)
-                                        .height(30.dp),
+                                        .height(25.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val weightText = String.format("%.2f", step.weight).replace(",", ".")
@@ -250,14 +250,14 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
 
                                     Row(
                                         modifier = Modifier
-                                            .height(27.5.dp)
+                                            .height(22.5.dp)
                                             .padding(bottom = 2.5.dp)
                                             .border(BorderStroke(1.dp, color), shape)
                                             .clip(shape), // keep if you want content clipped to the rounded shape
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         ScalableText(
-                                            modifier = Modifier.fillMaxSize().padding(3.dp),
+                                            modifier = Modifier.fillMaxSize().padding(1.dp),
                                             text = "$actionText $weightText",
                                             style = style,
                                             textAlign = TextAlign.Center,

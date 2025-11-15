@@ -29,7 +29,7 @@ private class FakeHrBpmSource : HrBpmSource {
 private class FakeReconnector(private val delaySec: Long, private val scheduler: TestScheduler) :
     ReconnectionActions {
     var calls = 0
-    override fun onStale(deviceId: String): Completable {
+    override fun onStale(deviceId: String,onReconnecting: (() -> Unit)?): Completable {
         calls++
         return Completable.complete() // reconnection itself is instant in this fake
     }

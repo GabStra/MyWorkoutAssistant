@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -121,13 +120,13 @@ fun HrStatusDialog(
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
 
-                    var message = when (heartRateStatus) {
+                    val message = when (heartRateStatus) {
                         HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
                         HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
                         HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
                     }
 
-                    var icon = when (heartRateStatus) {
+                    val icon = when (heartRateStatus) {
                         HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
                         HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
                         HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
@@ -332,14 +331,27 @@ private fun HeartRateDisplay(
     modifier: Modifier = Modifier,
     bpm: Int,
     textToDisplay: String,
+    zoneLabel: String,
     currentZone: Int,
     colorsByZone: Array<Color>,
     displayMode: Int
 ) {
     Row(
-        modifier = modifier
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Spacer(modifier = Modifier.weight(1f))
+        if (bpm != 0 && displayMode == 0) {
+            Text(
+                text = zoneLabel,
+                style = MaterialTheme.typography.bodyExtraSmall,
+                color = if (currentZone < 0 || currentZone >= colorsByZone.size)
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                else
+                    MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+        }
         PulsingHeartWithBpm(
             bpm = bpm,
             tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size)
@@ -734,6 +746,12 @@ private fun HeartRateView(
     }
 
     val context = LocalContext.current
+    val zoneLabel by remember(currentZone) {
+        derivedStateOf {
+            if (currentZone in 0 until colorsByZone.size) "Zone $currentZone" else "Zone -"
+        }
+    }
+
     val onSwitchClick = remember(appViewModel, context) {
         {
             appViewModel.switchHrDisplayMode()
@@ -747,11 +765,12 @@ private fun HeartRateView(
     ) {
         HeartRateDisplay(
             modifier = Modifier
-                .width(90.dp)
-                .height(20.dp)
+                .width(120.dp)
+                .padding(bottom = 8.dp)
                 .clickable(onClick = onSwitchClick, enabled = hr != 0),
             bpm = hr,
             textToDisplay = textToDisplay,
+            zoneLabel = zoneLabel,
             currentZone = currentZone,
             colorsByZone = colorsByZone,
             displayMode = displayMode

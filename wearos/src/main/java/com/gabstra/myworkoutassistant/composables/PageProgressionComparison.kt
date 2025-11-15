@@ -462,7 +462,7 @@ fun PageProgressionComparison(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(30.dp)
+                .height(27.5.dp)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -470,7 +470,7 @@ fun PageProgressionComparison(
                 SetTableRow(
                     modifier = Modifier
                         .fillMaxSize()
-                        .height(27.5.dp)
+                        .height(25.dp)
                         .padding(bottom = 2.5.dp)
                         .border(BorderStroke(1.dp, backgroundColor), shape)
                         .clip(shape),
@@ -486,7 +486,7 @@ fun PageProgressionComparison(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .height(27.5.dp)
+                        .height(25.dp)
                         .padding(bottom = 2.5.dp)
                         .border(BorderStroke(1.dp, backgroundColor), shape)
                         .clip(shape)
@@ -577,7 +577,7 @@ fun PageProgressionComparison(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(30.dp)
+                .height(27.5.dp)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -585,7 +585,7 @@ fun PageProgressionComparison(
                 SetTableRow(
                     modifier = Modifier
                         .fillMaxSize()
-                        .height(27.5.dp)
+                        .height(25.dp)
                         .padding(bottom = 2.5.dp)
                         .border(BorderStroke(1.dp, backgroundColor), shape)
                         .clip(shape),
@@ -601,7 +601,7 @@ fun PageProgressionComparison(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .height(27.5.dp)
+                        .height(25.dp)
                         .padding(bottom = 2.5.dp)
                         .border(BorderStroke(1.dp, backgroundColor), shape)
                         .clip(shape)

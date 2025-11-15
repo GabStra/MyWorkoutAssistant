@@ -10,8 +10,8 @@ object WarmupPlanner {
         availableTotals: Collection<Double>,
         workWeight: Double,
         workReps: Int,
-        baseAnchorTotal: Double = 0.0,
-        candidateStepsDesc: List<Double> = listOf(10.0, 5.0, 2.5, 1.0, 0.5, 0.25),
+        baseAnchorTotal: Double? = null,
+        candidateStepsDesc: List<Double> = listOf(20.0,15.0,10.0, 5.0, 2.5, 1.0, 0.5, 0.25),
         includeNoStep: Boolean = true,
         maxWarmups: Int = 3,
         capTotalWarmupReps: Int = 25,
@@ -86,8 +86,8 @@ object WarmupPlanner {
         workWeight: Double,
         workReps: Int,
         maxWarmups: Int = 3,
-        baseAnchorTotal: Double?,
-        convenienceStepKgTotal: Double?,
+        baseAnchorTotal: Double? = null,
+        convenienceStepKgTotal: Double? = null,
         capTotalWarmupReps: Int = 25,
     ): List<Pair<Double, Int>> {
         if (availableTotals.isEmpty()) return emptyList()

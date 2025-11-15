@@ -84,7 +84,7 @@ fun SetTableRow(
         modifier = modifier,
     ){
         Row(
-            modifier = Modifier.fillMaxSize().padding(3.dp),
+            modifier = Modifier.fillMaxSize().padding(1.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if(setState.isWarmupSet){
@@ -271,7 +271,7 @@ fun ExerciseSetsViewer(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(30.dp)
+                .height(27.5.dp)
                 .padding(horizontal = 10.dp)
                 .onGloballyPositioned { coordinates ->
                 val height = coordinates.size.height
@@ -290,7 +290,7 @@ fun ExerciseSetsViewer(
 
             SetTableRow(
                 modifier = Modifier
-                    .height(27.5.dp)
+                    .height(25.dp)
                     .padding(bottom = 2.5.dp)
                     .border(BorderStroke(1.dp, backgroundColor), shape)
                     .clip(shape),

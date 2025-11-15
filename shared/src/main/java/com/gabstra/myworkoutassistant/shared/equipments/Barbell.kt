@@ -20,6 +20,11 @@ class Barbell(
         return availableWeightsCombo.map { it + barWeight }.sorted().toSet()
     }
 
+    override fun getWeightsCombinationsNoExtra(): Set<Double> {
+        val availableWeightsCombo = setOf(0.0) + super.getWeightsCombinationsNoExtra()
+        return availableWeightsCombo.map { it + barWeight }.sorted().toSet()
+    }
+
     override fun getBaseCombinations(): Set<List<BaseWeight>> {
         return generateRecursiveValidSubsets(availablePlates)
     }

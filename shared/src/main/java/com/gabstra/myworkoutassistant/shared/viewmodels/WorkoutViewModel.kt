@@ -53,6 +53,7 @@ import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
+import com.gabstra.myworkoutassistant.shared.utils.WarmupPlateOptimizer
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -1809,77 +1810,84 @@ open class WorkoutViewModel(
         val exerciseSets = exercise.sets
 
         if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
-            val (workWeight,workReps) = exerciseSets.first().let  {
+            // 1) Work set TOTAL (includes bar or BW)
+            val (workWeightTotal, workReps) = exerciseSets.first().let {
                 when (it) {
                     is BodyWeightSet -> {
                         val relativeBodyWeight =
                             bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                        // TOTAL = BW + extra
                         Pair(it.getWeight(relativeBodyWeight), it.reps)
                     }
-
                     is WeightSet -> {
+                        // TOTAL = what you store as set.weight
                         Pair(it.weight, it.reps)
                     }
-
                     else -> throw IllegalArgumentException("Unknown set type")
                 }
             }
 
-            val availableWeights = when (exercise.exerciseType) {
-                ExerciseType.WEIGHT -> equipment.getWeightsCombinationsNoExtra()
-                ExerciseType.BODY_WEIGHT -> {
-                    val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                    equipment.getWeightsCombinationsNoExtra().map { value -> relativeBodyWeight + value }.toSet() + setOf(relativeBodyWeight)
+            // 2) Available TOTALS for warmups (what WarmupPlanner expects)
+            val availableTotals: kotlin.collections.Set<Double> = when (exercise.exerciseType) {
+                ExerciseType.WEIGHT -> {
+                    // IMPORTANT: this returns TOTALS including bar for barbells,
+                    // or full stack totals for machines, etc.
+                    equipment.getWeightsCombinationsNoExtra()
                 }
+                ExerciseType.BODY_WEIGHT -> {
+                    val relativeBodyWeight =
+                        bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
 
+                    // equipment.getWeightsCombinations() gives extra load totals.
+                    // Convert to TOTAL = BW + extra, plus pure BW.
+                    val extraTotals = equipment.getWeightsCombinationsNoExtra()
+                    extraTotals.map { relativeBodyWeight + it }.toSet() + setOf(relativeBodyWeight)
+                }
                 else -> throw IllegalArgumentException("Unknown exercise type")
             }
 
-            fun getSetWeight(desiredWeight: Double) : Double{
+            fun toSetInternalWeight(desiredTotal: Double): Double {
                 return when (exercise.exerciseType) {
                     ExerciseType.BODY_WEIGHT -> {
                         val relativeBodyWeight =
                             bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                        desiredWeight - relativeBodyWeight
+                        // BodyWeightSet stores extra load, TOTAL = BW + extra
+                        desiredTotal - relativeBodyWeight
                     }
-
                     ExerciseType.WEIGHT -> {
-                        desiredWeight
+                        // WeightSet stores TOTAL directly
+                        desiredTotal
                     }
-
                     else -> throw IllegalArgumentException("Unknown exercise type")
                 }
             }
 
-            fun getNewSet(id: UUID,weight: Double, reps: Int) : Set{
+            fun makeWarmupSet(id: UUID, total: Double, reps: Int): Set {
+                val internalWeight = toSetInternalWeight(total)
                 return when (exercise.exerciseType) {
-                    ExerciseType.BODY_WEIGHT -> {
-                        BodyWeightSet(id, reps, weight, true)
-                    }
-
-                    ExerciseType.WEIGHT -> {
-                        WeightSet(id, reps, weight, true)
-                    }
-
+                    ExerciseType.BODY_WEIGHT -> BodyWeightSet(id, reps, internalWeight, isWarmupSet = true)
+                    ExerciseType.WEIGHT     -> WeightSet(id, reps, internalWeight, isWarmupSet = true)
                     else -> throw IllegalArgumentException("Unknown exercise type")
                 }
             }
 
+            // 3) Ask WarmupPlanner for TOTALS; it expects totals, not plate-only weights
             val warmups: List<Pair<Double, Int>> =
-                WarmupPlanner.buildWarmupSetsBestStep(
-                    availableTotals = availableWeights,   // your totals list
-                    workWeight = workWeight,               // TOTAL already includes BW/bar/etc.
-                    workReps = workReps,                  // target reps of work set
-                    maxWarmups = 4,                       // or 2–4 as you prefer
-                    capTotalWarmupReps = 25
+                WarmupPlanner.buildWarmupSets(
+                    availableTotals = availableTotals,
+                    workWeight = workWeightTotal,
+                    workReps = workReps,
+                    maxWarmups = 4
                 )
 
-            warmups.forEach { (weight, reps) ->
-                val setWeight = getSetWeight(weight)
-                val warmupSet = getNewSet(UUID.randomUUID(), setWeight, reps) // your existing factory
+            // 4) Convert those TOTALS back into your Set objects
+            warmups.forEach { (total, reps) ->
+                val warmupSet = makeWarmupSet(UUID.randomUUID(), total, reps)
                 exerciseAllSets.add(warmupSet)
+                // Optional rest between warmups – keep as you had, or adjust
                 exerciseAllSets.add(RestSet(UUID.randomUUID(), 60))
             }
+
 
             exerciseAllSets.addAll(exerciseSets)
         }else{
@@ -1959,7 +1967,8 @@ open class WorkoutViewModel(
 
 
                 if(!isWarmupSet && isUnilateral){
-                    val restSet = RestSet(UUID.randomUUID(), exercise.intraSetRestInSeconds)
+                    val restDuration = exercise.intraSetRestInSeconds!!
+                    val restSet = RestSet(UUID.randomUUID(), restDuration)
                     val restState = WorkoutState.Rest(
                         set = restSet,
                         order = index.toUInt(),
