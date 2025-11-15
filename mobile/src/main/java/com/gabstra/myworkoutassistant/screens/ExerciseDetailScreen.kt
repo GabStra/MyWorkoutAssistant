@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
@@ -48,11 +49,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -62,12 +65,16 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
+import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -76,8 +83,11 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
@@ -215,6 +225,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 fun ExerciseDetailScreen(
     appViewModel: AppViewModel,
     workout: Workout,
+    workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
     exercise: Exercise,
     onGoBack: () -> Unit
@@ -227,6 +238,9 @@ fun ExerciseDetailScreen(
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val selectedEquipmentId = exercise?.equipmentId
+    val workouts by appViewModel.workoutsFlow.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(showRest) {
         selectedSets = emptyList()
@@ -255,6 +269,32 @@ fun ExerciseDetailScreen(
                 },
 
                 actions = {
+                    IconButton(
+                        enabled = !exercise.doNotStoreHistory,
+                        onClick = {
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    val db = AppDatabase.getDatabase(context)
+                                    val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+                                    exportExerciseHistoryToMarkdown(
+                                        context = context,
+                                        exercise = exercise,
+                                        workoutHistoryDao = workoutHistoryDao,
+                                        setHistoryDao = setHistoryDao,
+                                        exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                                        workouts = workouts,
+                                        appViewModel = appViewModel
+                                    )
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FileDownload,
+                            contentDescription = "Export History",
+                            tint = if (exercise.doNotStoreHistory) MediumLightGray else LightGray
+                        )
+                    }
                     IconButton(onClick = {
                         appViewModel.setScreenData(
                             ScreenData.EditExercise(

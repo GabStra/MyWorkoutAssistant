@@ -17,7 +17,7 @@ class Barbell(
 
     override fun getWeightsCombinations(): Set<Double> {
         val availableWeightsCombo = setOf(0.0) + super.getWeightsCombinations()
-        return availableWeightsCombo.map { it + barWeight }.toSet()
+        return availableWeightsCombo.map { it + barWeight }.sorted().toSet()
     }
 
     override fun getBaseCombinations(): Set<List<BaseWeight>> {

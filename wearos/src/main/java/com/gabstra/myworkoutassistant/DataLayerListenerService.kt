@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
@@ -41,6 +42,7 @@ class DataLayerListenerService : WearableListenerService() {
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao
     private lateinit var workoutRecordDao: WorkoutRecordDao
+    private lateinit var exerciseSessionProgressionDao: ExerciseSessionProgressionDao
 
     private val sharedPreferences by lazy { getSharedPreferences("backup_state", Context.MODE_PRIVATE) }
     private val gson = Gson()
@@ -128,6 +130,7 @@ class DataLayerListenerService : WearableListenerService() {
         exerciseInfoDao = db.exerciseInfoDao()
         workoutScheduleDao = db.workoutScheduleDao()
         workoutRecordDao = db.workoutRecordDao()
+        exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -269,6 +272,7 @@ class DataLayerListenerService : WearableListenerService() {
                                     }
 
                                     workoutScheduleDao.deleteAll()
+                                    exerciseSessionProgressionDao.deleteAll()
 
                                     val insertWorkoutHistoriesJob =
                                         scope.launch(start = CoroutineStart.LAZY) {
@@ -297,12 +301,21 @@ class DataLayerListenerService : WearableListenerService() {
                                             workoutRecordDao.insertAll(*appBackup.WorkoutRecords.toTypedArray())
                                         }
 
+                                    val insertExerciseSessionProgressionsJob =
+                                        scope.launch(start = CoroutineStart.LAZY) {
+                                            val validExerciseSessionProgressions = appBackup.ExerciseSessionProgressions.filter { progression ->
+                                                appBackup.WorkoutHistories.any { it.id == progression.workoutHistoryId }
+                                            }
+                                            exerciseSessionProgressionDao.insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                        }
+
                                     joinAll(
                                         insertWorkoutHistoriesJob,
                                         insertSetHistoriesJob,
                                         insertExerciseInfosJob,
                                         insertWorkoutSchedulesJob,
-                                        insertWorkoutRecordsJob
+                                        insertWorkoutRecordsJob,
+                                        insertExerciseSessionProgressionsJob
                                     )
 
                                     val intent = Intent(INTENT_ID).apply {

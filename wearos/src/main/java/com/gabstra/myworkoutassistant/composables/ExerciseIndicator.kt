@@ -129,7 +129,7 @@ fun ExerciseIndicator(
     val showRightDots = hiddenRight > 0
 
     val startingAngle = -55f
-    val totalArcAngle = 120f
+    val totalArcAngle = 110f
     val paddingAngle = 2f
 
     val dotAngleGapDeg = 4f

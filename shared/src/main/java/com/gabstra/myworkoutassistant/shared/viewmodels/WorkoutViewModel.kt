@@ -13,6 +13,8 @@ import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -28,6 +30,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
+import com.gabstra.myworkoutassistant.shared.coroutines.DefaultDispatcherProvider
+import com.gabstra.myworkoutassistant.shared.coroutines.DispatcherProvider
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.getNewSet
@@ -53,7 +57,6 @@ import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -90,7 +93,9 @@ private class ResettableLazy<T>(private val initializer: () -> T) {
     }
 }
 
-open class WorkoutViewModel : ViewModel() {
+open class WorkoutViewModel(
+    protected val dispatchers: DispatcherProvider = DefaultDispatcherProvider
+) : ViewModel() {
     private val _keepScreenOn = mutableStateOf(false)
     val keepScreenOn: State<Boolean> = _keepScreenOn
 
@@ -113,7 +118,7 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     fun lightScreenUp() {
-        viewModelScope.launch {
+        viewModelScope.launch(dispatchers.main) {
             _lightScreenUp.send(Unit)
         }
     }
@@ -227,6 +232,11 @@ open class WorkoutViewModel : ViewModel() {
         exerciseInfoDao = db.exerciseInfoDao()
     }
 
+    fun initExerciseSessionProgressionDao(context: Context) {
+        val db = AppDatabase.getDatabase(context)
+        exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+    }
+
     fun initWorkoutStoreRepository(workoutStoreRepository: WorkoutStoreRepository) {
         this.workoutStoreRepository = workoutStoreRepository
     }
@@ -255,6 +265,8 @@ open class WorkoutViewModel : ViewModel() {
     protected lateinit var setHistoryDao: SetHistoryDao
 
     protected lateinit var exerciseInfoDao: ExerciseInfoDao
+
+    protected lateinit var exerciseSessionProgressionDao: ExerciseSessionProgressionDao
 
     protected lateinit var workoutStoreRepository: WorkoutStoreRepository
 
@@ -385,8 +397,8 @@ open class WorkoutViewModel : ViewModel() {
     fun resetAll() {
         resetWorkoutStore()
         workoutStoreRepository.saveWorkoutStore(workoutStore)
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.main) {
+            withContext(dispatchers.io) {
                 workoutHistoryDao.deleteAll()
                 setHistoryDao.deleteAll()
                 exerciseInfoDao.deleteAll()
@@ -398,8 +410,8 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     protected open fun getWorkoutRecord(workout: Workout) {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.main) {
+            withContext(dispatchers.io) {
                 _workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
                 _hasWorkoutRecord.value = _workoutRecord != null
             }
@@ -407,7 +419,7 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     fun upsertWorkoutRecord(exerciseId : UUID,setIndex: UInt) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.io) {
             if (_workoutRecord == null) {
                 _workoutRecord = WorkoutRecord(
                     id = UUID.randomUUID(),
@@ -430,7 +442,7 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     fun deleteWorkoutRecord() {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.io) {
             _workoutRecord?.let {
                 workoutRecordDao.deleteById(it.id)
                 _workoutRecord = null
@@ -440,8 +452,8 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.main) {
+            withContext(dispatchers.io) {
                 _enableWorkoutNotificationFlow.value = null
                 _currentScreenDimmingState.value = false
 
@@ -870,7 +882,7 @@ open class WorkoutViewModel : ViewModel() {
             return
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.io) {
             _isResuming.value = true
             while (_workoutState.value !is WorkoutState.Completed) {
                 goToNextState()
@@ -890,8 +902,8 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     open fun startWorkout() {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.main) {
+            withContext(dispatchers.io) {
                 _enableWorkoutNotificationFlow.value = null
                 _currentScreenDimmingState.value = false
 
@@ -1080,7 +1092,7 @@ open class WorkoutViewModel : ViewModel() {
     }
 
     protected fun RefreshAndGoToNextState() {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.io) {
             if (_isRefreshing.value || (_workoutState.value !is WorkoutState.Set && _workoutState.value !is WorkoutState.Rest)) return@launch
 
             _isRefreshing.value = true
@@ -1142,7 +1154,7 @@ open class WorkoutViewModel : ViewModel() {
         forceNotSend: Boolean = false,
         onEnd: suspend () -> Unit = {}
     ) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(dispatchers.io) {
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 
             if (currentWorkoutHistory == null) {
@@ -1232,6 +1244,57 @@ open class WorkoutViewModel : ViewModel() {
                     }
                     weeklyCount++
 
+                    val executedSets = currentSession.mapNotNull { setHistory ->
+                        when (val setData = setHistory.setData) {
+                            is WeightSetData -> {
+                                if (setData.isRestPause) return@mapNotNull null
+                                SimpleSet(setData.getWeight(), setData.actualReps)
+                            }
+                            is BodyWeightSetData -> {
+                                if (setData.isRestPause) return@mapNotNull null
+                                SimpleSet(setData.getWeight(), setData.actualReps)
+                            }
+                            else -> null
+                        }
+                    }
+
+                    val expectedSets = exerciseProgression?.sets ?: emptyList()
+                    val vsExpected = if (exerciseProgression != null) {
+                        compareSetListsUnordered(executedSets, expectedSets)
+                    } else {
+                        Ternary.EQUAL
+                    }
+
+                    val previousSessionSets = if (exerciseInfo != null && exerciseInfo.lastSuccessfulSession.isNotEmpty()) {
+                        exerciseInfo.lastSuccessfulSession.mapNotNull { setHistory ->
+                            when (val setData = setHistory.setData) {
+                                is WeightSetData -> {
+                                    if (setData.isRestPause) return@mapNotNull null
+                                    SimpleSet(setData.getWeight(), setData.actualReps)
+                                }
+                                is BodyWeightSetData -> {
+                                    if (setData.isRestPause) return@mapNotNull null
+                                    SimpleSet(setData.getWeight(), setData.actualReps)
+                                }
+                                else -> null
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+
+                    val vsPrevious = if (previousSessionSets.isNotEmpty()) {
+                        compareSetListsUnordered(executedSets, previousSessionSets)
+                    } else {
+                        Ternary.EQUAL
+                    }
+
+                    val previousSessionVolume = exerciseProgression?.previousVolume
+                        ?: previousSessionSets.sumOf { it.weight * it.reps }
+                    val expectedVolume = exerciseProgression?.newVolume
+                        ?: expectedSets.sumOf { it.weight * it.reps }
+                    val executedVolume = executedSets.sumOf { it.weight * it.reps }
+
                     if (exerciseInfo == null) {
                         val newExerciseInfo = ExerciseInfo(
                             id = it.key!!,
@@ -1256,30 +1319,15 @@ open class WorkoutViewModel : ViewModel() {
                         } else {
                             updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
 
-                            // Convert current session to SimpleSet list
-                            val executedSets = currentSession.mapNotNull { setHistory ->
-                                when (val setData = setHistory.setData) {
-                                    is WeightSetData -> {
-                                        if(setData.isRestPause) return@mapNotNull null
-                                        SimpleSet(setData.getWeight(), setData.actualReps)
-                                    }
-                                    is BodyWeightSetData -> {
-                                        if(setData.isRestPause) return@mapNotNull null
-                                        SimpleSet(setData.getWeight(), setData.actualReps)
-                                    }
-                                    else -> null
-                                }
-                            }
-
                             // Convert best session to SimpleSet list for comparison
                             val bestSessionSets = updatedInfo.bestSession.mapNotNull { setHistory ->
                                 when (val setData = setHistory.setData) {
                                     is WeightSetData -> {
-                                        if(setData.isRestPause) return@mapNotNull null
+                                        if (setData.isRestPause) return@mapNotNull null
                                         SimpleSet(setData.getWeight(), setData.actualReps)
                                     }
                                     is BodyWeightSetData -> {
-                                        if(setData.isRestPause) return@mapNotNull null
+                                        if (setData.isRestPause) return@mapNotNull null
                                         SimpleSet(setData.getWeight(), setData.actualReps)
                                     }
                                     else -> null
@@ -1292,15 +1340,11 @@ open class WorkoutViewModel : ViewModel() {
                                 updatedInfo = updatedInfo.copy(bestSession = currentSession)
                             }
 
-                            if(progressionState != null){
-                                if(progressionState == ProgressionState.PROGRESS){
-                                    // Get expected sets from progression
-                                    val expectedSets = exerciseProgression!!.sets
-                                    val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
-                                    
+                            if (progressionState != null) {
+                                if (progressionState == ProgressionState.PROGRESS) {
                                     // Success if executed sets are ABOVE or EQUAL to expected sets
                                     val isSuccess = vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL
-                                    
+
                                     updatedInfo = if (isSuccess) {
                                         updatedInfo.copy(
                                             lastSuccessfulSession = currentSession,
@@ -1313,12 +1357,9 @@ open class WorkoutViewModel : ViewModel() {
                                             sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
                                         )
                                     }
-                                }else{
+                                } else {
                                     // ProgressionState.RETRY as DELOAD was already handled
-                                    val expectedSets = exerciseProgression!!.sets
-                                    val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
-                                    
-                                    when(vsExpected) {
+                                    when (vsExpected) {
                                         Ternary.ABOVE -> {
                                             // Exceeded retry target - success
                                             updatedInfo = updatedInfo.copy(
@@ -1341,25 +1382,25 @@ open class WorkoutViewModel : ViewModel() {
                                         }
                                     }
                                 }
-                            }else{
+                            } else {
                                 // No progression state - compare against last successful session
                                 val lastSessionSets = updatedInfo.lastSuccessfulSession.mapNotNull { setHistory ->
                                     when (val setData = setHistory.setData) {
                                         is WeightSetData -> {
-                                            if(setData.isRestPause) return@mapNotNull null
+                                            if (setData.isRestPause) return@mapNotNull null
                                             SimpleSet(setData.getWeight(), setData.actualReps)
                                         }
                                         is BodyWeightSetData -> {
-                                            if(setData.isRestPause) return@mapNotNull null
+                                            if (setData.isRestPause) return@mapNotNull null
                                             SimpleSet(setData.getWeight(), setData.actualReps)
                                         }
                                         else -> null
                                     }
                                 }
-                                
+
                                 val vsLast = compareSetListsUnordered(executedSets, lastSessionSets)
                                 val isSuccess = vsLast == Ternary.ABOVE || vsLast == Ternary.EQUAL
-                                
+
                                 updatedInfo = if (isSuccess) {
                                     updatedInfo.copy(
                                         lastSuccessfulSession = currentSession,
@@ -1381,6 +1422,23 @@ open class WorkoutViewModel : ViewModel() {
                         )
 
                         exerciseInfoDao.insert(updatedInfo)
+                    }
+
+                    if (progressionData != null && progressionState != null) {
+                        val progressionEntry = ExerciseSessionProgression(
+                            id = UUID.randomUUID(),
+                            workoutHistoryId = currentWorkoutHistory!!.id,
+                            exerciseId = it.key!!,
+                            expectedSets = expectedSets,
+                            progressionState = progressionState,
+                            vsExpected = vsExpected,
+                            vsPrevious = vsPrevious,
+                            previousSessionVolume = previousSessionVolume,
+                            expectedVolume = expectedVolume,
+                            executedVolume = executedVolume
+                        )
+
+                        exerciseSessionProgressionDao.insert(progressionEntry)
                     }
                 }
 

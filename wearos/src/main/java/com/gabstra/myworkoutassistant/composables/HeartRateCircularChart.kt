@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -66,6 +67,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
+import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -388,9 +390,11 @@ private fun TargetRangeArc(
     var shouldCaptureMask1 by remember { mutableStateOf(true) }
     var shouldCaptureMask2 by remember { mutableStateOf(true) }
 
+    val nudgeAmount = 5.dp
 
     fun dpToDegrees(gap: Dp, diameter: Dp): Float =
         (gap.value / (PI * diameter.value).toFloat()) * 360f
+
 
     BoxWithConstraints(
         modifier = modifier
@@ -410,7 +414,11 @@ private fun TargetRangeArc(
             }
     ) {
         val diameter = min(maxWidth, maxHeight)
-        val extraDeg = dpToDegrees(borderWidth + 2.dp, diameter) + 1
+        val extraDeg = dpToDegrees(borderWidth + 3.dp, diameter)
+
+        val nudgeDeg = dpToDegrees(nudgeAmount, diameter)
+        val s = startAngle - nudgeDeg
+        val e = endAngle + nudgeDeg
 
         CircularProgressIndicator(
             progress = { 1f },
@@ -420,8 +428,8 @@ private fun TargetRangeArc(
                 trackColor = Color.Transparent
             ),
             strokeWidth = strokeWidth,
-            startAngle = startAngle - extraDeg,
-            endAngle = endAngle + extraDeg
+            startAngle = s - extraDeg,
+            endAngle = e + extraDeg
         )
 
         if (shouldCaptureMask1) {
@@ -442,8 +450,8 @@ private fun TargetRangeArc(
                         trackColor = Color.Transparent
                     ),
                     strokeWidth = strokeWidth - borderWidth * 2,
-                    startAngle = startAngle,
-                    endAngle = endAngle
+                    startAngle = s,
+                    endAngle = e
                 )
             }
 
@@ -486,7 +494,11 @@ private fun TargetRangeArc(
             }
     ) {
         val diameter = min(maxWidth, maxHeight)
-        val extraDeg = dpToDegrees(borderWidth, diameter) + 1
+        val extraDeg = dpToDegrees(borderWidth + 1.dp, diameter)
+
+        val nudgeDeg = dpToDegrees(nudgeAmount, diameter)
+        val s = startAngle - nudgeDeg
+        val e = endAngle + nudgeDeg
 
         CircularProgressIndicator(
             progress = { 1f },
@@ -496,8 +508,8 @@ private fun TargetRangeArc(
                 trackColor = Color.Transparent
             ),
             strokeWidth = strokeWidth,
-            startAngle = startAngle - extraDeg,
-            endAngle = endAngle + extraDeg
+            startAngle = s - extraDeg,
+            endAngle = e + extraDeg
         )
 
         if (shouldCaptureMask2) {
@@ -514,7 +526,7 @@ private fun TargetRangeArc(
                 val newDiameter = min(maxWidth, maxHeight)
 
                 val newStrokeWidth = strokeWidth - borderWidth * 2 + innerBorderWidth * 2
-                val newExtraDeg = dpToDegrees(innerBorderWidth, newDiameter) + 1
+                val newExtraDeg = dpToDegrees(innerBorderWidth, newDiameter)
 
                 CircularProgressIndicator(
                     progress = { 1f },
@@ -524,8 +536,8 @@ private fun TargetRangeArc(
                         trackColor = Color.Transparent
                     ),
                     strokeWidth = newStrokeWidth,
-                    startAngle = startAngle - newExtraDeg,
-                    endAngle = endAngle + newExtraDeg
+                    startAngle = s - newExtraDeg,
+                    endAngle = e + newExtraDeg
                 )
             }
 
@@ -654,14 +666,18 @@ fun extractCurrentHrRotationAngle(
 ): Float? {
     if (segmentArcAngle <= 0f || zoneCount <= 0 || mhrPercentage == null) return null
 
+    Log.d("HeartRateCircularChart", "mhrPercentage: ${mhrPercentage.round(1)}")
+
     for (index in 0 until zoneCount) {
         val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
         val endAngle = startAngle + segmentArcAngle
         val (lowerBound, upperBound) = zoneRanges[index + 1]
 
-        if (mhrPercentage >= lowerBound && mhrPercentage <= upperBound) {
+        Log.d("HeartRateCircularChart", "Zone $index: is in: ${mhrPercentage.round(1) in lowerBound..upperBound}")
+
+        if (mhrPercentage.round(1) in lowerBound..upperBound) {
             val percentageInZone = if (upperBound > lowerBound) {
-                ((mhrPercentage - lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
+                ((mhrPercentage- lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
             } else 0f
 
             return getValueInRange(startAngle, endAngle, percentageInZone)
@@ -702,7 +718,7 @@ private fun HeartRateView(
     }
 
     val zoneCount = colorsByZone.size - 1
-    val totalStartAngle = 115f
+    val totalStartAngle = 125f
     val totalEndAngle = 235f
     val paddingAngle = 2f
 
@@ -790,7 +806,7 @@ private fun HeartRateView(
 
         if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
             val inBounds = remember(mhrPercentage) {
-                mhrPercentage in (lowerBoundMaxHRPercent ?: 0f)..(upperBoundMaxHRPercent ?: 0f)
+                mhrPercentage.round(1) in (lowerBoundMaxHRPercent ?: 0f)..(upperBoundMaxHRPercent ?: 0f)
             }
 
             TargetRangeArc(
@@ -799,7 +815,7 @@ private fun HeartRateView(
                     .padding(2.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
+                color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
                 strokeWidth = 20.dp,
                 borderWidth = 8.dp,
                 innerBorderWidth = 6.dp
@@ -809,12 +825,12 @@ private fun HeartRateView(
         if (currentHrRotationAngle != null) {
             Box(modifier = Modifier
                 .fillMaxSize()
-                .padding(5.dp)
+                .padding(4.dp)
             ) {
                 AnimatedHeartRateIndicator(
                     currentHrRotationAngle,
                     MaterialTheme.colorScheme.onBackground,
-                    bubbleSize = 14.dp,
+                    bubbleSize = 15.dp,
                     borderWidth = 2.dp
                 )
             }

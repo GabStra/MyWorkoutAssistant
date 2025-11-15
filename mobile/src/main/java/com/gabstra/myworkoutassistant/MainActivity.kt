@@ -233,6 +233,7 @@ fun MyWorkoutAssistantNavHost(
     workoutViewModel.initWorkoutScheduleDao(localContext)
     workoutViewModel.initWorkoutRecordDao(localContext)
     workoutViewModel.initExerciseInfoDao(localContext)
+    workoutViewModel.initExerciseSessionProgressionDao(localContext)
     workoutViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
     val systemUiController = rememberSystemUiController()
@@ -316,6 +317,7 @@ fun MyWorkoutAssistantNavHost(
                                 exerciseInfoDao.deleteAll()
                                 workoutScheduleDao.deleteAll()
                                 workoutRecordDao.deleteAll()
+                                db.exerciseSessionProgressionDao().deleteAll()
 
                                 val validWorkoutHistories = appBackup.WorkoutHistories.filter { workoutHistory ->
                                     allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
@@ -341,6 +343,11 @@ fun MyWorkoutAssistantNavHost(
                                     val validWorkoutRecords = appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
                                     workoutRecordDao.insertAll(*validWorkoutRecords.toTypedArray())
                                 }
+
+                                val validExerciseSessionProgressions = appBackup.ExerciseSessionProgressions.filter { progression ->
+                                    validWorkoutHistories.any { it.id == progression.workoutHistoryId }
+                                }
+                                db.exerciseSessionProgressionDao().insertAll(*validExerciseSessionProgressions.toTypedArray())
                             }
 
                             // Wait for the delete and insert operations to complete
@@ -406,7 +413,11 @@ fun MyWorkoutAssistantNavHost(
                 val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
                 val workoutSchedules = workoutScheduleDao.getAllSchedules()
 
-                val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords)
+                val exerciseSessionProgressions = db.exerciseSessionProgressionDao().getAllExerciseSessionProgressions().filter { progression ->
+                    validWorkoutHistories.any { it.id == progression.workoutHistoryId }
+                }
+
+                val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions)
                 sendAppBackup(dataClient, appBackup)
             }
             Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
@@ -460,13 +471,18 @@ fun MyWorkoutAssistantNavHost(
 
                                 val workoutRecords = workoutRecordDao.getAll()
 
+                                val exerciseSessionProgressions = db.exerciseSessionProgressionDao().getAllExerciseSessionProgressions().filter { progression ->
+                                    validWorkoutHistories.any { it.id == progression.workoutHistoryId }
+                                }
+
                                 val appBackup = AppBackup(
                                     appViewModel.workoutStore.copy(workouts = allowedWorkouts),
                                     validWorkoutHistories,
                                     setHistories,
                                     exerciseInfos,
                                     workoutSchedules,
-                                    workoutRecords
+                                    workoutRecords,
+                                    exerciseSessionProgressions
                                 )
 
                                 val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
@@ -765,6 +781,7 @@ fun MyWorkoutAssistantNavHost(
                 ExerciseDetailScreen(
                     appViewModel,
                     selectedWorkout,
+                    workoutHistoryDao,
                     setHistoryDao,
                     selectedExercise
                 ) {

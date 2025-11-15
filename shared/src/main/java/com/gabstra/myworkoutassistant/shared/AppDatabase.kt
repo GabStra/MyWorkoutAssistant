@@ -9,14 +9,17 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.DateTimeTypeConverte
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ListIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ListSetHistoryTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.ListSimpleSetTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.ProgressionStateTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.SetDataTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.TernaryTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
 @Database(
-    entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class, WorkoutSchedule::class],
-    version = 51,
+    entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class, WorkoutSchedule::class, ExerciseSessionProgression::class],
+    version = 52,
     exportSchema = false
 )
 @TypeConverters(
@@ -27,7 +30,10 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
     UUIDConverter::class,
     UIntConverter::class,
     ListIntConverter::class,
-    ListSetHistoryTypeConverter::class
+    ListSetHistoryTypeConverter::class,
+    ListSimpleSetTypeConverter::class,
+    ProgressionStateTypeConverter::class,
+    TernaryTypeConverter::class
 )
 
 abstract class AppDatabase : RoomDatabase() {
@@ -36,6 +42,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun workoutRecordDao(): WorkoutRecordDao
     abstract fun exerciseInfoDao(): ExerciseInfoDao
     abstract fun workoutScheduleDao(): WorkoutScheduleDao
+    abstract fun exerciseSessionProgressionDao(): ExerciseSessionProgressionDao
 
     companion object {
         @Volatile

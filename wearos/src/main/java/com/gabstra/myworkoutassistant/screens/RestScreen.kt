@@ -19,6 +19,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -44,6 +45,7 @@ import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PagePlates
+import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -52,6 +54,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -129,10 +132,19 @@ fun RestScreen(
                 && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
     }
 
-    val pageTypes = remember(showPlatesPage) {
+    val showProgressionComparisonPage = remember(exercise) {
+        viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
+                viewModel.lastSessionWorkout != null &&
+                ((viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
+                        viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset>()
+                            .flatMap { it.exercises }).any { it.id == exercise.id })
+    }
+
+    val pageTypes = remember(showPlatesPage,showProgressionComparisonPage) {
         mutableListOf<PageType>().apply {
             add(PageType.EXERCISES)
             if (showPlatesPage) add(PageType.PLATES)
+            if (showProgressionComparisonPage) add(PageType.PROGRESSION_COMPARISON)
             add(PageType.BUTTONS)
         }
     }
@@ -331,7 +343,7 @@ fun RestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(22.5.dp)
+                    .padding(horizontal = 22.5.dp, vertical = 27.5.dp)
                     .clip(CircularEndsPillShape(straightWidth = 50.dp)),
             ) {
                 CustomHorizontalPager(
@@ -371,7 +383,17 @@ fun RestScreen(
                             )
 
                             PageType.NOTES -> TODO()
-                            PageType.PROGRESSION_COMPARISON -> TODO()
+                            PageType.PROGRESSION_COMPARISON -> {
+                                key(pageType, pageIndex) {
+                                    PageProgressionComparison(
+                                        viewModel = viewModel,
+                                        hapticsViewModel = hapticsViewModel,
+                                        exercise = exercise,
+                                        state = state.nextStateSets.first()
+                                    )
+                                }
+                            }
+
                         }
                     }
                 }
@@ -403,7 +425,7 @@ fun RestScreen(
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
             ),
             strokeWidth = 4.dp,
-            startAngle = 115f,
+            startAngle = 125f,
             endAngle = 235f,
         )
 

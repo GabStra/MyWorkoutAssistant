@@ -386,7 +386,7 @@ fun formatNumber(number: Double): String {
         value >= 100 -> "%.0f%s".format(value, suffixes[suffixIndex])
         value >= 10 -> "%.1f%s".format(value, suffixes[suffixIndex])
         else -> "%.2f%s".format(value, suffixes[suffixIndex])
-    }.replace(",",".").replace(".0", "")
+    }.replace(",",".").replace(Regex("\\.0+$"), "")
 }
 
 fun Double.isEqualTo(other: Double, epsilon: Double = 1e-2): Boolean {

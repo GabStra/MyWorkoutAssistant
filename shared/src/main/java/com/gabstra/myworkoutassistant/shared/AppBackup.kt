@@ -7,4 +7,5 @@ data class AppBackup(
     val ExerciseInfos: List<ExerciseInfo>,
     val WorkoutSchedules: List<WorkoutSchedule>,
     val WorkoutRecords: List<WorkoutRecord>,
+    val ExerciseSessionProgressions: List<ExerciseSessionProgression>,
 )

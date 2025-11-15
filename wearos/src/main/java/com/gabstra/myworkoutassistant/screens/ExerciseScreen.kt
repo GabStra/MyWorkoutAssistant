@@ -238,7 +238,7 @@ fun ExerciseScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(22.5.dp)
+                .padding(horizontal = 22.5.dp, vertical = 27.5.dp)
                 .clip(CircularEndsPillShape(straightWidth = 50.dp)),
         ) {
             CustomHorizontalPager(

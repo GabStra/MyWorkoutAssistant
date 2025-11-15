@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,7 +64,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class SetComparison {
-    BETTER, EQUAL, WORSE
+    BETTER, EQUAL, WORSE, MIXED
 }
 
 fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison {
@@ -80,6 +81,8 @@ fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison 
 
             when {
                 afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
+                (afterWeight > beforeWeight && afterReps < beforeReps) ||
+                        (afterWeight < beforeWeight && afterReps > beforeReps) -> SetComparison.MIXED
                 (afterWeight == beforeWeight && afterReps > beforeReps) ||
                         (afterReps == beforeReps && afterWeight > beforeWeight) ||
                         (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
@@ -96,6 +99,8 @@ fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison 
 
             when {
                 afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
+                (afterWeight > beforeWeight && afterReps < beforeReps) ||
+                        (afterWeight < beforeWeight && afterReps > beforeReps) -> SetComparison.MIXED
                 (afterWeight == beforeWeight && afterReps > beforeReps) ||
                         (afterReps == beforeReps && afterWeight > beforeWeight) ||
                         (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
@@ -503,11 +508,12 @@ fun PageProgressionComparison(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val comparisonColor = remember(comparison, colorScheme.onBackground) {
+            val comparisonColor = remember(comparison, colorScheme.onBackground, colorScheme.tertiary) {
                 when (comparison) {
                     SetComparison.BETTER -> Green
                     SetComparison.WORSE -> Red
                     SetComparison.EQUAL -> colorScheme.onBackground
+                    SetComparison.MIXED -> colorScheme.tertiary
                 }
             }
 
@@ -542,6 +548,17 @@ fun PageProgressionComparison(
                             .width(20.dp)
                             .height(20.dp),
                         tint = Red
+                    )
+                }
+
+                SetComparison.MIXED -> {
+                    Icon(
+                        imageVector = Icons.Filled.SwapVert,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .width(20.dp)
+                            .height(20.dp),
+                        tint = MaterialTheme.colorScheme.tertiary
                     )
                 }
             }
