@@ -59,6 +59,7 @@ class WorkoutViewModelSessionTest {
     private lateinit var context: Context
     private lateinit var mockWorkoutStoreRepository: WorkoutStoreRepository
     private lateinit var workoutStateQueueField: java.lang.reflect.Field
+    private lateinit var workoutStateField: java.lang.reflect.Field
     private lateinit var testDispatcher: TestDispatcher
 
     // Test data
@@ -120,6 +121,10 @@ class WorkoutViewModelSessionTest {
         // Get reflection access to workoutStateQueue for verification
         workoutStateQueueField = WorkoutViewModel::class.java.getDeclaredField("workoutStateQueue")
         workoutStateQueueField.isAccessible = true
+        
+        // Get reflection access to _workoutState for test updates
+        workoutStateField = WorkoutViewModel::class.java.getDeclaredField("_workoutState")
+        workoutStateField.isAccessible = true
         
         viewModel.initWorkoutStoreRepository(mockWorkoutStoreRepository)
 
@@ -333,7 +338,9 @@ class WorkoutViewModelSessionTest {
             val queueSize = queueCheck.size
             
             if (queueSize > 0) {
-                currentState.dataLoaded = true
+                @Suppress("UNCHECKED_CAST")
+                val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
+                workoutStateFlow.value = WorkoutState.Preparing(dataLoaded = true)
             }
         }
         
@@ -1298,7 +1305,9 @@ class WorkoutViewModelSessionTest {
             @Suppress("UNCHECKED_CAST")
             val queueCheck = workoutStateQueueField.get(viewModel) as java.util.LinkedList<WorkoutState>
             if (queueCheck.isNotEmpty()) {
-                currentState.dataLoaded = true
+                @Suppress("UNCHECKED_CAST")
+                val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
+                workoutStateFlow.value = WorkoutState.Preparing(dataLoaded = true)
             }
         }
         

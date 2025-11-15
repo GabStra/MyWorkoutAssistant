@@ -510,7 +510,7 @@ open class WorkoutViewModel(
                 }
 
                 workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
-                preparingState.dataLoaded = true
+                _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                 triggerWorkoutNotification()
                 onEnd()
             }
@@ -974,7 +974,7 @@ open class WorkoutViewModel(
                     
                     if (foundWorkout == null) {
                         Log.e("WorkoutViewModel", "Workout not found for id: $selectedWorkoutId")
-                        preparingState.dataLoaded = true
+                        _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                         return@withContext
                     }
                     
@@ -998,13 +998,13 @@ open class WorkoutViewModel(
                         }
                     }
 
-                    preparingState.dataLoaded = true
+                    _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                     triggerWorkoutNotification()
                 } catch (e: Exception) {
                     Log.e("WorkoutViewModel", "Error in startWorkout()", e)
                     val currentState = _workoutState.value
                     if (currentState is WorkoutState.Preparing) {
-                        currentState.dataLoaded = true
+                        _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                     }
                     throw e
                 }

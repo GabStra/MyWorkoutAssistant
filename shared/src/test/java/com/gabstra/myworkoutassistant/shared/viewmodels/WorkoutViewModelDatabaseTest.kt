@@ -55,6 +55,7 @@ class WorkoutViewModelDatabaseTest {
     private lateinit var context: Context
     private lateinit var mockWorkoutStoreRepository: WorkoutStoreRepository
     private lateinit var workoutStateQueueField: java.lang.reflect.Field
+    private lateinit var workoutStateField: java.lang.reflect.Field
     private lateinit var testDispatcher: TestDispatcher
 
     // Test data
@@ -120,6 +121,10 @@ class WorkoutViewModelDatabaseTest {
         // Get reflection access to workoutStateQueue for verification
         workoutStateQueueField = WorkoutViewModel::class.java.getDeclaredField("workoutStateQueue")
         workoutStateQueueField.isAccessible = true
+        
+        // Get reflection access to _workoutState for test updates
+        workoutStateField = WorkoutViewModel::class.java.getDeclaredField("_workoutState")
+        workoutStateField.isAccessible = true
         
         viewModel.initWorkoutStoreRepository(mockWorkoutStoreRepository)
 
@@ -330,8 +335,10 @@ class WorkoutViewModelDatabaseTest {
             if (queueSize > 0) {
                 // Manually set dataLoaded to true if queue is populated
                 // This is a workaround for the test
-                currentState.dataLoaded = true
-                workoutState = currentState
+                @Suppress("UNCHECKED_CAST")
+                val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
+                workoutStateFlow.value = WorkoutState.Preparing(dataLoaded = true)
+                workoutState = workoutStateFlow.value
             } else {
                 // Queue is empty, coroutine didn't complete
                 assertTrue(

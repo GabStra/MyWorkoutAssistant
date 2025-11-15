@@ -14,11 +14,9 @@ enum class ProgressionState {
 }
 
 sealed class WorkoutState {
-    class Preparing(
-        dataLoaded: Boolean
-    ) : WorkoutState() {
-        var dataLoaded by mutableStateOf(dataLoaded)
-    }
+    data class Preparing(
+        val dataLoaded: Boolean
+    ) : WorkoutState()
 
     data class Set(
         val exerciseId: UUID,
