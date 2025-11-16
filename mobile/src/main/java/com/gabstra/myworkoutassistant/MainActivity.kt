@@ -412,11 +412,43 @@ fun MyWorkoutAssistantNavHost(
 
                 val workoutRecords = workoutRecordDao.getAll()
 
-                val validWorkoutHistories = workoutHistories
+                // Filter workout histories by allowed workouts and done status
+                val filteredWorkoutHistories = workoutHistories
                     .filter { workoutHistory -> allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id }) }
-                    .groupBy { it.workoutId }
-                    //IF FOR WHATEVER REASON WATCH NEEDS TO HAVE ALL HISTORIES, REMOVE THE FOLLOWING LINES
-                    .mapNotNull { (_, histories) -> histories.maxByOrNull { it.startTime } }
+
+                // Collect all exercises from allowed workouts (including exercises from Supersets)
+                val allExercises = allowedWorkouts.flatMap { workout ->
+                    workout.workoutComponents.filterIsInstance<Exercise>() +
+                    workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+                }.distinctBy { it.id }
+
+                // For each exercise, get set histories and extract workout history IDs
+                // Group by exercise and keep the most recent 15 workout histories per exercise
+                val workoutHistoryIdsByExercise = allExercises.mapNotNull { exercise ->
+                    val setHistoriesForExercise = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
+                    val workoutHistoryIds = setHistoriesForExercise
+                        .mapNotNull { it.workoutHistoryId }
+                        .distinct()
+                    
+                    if (workoutHistoryIds.isEmpty()) null
+                    else exercise.id to workoutHistoryIds
+                }.toMap()
+
+                // Get workout histories for each exercise and keep the most recent 15 per exercise
+                val workoutHistoriesByExerciseId = workoutHistoryIdsByExercise.mapValues { (_, workoutHistoryIds) ->
+                    filteredWorkoutHistories
+                        .filter { it.id in workoutHistoryIds }
+                        .sortedByDescending { it.startTime }
+                        .take(15)
+                        .map { it.id }
+                }
+
+                // Union all workout history IDs across exercises
+                val requiredWorkoutHistoryIds = workoutHistoriesByExerciseId.values.flatten().toSet()
+
+                // Filter to only include required workout histories
+                val validWorkoutHistories = filteredWorkoutHistories
+                    .filter { it.id in requiredWorkoutHistoryIds }
 
                 val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
                     validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
