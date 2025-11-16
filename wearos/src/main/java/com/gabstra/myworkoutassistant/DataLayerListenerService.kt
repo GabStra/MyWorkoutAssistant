@@ -18,7 +18,10 @@ import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataEventBuffer
+import java.util.UUID
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
 import com.google.gson.Gson
@@ -318,6 +321,9 @@ class DataLayerListenerService : WearableListenerService() {
                                         insertExerciseSessionProgressionsJob
                                     )
 
+                                    // Clean up workout histories that are no longer needed
+                                    cleanupUnusedWorkoutHistories(appBackup.WorkoutStore.workouts, appBackup.WorkoutHistories.map { it.id }.toSet())
+
                                     val intent = Intent(INTENT_ID).apply {
                                         putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
                                         setPackage(packageName)
@@ -355,6 +361,68 @@ class DataLayerListenerService : WearableListenerService() {
             expectedChunks = 0
             hasStartedSync = false
             ignoreUntilStartOrEnd = true
+        }
+    }
+
+    /**
+     * Cleans up workout histories that are no longer needed for plateau detection.
+     * Keeps only the most recent 15 workout histories per exercise (same as phone sync logic)
+     * plus any workout histories that were just synced.
+     */
+    private suspend fun cleanupUnusedWorkoutHistories(
+        workouts: List<com.gabstra.myworkoutassistant.shared.workoutcomponents.Workout>,
+        syncedWorkoutHistoryIds: Set<UUID>
+    ) {
+        try {
+            // Collect all exercises from workouts (including exercises from Supersets)
+            val allExercises = workouts.flatMap { workout ->
+                workout.workoutComponents.filterIsInstance<Exercise>() +
+                workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+            }.distinctBy { it.id }
+
+            // Get all workout histories currently on the watch
+            val allWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+
+            // Start with synced workout histories (these are definitely needed)
+            val workoutHistoryIdsToKeep = syncedWorkoutHistoryIds.toMutableSet()
+
+            // For each exercise, get set histories and extract workout history IDs
+            // Keep the most recent 15 workout histories per exercise (for plateau detection)
+            for (exercise in allExercises) {
+                val setHistoriesForExercise = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
+                val workoutHistoryIds = setHistoriesForExercise
+                    .mapNotNull { it.workoutHistoryId }
+                    .distinct()
+                
+                if (workoutHistoryIds.isNotEmpty()) {
+                    // Get workout histories for this exercise and keep the most recent 15
+                    val workoutHistoriesForExercise = allWorkoutHistories
+                        .filter { it.id in workoutHistoryIds }
+                        .sortedByDescending { it.startTime }
+                        .take(15)
+                    
+                    workoutHistoryIdsToKeep.addAll(workoutHistoriesForExercise.map { it.id })
+                }
+            }
+
+            // Delete workout histories that aren't in the keep set
+            val workoutHistoriesToDelete = allWorkoutHistories.filter { it.id !in workoutHistoryIdsToKeep }
+            
+            for (workoutHistory in workoutHistoriesToDelete) {
+                // Delete associated set histories
+                setHistoryDao.deleteByWorkoutHistoryId(workoutHistory.id)
+                // Delete associated exercise session progressions
+                exerciseSessionProgressionDao.deleteByWorkoutHistoryId(workoutHistory.id)
+                // Delete the workout history itself
+                workoutHistoryDao.deleteById(workoutHistory.id)
+            }
+            
+            if (workoutHistoriesToDelete.isNotEmpty()) {
+                Log.d("DataLayerListenerService", "Cleaned up ${workoutHistoriesToDelete.size} unused workout histories")
+            }
+        } catch (e: Exception) {
+            Log.e("DataLayerListenerService", "Error cleaning up unused workout histories", e)
+            // Don't throw - cleanup failure shouldn't break the sync
         }
     }
 
