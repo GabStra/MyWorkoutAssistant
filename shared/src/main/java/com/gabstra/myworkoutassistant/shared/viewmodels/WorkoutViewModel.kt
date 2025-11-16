@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
+import com.gabstra.myworkoutassistant.shared.utils.PlateauDetectionHelper
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
@@ -306,6 +307,9 @@ open class WorkoutViewModel(
     }
 
     val exerciseProgressionByExerciseId: MutableMap<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>> =
+        mutableMapOf()
+
+    val plateauDetectedByExerciseId: MutableMap<UUID, Boolean> =
         mutableMapOf()
 
     protected var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
@@ -668,6 +672,7 @@ open class WorkoutViewModel(
 
     protected suspend fun generateProgressions() {
         exerciseProgressionByExerciseId.clear()
+        plateauDetectedByExerciseId.clear()
 
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
@@ -753,6 +758,29 @@ open class WorkoutViewModel(
         }
 
         val sessionDecision = computeSessionDecision(exercise.id)
+
+        // Check for plateau detection
+        val setHistories = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
+        val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+            .filter { it.globalId == selectedWorkout.value.globalId && it.isDone }
+            .associateBy { it.id }
+        
+        val exerciseProgressions = exerciseSessionProgressionDao.getByExerciseId(exercise.id)
+        val progressionStatesByWorkoutHistoryId = exerciseProgressions
+            .associate { it.workoutHistoryId to it.progressionState }
+        
+        val (isPlateau, _) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories,
+            progressionStatesByWorkoutHistoryId
+        )
+
+        if (isPlateau) {
+            Log.d("WorkoutViewModel", "${exercise.name}: Plateau detected")
+        }
+
+        // Store plateau detection result for UI display
+        plateauDetectedByExerciseId[exercise.id] = isPlateau
 
         val validSets = removeRestAndRestPause(
             sets = exercise.sets,
@@ -855,6 +883,7 @@ open class WorkoutViewModel(
         Log.d("WorkoutViewModel", "Old sets: ${oldSets.joinToString(", ")}")
 
         val exerciseProgression = when {
+            // Always respect deload decision
             sessionDecision.progressionState ==  ProgressionState.DELOAD -> {
                 Log.d("WorkoutViewModel", "Deload")
 
@@ -909,7 +938,10 @@ open class WorkoutViewModel(
                 hadHistoricalBaseline &&
                 exerciseProgression.previousVolume.round(2) == exerciseProgression.newVolume.round(2)
 
-        val progressionState = if(couldNotFindProgression) ProgressionState.FAILED else sessionDecision.progressionState
+        val progressionState = when {
+            couldNotFindProgression -> ProgressionState.FAILED
+            else -> sessionDecision.progressionState
+        }
 
         return exercise.id to (exerciseProgression to progressionState)
     }

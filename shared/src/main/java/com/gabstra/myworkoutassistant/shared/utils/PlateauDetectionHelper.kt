@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import java.time.LocalDate
 import java.util.UUID
 
@@ -37,10 +38,12 @@ object PlateauDetectionHelper {
     /**
      * Converts SetHistory records to Session objects.
      * Groups by workoutHistoryId, filters for WorkSet only, and sorts by date.
+     * Excludes sessions that are marked as DELOAD in the progressionStates map.
      */
     fun convertToSessions(
         setHistories: List<SetHistory>,
-        workoutHistories: Map<UUID, WorkoutHistory>
+        workoutHistories: Map<UUID, WorkoutHistory>,
+        progressionStatesByWorkoutHistoryId: Map<UUID, ProgressionState> = emptyMap()
     ): List<Session> {
         // Group set histories by workoutHistoryId
         val setsByWorkoutHistoryId = setHistories
@@ -50,6 +53,12 @@ object PlateauDetectionHelper {
         // Convert to sessions
         val sessions = setsByWorkoutHistoryId.mapNotNull { (workoutHistoryId, setHistories) ->
             val workoutHistory = workoutHistories[workoutHistoryId] ?: return@mapNotNull null
+
+            // Exclude deload sessions from plateau detection
+            val progressionState = progressionStatesByWorkoutHistoryId[workoutHistoryId]
+            if (progressionState == ProgressionState.DELOAD) {
+                return@mapNotNull null
+            }
 
             // Filter for WorkSet only and extract weight/reps
             val workingSets = setHistories
@@ -220,12 +229,14 @@ object PlateauDetectionHelper {
     /**
      * Convenience function that converts SetHistory records to Session objects
      * and calls detectPlateau.
+     * Excludes sessions that are marked as DELOAD in the progressionStates map.
      */
     fun detectPlateauFromHistories(
         setHistories: List<SetHistory>,
-        workoutHistories: Map<UUID, WorkoutHistory>
+        workoutHistories: Map<UUID, WorkoutHistory>,
+        progressionStatesByWorkoutHistoryId: Map<UUID, ProgressionState> = emptyMap()
     ): Pair<Boolean, List<Boolean>> {
-        val sessions = convertToSessions(setHistories, workoutHistories)
+        val sessions = convertToSessions(setHistories, workoutHistories, progressionStatesByWorkoutHistoryId)
         return detectPlateau(sessions)
     }
 }

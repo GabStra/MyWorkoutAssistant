@@ -282,6 +282,9 @@ fun PageProgressionComparison(
 
     val progressionState = progressionData?.second
     val isRetry = progressionState == ProgressionState.RETRY
+    val isPlateauDetected = remember(exercise.id) {
+        viewModel.plateauDetectedByExerciseId[exercise.id] == true
+    }
 
     var previousSetStates by remember(exercise.id) {
         mutableStateOf<List<WorkoutState.Set>>(
@@ -358,9 +361,9 @@ fun PageProgressionComparison(
             textAlign = TextAlign.Center
         )
 
-        // Set number indicator (combined with Repeat if applicable)
+        // Set number indicator (combined with Repeat and Plateau Detected if applicable)
         if (maxSets > 0) {
-            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, colorScheme.primary) {
+            val setIndicatorText = remember(isRetry, isPlateauDetected, currentSetIndex, maxSets, colorScheme.primary, colorScheme.tertiary) {
                 buildAnnotatedString {
                     if (isRetry) {
                         withStyle(
@@ -370,6 +373,17 @@ fun PageProgressionComparison(
                             )
                         ) {
                             append("Repeat")
+                        }
+                        append(" • ")
+                    }
+                    if (isPlateauDetected) {
+                        withStyle(
+                            style = SpanStyle(
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.tertiary
+                            )
+                        ) {
+                            append("Plateau Detected")
                         }
                         append(" • ")
                     }
