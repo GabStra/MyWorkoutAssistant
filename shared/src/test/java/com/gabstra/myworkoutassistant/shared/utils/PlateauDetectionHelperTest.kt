@@ -1,0 +1,537 @@
+package com.gabstra.myworkoutassistant.shared.utils
+
+import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.util.UUID
+
+class PlateauDetectionHelperTest {
+
+    // Helper functions for creating test data
+    private fun createWorkoutHistory(
+        id: UUID = UUID.randomUUID(),
+        date: LocalDate = LocalDate.now()
+    ): WorkoutHistory {
+        return WorkoutHistory(
+            id = id,
+            workoutId = UUID.randomUUID(),
+            date = date,
+            time = LocalTime.now(),
+            startTime = LocalDateTime.of(date, LocalTime.of(10, 0)),
+            duration = 3600,
+            heartBeatRecords = emptyList(),
+            isDone = true,
+            hasBeenSentToHealth = false,
+            globalId = UUID.randomUUID()
+        )
+    }
+
+    private fun createSetHistory(
+        workoutHistoryId: UUID,
+        exerciseId: UUID = UUID.randomUUID(),
+        setId: UUID = UUID.randomUUID(),
+        order: UInt = 0u,
+        weight: Double,
+        reps: Int,
+        subCategory: SetSubCategory = SetSubCategory.WorkSet
+    ): SetHistory {
+        return SetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = workoutHistoryId,
+            exerciseId = exerciseId,
+            setId = setId,
+            order = order,
+            startTime = LocalDateTime.now(),
+            endTime = LocalDateTime.now(),
+            setData = WeightSetData(
+                actualReps = reps,
+                actualWeight = weight,
+                volume = weight * reps,
+                subCategory = subCategory
+            ),
+            skipped = false
+        )
+    }
+
+    private fun createBodyWeightSetHistory(
+        workoutHistoryId: UUID,
+        exerciseId: UUID = UUID.randomUUID(),
+        setId: UUID = UUID.randomUUID(),
+        order: UInt = 0u,
+        relativeBodyWeight: Double,
+        additionalWeight: Double,
+        reps: Int,
+        subCategory: SetSubCategory = SetSubCategory.WorkSet
+    ): SetHistory {
+        val totalWeight = relativeBodyWeight + additionalWeight
+        return SetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = workoutHistoryId,
+            exerciseId = exerciseId,
+            setId = setId,
+            order = order,
+            startTime = LocalDateTime.now(),
+            endTime = LocalDateTime.now(),
+            setData = BodyWeightSetData(
+                actualReps = reps,
+                additionalWeight = additionalWeight,
+                relativeBodyWeightInKg = relativeBodyWeight,
+                volume = totalWeight * reps,
+                subCategory = subCategory
+            ),
+            skipped = false
+        )
+    }
+
+    @Test
+    fun testNotEnoughSessions() {
+        // Less than MIN_SESS_FOR_PLAT (4) sessions
+        val exerciseId = UUID.randomUUID()
+        val workoutHistory1 = createWorkoutHistory(date = LocalDate.now().minusDays(3))
+        val workoutHistory2 = createWorkoutHistory(date = LocalDate.now().minusDays(2))
+        val workoutHistory3 = createWorkoutHistory(date = LocalDate.now().minusDays(1))
+
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 100.0, reps = 10)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertFalse("Should not detect plateau with less than 4 sessions", isPlateau)
+        assertTrue("sessionImproved should be empty when not enough sessions", sessionImproved.isEmpty())
+    }
+
+    @Test
+    fun testConditionA_SameWeightMoreReps() {
+        // Condition A: Same weight bin, best reps increase by ≥1
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 11), // +1 rep
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 100.0, reps = 11),
+            createSetHistory(workoutHistory4.id, exerciseId, weight = 100.0, reps = 12), // +1 rep
+            createSetHistory(workoutHistory5.id, exerciseId, weight = 100.0, reps = 12)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertFalse("Should not detect plateau when reps are improving", isPlateau)
+        assertTrue("Session 2 should show improvement", sessionImproved[1])
+        assertTrue("Session 4 should show improvement", sessionImproved[3])
+    }
+
+    @Test
+    fun testConditionB_HigherWeightAcceptableRepDrop() {
+        // Condition B: Higher weight with reps not dropping more than REP_TOL (2) below best at lower weights
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+
+        // Start at 100kg x 10 reps, then increase to 105kg x 9 reps (only 1 rep drop, within tolerance)
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 105.0, reps = 9), // Weight up, reps down by 1 (acceptable)
+            createSetHistory(workoutHistory4.id, exerciseId, weight = 105.0, reps = 9),
+            createSetHistory(workoutHistory5.id, exerciseId, weight = 105.0, reps = 9)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertFalse("Should not detect plateau when weight increases with acceptable rep drop", isPlateau)
+        assertTrue("Session 3 should show improvement (weight increase)", sessionImproved[2])
+    }
+
+    @Test
+    fun testConditionC_SameWeightVolumeIncrease() {
+        // Condition C: Same weight bin, total volume increases by ≥ MIN_VOLUME_DELTA (2)
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+
+        // 3 sets per session: 10+10+10 = 30 total reps, then 10+10+12 = 32 total reps (+2)
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, order = 0u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory1.id, exerciseId, order = 1u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory1.id, exerciseId, order = 2u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, order = 0u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, order = 1u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, order = 2u, weight = 100.0, reps = 12), // +2 total reps
+            createSetHistory(workoutHistory3.id, exerciseId, order = 0u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory3.id, exerciseId, order = 1u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory3.id, exerciseId, order = 2u, weight = 100.0, reps = 12),
+            createSetHistory(workoutHistory4.id, exerciseId, order = 0u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory4.id, exerciseId, order = 1u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory4.id, exerciseId, order = 2u, weight = 100.0, reps = 12),
+            createSetHistory(workoutHistory5.id, exerciseId, order = 0u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory5.id, exerciseId, order = 1u, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory5.id, exerciseId, order = 2u, weight = 100.0, reps = 12)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertFalse("Should not detect plateau when volume is increasing", isPlateau)
+        assertTrue("Session 2 should show improvement (volume increase)", sessionImproved[1])
+    }
+
+    @Test
+    fun testPlateauDetection() {
+        // Last WINDOW_SESS (5) sessions show no improvement
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+        val workoutHistory6 = createWorkoutHistory(date = baseDate.plusDays(5))
+        val workoutHistory7 = createWorkoutHistory(date = baseDate.plusDays(6))
+        val workoutHistory8 = createWorkoutHistory(date = baseDate.plusDays(7))
+        val workoutHistory9 = createWorkoutHistory(date = baseDate.plusDays(8))
+
+        // First 4 sessions show improvement, last 5 sessions are stagnant
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 11), // Improvement
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 100.0, reps = 11),
+            createSetHistory(workoutHistory4.id, exerciseId, weight = 100.0, reps = 12), // Improvement
+            createSetHistory(workoutHistory5.id, exerciseId, weight = 100.0, reps = 12), // No improvement
+            createSetHistory(workoutHistory6.id, exerciseId, weight = 100.0, reps = 12), // No improvement
+            createSetHistory(workoutHistory7.id, exerciseId, weight = 100.0, reps = 12), // No improvement
+            createSetHistory(workoutHistory8.id, exerciseId, weight = 100.0, reps = 12), // No improvement
+            createSetHistory(workoutHistory9.id, exerciseId, weight = 100.0, reps = 12)  // No improvement
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5,
+            workoutHistory6.id to workoutHistory6,
+            workoutHistory7.id to workoutHistory7,
+            workoutHistory8.id to workoutHistory8,
+            workoutHistory9.id to workoutHistory9
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertTrue("Should detect plateau when last 5 sessions show no improvement", isPlateau)
+        assertTrue("Early sessions should show improvement", sessionImproved[1])
+        assertTrue("Early sessions should show improvement", sessionImproved[3])
+        // Last 5 sessions (indices 4-8) should not show improvement
+        assertFalse("Session 5 should not show improvement", sessionImproved[4])
+        assertFalse("Session 6 should not show improvement", sessionImproved[5])
+        assertFalse("Session 7 should not show improvement", sessionImproved[6])
+        assertFalse("Session 8 should not show improvement", sessionImproved[7])
+        assertFalse("Session 9 should not show improvement", sessionImproved[8])
+    }
+
+    @Test
+    fun testWeightBinning() {
+        // Test weight binning function indirectly through detectPlateau
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+
+        // Test that 62.7kg and 62.3kg both bin to 62.5kg (with BIN_SIZE=0.5)
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 62.3, reps = 10), // Should bin to 62.5
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 62.7, reps = 11), // Should bin to 62.5, +1 rep
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 62.5, reps = 11),
+            createSetHistory(workoutHistory4.id, exerciseId, weight = 62.5, reps = 12), // +1 rep
+            createSetHistory(workoutHistory5.id, exerciseId, weight = 62.5, reps = 12)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertFalse("Should not detect plateau when weights are binned correctly and reps improve", isPlateau)
+        assertTrue("Session 2 should show improvement (same bin, more reps)", sessionImproved[1])
+        assertTrue("Session 4 should show improvement (same bin, more reps)", sessionImproved[3])
+    }
+
+    @Test
+    fun testMixedScenarios() {
+        // Early sessions show improvement, recent ones don't
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+        val workoutHistory6 = createWorkoutHistory(date = baseDate.plusDays(5))
+        val workoutHistory7 = createWorkoutHistory(date = baseDate.plusDays(6))
+        val workoutHistory8 = createWorkoutHistory(date = baseDate.plusDays(7))
+        val workoutHistory9 = createWorkoutHistory(date = baseDate.plusDays(8))
+
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 11), // Improvement
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 100.0, reps = 12), // Improvement
+            createSetHistory(workoutHistory4.id, exerciseId, weight = 100.0, reps = 12),
+            createSetHistory(workoutHistory5.id, exerciseId, weight = 100.0, reps = 12), // No improvement (start of window)
+            createSetHistory(workoutHistory6.id, exerciseId, weight = 100.0, reps = 12), // No improvement
+            createSetHistory(workoutHistory7.id, exerciseId, weight = 100.0, reps = 12), // No improvement
+            createSetHistory(workoutHistory8.id, exerciseId, weight = 100.0, reps = 12), // No improvement
+            createSetHistory(workoutHistory9.id, exerciseId, weight = 100.0, reps = 12)  // No improvement
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5,
+            workoutHistory6.id to workoutHistory6,
+            workoutHistory7.id to workoutHistory7,
+            workoutHistory8.id to workoutHistory8,
+            workoutHistory9.id to workoutHistory9
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertTrue("Should detect plateau in recent window even if early sessions improved", isPlateau)
+        assertTrue("Early sessions should show improvement", sessionImproved[1])
+        assertTrue("Early sessions should show improvement", sessionImproved[2])
+        // Last 5 sessions (indices 4-8) should not show improvement
+        for (i in 4..8) {
+            assertFalse("Session ${i + 1} should not show improvement", sessionImproved[i])
+        }
+    }
+
+    @Test
+    fun testEdgeCase_EmptySessionsList() {
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateau(emptyList())
+
+        assertFalse("Should not detect plateau with empty sessions", isPlateau)
+        assertTrue("sessionImproved should be empty", sessionImproved.isEmpty())
+    }
+
+    @Test
+    fun testEdgeCase_OnlyWarmupSets() {
+        // Sessions with only warmup sets should be filtered out
+        val exerciseId = UUID.randomUUID()
+        val workoutHistory1 = createWorkoutHistory(date = LocalDate.now().minusDays(3))
+        val workoutHistory2 = createWorkoutHistory(date = LocalDate.now().minusDays(2))
+        val workoutHistory3 = createWorkoutHistory(date = LocalDate.now().minusDays(1))
+        val workoutHistory4 = createWorkoutHistory(date = LocalDate.now())
+
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10, subCategory = SetSubCategory.WarmupSet),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 10, subCategory = SetSubCategory.WarmupSet),
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 100.0, reps = 10, subCategory = SetSubCategory.WarmupSet),
+            createSetHistory(workoutHistory4.id, exerciseId, weight = 100.0, reps = 10, subCategory = SetSubCategory.WarmupSet)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4
+        )
+
+        val sessions = PlateauDetectionHelper.convertToSessions(setHistories, workoutHistories)
+
+        assertTrue("Sessions with only warmup sets should be filtered out", sessions.isEmpty())
+    }
+
+    @Test
+    fun testEdgeCase_MixedWeightAndBodyWeightSetData() {
+        // Sessions with both WeightSetData and BodyWeightSetData
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+
+        // Mix of WeightSetData and BodyWeightSetData
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, order = 0u, weight = 100.0, reps = 10),
+            createBodyWeightSetHistory(workoutHistory1.id, exerciseId, order = 1u, relativeBodyWeight = 70.0, additionalWeight = 30.0, reps = 10), // Total: 100kg
+            createSetHistory(workoutHistory2.id, exerciseId, order = 0u, weight = 100.0, reps = 11), // Improvement
+            createBodyWeightSetHistory(workoutHistory2.id, exerciseId, order = 1u, relativeBodyWeight = 70.0, additionalWeight = 30.0, reps = 11), // Total: 100kg, Improvement
+            createSetHistory(workoutHistory3.id, exerciseId, order = 0u, weight = 100.0, reps = 11),
+            createBodyWeightSetHistory(workoutHistory3.id, exerciseId, order = 1u, relativeBodyWeight = 70.0, additionalWeight = 30.0, reps = 11),
+            createSetHistory(workoutHistory4.id, exerciseId, order = 0u, weight = 100.0, reps = 11),
+            createBodyWeightSetHistory(workoutHistory4.id, exerciseId, order = 1u, relativeBodyWeight = 70.0, additionalWeight = 30.0, reps = 11),
+            createSetHistory(workoutHistory5.id, exerciseId, order = 0u, weight = 100.0, reps = 11),
+            createBodyWeightSetHistory(workoutHistory5.id, exerciseId, order = 1u, relativeBodyWeight = 70.0, additionalWeight = 30.0, reps = 11)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertFalse("Should handle mixed WeightSetData and BodyWeightSetData correctly", isPlateau)
+        assertTrue("Session 2 should show improvement", sessionImproved[1])
+    }
+
+    @Test
+    fun testConditionB_RepDropTooLarge() {
+        // Condition B: Rep drop exceeds REP_TOL (2), so should NOT count as improvement
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+
+        // Start at 100kg x 10 reps, then increase to 105kg x 7 reps (3 rep drop, exceeds tolerance of 2)
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 105.0, reps = 7), // Weight up, reps down by 3 (too much)
+            createSetHistory(workoutHistory4.id, exerciseId, weight = 105.0, reps = 7),
+            createSetHistory(workoutHistory5.id, exerciseId, weight = 105.0, reps = 7)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5
+        )
+
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        // Session 3 should NOT show improvement because rep drop is too large
+        assertFalse("Session 3 should not show improvement (rep drop too large)", sessionImproved[2])
+        // Since last 5 sessions show no improvement, should detect plateau
+        assertTrue("Should detect plateau when rep drop exceeds tolerance", isPlateau)
+    }
+
+    @Test
+    fun testConvertToSessions_Sorting() {
+        // Test that sessions are sorted by date ascending
+        val exerciseId = UUID.randomUUID()
+        val workoutHistory1 = createWorkoutHistory(date = LocalDate.now().minusDays(3))
+        val workoutHistory2 = createWorkoutHistory(date = LocalDate.now().minusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = LocalDate.now().minusDays(2))
+
+        val setHistories = listOf(
+            createSetHistory(workoutHistory1.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory2.id, exerciseId, weight = 100.0, reps = 10),
+            createSetHistory(workoutHistory3.id, exerciseId, weight = 100.0, reps = 10)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3
+        )
+
+        val sessions = PlateauDetectionHelper.convertToSessions(setHistories, workoutHistories)
+
+        assertEquals("Should have 3 sessions", 3, sessions.size)
+        // Check that sessions are sorted by date (oldest first)
+        assertTrue("First session should be oldest", sessions[0].date.isBefore(sessions[1].date))
+        assertTrue("Second session should be before third", sessions[1].date.isBefore(sessions[2].date))
+    }
+}
+
