@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.google.gson.JsonDeserializationContext
@@ -33,14 +34,14 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 jsonObject.addProperty("actualReps", src.actualReps)
                 jsonObject.addProperty("actualWeight", src.actualWeight)
                 jsonObject.addProperty("volume", src.volume)
-                jsonObject.addProperty("isRestPause", src.isRestPause)
+                jsonObject.addProperty("subCategory", src.subCategory.name)
             }
             is BodyWeightSetData ->{
                 jsonObject.addProperty("actualReps", src.actualReps)
                 jsonObject.addProperty("additionalWeight", src.additionalWeight)
                 jsonObject.addProperty("relativeBodyWeightInKg", src.relativeBodyWeightInKg)
                 jsonObject.addProperty("volume", src.volume)
-                jsonObject.addProperty("isRestPause", src.isRestPause)
+                jsonObject.addProperty("subCategory", src.subCategory.name)
             }
             is TimedDurationSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
@@ -57,7 +58,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             is RestSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
                 jsonObject.addProperty("endTimer", src.endTimer)
-                jsonObject.addProperty("isRestPause", src.isRestPause)
+                jsonObject.addProperty("subCategory", src.subCategory.name)
             }
         }
         return jsonObject
@@ -72,16 +73,36 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 val actualReps = jsonObject.get("actualReps").asInt
                 val actualWeight = jsonObject.get("actualWeight").asDouble
                 val volume = if(jsonObject.has("volume")) jsonObject.get("volume").asDouble else 0.0
-                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
-                WeightSetData(actualReps, actualWeight, volume,isRestPause)
+                val subCategory = if(jsonObject.has("subCategory")) {
+                    try {
+                        SetSubCategory.valueOf(jsonObject.get("subCategory").asString)
+                    } catch (e: IllegalArgumentException) {
+                        SetSubCategory.WorkSet
+                    }
+                } else {
+                    // Legacy migration: convert isRestPause to subCategory
+                    val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
+                    if (isRestPause) SetSubCategory.RestPauseSet else SetSubCategory.WorkSet
+                }
+                WeightSetData(actualReps, actualWeight, volume, subCategory)
             }
             "BodyWeightSetData" -> {
                 val actualReps = jsonObject.get("actualReps").asInt
                 val additionalWeight = if(jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
                 val relativeBodyWeightInKg = if(jsonObject.has("relativeBodyWeightInKg")) jsonObject.get("relativeBodyWeightInKg").asDouble else 0.0
                 val volume =  if(jsonObject.has("volume")) jsonObject.get("volume").asDouble else 0.0
-                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
-                BodyWeightSetData(actualReps,additionalWeight,relativeBodyWeightInKg,volume,isRestPause)
+                val subCategory = if(jsonObject.has("subCategory")) {
+                    try {
+                        SetSubCategory.valueOf(jsonObject.get("subCategory").asString)
+                    } catch (e: IllegalArgumentException) {
+                        SetSubCategory.WorkSet
+                    }
+                } else {
+                    // Legacy migration: convert isRestPause to subCategory
+                    val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
+                    if (isRestPause) SetSubCategory.RestPauseSet else SetSubCategory.WorkSet
+                }
+                BodyWeightSetData(actualReps,additionalWeight,relativeBodyWeightInKg,volume,subCategory)
             }
             "TimedDurationSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt
@@ -100,8 +121,18 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             "RestSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt
                 val endTimer = jsonObject.get("endTimer").asInt
-                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
-                RestSetData(startTimer,endTimer,isRestPause)
+                val subCategory = if(jsonObject.has("subCategory")) {
+                    try {
+                        SetSubCategory.valueOf(jsonObject.get("subCategory").asString)
+                    } catch (e: IllegalArgumentException) {
+                        SetSubCategory.WorkSet
+                    }
+                } else {
+                    // Legacy migration: convert isRestPause to subCategory
+                    val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
+                    if (isRestPause) SetSubCategory.RestPauseSet else SetSubCategory.WorkSet
+                }
+                RestSetData(startTimer,endTimer,subCategory)
             }
             else -> throw RuntimeException("Unsupported set type")
         }

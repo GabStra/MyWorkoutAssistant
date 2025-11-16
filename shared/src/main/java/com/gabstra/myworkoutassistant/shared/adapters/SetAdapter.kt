@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -34,13 +35,12 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is WeightSet -> {
                 jsonObject.addProperty("reps", src.reps)
                 jsonObject.addProperty("weight", src.weight)
-                jsonObject.addProperty("isWarmupSet", src.isWarmupSet)
-                jsonObject.addProperty("isRestPause", src.isRestPause)
+                jsonObject.addProperty("subCategory", src.subCategory.name)
             }
             is BodyWeightSet ->{
                 jsonObject.addProperty("reps", src.reps)
                 jsonObject.addProperty("additionalWeight", src.additionalWeight)
-                jsonObject.addProperty("isWarmupSet", src.isWarmupSet)
+                jsonObject.addProperty("subCategory", src.subCategory.name)
             }
             is TimedDurationSet ->{
                 jsonObject.addProperty("timeInMillis", src.timeInMillis)
@@ -54,7 +54,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             }
             is RestSet ->{
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
-                jsonObject.addProperty("isRestPause", src.isRestPause)
+                jsonObject.addProperty("subCategory", src.subCategory.name)
             }
         }
         return jsonObject
@@ -70,16 +70,44 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             "WeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
                 val weight = jsonObject.get("weight").asDouble
-                val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
-                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
-                WeightSet(id,reps, weight,isWarmupSet,isRestPause)
+                val subCategory = if(jsonObject.has("subCategory")) {
+                    try {
+                        SetSubCategory.valueOf(jsonObject.get("subCategory").asString)
+                    } catch (e: IllegalArgumentException) {
+                        SetSubCategory.WorkSet
+                    }
+                } else {
+                    // Legacy migration: convert isWarmupSet and isRestPause to subCategory
+                    val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
+                    val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
+                    when {
+                        isWarmupSet -> SetSubCategory.WarmupSet
+                        isRestPause -> SetSubCategory.RestPauseSet
+                        else -> SetSubCategory.WorkSet
+                    }
+                }
+                WeightSet(id,reps, weight,subCategory)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
                 val additionalWeight = if(jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
-                val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
-                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
-                BodyWeightSet(id,reps,additionalWeight,isWarmupSet,isRestPause)
+                val subCategory = if(jsonObject.has("subCategory")) {
+                    try {
+                        SetSubCategory.valueOf(jsonObject.get("subCategory").asString)
+                    } catch (e: IllegalArgumentException) {
+                        SetSubCategory.WorkSet
+                    }
+                } else {
+                    // Legacy migration: convert isWarmupSet and isRestPause to subCategory
+                    val isWarmupSet = if(jsonObject.has("isWarmupSet")) jsonObject.get("isWarmupSet").asBoolean else false
+                    val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
+                    when {
+                        isWarmupSet -> SetSubCategory.WarmupSet
+                        isRestPause -> SetSubCategory.RestPauseSet
+                        else -> SetSubCategory.WorkSet
+                    }
+                }
+                BodyWeightSet(id,reps,additionalWeight,subCategory)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
@@ -95,8 +123,18 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             }
             "RestSet" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt
-                val isRestPause =  if(jsonObject.has("isRestPause"))jsonObject.get("isRestPause").asBoolean else false
-                RestSet(id,timeInSeconds,isRestPause)
+                val subCategory = if(jsonObject.has("subCategory")) {
+                    try {
+                        SetSubCategory.valueOf(jsonObject.get("subCategory").asString)
+                    } catch (e: IllegalArgumentException) {
+                        SetSubCategory.WorkSet
+                    }
+                } else {
+                    // Legacy migration: convert isRestPause to subCategory
+                    val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
+                    if (isRestPause) SetSubCategory.RestPauseSet else SetSubCategory.WorkSet
+                }
+                RestSet(id,timeInSeconds,subCategory)
             }
 
             else -> throw RuntimeException("Unsupported set type")

@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -131,11 +132,11 @@ fun ProgressionSection(
 
                 val executedSets = viewModel.executedSetsHistory
                     .filter { it.exerciseId == exerciseId }
-                    .filter { it ->
+                    .filter { it -> 
                         when(val setData = it.setData){
-                            is BodyWeightSetData -> !setData.isRestPause
-                            is WeightSetData -> !setData.isRestPause
-                            is RestSetData -> !setData.isRestPause
+                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
                             else -> true
                         }
                     }
@@ -171,8 +172,8 @@ fun ProgressionSection(
 
                 val lastSessionSets = lastSessionExercise!!.sets
                     .filter { it !is RestSet &&
-                            (it is WeightSet && !it.isWarmupSet && !it.isRestPause) ||
-                            (it is BodyWeightSet && !it.isWarmupSet&& !it.isRestPause)
+                            (it is WeightSet && it.subCategory == SetSubCategory.WorkSet) ||
+                            (it is BodyWeightSet && it.subCategory == SetSubCategory.WorkSet)
                     }
                     .mapNotNull { set ->
                         when (set) {

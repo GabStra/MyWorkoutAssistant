@@ -5,7 +5,7 @@ data class BodyWeightSetData(
     val additionalWeight:Double,
     val relativeBodyWeightInKg: Double,
     val volume: Double,
-    val isRestPause: Boolean = false
+    val subCategory: SetSubCategory = SetSubCategory.WorkSet
 ): SetData(){
     fun getWeight(): Double {
         return (relativeBodyWeightInKg + additionalWeight)

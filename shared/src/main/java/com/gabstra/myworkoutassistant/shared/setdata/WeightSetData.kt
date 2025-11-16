@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.setdata
 
-data class WeightSetData (val actualReps: Int, val actualWeight: Double, val volume: Double, val isRestPause: Boolean = false) : SetData(){
+data class WeightSetData (val actualReps: Int, val actualWeight: Double, val volume: Double, val subCategory: SetSubCategory = SetSubCategory.WorkSet) : SetData(){
     fun getWeight(): Double {
         return actualWeight
     }

@@ -58,6 +58,9 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Job
@@ -395,7 +398,12 @@ fun ExerciseScreen(
                                             sep()
                                             append(equipment.name)
                                         }
-                                        if (updatedState.isWarmupSet) {
+                                        val isWarmupSet = when(val set = updatedState.set) {
+                                            is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                            is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                            else -> false
+                                        }
+                                        if (isWarmupSet) {
                                             sep()
                                             withStyle(
                                                 SpanStyle(

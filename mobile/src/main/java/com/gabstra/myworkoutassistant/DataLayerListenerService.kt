@@ -21,6 +21,7 @@ import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -122,9 +123,9 @@ class DataLayerListenerService : WearableListenerService() {
                                             .dropLastWhile { it.setData is RestSetData }
                                             .filter { it ->
                                                 when(val setData = it.setData){
-                                                    is BodyWeightSetData -> !setData.isRestPause
-                                                    is WeightSetData -> !setData.isRestPause
-                                                    is RestSetData -> !setData.isRestPause
+                                                    is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                                                    is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                                                    is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
                                                     else -> true
                                                 }
                                             }

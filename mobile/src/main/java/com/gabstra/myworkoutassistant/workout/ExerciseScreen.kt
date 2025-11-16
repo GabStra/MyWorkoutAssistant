@@ -36,6 +36,9 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.Job
@@ -285,7 +288,12 @@ fun ExerciseScreen(
                                 }
                             }
 
-                            if (updatedState.isWarmupSet) {
+                            val isWarmupSet = when(val set = updatedState.set) {
+                                is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                else -> false
+                            }
+                            if (isWarmupSet) {
                                 Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
                                     Text(
                                         text = "Warm-up",

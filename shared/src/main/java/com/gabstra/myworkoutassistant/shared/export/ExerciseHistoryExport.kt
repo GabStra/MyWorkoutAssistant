@@ -11,6 +11,7 @@ import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
@@ -226,13 +227,13 @@ suspend fun buildExerciseHistoryMarkdown(
                         achievableWeights
                     )
                     setLine.append("${formatNumber(adjustedWeight)}kg×${setData.actualReps} Vol:${formatNumber(adjustedVolume)}kg")
-                    if (setData.isRestPause) setLine.append(" [RP]")
+                    if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
                     totalVolume += adjustedVolume
                 }
                 is BodyWeightSetData -> {
                     val totalWeight = setData.getWeight()
                     setLine.append("${formatNumber(totalWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
-                    if (setData.isRestPause) setLine.append(" [RP]")
+                    if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
                     totalVolume += setData.volume
                 }
                 is TimedDurationSetData -> {

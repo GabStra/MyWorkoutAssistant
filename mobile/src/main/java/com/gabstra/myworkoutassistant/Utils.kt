@@ -57,6 +57,7 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -982,9 +983,9 @@ suspend fun backfillExerciseSessionProgressions(
                     .dropLastWhile { it.setData is RestSetData }
                     .filter {
                         when (val setData = it.setData) {
-                            is BodyWeightSetData -> !setData.isRestPause
-                            is WeightSetData -> !setData.isRestPause
-                            is RestSetData -> !setData.isRestPause
+                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
                             else -> true
                         }
                     }
@@ -997,11 +998,11 @@ suspend fun backfillExerciseSessionProgressions(
                 val executedSets = currentSession.mapNotNull { setHistory ->
                     when (val setData = setHistory.setData) {
                         is WeightSetData -> {
-                            if (setData.isRestPause) null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
                             else SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         is BodyWeightSetData -> {
-                            if (setData.isRestPause) null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
                             else SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         else -> null
@@ -1040,11 +1041,11 @@ suspend fun backfillExerciseSessionProgressions(
                 val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
                     when (val setData = setHistory.setData) {
                         is WeightSetData -> {
-                            if (setData.isRestPause) null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
                             else SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         is BodyWeightSetData -> {
-                            if (setData.isRestPause) null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
                             else SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         else -> null
@@ -1061,11 +1062,11 @@ suspend fun backfillExerciseSessionProgressions(
                 val previousSessionVolume = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
                     when (val setData = setHistory.setData) {
                         is WeightSetData -> {
-                            if (setData.isRestPause) null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
                             else SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         is BodyWeightSetData -> {
-                            if (setData.isRestPause) null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
                             else SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         else -> null
@@ -1140,11 +1141,11 @@ private suspend fun calculateExpectedSetsAndProgressionState(
         val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
             when (val setData = setHistory.setData) {
                 is WeightSetData -> {
-                    if (setData.isRestPause) null
+                    if (setData.subCategory == SetSubCategory.RestPauseSet) null
                     else SimpleSet(setData.getWeight(), setData.actualReps)
                 }
                 is BodyWeightSetData -> {
-                    if (setData.isRestPause) null
+                    if (setData.subCategory == SetSubCategory.RestPauseSet) null
                     else SimpleSet(setData.getWeight(), setData.actualReps)
                 }
                 else -> null
@@ -1285,11 +1286,11 @@ private suspend fun updateExerciseInfoState(
                 val bestSessionSets = info.bestSession.mapNotNull { setHistory ->
                     when (val setData = setHistory.setData) {
                         is WeightSetData -> {
-                            if (setData.isRestPause) return@mapNotNull null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                             SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         is BodyWeightSetData -> {
-                            if (setData.isRestPause) return@mapNotNull null
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                             SimpleSet(setData.getWeight(), setData.actualReps)
                         }
                         else -> null
@@ -1349,11 +1350,11 @@ private suspend fun updateExerciseInfoState(
                     val lastSessionSets = info.lastSuccessfulSession.mapNotNull { setHistory ->
                         when (val setData = setHistory.setData) {
                             is WeightSetData -> {
-                                if (setData.isRestPause) return@mapNotNull null
+                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             is BodyWeightSetData -> {
-                                if (setData.isRestPause) return@mapNotNull null
+                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             else -> null

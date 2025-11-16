@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -610,8 +611,8 @@ open class WorkoutViewModel(
                 sets = exercise.sets,
                 isRestPause = {
                     when (it) {
-                        is BodyWeightSet -> it.isRestPause
-                        is WeightSet -> it.isRestPause
+                        is BodyWeightSet -> it.subCategory == SetSubCategory.RestPauseSet
+                        is WeightSet -> it.subCategory == SetSubCategory.RestPauseSet
                         else -> false
                     }
                 },
@@ -757,8 +758,8 @@ open class WorkoutViewModel(
             sets = exercise.sets,
             isRestPause = {
                 when (it) {
-                    is BodyWeightSet -> it.isRestPause
-                    is WeightSet -> it.isRestPause
+                    is BodyWeightSet -> it.subCategory == SetSubCategory.RestPauseSet
+                    is WeightSet -> it.subCategory == SetSubCategory.RestPauseSet
                     else -> false
                 }
             },
@@ -770,12 +771,12 @@ open class WorkoutViewModel(
         val lastSuccessfulSessionSets = exerciseInfo?.lastSuccessfulSession?.mapNotNull { setHistory ->
             when (val setData = setHistory.setData) {
                 is WeightSetData -> {
-                    if (setData.isRestPause) return@mapNotNull null
+                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                     SimpleSet(setData.getWeight(), setData.actualReps)
                 }
 
                 is BodyWeightSetData -> {
-                    if (setData.isRestPause) return@mapNotNull null
+                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                     SimpleSet(setData.getWeight(), setData.actualReps)
                 }
 
@@ -1138,12 +1139,12 @@ open class WorkoutViewModel(
         val currentExercise = exercisesById[currentState.exerciseId]!!
 
         val newSets = currentExercise.sets.toMutableList()
-        val newRestSet = RestSet(UUID.randomUUID(), 30, true)
+        val newRestSet = RestSet(UUID.randomUUID(), 30, SetSubCategory.RestPauseSet)
 
         newSets.add(currentSetIndex + 1, newRestSet)
         val newSet = when (val new = getNewSet(currentState.set)) {
-            is BodyWeightSet -> new.copy(reps = 3, isRestPause = true)
-            is WeightSet -> new.copy(reps = 3, isRestPause = true)
+            is BodyWeightSet -> new.copy(reps = 3, subCategory = SetSubCategory.RestPauseSet)
+            is WeightSet -> new.copy(reps = 3, subCategory = SetSubCategory.RestPauseSet)
             else -> throw IllegalArgumentException("Unknown set type")
         }
         newSets.add(currentSetIndex + 2, newSet)
@@ -1284,9 +1285,9 @@ open class WorkoutViewModel(
                         .dropLastWhile { it.setData is RestSetData }
                         .filter {
                             when (val sd = it.setData) {
-                                is BodyWeightSetData -> !sd.isRestPause
-                                is WeightSetData     -> !sd.isRestPause
-                                is RestSetData       -> !sd.isRestPause
+                                is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet
+                                is WeightSetData     -> sd.subCategory != SetSubCategory.RestPauseSet
+                                is RestSetData       -> sd.subCategory != SetSubCategory.RestPauseSet
                                 else -> true
                             }
                         }
@@ -1311,11 +1312,11 @@ open class WorkoutViewModel(
                     val executedSets = currentSession.mapNotNull { setHistory ->
                         when (val setData = setHistory.setData) {
                             is WeightSetData -> {
-                                if (setData.isRestPause) return@mapNotNull null
+                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             is BodyWeightSetData -> {
-                                if (setData.isRestPause) return@mapNotNull null
+                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             else -> null
@@ -1333,11 +1334,11 @@ open class WorkoutViewModel(
                         exerciseInfo.lastSuccessfulSession.mapNotNull { setHistory ->
                             when (val setData = setHistory.setData) {
                                 is WeightSetData -> {
-                                    if (setData.isRestPause) return@mapNotNull null
+                                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                     SimpleSet(setData.getWeight(), setData.actualReps)
                                 }
                                 is BodyWeightSetData -> {
-                                    if (setData.isRestPause) return@mapNotNull null
+                                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                     SimpleSet(setData.getWeight(), setData.actualReps)
                                 }
                                 else -> null
@@ -1387,11 +1388,11 @@ open class WorkoutViewModel(
                             val bestSessionSets = updatedInfo.bestSession.mapNotNull { setHistory ->
                                 when (val setData = setHistory.setData) {
                                     is WeightSetData -> {
-                                        if (setData.isRestPause) return@mapNotNull null
+                                        if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                         SimpleSet(setData.getWeight(), setData.actualReps)
                                     }
                                     is BodyWeightSetData -> {
-                                        if (setData.isRestPause) return@mapNotNull null
+                                        if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                         SimpleSet(setData.getWeight(), setData.actualReps)
                                     }
                                     else -> null
@@ -1451,11 +1452,11 @@ open class WorkoutViewModel(
                                 val lastSessionSets = updatedInfo.lastSuccessfulSession.mapNotNull { setHistory ->
                                     when (val setData = setHistory.setData) {
                                         is WeightSetData -> {
-                                            if (setData.isRestPause) return@mapNotNull null
+                                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                             SimpleSet(setData.getWeight(), setData.actualReps)
                                         }
                                         is BodyWeightSetData -> {
-                                            if (setData.isRestPause) return@mapNotNull null
+                                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
                                             SimpleSet(setData.getWeight(), setData.actualReps)
                                         }
                                         else -> null
@@ -1523,9 +1524,9 @@ open class WorkoutViewModel(
                         .dropLastWhile { it.setData is RestSetData }
                         .filter { it ->
                         when(val setData = it.setData){
-                            is BodyWeightSetData -> !setData.isRestPause
-                            is WeightSetData -> !setData.isRestPause
-                            is RestSetData -> !setData.isRestPause
+                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
                             else -> true
                         }
                     }
@@ -1560,7 +1561,12 @@ open class WorkoutViewModel(
 
         if (currentState is WorkoutState.Set) {
             val exercise = exercisesById[currentState.exerciseId]!!
-            if (exercise.doNotStoreHistory || currentState.isWarmupSet) return
+            val isWarmupSet = when(val set = currentState.set) {
+                is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                else -> false
+            }
+            if (exercise.doNotStoreHistory || isWarmupSet) return
         }
 
         if(currentState is WorkoutState.Rest && currentState.isIntraSetRest) return
@@ -1666,7 +1672,12 @@ open class WorkoutViewModel(
                         for (q in queues) {
                             if (q.isEmpty() || q.first() !is WorkoutState.Set) continue
                             val s = q.first() as WorkoutState.Set
-                            if (!s.isWarmupSet) continue
+                            val isWarmupSet = when(val set = s.set) {
+                                is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                else -> false
+                            }
+                            if (!isWarmupSet) continue
                             anyWarmups = true
                             out.add(q.removeAt(0) as WorkoutState.Set)
                             if (q.isNotEmpty() && q.first() is WorkoutState.Rest) {
@@ -1680,7 +1691,17 @@ open class WorkoutViewModel(
                     for (q in queues) while (q.isNotEmpty() && q.first() is WorkoutState.Rest) q.removeAt(0)
 
                     fun workCount(q: MutableList<WorkoutState>) =
-                        q.count { it is WorkoutState.Set && !it.isWarmupSet }
+                        q.count { 
+                            if (it !is WorkoutState.Set) false
+                            else {
+                                val isWarmupSet = when(val set = it.set) {
+                                    is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                    is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                                    else -> false
+                                }
+                                !isWarmupSet
+                            }
+                        }
                     val rounds = queues.minOfOrNull { workCount(it) } ?: 0
 
                     // 2) Alternate WORK sets; rest comes from superset.restSecondsByExercise
@@ -1865,8 +1886,8 @@ open class WorkoutViewModel(
             fun makeWarmupSet(id: UUID, total: Double, reps: Int): Set {
                 val internalWeight = toSetInternalWeight(total)
                 return when (exercise.exerciseType) {
-                    ExerciseType.BODY_WEIGHT -> BodyWeightSet(id, reps, internalWeight, isWarmupSet = true)
-                    ExerciseType.WEIGHT     -> WeightSet(id, reps, internalWeight, isWarmupSet = true)
+                    ExerciseType.BODY_WEIGHT -> BodyWeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
+                    ExerciseType.WEIGHT     -> WeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
                     else -> throw IllegalArgumentException("Unknown exercise type")
                 }
             }
@@ -1937,8 +1958,8 @@ open class WorkoutViewModel(
                 val plateChangeResult = plateChangeResults.getOrNull(weightSetIndex)
 
                 val isWarmupSet = when(set) {
-                    is BodyWeightSet -> set.isWarmupSet
-                    is WeightSet -> set.isWarmupSet
+                    is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                    is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                     else -> false
                 }
 
