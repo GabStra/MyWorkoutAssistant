@@ -292,6 +292,7 @@ fun WearApp(
         appViewModel.initWorkoutScheduleDao(localContext)
         appViewModel.initWorkoutRecordDao(localContext)
         appViewModel.initExerciseInfoDao(localContext)
+        appViewModel.initExerciseSessionProgressionDao(localContext)
 
         var initialized by remember { mutableStateOf(false) }
 

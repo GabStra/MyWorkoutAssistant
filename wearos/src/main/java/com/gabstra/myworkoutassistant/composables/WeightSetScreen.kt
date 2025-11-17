@@ -62,6 +62,10 @@ fun WeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
+    val isPlateauDetected = remember(state.exerciseId) {
+        viewModel.plateauDetectedByExerciseId[state.exerciseId] == true
+    }
+
     val equipment = state.equipment
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 
@@ -404,11 +408,21 @@ fun WeightSetScreen(
                             //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                             extraInfo(state)
                         }
+                        if (isPlateauDetected) {
+                            Text(
+                                text = "Plateau Detected",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = Red,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
 
                     SetScreen(
                         customModifier = Modifier
-                            .weight(1f)
                     )
                 }
             }

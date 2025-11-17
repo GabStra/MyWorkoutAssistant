@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
+import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
@@ -21,7 +22,6 @@ import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataEventBuffer
-import java.util.UUID
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
 import com.google.gson.Gson
@@ -34,6 +34,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.util.UUID
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -370,7 +371,7 @@ class DataLayerListenerService : WearableListenerService() {
      * plus any workout histories that were just synced.
      */
     private suspend fun cleanupUnusedWorkoutHistories(
-        workouts: List<com.gabstra.myworkoutassistant.shared.workoutcomponents.Workout>,
+        workouts: List<Workout>,
         syncedWorkoutHistoryIds: Set<UUID>
     ) {
         try {

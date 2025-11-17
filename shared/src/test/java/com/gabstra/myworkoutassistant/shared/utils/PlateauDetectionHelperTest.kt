@@ -391,7 +391,7 @@ class PlateauDetectionHelperTest {
 
     @Test
     fun testEdgeCase_EmptySessionsList() {
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateau(emptyList())
+        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateau(emptyList(), 0.25)
 
         assertFalse("Should not detect plateau with empty sessions", isPlateau)
         assertTrue("sessionImproved should be empty", sessionImproved.isEmpty())

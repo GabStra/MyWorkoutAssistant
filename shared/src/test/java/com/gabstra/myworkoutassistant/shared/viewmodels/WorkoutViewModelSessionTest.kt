@@ -274,6 +274,10 @@ class WorkoutViewModelSessionTest {
         weight: Double,
         reps: Int
     ): SetHistory {
+        // Validate weight against equipment
+        val equipment = createTestBarbell()
+        val validatedWeight = findClosestAchievableWeight(weight, equipment)
+        
         val setHistory = SetHistory(
             id = UUID.randomUUID(),
             workoutHistoryId = workoutHistoryId,
@@ -282,7 +286,7 @@ class WorkoutViewModelSessionTest {
             order = order,
             startTime = LocalDateTime.now(),
             endTime = LocalDateTime.now(),
-            setData = WeightSetData(actualReps = reps, actualWeight = weight, volume = weight * reps),
+            setData = WeightSetData(actualReps = reps, actualWeight = validatedWeight, volume = validatedWeight * reps),
             skipped = false
         )
         database.setHistoryDao().insert(setHistory)
@@ -427,6 +431,37 @@ class WorkoutViewModelSessionTest {
         }
     }
 
+    /**
+     * Finds the closest achievable weight for the given equipment.
+     * If equipment is null, returns the desired weight without validation.
+     * Otherwise, finds the closest weight from the equipment's achievable combinations.
+     */
+    private fun findClosestAchievableWeight(desiredWeight: Double, equipment: com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment?): Double {
+        if (equipment == null) {
+            return desiredWeight
+        }
+        
+        // Get available weights from equipment
+        val availableWeights = equipment.getWeightsCombinations()
+        
+        if (availableWeights.isEmpty()) {
+            return desiredWeight
+        }
+        
+        // Find the closest achievable weight
+        return availableWeights.minByOrNull { kotlin.math.abs(it - desiredWeight) } ?: desiredWeight
+    }
+
+    /**
+     * Creates a WeightSet with validated weight based on equipment.
+     * Uses the test equipment ID to get the equipment and validate the weight.
+     */
+    private fun createWeightSetWithValidatedWeight(setId: UUID, reps: Int, desiredWeight: Double): WeightSet {
+        val equipment = createTestBarbell()
+        val validatedWeight = findClosestAchievableWeight(desiredWeight, equipment)
+        return WeightSet(setId, reps, validatedWeight)
+    }
+
     private suspend fun TestScope.executeWorkoutWithSets(
         setModifier: (WorkoutState.Set) -> Unit = {}
     ) {
@@ -453,9 +488,9 @@ class WorkoutViewModelSessionTest {
     fun testFirstSession_createsExerciseInfo() = runTest(testDispatcher) {
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 100.0),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 100.0)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -490,8 +525,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -502,9 +537,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5), // Expected: 102.5kg x 10
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 92.5), // Expected: 92.5kg x 10
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)   // Expected: 102.5kg x 8
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 92.5)   // Expected: 92.5kg x 8
             )
         )
         val workout = createTestWorkout(exercise)
@@ -517,11 +552,12 @@ class WorkoutViewModelSessionTest {
         executeWorkoutWithSets { setState ->
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
-                // Execute above expected: 105kg instead of 102.5kg
+                // Execute above expected: 95kg instead of 92.5kg
+                val achievableWeight = findClosestAchievableWeight(95.0, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
-                    actualWeight = 105.0,
-                    volume = 105.0 * currentSetData.actualReps
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * currentSetData.actualReps
                 )
             }
         }
@@ -535,6 +571,7 @@ class WorkoutViewModelSessionTest {
         val progressions = database.exerciseSessionProgressionDao().getAllExerciseSessionProgressions()
         val progression = progressions.firstOrNull { it.exerciseId == testExerciseId }
         assertNotNull("Progression should exist", progression)
+        assertEquals("vsPrevious should be ABOVE", Ternary.ABOVE, progression?.vsPrevious)
         assertEquals("vsExpected should be ABOVE", Ternary.ABOVE, progression?.vsExpected)
         assertEquals("progressionState should be PROGRESS", ProgressionState.PROGRESS, progression?.progressionState)
     }
@@ -545,8 +582,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -557,9 +594,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 92.5),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 92.5)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -569,15 +606,47 @@ class WorkoutViewModelSessionTest {
         viewModel.setSelectedWorkoutId(testWorkoutId)
         advanceUntilIdle()
         
-        executeWorkoutWithSets { setState ->
+        // Start workout to trigger progression generation
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        Thread.sleep(10)
+        delay(10)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        
+        waitForWorkoutToLoad()
+        
+        // Access exerciseProgressionByExerciseId via reflection to get expected sets
+        val exerciseProgressionByExerciseIdField = WorkoutViewModel::class.java.getDeclaredField("exerciseProgressionByExerciseId")
+        exerciseProgressionByExerciseIdField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val exerciseProgressionMap = exerciseProgressionByExerciseIdField.get(viewModel) as MutableMap<UUID, Pair<com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper.Plan, ProgressionState>>
+        
+        val progressionData = exerciseProgressionMap[testExerciseId]
+        assertNotNull("Progression should be generated", progressionData)
+        val expectedSets = progressionData!!.first.sets.sortedByDescending { it.weight * it.reps }
+        
+        viewModel.setWorkoutStart()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        
+        assertNotNull("Start workout time should be set", viewModel.startWorkoutTime)
+        
+        // Execute sets using expected sets from progression
+        var expectedSetIndex = 0
+        executeSetsOnly { setState ->
             val currentSetData = setState.currentSetData
-            if (currentSetData is WeightSetData) {
-                // Execute exactly as expected
+            if (currentSetData is WeightSetData && expectedSetIndex < expectedSets.size) {
+                val expectedSet = expectedSets[expectedSetIndex]
+                // Execute exactly as expected from progression
+                val achievableWeight = findClosestAchievableWeight(expectedSet.weight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
-                    actualReps = currentSetData.actualReps,
-                    actualWeight = 102.5,
-                    volume = 102.5 * currentSetData.actualReps
+                    actualReps = expectedSet.reps,
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * expectedSet.reps
                 )
+                expectedSetIndex++
             }
         }
         
@@ -598,8 +667,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 50.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 50.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -610,9 +679,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 55.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 55.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -625,11 +694,12 @@ class WorkoutViewModelSessionTest {
         executeWorkoutWithSets { setState ->
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
-                // Execute below expected: 100kg instead of 102.5kg
+                // Execute below expected: 50 instead of 55.0kg
+                val achievableWeight = findClosestAchievableWeight(50.0, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
-                    actualWeight = 100.0,
-                    volume = 100.0 * currentSetData.actualReps
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * currentSetData.actualReps
                 )
             }
         }
@@ -651,8 +721,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -665,9 +735,9 @@ class WorkoutViewModelSessionTest {
         val set2Id = UUID.randomUUID()
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(set1Id, 10, 102.5),
+                createWeightSetWithValidatedWeight(set1Id, 10, 92.5),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(set2Id, 8, 102.5)
+                createWeightSetWithValidatedWeight(set2Id, 8, 92.5)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -682,11 +752,12 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // First set above, second set below - creates MIXED
-                val weight = if (setIndex == 0) 105.0 else 100.0
+                val desiredWeight = if (setIndex == 0) 95.0 else 90.0
+                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
-                    actualWeight = weight,
-                    volume = weight * currentSetData.actualReps
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * currentSetData.actualReps
                 )
                 setIndex++
             }
@@ -709,8 +780,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 95.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 95.0, 8)
         
         // Create ExerciseInfo with failed session to trigger RETRY
         createExerciseInfo(
@@ -724,9 +795,9 @@ class WorkoutViewModelSessionTest {
         // Exercise sets match previous session (RETRY loads last successful session)
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(previousSetId1, 10, 100.0),
+                createWeightSetWithValidatedWeight(previousSetId1, 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(previousSetId2, 8, 100.0)
+                createWeightSetWithValidatedWeight(previousSetId2, 8, 95.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -740,10 +811,11 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above retry target
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.actualWeight * (currentSetData.actualReps + 1)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps + 1)
                 )
             }
         }
@@ -766,8 +838,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 95.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 95.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -778,9 +850,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(previousSetId1, 10, 100.0),
+                createWeightSetWithValidatedWeight(previousSetId1, 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(previousSetId2, 8, 100.0)
+                createWeightSetWithValidatedWeight(previousSetId2, 8, 95.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -794,10 +866,11 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute exactly as retry target
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.calculateVolume()
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * currentSetData.actualReps
                 )
             }
         }
@@ -819,8 +892,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 95.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 95.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -831,9 +904,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(previousSetId1, 10, 100.0),
+                createWeightSetWithValidatedWeight(previousSetId1, 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(previousSetId2, 8, 100.0)
+                createWeightSetWithValidatedWeight(previousSetId2, 8, 95.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -847,10 +920,11 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute below retry target
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps - 1,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.actualWeight * (currentSetData.actualReps - 1)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps - 1)
                 )
             }
         }
@@ -873,8 +947,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 95.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 95.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -885,9 +959,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(previousSetId1, 10, 100.0),
+                createWeightSetWithValidatedWeight(previousSetId1, 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(previousSetId2, 8, 100.0)
+                createWeightSetWithValidatedWeight(previousSetId2, 8, 95.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -903,10 +977,11 @@ class WorkoutViewModelSessionTest {
             if (currentSetData is WeightSetData) {
                 // First set above, second set below - creates MIXED
                 val reps = if (setIndex == 0) currentSetData.actualReps + 1 else currentSetData.actualReps - 1
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = reps,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.actualWeight * reps
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * reps
                 )
                 setIndex++
             }
@@ -929,8 +1004,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -945,9 +1020,9 @@ class WorkoutViewModelSessionTest {
         // For now, we test that if DELOAD happens, counters are reset
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 95.0), // Deload weight
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 90.0), // Deload weight
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 95.0)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 90.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -986,10 +1061,11 @@ class WorkoutViewModelSessionTest {
         executeSetsOnly { setState ->
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.calculateVolume()
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * currentSetData.actualReps
                 )
             }
         }
@@ -1007,8 +1083,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 95.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 95.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -1025,9 +1101,9 @@ class WorkoutViewModelSessionTest {
             doNotStoreHistory = false,
             notes = "",
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 100.0),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 100.0)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
             minLoadPercent = 0.0,
@@ -1058,10 +1134,11 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above last successful session
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.actualWeight * (currentSetData.actualReps + 1)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps + 1)
                 )
             }
         }
@@ -1083,8 +1160,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 95.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 95.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -1100,9 +1177,9 @@ class WorkoutViewModelSessionTest {
             doNotStoreHistory = false,
             notes = "",
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 100.0),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 100.0)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
             minLoadPercent = 0.0,
@@ -1133,10 +1210,11 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute below last successful session
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps - 1,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.actualWeight * (currentSetData.actualReps - 1)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps - 1)
                 )
             }
         }
@@ -1153,8 +1231,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -1166,9 +1244,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 92.5),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 92.5)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -1182,10 +1260,12 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute significantly above expected to beat best session
+                val desiredWeight = currentSetData.actualWeight + 5.0
+                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 2,
-                    actualWeight = currentSetData.actualWeight + 5.0,
-                    volume = (currentSetData.actualWeight + 5.0) * (currentSetData.actualReps + 2)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps + 2)
                 )
             }
         }
@@ -1220,9 +1300,9 @@ class WorkoutViewModelSessionTest {
         val today = LocalDate.now()
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 100.0),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 100.0)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -1364,9 +1444,9 @@ class WorkoutViewModelSessionTest {
         val lastWeek = today.minusWeeks(1)
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 100.0),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 100.0)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -1396,8 +1476,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -1408,9 +1488,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 92.5),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 92.5)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -1424,10 +1504,11 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above previous session
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.actualWeight * (currentSetData.actualReps + 1)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps + 1)
                 )
             }
         }
@@ -1437,8 +1518,8 @@ class WorkoutViewModelSessionTest {
         assertNotNull("Progression should exist", progression)
         
         val previousSessionSets = listOf(
-            SimpleSet(100.0, 10),
-            SimpleSet(100.0, 8)
+            SimpleSet(90.0, 10),
+            SimpleSet(90.0, 8)
         )
         val executedSets = viewModel.executedSetsHistory
             .filter { it.exerciseId == testExerciseId }
@@ -1459,9 +1540,9 @@ class WorkoutViewModelSessionTest {
     fun testCrossSession_multipleProgressSuccess() = runTest(testDispatcher) {
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 100.0),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 90.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 100.0)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 90.0)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -1480,9 +1561,9 @@ class WorkoutViewModelSessionTest {
         // Second session - need to update exercise sets for progression
         val exercise2 = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 92.5),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 92.5)
             )
         )
         val workout2 = createTestWorkout(exercise2)
@@ -1505,8 +1586,8 @@ class WorkoutViewModelSessionTest {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -1518,9 +1599,9 @@ class WorkoutViewModelSessionTest {
         // First session - PROGRESS failure
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 92.5),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 92.5)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -1534,10 +1615,12 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute below expected - failure
+                val desiredWeight = currentSetData.actualWeight - 5.0
+                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps - 2,
-                    actualWeight = currentSetData.actualWeight - 5.0,
-                    volume = (currentSetData.actualWeight - 5.0) * (currentSetData.actualReps - 2)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps - 2)
                 )
             }
         }
@@ -1549,9 +1632,9 @@ class WorkoutViewModelSessionTest {
         // Second session - RETRY (should load last successful session)
         val exercise2 = createTestExercise(
             sets = listOf(
-                WeightSet(previousSetId1, 10, 100.0),
+                createWeightSetWithValidatedWeight(previousSetId1, 10, 90.0),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(previousSetId2, 8, 100.0)
+                createWeightSetWithValidatedWeight(previousSetId2, 8, 90.0)
             )
         )
         val workout2 = createTestWorkout(exercise2)
@@ -1565,10 +1648,11 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above retry target - success
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.actualWeight * (currentSetData.actualReps + 1)
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps + 1)
                 )
             }
         }
@@ -1582,14 +1666,132 @@ class WorkoutViewModelSessionTest {
         assertEquals("Second session should be RETRY", ProgressionState.RETRY, retryProgression?.progressionState)
     }
 
-    // Test 19: ExerciseSessionProgression - Volume Verification
+    // Test 19: PROGRESS State - Verify Progression Calculation
+    @Test
+    fun testProgressState_progressionCalculation() = runTest(testDispatcher) {
+        val previousSetId1 = UUID.randomUUID()
+        val previousSetId2 = UUID.randomUUID()
+        val previousSetId3 = UUID.randomUUID()
+        val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 9)
+        val previousSet3 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId3, 2u, 90.0, 8)
+        
+        createExerciseInfo(
+            exerciseId = testExerciseId,
+            lastSuccessfulSession = listOf(previousSet1, previousSet2, previousSet3),
+            successfulSessionCounter = 1u,
+            sessionFailedCounter = 0u
+        )
+        
+        // Create exercise with initial sets (these should be replaced by progression)
+        val exercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 90.0),
+                RestSet(UUID.randomUUID(), 90),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 9, 90.0),
+                RestSet(UUID.randomUUID(), 90),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 90.0)
+            )
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+        
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+        
+        // Start workout to trigger progression generation
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        Thread.sleep(10)
+        delay(10)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        
+        waitForWorkoutToLoad()
+        
+        // Access exerciseProgressionByExerciseId via reflection
+        val exerciseProgressionByExerciseIdField = WorkoutViewModel::class.java.getDeclaredField("exerciseProgressionByExerciseId")
+        exerciseProgressionByExerciseIdField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val exerciseProgressionMap = exerciseProgressionByExerciseIdField.get(viewModel) as MutableMap<UUID, Pair<com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper.Plan, ProgressionState>>
+        
+        val progressionData = exerciseProgressionMap[testExerciseId]
+        assertNotNull("Progression should be generated", progressionData)
+        
+        val progressionPlan = progressionData!!.first
+        val progressionState = progressionData.second
+        
+        assertEquals("Progression state should be PROGRESS", ProgressionState.PROGRESS, progressionState)
+        
+        // Verify that new sets are different from previous sets
+        val previousSets = listOf(
+            SimpleSet(90.0, 10),
+            SimpleSet(90.0, 9),
+            SimpleSet(90.0, 8)
+        )
+        val newSets = progressionPlan.sets
+        
+        assertTrue("New sets should be generated", newSets.isNotEmpty())
+        assertEquals("New sets count should match previous sets count", previousSets.size, newSets.size)
+        
+        // Verify that progression was actually calculated by planNextSession()
+        // The key test: new sets should be calculated from previous sets, not copied from exercise sets
+        // Previous sets: 100kg x 10, 100kg x 9, 100kg x 8 (reps range 5-12)
+        // Progression should increase reps (since not all at max) or weight
+        val previousVolume = previousSets.sumOf { it.weight * it.reps }
+        val newVolume = newSets.sumOf { it.weight * it.reps }
+        
+        // Verify that planNextSession was called (not just copying current sets)
+        // The progression should result in different sets/volume
+        // Note: In rare cases volume might stay same if at absolute limits, but sets should still reflect progression logic
+        val previousTotalReps = previousSets.sumOf { it.reps }
+        val newTotalReps = newSets.sumOf { it.reps }
+        val maxPreviousWeight = previousSets.maxOf { it.weight }
+        val maxNewWeight = newSets.maxOf { it.weight }
+        
+        // Progression should either:
+        // 1. Increase reps (if not all at max)
+        // 2. Increase weight (if all at max reps)
+        // 3. Or at minimum, the sets should be normalized/calculated (not identical)
+        val setsAreIdentical = newSets.size == previousSets.size &&
+            newSets.zip(previousSets).all { (new, prev) -> 
+                new.weight == prev.weight && new.reps == prev.reps 
+            }
+        
+        assertTrue(
+            "Progression should be calculated (not identical sets). " +
+            "Previous: ${previousSets.map { "${it.weight}kg x ${it.reps}" }}, " +
+            "New: ${newSets.map { "${it.weight}kg x ${it.reps}" }}. " +
+            "Previous volume: $previousVolume, New volume: $newVolume. " +
+            "Previous total reps: $previousTotalReps, New total reps: $newTotalReps. " +
+            "Previous max weight: $maxPreviousWeight, New max weight: $maxNewWeight",
+            !setsAreIdentical || newVolume != previousVolume || 
+            newTotalReps > previousTotalReps || maxNewWeight > maxPreviousWeight
+        )
+        
+        // Additional verification: if reps are below max (12), progression should increase reps
+        val allAtMaxReps = previousSets.all { it.reps >= 12 }
+        if (!allAtMaxReps) {
+            assertTrue(
+                "When not all sets at max reps, progression should increase reps or weight. " +
+                "Previous total reps: $previousTotalReps, New total reps: $newTotalReps. " +
+                "Previous max weight: $maxPreviousWeight, New max weight: $maxNewWeight",
+                newTotalReps > previousTotalReps || maxNewWeight > maxPreviousWeight
+            )
+        }
+    }
+
+    // Test 20: ExerciseSessionProgression - Volume Verification
     @Test
     fun testExerciseSessionProgression_volumes() = runTest(testDispatcher) {
         val previousSetId1 = UUID.randomUUID()
         val previousSetId2 = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
-        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 100.0, 10)
-        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 100.0, 8)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 8)
         
         createExerciseInfo(
             exerciseId = testExerciseId,
@@ -1600,9 +1802,9 @@ class WorkoutViewModelSessionTest {
         
         val exercise = createTestExercise(
             sets = listOf(
-                WeightSet(UUID.randomUUID(), 10, 102.5),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 92.5),
                 RestSet(UUID.randomUUID(), 90),
-                WeightSet(UUID.randomUUID(), 8, 102.5)
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 92.5)
             )
         )
         val workout = createTestWorkout(exercise)
@@ -1615,10 +1817,11 @@ class WorkoutViewModelSessionTest {
         executeWorkoutWithSets { setState ->
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
-                    actualWeight = currentSetData.actualWeight,
-                    volume = currentSetData.calculateVolume()
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * currentSetData.actualReps
                 )
             }
         }
@@ -1627,8 +1830,8 @@ class WorkoutViewModelSessionTest {
         val progression = progressions.firstOrNull { it.exerciseId == testExerciseId }
         assertNotNull("Progression should exist", progression)
         
-        val previousVolume = (100.0 * 10) + (100.0 * 8) // 1800
-        val expectedVolume = (102.5 * 10) + (102.5 * 8) // 1845
+        val previousVolume = (90.0 * 10) + (90.0 * 8) // 1620
+        val expectedVolume = (92.5 * 10) + (92.5 * 9) // 1757.5
         val executedVolume = viewModel.executedSetsHistory
             .filter { it.exerciseId == testExerciseId }
             .sumOf { setHistory ->

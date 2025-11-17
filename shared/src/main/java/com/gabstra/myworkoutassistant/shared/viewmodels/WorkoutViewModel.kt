@@ -558,10 +558,10 @@ open class WorkoutViewModel(
 
         val validExercises = exercises.filter { exercise ->  !exercise.doNotStoreHistory && exercise.enableProgression }
 
+        //this is setting the exercise to have either the sets from latest history of the ones from last successful session
+
         validExercises.forEach { exercise ->
             val sessionDecision = computeSessionDecision(exercise.id)
-
-            //Log.d("WorkoutViewModel", "Exercise: ${exercise.name} SessionDecision: ${sessionDecision.progressionState} should load last session: ${sessionDecision.shouldLoadLastSuccessfulSession}")
 
             val derivedSets = if (exercise.doNotStoreHistory) {
                 exercise.sets
@@ -581,8 +581,8 @@ open class WorkoutViewModel(
                 emptyList()
             }
 
-            val setsToUse = if (sessionDecision.shouldLoadLastSuccessfulSession) {
-                if (historySets.isNotEmpty()) historySets else derivedSets
+            val setsToUse = if (sessionDecision.shouldLoadLastSuccessfulSession){
+                historySets.ifEmpty { derivedSets }
             } else {
                 derivedSets
             }
@@ -590,11 +590,6 @@ open class WorkoutViewModel(
             val validSets = setsToUse
                 .dropWhile { it is RestSet }
                 .dropLastWhile { it is RestSet }
-
-            /*
-            validSets.forEach { it ->
-                Log.d("WorkoutViewModel","${it}")
-            }*/
 
             updateWorkout(exercise,exercise.copy(sets = validSets))
         }
@@ -606,7 +601,12 @@ open class WorkoutViewModel(
         val exercises =
             selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
-        val validExercises = exercises.filter { exercise ->  !exercise.doNotStoreHistory && exerciseProgressionByExerciseId.containsKey(exercise.id) }
+        val validExercises = exercises.filter { exercise -> 
+            exercise.enabled && 
+            exercise.enableProgression && 
+            !exercise.doNotStoreHistory && 
+            exerciseProgressionByExerciseId.containsKey(exercise.id)
+        }
 
         validExercises.forEach { exercise ->
             val exerciseProgression = exerciseProgressionByExerciseId[exercise.id]!!.first
@@ -769,10 +769,14 @@ open class WorkoutViewModel(
         val progressionStatesByWorkoutHistoryId = exerciseProgressions
             .associate { it.workoutHistoryId to it.progressionState }
         
+        // Get equipment for BIN_SIZE calculation
+        val equipment = exercise.equipmentId?.let { getEquipmentById(it) }
+        
         val (isPlateau, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories,
-            progressionStatesByWorkoutHistoryId
+            progressionStatesByWorkoutHistoryId,
+            equipment
         )
 
         if (isPlateau) {
@@ -796,43 +800,8 @@ open class WorkoutViewModel(
 
         val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
 
-        val lastSuccessfulSessionSets = exerciseInfo?.lastSuccessfulSession?.mapNotNull { setHistory ->
-            when (val setData = setHistory.setData) {
-                is WeightSetData -> {
-                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                    SimpleSet(setData.getWeight(), setData.actualReps)
-                }
 
-                is BodyWeightSetData -> {
-                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                    SimpleSet(setData.getWeight(), setData.actualReps)
-                }
-
-                else -> null
-            }
-        } ?: emptyList()
-
-        val previousSets = if (lastSuccessfulSessionSets.isNotEmpty()) {
-            lastSuccessfulSessionSets
-        } else {
-            validSets.map { set ->
-                when (set) {
-                    is BodyWeightSet -> {
-                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                        val weight = set.getWeight(relativeBodyWeight)
-                        SimpleSet(weight, set.reps)
-                    }
-
-                    is WeightSet -> {
-                        SimpleSet(set.weight, set.reps)
-                    }
-
-                    else -> throw IllegalStateException("Unknown set type encountered after filtering.")
-                }
-            }
-        }
-
-        val plannedSets = validSets.map { set ->
+        val previousSets = validSets.map { set ->
             when (set) {
                 is BodyWeightSet -> {
                     val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
@@ -848,13 +817,11 @@ open class WorkoutViewModel(
             }
         }
 
-        val previousSetsForPlan = if (previousSets.isNotEmpty()) previousSets else plannedSets
-        val previousVolume = previousSetsForPlan.sumOf { it.weight * it.reps }
-        val plannedVolume = plannedSets.sumOf { it.weight * it.reps }
+        val previousVolume = previousSets.sumOf { it.weight * it.reps }
 
-        val availableWeights = (baseAvailableWeights + plannedSets.map { it.weight }).toSet()
+        val availableWeights = baseAvailableWeights.toSet()
 
-        val oldSets = previousSetsForPlan.mapIndexed { index, set ->
+        val oldSets = previousSets.mapIndexed { index, set ->
             if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
                 val relativeBodyWeight =
                     bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
@@ -888,7 +855,7 @@ open class WorkoutViewModel(
                 Log.d("WorkoutViewModel", "Deload")
 
                 DoubleProgressionHelper.planDeloadSession(
-                    previousSets = previousSetsForPlan,
+                    previousSets = previousSets,
                     availableWeights = availableWeights,
                     repsRange = repsRange
                 )
@@ -896,17 +863,23 @@ open class WorkoutViewModel(
             sessionDecision.progressionState == ProgressionState.RETRY -> {
                 Log.d("WorkoutViewModel", "Retrying")
                 DoubleProgressionHelper.Plan(
-                    previousSetsForPlan,
+                    previousSets,
                     previousVolume,
                     previousVolume
                 )
             }
 
             sessionDecision.progressionState == ProgressionState.PROGRESS -> {
-                DoubleProgressionHelper.Plan(
-                    sets = plannedSets,
-                    newVolume = plannedVolume,
-                    previousVolume = previousVolume
+                val jumpPolicy = DoubleProgressionHelper.LoadJumpPolicy(
+                    defaultPct = exercise.loadJumpDefaultPct ?: 0.025,
+                    maxPct = exercise.loadJumpMaxPct ?: 0.5,
+                    overcapUntil = exercise.loadJumpOvercapUntil ?: 2
+                )
+                DoubleProgressionHelper.planNextSession(
+                    previousSets = previousSets,
+                    availableWeights = availableWeights,
+                    repsRange = repsRange,
+                    jumpPolicy = jumpPolicy
                 )
             }
             else -> {
@@ -932,10 +905,7 @@ open class WorkoutViewModel(
             "WorkoutViewModel",
             "Volume: ${exerciseProgression.previousVolume.round(2)} -> ${exerciseProgression.newVolume .round(2)} (${if(progressIncrease>0) "+" else ""}${progressIncrease.round(2)}%)")
 
-
-        val hadHistoricalBaseline = exerciseInfo != null && lastSuccessfulSessionSets.isNotEmpty()
         val couldNotFindProgression = sessionDecision.progressionState == ProgressionState.PROGRESS &&
-                hadHistoricalBaseline &&
                 exerciseProgression.previousVolume.round(2) == exerciseProgression.newVolume.round(2)
 
         val progressionState = when {
@@ -1244,6 +1214,61 @@ open class WorkoutViewModel(
         }
     }
 
+    /**
+     * Gets the last session from history for an exercise, excluding the current workout history.
+     * This is used for comparison purposes (vsPrevious), not for retry logic.
+     * 
+     * @param exerciseId The exercise ID to get history for
+     * @param excludeWorkoutHistoryId The workout history ID to exclude (typically the current session being saved)
+     * @return List of SetHistory representing the last session, or empty list if none found
+     */
+    private suspend fun getLastSessionFromHistory(
+        exerciseId: UUID,
+        excludeWorkoutHistoryId: UUID?
+    ): List<SetHistory> {
+        // Query all workout histories for the current workout, ordered by date DESC
+        val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+            .filter { 
+                it.globalId == selectedWorkout.value.globalId && 
+                it.isDone && 
+                it.id != excludeWorkoutHistoryId
+            }
+            .sortedWith(Comparator { a, b ->
+                val dateCompare = b.date.compareTo(a.date)
+                if (dateCompare != 0) dateCompare else b.time.compareTo(a.time)
+            })
+
+        // Find the first workout history that has set histories for this exercise
+        for (workoutHistory in workoutHistories) {
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+                workoutHistory.id,
+                exerciseId
+            )
+            
+            if (setHistories.isNotEmpty()) {
+                // Process and filter sets the same way as currentSession
+                val processedSession = setHistories
+                    .dropWhile { it.setData is RestSetData }
+                    .dropLastWhile { it.setData is RestSetData }
+                    .filter {
+                        when (val sd = it.setData) {
+                            is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet
+                            is WeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet
+                            is RestSetData -> sd.subCategory != SetSubCategory.RestPauseSet
+                            else -> true
+                        }
+                    }
+                
+                // Return if we have any sets after processing
+                if (processedSession.isNotEmpty()) {
+                    return processedSession
+                }
+            }
+        }
+        
+        return emptyList()
+    }
+
     open fun pushAndStoreWorkoutData(
         isDone: Boolean,
         context: Context? = null,
@@ -1362,8 +1387,10 @@ open class WorkoutViewModel(
                         Ternary.EQUAL
                     }
 
-                    val previousSessionSets = if (exerciseInfo != null && exerciseInfo.lastSuccessfulSession.isNotEmpty()) {
-                        exerciseInfo.lastSuccessfulSession.mapNotNull { setHistory ->
+                    // Get last session from history for comparison (not retry logic)
+                    val lastSessionFromHistory = getLastSessionFromHistory(it.key!!, currentWorkoutHistory!!.id)
+                    val previousSessionSets = if (lastSessionFromHistory.isNotEmpty()) {
+                        lastSessionFromHistory.mapNotNull { setHistory ->
                             when (val setData = setHistory.setData) {
                                 is WeightSetData -> {
                                     if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
@@ -1386,10 +1413,8 @@ open class WorkoutViewModel(
                         Ternary.EQUAL
                     }
 
-                    val previousSessionVolume = exerciseProgression?.previousVolume
-                        ?: previousSessionSets.sumOf { it.weight * it.reps }
-                    val expectedVolume = exerciseProgression?.newVolume
-                        ?: expectedSets.sumOf { it.weight * it.reps }
+                    val previousSessionVolume = previousSessionSets.sumOf { it.weight * it.reps }
+                    val expectedVolume = expectedSets.sumOf { it.weight * it.reps }
                     val executedVolume = executedSets.sumOf { it.weight * it.reps }
 
                     if (exerciseInfo == null) {
@@ -1440,7 +1465,10 @@ open class WorkoutViewModel(
                             if (progressionState != null) {
                                 if (progressionState == ProgressionState.PROGRESS) {
                                     // Success if executed sets are ABOVE or EQUAL to expected sets
-                                    val isSuccess = vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL
+                                    // Failure if exerciseProgression is null, expectedSets is empty, or vsExpected is BELOW/MIXED
+                                    val isSuccess = exerciseProgression != null && 
+                                        expectedSets.isNotEmpty() &&
+                                        (vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL)
 
                                     updatedInfo = if (isSuccess) {
                                         updatedInfo.copy(
@@ -1449,6 +1477,7 @@ open class WorkoutViewModel(
                                             sessionFailedCounter = 0u
                                         )
                                     } else {
+                                        // PROGRESS failure: reset successfulSessionCounter to 0
                                         updatedInfo.copy(
                                             successfulSessionCounter = 0u,
                                             sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
@@ -1481,34 +1510,58 @@ open class WorkoutViewModel(
                                 }
                             } else {
                                 // No progression state - compare against last successful session
-                                val lastSessionSets = updatedInfo.lastSuccessfulSession.mapNotNull { setHistory ->
-                                    when (val setData = setHistory.setData) {
-                                        is WeightSetData -> {
-                                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                            SimpleSet(setData.getWeight(), setData.actualReps)
-                                        }
-                                        is BodyWeightSetData -> {
-                                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                            SimpleSet(setData.getWeight(), setData.actualReps)
-                                        }
-                                        else -> null
-                                    }
-                                }
-
-                                val vsLast = compareSetListsUnordered(executedSets, lastSessionSets)
-                                val isSuccess = vsLast == Ternary.ABOVE || vsLast == Ternary.EQUAL
-
-                                updatedInfo = if (isSuccess) {
-                                    updatedInfo.copy(
-                                        lastSuccessfulSession = currentSession,
-                                        successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
-                                        sessionFailedCounter = 0u
-                                    )
-                                } else {
-                                    updatedInfo.copy(
+                                // However, if we have exerciseProgression but progressionState is null,
+                                // we should still check vsExpected to handle PROGRESS failures correctly
+                                if (exerciseProgression != null && expectedSets.isNotEmpty() && 
+                                    (vsExpected == Ternary.BELOW || vsExpected == Ternary.MIXED)) {
+                                    // This is a PROGRESS failure even though progressionState is null
+                                    // Reset successfulSessionCounter to 0
+                                    updatedInfo = updatedInfo.copy(
                                         successfulSessionCounter = 0u,
                                         sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
                                     )
+                                } else {
+                                    val lastSessionSets = updatedInfo.lastSuccessfulSession.mapNotNull { setHistory ->
+                                        when (val setData = setHistory.setData) {
+                                            is WeightSetData -> {
+                                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
+                                                SimpleSet(setData.getWeight(), setData.actualReps)
+                                            }
+                                            is BodyWeightSetData -> {
+                                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
+                                                SimpleSet(setData.getWeight(), setData.actualReps)
+                                            }
+                                            else -> null
+                                        }
+                                    }
+
+                                    val vsLast = compareSetListsUnordered(executedSets, lastSessionSets)
+
+                                    updatedInfo = when (vsLast) {
+                                        Ternary.ABOVE -> {
+                                            // Exceeded last successful session - success
+                                            updatedInfo.copy(
+                                                lastSuccessfulSession = currentSession,
+                                                successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
+                                                sessionFailedCounter = 0u
+                                            )
+                                        }
+                                        Ternary.EQUAL -> {
+                                            // Equal to last successful session - no progress, reset counter
+                                            updatedInfo.copy(
+                                                lastSuccessfulSession = currentSession,
+                                                successfulSessionCounter = 0u,
+                                                sessionFailedCounter = 0u
+                                            )
+                                        }
+                                        Ternary.BELOW, Ternary.MIXED -> {
+                                            // Below last successful session - failure
+                                            updatedInfo.copy(
+                                                successfulSessionCounter = 0u,
+                                                sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
