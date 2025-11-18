@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant
 
 import android.app.KeyguardManager
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.media.Ringtone
 import android.os.Bundle
@@ -37,6 +38,19 @@ class WorkoutAlarmActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Check if a workout is already in progress - if so, dismiss immediately
+        val prefs = getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+
+        if (isWorkoutInProgress) {
+            // A workout is active, dismiss the notification and finish
+            intent.getStringExtra("SCHEDULE_ID")?.let {
+                getSystemService(NotificationManager::class.java)?.cancel(it.hashCode())
+            }
+            finish()
+            return
+        }
 
         // show over lock screen
         setShowWhenLocked(true)

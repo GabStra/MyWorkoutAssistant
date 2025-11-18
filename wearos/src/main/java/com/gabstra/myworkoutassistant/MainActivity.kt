@@ -175,12 +175,10 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
 
-        val prefs = getSharedPreferences("workout_state", MODE_PRIVATE)
-        val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-
-        if(isWorkoutInProgress){
-            prefs.edit { putBoolean("isWorkoutInProgress", false) }
-        }
+        // Don't clear isWorkoutInProgress flag here - it's already cleared when the workout
+        // actually ends (in WorkoutScreen and WorkoutCompleteScreen). Clearing it here would
+        // cause issues when navigating between activities (e.g., WorkoutAlarmActivity launching
+        // MainActivity with FLAG_ACTIVITY_CLEAR_TOP) while a workout is still active.
 
         cancelWorkoutInProgressNotification(this)
 
@@ -257,6 +255,16 @@ class MainActivity : ComponentActivity() {
 
             notificationManager.cancel(scheduleId.hashCode())
 
+            // Check if a workout is already in progress
+            val prefs = getSharedPreferences("workout_state", MODE_PRIVATE)
+            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+
+            if (isWorkoutInProgress) {
+                // A workout is already active, don't start a new one
+                Log.d("MainActivity", "Workout already in progress, skipping notification intent")
+                return
+            }
+
             if (workoutId != null) {
                 val uuid = UUID.fromString(workoutId)
 
@@ -321,10 +329,24 @@ fun WearApp(
 
         LaunchedEffect(appViewModel.executeStartWorkout) {
             if(appViewModel.executeStartWorkout.value == null) return@LaunchedEffect
+            
+            // Check if a workout is already in progress
+            val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+            
             val workoutStore = workoutStoreRepository.getWorkoutStore()
             val workout = workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }!!
             appViewModel.setSelectedWorkoutId(workout.id)
-            startDestination = Screen.WorkoutDetail.route
+            
+            if (isWorkoutInProgress) {
+                // A workout is already active, navigate to WorkoutScreen instead
+                startDestination = Screen.Workout.route
+                navController.navigate(Screen.Workout.route) {
+                    popUpTo(0) { inclusive = true }
+                }
+            } else {
+                startDestination = Screen.WorkoutDetail.route
+            }
         }
 
         val hrViewModel: SensorDataViewModel =  viewModel(

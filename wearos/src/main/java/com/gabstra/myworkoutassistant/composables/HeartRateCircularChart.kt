@@ -341,17 +341,6 @@ private fun HeartRateDisplay(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Spacer(modifier = Modifier.weight(1f))
-        if (bpm != 0 && displayMode == 0) {
-            Text(
-                text = zoneLabel,
-                style = MaterialTheme.typography.bodyExtraSmall,
-                color = if (currentZone < 0 || currentZone >= colorsByZone.size)
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                else
-                    MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.width(5.dp))
-        }
         PulsingHeartWithBpm(
             bpm = bpm,
             tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size)
@@ -373,6 +362,15 @@ private fun HeartRateDisplay(
                 text = "bpm",
                 style = MaterialTheme.typography.bodyExtraSmall,
                 color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = zoneLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (currentZone < 0 || currentZone >= colorsByZone.size)
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                else
+                    MaterialTheme.colorScheme.onBackground
             )
         }
         Spacer(modifier = Modifier.weight(1f))
@@ -462,8 +460,8 @@ private fun TargetRangeArc(
                         trackColor = Color.Transparent
                     ),
                     strokeWidth = strokeWidth - borderWidth * 2,
-                    startAngle = s,
-                    endAngle = e
+                    startAngle = startAngle,
+                    endAngle = endAngle
                 )
             }
 
@@ -748,7 +746,7 @@ private fun HeartRateView(
     val context = LocalContext.current
     val zoneLabel by remember(currentZone) {
         derivedStateOf {
-            if (currentZone in 0 until colorsByZone.size) "Zone $currentZone" else "Zone -"
+            if (currentZone in 0 until colorsByZone.size) "Z: $currentZone" else "Z: -"
         }
     }
 

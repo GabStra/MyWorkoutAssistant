@@ -41,13 +41,17 @@ import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.removeRestAndRestPause
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
@@ -927,7 +931,48 @@ open class WorkoutViewModel(
                     currentWorkoutState.setIndex == _workoutRecord!!.setIndex
         }
 
+        fun restoreTimerForTimeSet(state: WorkoutState.Set) {
+            val set = state.set
+            
+            // Check if this is a time set
+            val isTimeSet = set is TimedDurationSet || set is EnduranceSet
+            if (!isTimeSet) return
+            
+            // Find the set history from executedSetsHistory
+            val setHistory = executedSetsHistory.firstOrNull { 
+                it.setId == set.id && it.order == state.setIndex 
+            }
+            
+            if (setHistory == null) return
+            
+            val setData = setHistory.setData
+            val now = LocalDateTime.now()
+            
+            when {
+                set is TimedDurationSet && setData is TimedDurationSetData -> {
+                    // Only restore if timer was running (endTimer < startTimer)
+                    if (setData.endTimer < setData.startTimer) {
+                        // Calculate elapsed time: startTimer - endTimer
+                        val elapsedMillis = setData.startTimer - setData.endTimer
+                        // Restore startTime so that elapsed time matches
+                        state.startTime = now.minusNanos((elapsedMillis * 1_000_000L).toLong())
+                    }
+                }
+                set is EnduranceSet && setData is EnduranceSetData -> {
+                    // Only restore if timer was running (endTimer > 0)
+                    if (setData.endTimer > 0) {
+                        // Restore startTime so that elapsed time matches endTimer
+                        state.startTime = now.minusNanos((setData.endTimer * 1_000_000L).toLong())
+                    }
+                }
+            }
+        }
+
         if (isCurrentStateTheTargetResumeSet()) {
+            val currentState = _workoutState.value
+            if (currentState is WorkoutState.Set) {
+                restoreTimerForTimeSet(currentState)
+            }
             return
         }
 
@@ -937,6 +982,10 @@ open class WorkoutViewModel(
                 goToNextState()
 
                 if (isCurrentStateTheTargetResumeSet()){
+                    val currentState = _workoutState.value
+                    if (currentState is WorkoutState.Set) {
+                        restoreTimerForTimeSet(currentState)
+                    }
                     //go to the next set after the target set which is not rest
                     do{
                         goToNextState()

@@ -18,15 +18,17 @@ class WorkoutAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val scheduleId = intent.getStringExtra("SCHEDULE_ID") ?: return
 
+        // Check synchronously before launching coroutine to prevent race condition
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+
+        if (isWorkoutInProgress) {
+            // A workout is active, so we skip the notification.
+            return
+        }
+
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-
-            if (isWorkoutInProgress) {
-                // A workout is active, so we skip the notification.
-                return@launch
-            }
 
             val database = AppDatabase.getDatabase(context)
             val scheduleDao = database.workoutScheduleDao()
