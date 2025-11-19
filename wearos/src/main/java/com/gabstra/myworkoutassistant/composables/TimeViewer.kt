@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composables
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,9 +20,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
-import kotlinx.coroutines.delay
-import java.time.LocalDateTime
-import java.time.temporal.ChronoUnit
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -62,15 +58,21 @@ fun TimeViewer(
 
     var showDots by remember { mutableStateOf(true) }
 
-    // Coroutine that updates the time every minute
-    LaunchedEffect(Unit) {
+    // Coroutine that blinks at 2 Hz synced to half-second boundaries
+/*    LaunchedEffect(Unit) {
         while (true) {
             val now = LocalDateTime.now()
-            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
+            val truncated = now.truncatedTo(ChronoUnit.SECONDS)
+            val nanoOfSecond = now.nano
+            val nextHalfSecond = if (nanoOfSecond < 500_000_000) {
+                truncated.plusNanos(500_000_000)
+            } else {
+                truncated.plusSeconds(1)
+            }
             showDots = !showDots
-            delay(java.time.Duration.between(now, nextSecond).toMillis())
+            delay(Duration.between(now, nextHalfSecond).toMillis())
         }
-    }
+    }*/
 
     val colonColor = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh
 

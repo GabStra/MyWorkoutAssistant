@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -10,7 +8,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -28,7 +25,7 @@ import kotlin.math.sin
 
 @Composable
 fun RotatingIndicator(rotationAngle: Float, fillColor: Color, reverse: Boolean = false) {
-    val bubbleSize = 10.dp
+    val bubbleSize = 12.dp
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -74,14 +71,8 @@ fun RotatingIndicator(rotationAngle: Float, fillColor: Color, reverse: Boolean =
 }
 
 @Composable
-fun AnimatedHeartRateIndicator(rotationAngle: Float?, fillColor: Color, bubbleSize: Dp = 14.dp, borderWidth: Dp = 2.dp) {
+fun HeartRateIndicator(rotationAngle: Float?, fillColor: Color, bubbleSize: Dp = 14.dp, borderWidth: Dp = 2.dp) {
     if (rotationAngle == null) return
-
-    val animatedAngle by animateFloatAsState(
-        targetValue = rotationAngle,
-        animationSpec = tween(durationMillis = 300),
-        label = "HeartRateIndicatorAngle"
-    )
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -95,7 +86,7 @@ fun AnimatedHeartRateIndicator(rotationAngle: Float?, fillColor: Color, bubbleSi
         val rx = cx - bubblePx / 2f
         val ry = cy - bubblePx / 2f
 
-        val rad = Math.toRadians(animatedAngle.toDouble())
+        val rad = Math.toRadians(rotationAngle.toDouble())
         val x = cx + rx * cos(rad).toFloat()
         val y = cy + ry * sin(rad).toFloat()
 

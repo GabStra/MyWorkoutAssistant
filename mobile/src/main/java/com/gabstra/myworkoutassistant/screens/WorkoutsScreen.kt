@@ -125,6 +125,7 @@ fun Menu(
     onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
+    onViewErrorLogs: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -207,6 +208,13 @@ fun Menu(
                         expanded = false
                     }
                 )
+                DropdownMenuItem(
+                    text = { Text("View Error Logs") },
+                    onClick = {
+                        onViewErrorLogs()
+                        expanded = false
+                    }
+                )
             }
         }
     }
@@ -253,6 +261,7 @@ fun WorkoutsScreen(
     onSyncToHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
+    onViewErrorLogs: () -> Unit,
     selectedTabIndex: Int
 ) {
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
@@ -655,7 +664,8 @@ fun WorkoutsScreen(
                         onClearAllHistories = onClearAllHistories,
                         onSyncWithHealthConnectClick = onSyncToHealthConnectClick,
                         onExportWorkouts = onExportWorkouts,
-                        onClearAllExerciseInfo = onClearAllExerciseInfo
+                        onClearAllExerciseInfo = onClearAllExerciseInfo,
+                        onViewErrorLogs = onViewErrorLogs
                     )
                 }
             )

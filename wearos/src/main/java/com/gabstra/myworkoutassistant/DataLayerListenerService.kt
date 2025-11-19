@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.edit
+import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
@@ -347,6 +348,16 @@ class DataLayerListenerService : WearableListenerService() {
                             currentTransactionId = null
                         }
                     }
+
+                    CLEAR_ERROR_LOGS_PATH -> {
+                        try {
+                            val app = applicationContext as? MyApplication
+                            app?.clearErrorLogs()
+                            Log.d("DataLayerListenerService", "Error logs cleared from Wear OS")
+                        } catch (e: Exception) {
+                            Log.e("DataLayerListenerService", "Error clearing error logs", e)
+                        }
+                    }
                 }
             }
         } catch (exception: Exception) {
@@ -435,6 +446,7 @@ class DataLayerListenerService : WearableListenerService() {
     companion object {
         private const val WORKOUT_STORE_PATH = "/workoutStore"
         private const val BACKUP_CHUNK_PATH = "/backupChunkPath"
+        const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"
         const val WORKOUT_STORE_JSON = "workoutStoreJson"
         const val APP_BACKUP_START_JSON = "appBackupStartJson"

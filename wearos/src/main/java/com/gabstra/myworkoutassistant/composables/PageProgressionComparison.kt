@@ -394,8 +394,11 @@ fun PageProgressionComparison(
             } else null
         }
 
-        val afterSetData = remember(currentSetIndex, progressionSetStates) {
-            if (currentSetIndex < progressionSetStates.size) {
+        val afterSetData = remember(currentSetIndex, setIndex, state.currentSetData, progressionSetStates) {
+            if (currentSetIndex == setIndex) {
+                // Use the current state's set data directly to reflect real-time changes
+                state.currentSetData
+            } else if (currentSetIndex < progressionSetStates.size) {
                 progressionSetStates[currentSetIndex].currentSetData
             } else null
         }
@@ -406,8 +409,11 @@ fun PageProgressionComparison(
             } else null
         }
 
-        val afterSetState = remember(currentSetIndex, progressionSetStates) {
-            if (currentSetIndex < progressionSetStates.size) {
+        val afterSetState = remember(currentSetIndex, setIndex, state, progressionSetStates) {
+            if (currentSetIndex == setIndex) {
+                // Use the current state directly to reflect real-time changes
+                state
+            } else if (currentSetIndex < progressionSetStates.size) {
                 progressionSetStates[currentSetIndex]
             } else null
         }

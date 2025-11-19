@@ -22,6 +22,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -205,6 +206,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        appViewModel.initApplicationContext(applicationContext)
+
         val nm = this.getSystemService(NotificationManager::class.java)
         if (!nm.canUseFullScreenIntent()) {
             this.startActivity(
@@ -312,40 +315,56 @@ fun WearApp(
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                 appViewModel.updateWorkoutStore(workoutStore)
             }catch(exception: Exception){
+                Log.e("MainActivity", "Failed to load workout repository", exception)
                 Toast.makeText(localContext, "Failed to load workout repository", Toast.LENGTH_SHORT).show()
             }
 
-            appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
+            try {
+                appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
-            val now = System.currentTimeMillis()
-            if(now - startTime < 2000){
-                delay(2000 - (now - startTime))
+                val now = System.currentTimeMillis()
+                if(now - startTime < 2000){
+                    delay(2000 - (now - startTime))
+                }
+
+                initialized = true
+
+                onNavControllerAvailable(navController)
+            } catch (exception: Exception) {
+                Log.e("MainActivity", "Error initializing workout store repository", exception)
+                initialized = true // Still set initialized to prevent blocking the UI
             }
-
-            initialized = true
-
-            onNavControllerAvailable(navController)
         }
 
         LaunchedEffect(appViewModel.executeStartWorkout) {
             if(appViewModel.executeStartWorkout.value == null) return@LaunchedEffect
             
-            // Check if a workout is already in progress
-            val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-            
-            val workoutStore = workoutStoreRepository.getWorkoutStore()
-            val workout = workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }!!
-            appViewModel.setSelectedWorkoutId(workout.id)
-            
-            if (isWorkoutInProgress) {
-                // A workout is already active, navigate to WorkoutScreen instead
-                startDestination = Screen.Workout.route
-                navController.navigate(Screen.Workout.route) {
-                    popUpTo(0) { inclusive = true }
+            try {
+                // Check if a workout is already in progress
+                val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+                
+                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                val workout = workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }
+                
+                if (workout == null) {
+                    Log.e("MainActivity", "Workout not found for id: ${appViewModel.executeStartWorkout.value}")
+                    return@LaunchedEffect
                 }
-            } else {
-                startDestination = Screen.WorkoutDetail.route
+                
+                appViewModel.setSelectedWorkoutId(workout.id)
+                
+                if (isWorkoutInProgress) {
+                    // A workout is already active, navigate to WorkoutScreen instead
+                    startDestination = Screen.Workout.route
+                    navController.navigate(Screen.Workout.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                } else {
+                    startDestination = Screen.WorkoutDetail.route
+                }
+            } catch (exception: Exception) {
+                Log.e("MainActivity", "Error executing start workout", exception)
             }
         }
 
@@ -354,15 +373,20 @@ fun WearApp(
                 sensorDataRepository = SensorDataRepository(localContext)
             )
         )
+        hrViewModel.initApplicationContext(localContext)
 
         val polarViewModel: PolarViewModel = viewModel()
 
         val nodes by appHelper.connectedAndInstalledNodes.collectAsState(initial = emptyList())
 
         LaunchedEffect(nodes){
-            appViewModel.phoneNode = nodes.firstOrNull()
-            if(appViewModel.phoneNode != null){
-                //appViewModel.sendAll(localContext)
+            try {
+                appViewModel.phoneNode = nodes.firstOrNull()
+                if(appViewModel.phoneNode != null){
+                    //appViewModel.sendAll(localContext)
+                }
+            } catch (exception: Exception) {
+                Log.e("MainActivity", "Error handling nodes update", exception)
             }
         }
 
@@ -403,9 +427,13 @@ fun WearApp(
                     }
                     composable(Screen.Loading.route) {
                         val progress by appViewModel.backupProgress
+                        val animatedProgress by animateFloatAsState(
+                            targetValue = progress,
+                            animationSpec = tween(durationMillis = 400)
+                        )
 
                         CircularProgressIndicator(
-                            progress = progress,
+                            progress = animatedProgress,
                             modifier = Modifier
                                 .fillMaxSize(),
                             strokeWidth = 4.dp,

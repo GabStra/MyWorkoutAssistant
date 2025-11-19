@@ -4,10 +4,14 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import java.util.UUID
 
 @Dao
 interface ExerciseSessionProgressionDao {
+    @Query("SELECT * FROM exercise_session_progression WHERE id = :id")
+    suspend fun getExerciseSessionProgressionById(id: UUID): ExerciseSessionProgression?
+
     @Query("SELECT * FROM exercise_session_progression WHERE workoutHistoryId = :workoutHistoryId")
     suspend fun getByWorkoutHistoryId(workoutHistoryId: UUID): List<ExerciseSessionProgression>
 
@@ -34,5 +38,15 @@ interface ExerciseSessionProgressionDao {
 
     @Query("DELETE FROM exercise_session_progression")
     suspend fun deleteAll()
+
+    @Transaction
+    suspend fun insertAllWithVersionCheck(vararg progressions: ExerciseSessionProgression) {
+        progressions.forEach { progression ->
+            val existingProgression = getExerciseSessionProgressionById(progression.id)
+            if (existingProgression == null || progression.version >= existingProgression.version) {
+                insert(progression)
+            }
+        }
+    }
 }
 

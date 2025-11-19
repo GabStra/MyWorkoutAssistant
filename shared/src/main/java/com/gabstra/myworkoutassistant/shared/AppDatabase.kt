@@ -18,8 +18,8 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
 @Database(
-    entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class, WorkoutSchedule::class, ExerciseSessionProgression::class],
-    version = 52,
+    entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class, WorkoutSchedule::class, ExerciseSessionProgression::class, ErrorLog::class],
+    version = 53,
     exportSchema = false
 )
 @TypeConverters(
@@ -43,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun exerciseInfoDao(): ExerciseInfoDao
     abstract fun workoutScheduleDao(): WorkoutScheduleDao
     abstract fun exerciseSessionProgressionDao(): ExerciseSessionProgressionDao
+    abstract fun errorLogDao(): ErrorLogDao
 
     companion object {
         @Volatile

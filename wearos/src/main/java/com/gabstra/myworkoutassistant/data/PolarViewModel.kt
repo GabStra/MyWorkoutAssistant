@@ -19,9 +19,13 @@ import io.reactivex.rxjava3.core.Scheduler
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.schedulers.Schedulers
+import com.gabstra.myworkoutassistant.MyApplication
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -101,6 +105,16 @@ class PolarViewModel : ViewModel() {
 
     private lateinit var applicationContext: Context
 
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e("PolarViewModel", "Uncaught exception in coroutine", throwable)
+        // Log the exception to file via MyApplication if available
+        try {
+            (applicationContext as? MyApplication)?.logErrorToFile("PolarViewModel Coroutine", throwable)
+        } catch (e: Exception) {
+            Log.e("PolarViewModel", "Failed to log exception to file", e)
+        }
+    }
+
     private val _deviceConnectionState = MutableStateFlow<PolarDeviceInfo?>(null)
     val deviceConnectionState = _deviceConnectionState.asStateFlow()
 
@@ -147,20 +161,32 @@ class PolarViewModel : ViewModel() {
 
         api.setApiCallback(object : PolarBleApiCallback() {
             override fun blePowerStateChanged(powered: Boolean) {
-                viewModelScope.launch {
-                    _bluetoothEnabledState.value = powered
+                viewModelScope.launch(coroutineExceptionHandler) {
+                    try {
+                        _bluetoothEnabledState.value = powered
+                    } catch (e: Exception) {
+                        Log.e("PolarViewModel", "Error updating bluetooth state", e)
+                    }
                 }
             }
 
             override fun deviceConnected(polarDeviceInfo: PolarDeviceInfo) {
                 // Only start streaming if not already active (prevents race condition with retry mechanism)
                 if (!isHrStreamingActive.get()) {
-                    startHrStreaming(polarDeviceInfo.deviceId)
+                    try {
+                        startHrStreaming(polarDeviceInfo.deviceId)
+                    } catch (e: Exception) {
+                        Log.e("PolarViewModel", "Error starting HR streaming", e)
+                    }
                 } else {
                     Log.d("MyApp", "HR stream already active, skipping startHrStreaming from deviceConnected callback")
                 }
-                viewModelScope.launch {
-                    _deviceConnectionState.value = polarDeviceInfo
+                viewModelScope.launch(coroutineExceptionHandler) {
+                    try {
+                        _deviceConnectionState.value = polarDeviceInfo
+                    } catch (e: Exception) {
+                        Log.e("PolarViewModel", "Error updating device connection state", e)
+                    }
                 }
             }
 
@@ -179,12 +205,24 @@ class PolarViewModel : ViewModel() {
                 isHrStreamingActive.set(false)
                 
                 // Reset HR state to indicate no valid data
-                viewModelScope.launch {
-                    _hrBpm.value = null
-                    _deviceConnectionState.value = null
+                viewModelScope.launch(coroutineExceptionHandler) {
+                    try {
+                        _hrBpm.value = null
+                        _deviceConnectionState.value = null
+                    } catch (e: Exception) {
+                        Log.e("PolarViewModel", "Error updating state on disconnect", e)
+                    }
                 }
                 
-                Toast.makeText(applicationContext, "Polar device disconnected", Toast.LENGTH_SHORT).show()
+                try {
+                    viewModelScope.launch {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(applicationContext, "Polar device disconnected", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("PolarViewModel", "Error showing disconnect toast", e)
+                }
             }
 
             override fun disInformationReceived(
@@ -202,32 +240,44 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun batteryLevelReceived(identifier: String, level: Int) {
-                Toast.makeText(applicationContext, "Polar device connected\nBattery level: $level%", Toast.LENGTH_SHORT).show()
-                viewModelScope.launch {
-                    _batteryLevelState.value = level
+                try {
+                    viewModelScope.launch {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(applicationContext, "Polar device connected\nBattery level: $level%", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("PolarViewModel", "Error showing battery level toast", e)
+                }
+                viewModelScope.launch(coroutineExceptionHandler) {
+                    try {
+                        _batteryLevelState.value = level
+                    } catch (e: Exception) {
+                        Log.e("PolarViewModel", "Error updating battery level state", e)
+                    }
                 }
             }
         })
     }
 
     fun connectToDevice() {
-        viewModelScope.launch {
+        viewModelScope.launch(coroutineExceptionHandler) {
             try {
                 api.connectToDevice(deviceId)
             } catch (e: Exception) {
-                Log.e("MyApp", "Error connecting to device ${deviceId}: $e")
+                Log.e("PolarViewModel", "Error connecting to device ${deviceId}: $e", e)
             }
         }
     }
 
     fun disconnectFromDevice() {
-        viewModelScope.launch {
+        viewModelScope.launch(coroutineExceptionHandler) {
             try {
                 disposables.clear()
                 api.disconnectFromDevice(deviceId)
                 api.shutDown()
             } catch (e: Exception) {
-                Log.e("MyApp", "Error disconnecting from device ${deviceId}: $e")
+                Log.e("PolarViewModel", "Error disconnecting from device ${deviceId}: $e", e)
             }
         }
     }
@@ -265,8 +315,12 @@ class PolarViewModel : ViewModel() {
             backoffSec = 2,
             onReconnecting = {
                 // Reset HR BPM when stale stream triggers reconnection
-                viewModelScope.launch {
-                    _hrBpm.value = null
+                viewModelScope.launch(coroutineExceptionHandler) {
+                    try {
+                        _hrBpm.value = null
+                    } catch (e: Exception) {
+                        Log.e("PolarViewModel", "Error resetting HR BPM on reconnection", e)
+                    }
                 }
             }
         ).stream()

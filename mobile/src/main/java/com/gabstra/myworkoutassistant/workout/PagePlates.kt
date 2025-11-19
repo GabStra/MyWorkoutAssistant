@@ -59,7 +59,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
             if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
                 Text(
                     text = "No changes required",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxSize(),
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground

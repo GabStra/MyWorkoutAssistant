@@ -305,9 +305,19 @@ open class WorkoutViewModel(
     protected val weightsByEquipment: MutableMap<WeightLoadedEquipment, kotlin.collections.Set<Double>> =
         mutableMapOf()
 
+    // Cache for available totals (getWeightsCombinationsNoExtra results) per equipment ID
+    private val availableTotalsCache: MutableMap<UUID, kotlin.collections.Set<Double>> =
+        mutableMapOf()
+
     fun getWeightByEquipment(equipment: WeightLoadedEquipment?): kotlin.collections.Set<Double> {
         if (equipment == null) return emptySet()
         return weightsByEquipment[equipment] ?: emptySet()
+    }
+
+    private fun getCachedAvailableTotals(equipment: WeightLoadedEquipment): kotlin.collections.Set<Double> {
+        return availableTotalsCache.getOrPut(equipment.id) {
+            equipment.getWeightsCombinationsNoExtra()
+        }
     }
 
     val exerciseProgressionByExerciseId: MutableMap<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>> =
@@ -536,14 +546,55 @@ open class WorkoutViewModel(
     }
 
     fun getAllExerciseCompletedSetsBefore(target: WorkoutState.Set): List<WorkoutState.Set> {
-        val cutoff = allWorkoutStates.indexOfFirst {
-            it is WorkoutState.Set && it.set.id == target.set.id
+        // Find all indices where sets with matching set.id appear
+        val matchingIndices = allWorkoutStates.mapIndexedNotNull { index, state ->
+            if (state is WorkoutState.Set && state.set.id == target.set.id) {
+                index
+            } else null
         }
+        
+        if (matchingIndices.isEmpty()) return emptyList()
+        
+        // Determine which occurrence corresponds to the current position in workout flow
+        val currentWorkoutState = _workoutState.value
+        
+        // Count how many matching sets have been completed (are in history)
+        // This tells us which occurrence we're currently on (0-indexed)
+        val completedMatchingSetsCount = workoutStateHistory.count { 
+            it is WorkoutState.Set && it.set.id == target.set.id 
+        }
+        
+        val cutoff: Int = if (target === currentWorkoutState) {
+            // If target is the current state, use the occurrence index based on completed count
+            // For unilateral sets: if 0 completed, we're on first occurrence; if 1 completed, we're on second
+            val occurrenceIndex = completedMatchingSetsCount.coerceAtMost(matchingIndices.size - 1)
+            matchingIndices[occurrenceIndex]
+        } else {
+            // If target is not the current state, determine its position
+            val targetIndexInHistory = workoutStateHistory.indexOfFirst { it === target }
+            if (targetIndexInHistory >= 0) {
+                // Target is in history, so it's been completed
+                // Count how many matching sets appear before target in history
+                val matchingSetsBeforeTargetInHistory = workoutStateHistory
+                    .subList(0, targetIndexInHistory)
+                    .count { it is WorkoutState.Set && it.set.id == target.set.id }
+                // Use the occurrence index that corresponds to this position
+                val occurrenceIndex = matchingSetsBeforeTargetInHistory.coerceAtMost(matchingIndices.size - 1)
+                matchingIndices[occurrenceIndex]
+            } else {
+                // Target is not in history and not current, so it's upcoming
+                // Use the first occurrence that hasn't been reached yet
+                matchingIndices.first()
+            }
+        }
+        
         if (cutoff <= 0) return emptyList()
 
+        // Get all sets before the cutoff and deduplicate by set.id
         return allWorkoutStates
             .subList(0, cutoff)
             .filterIsInstance<WorkoutState.Set>()
+            .distinctBy { it.set.id }
         //.filter { it.set !is RestSet } // uncomment to exclude rest sets
     }
 
@@ -1987,7 +2038,8 @@ open class WorkoutViewModel(
                 ExerciseType.WEIGHT -> {
                     // IMPORTANT: this returns TOTALS including bar for barbells,
                     // or full stack totals for machines, etc.
-                    equipment.getWeightsCombinationsNoExtra()
+                    // Use cached result to avoid recomputation
+                    getCachedAvailableTotals(equipment)
                 }
                 ExerciseType.BODY_WEIGHT -> {
                     val relativeBodyWeight =
@@ -1995,7 +2047,8 @@ open class WorkoutViewModel(
 
                     // equipment.getWeightsCombinations() gives extra load totals.
                     // Convert to TOTAL = BW + extra, plus pure BW.
-                    val extraTotals = equipment.getWeightsCombinationsNoExtra()
+                    // Use cached result to avoid recomputation
+                    val extraTotals = getCachedAvailableTotals(equipment)
                     extraTotals.map { relativeBodyWeight + it }.toSet() + setOf(relativeBodyWeight)
                 }
                 else -> throw IllegalArgumentException("Unknown exercise type")
@@ -2027,13 +2080,24 @@ open class WorkoutViewModel(
             }
 
             // 3) Ask WarmupPlanner for TOTALS; it expects totals, not plate-only weights
-            val warmups: List<Pair<Double, Int>> =
+            // For barbell exercises, use the plate-optimized version
+            val warmups: List<Pair<Double, Int>> = if (equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT) {
+                WarmupPlanner.buildWarmupSetsForBarbell(
+                    availableTotals = availableTotals,
+                    workWeight = workWeightTotal,
+                    workReps = workReps,
+                    barbell = equipment,
+                    initialSetup = emptyList(),
+                    maxWarmups = 4
+                )
+            } else {
                 WarmupPlanner.buildWarmupSets(
                     availableTotals = availableTotals,
                     workWeight = workWeightTotal,
                     workReps = workReps,
                     maxWarmups = 4
                 )
+            }
 
             // 4) Convert those TOTALS back into your Set objects
             warmups.forEach { (total, reps) ->

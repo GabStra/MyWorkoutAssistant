@@ -62,6 +62,7 @@ fun WorkoutCompleteScreen(
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val countDownTimer = remember { mutableIntStateOf(30) }
+    var progressionDataCalculated by remember { mutableStateOf(false) }
 
     val headerStyle = MaterialTheme.typography.bodySmall
 
@@ -106,7 +107,7 @@ fun WorkoutCompleteScreen(
         viewModel.pushAndStoreWorkoutData(true,context){
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
 
-            startCloseJob()
+            // Timer will start after progression data is calculated
         }
     }
 
@@ -134,7 +135,16 @@ fun WorkoutCompleteScreen(
         }
         ProgressionSection(
             modifier = Modifier.weight(1f),
-            viewModel = viewModel
+            viewModel = viewModel,
+            onProgressionDataCalculated = { isEmpty ->
+                if (!progressionDataCalculated) {
+                    progressionDataCalculated = true
+                    // Set timer duration: 5 seconds if empty/null, 30 seconds if has data
+                    val timerDuration = if (isEmpty) 5 else 30
+                    countDownTimer.intValue = timerDuration
+                    startCloseJob()
+                }
+            }
         )
         Text(
             modifier = Modifier.padding(top = 2.5.dp),

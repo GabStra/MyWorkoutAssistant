@@ -20,8 +20,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
-import java.time.Duration
 import java.time.LocalDateTime
+import java.time.Duration
 import java.time.temporal.ChronoUnit
 
 @SuppressLint("DefaultLocale")
@@ -40,13 +40,19 @@ fun TimeViewer(
 
     var showDots by remember { mutableStateOf(true) }
 
-    // Coroutine that updates the time every minute
+    // Coroutine that blinks at 2 Hz synced to half-second boundaries
     LaunchedEffect(Unit) {
         while (true) {
             val now = LocalDateTime.now()
+            val truncated = now.truncatedTo(ChronoUnit.SECONDS)
+            val nanoOfSecond = now.nano
+            val nextHalfSecond = if (nanoOfSecond < 500_000_000) {
+                truncated.plusNanos(500_000_000)
+            } else {
+                truncated.plusSeconds(1)
+            }
             showDots = !showDots
-            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-            delay(Duration.between(now, nextSecond).toMillis())
+            delay(Duration.between(now, nextHalfSecond).toMillis())
         }
     }
 

@@ -3,7 +3,9 @@ package com.gabstra.myworkoutassistant
 import android.content.Intent
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ErrorLogDao
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
@@ -50,6 +52,8 @@ class DataLayerListenerService : WearableListenerService() {
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao
     private lateinit var workoutRecordDao: WorkoutRecordDao
+    private lateinit var exerciseSessionProgressionDao: ExerciseSessionProgressionDao
+    private lateinit var errorLogDao: ErrorLogDao
 
     override fun onCreate() {
         super.onCreate()
@@ -58,6 +62,8 @@ class DataLayerListenerService : WearableListenerService() {
         workoutHistoryDao = db.workoutHistoryDao()
         exerciseInfoDao = db.exerciseInfoDao()
         workoutRecordDao = db.workoutRecordDao()
+        exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+        errorLogDao = db.errorLogDao()
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -103,6 +109,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                                 if (workoutHistoryStore.WorkoutHistory.isDone) {
                                     exerciseInfoDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseInfos.toTypedArray())
+                                    exerciseSessionProgressionDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseSessionProgressions.toTypedArray())
                                     workoutRecordDao.deleteByWorkoutId(workout.id)
 
                                     val setHistoriesByExerciseId = workoutHistoryStore.SetHistories
@@ -147,6 +154,11 @@ class DataLayerListenerService : WearableListenerService() {
                                     workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
                                 }
 
+                                // Save error logs if present
+                                if (workoutHistoryStore.ErrorLogs.isNotEmpty()) {
+                                    errorLogDao.insertAll(*workoutHistoryStore.ErrorLogs.toTypedArray())
+                                }
+
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
                                 }
@@ -178,6 +190,17 @@ class DataLayerListenerService : WearableListenerService() {
                             startActivity(intent)
                         }
                     }
+
+                    CLEAR_ERROR_LOGS_PATH -> {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                errorLogDao.deleteAll()
+                                Log.d("DataLayerListenerService", "Error logs cleared from mobile")
+                            } catch (e: Exception) {
+                                Log.e("DataLayerListenerService", "Error clearing error logs", e)
+                            }
+                        }
+                    }
                 }
             }
         } catch (exception: Exception) {
@@ -195,6 +218,7 @@ class DataLayerListenerService : WearableListenerService() {
     companion object {
         private const val WORKOUT_HISTORY_STORE_PATH = "/workoutHistoryStore"
         private const val OPEN_PAGE_PATH = "/openPagePath" // Define your new URI path here
+        const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.WORKOUT_STORE"
         const val UPDATE_WORKOUTS = "update_workouts"
         const val PAGE = "page"

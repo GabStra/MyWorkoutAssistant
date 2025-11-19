@@ -14,22 +14,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -38,7 +33,7 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.data.verticalLazyColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
@@ -52,7 +47,6 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import kotlinx.coroutines.delay
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -238,31 +232,20 @@ fun ExerciseSetsViewer(
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
-    val scrollState = rememberScrollState()
+    val lazyListState = rememberLazyListState()
 
-    val itemHeights = remember(exercise.id)  { mutableStateMapOf<Int, Int>() }
-    var allItemsMeasured by remember(exercise.id) { mutableStateOf(false) }
-    var measuredItems by remember(exercise.id) { mutableIntStateOf(0) }
+    // Reset scroll position immediately when exercise changes
+    LaunchedEffect(exercise.id) {
+        lazyListState.animateScrollToItem(0)
+    }
 
-    var readyToBeShown by remember(exercise.id) { mutableStateOf(false) }
-
-    LaunchedEffect(allItemsMeasured, setIndex) {
-        if (!allItemsMeasured) {
-            return@LaunchedEffect
+    // Scroll to current set when it changes
+    LaunchedEffect(setIndex, exercise.id) {
+        if (setIndex != -1 && setIndex < exerciseSetStates.size) {
+            lazyListState.animateScrollToItem(setIndex)
+        } else {
+            lazyListState.animateScrollToItem(0)
         }
-
-        if(setIndex != -1) {
-            val position = (0 until setIndex).sumOf { index ->
-                (itemHeights[index] ?: 0) // + spacingHeight
-            }
-            delay(500)
-            scrollState.animateScrollTo(position)
-        }else{
-            scrollState.scrollTo(0)
-        }
-
-        delay(100)
-        readyToBeShown = true
     }
 
     @Composable
@@ -280,18 +263,7 @@ fun ExerciseSetsViewer(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(27.5.dp)
-                .padding(horizontal = 10.dp)
-                .onGloballyPositioned { coordinates ->
-                val height = coordinates.size.height
-                if (itemHeights[rowIndex] != height) {
-                    itemHeights[rowIndex] = height
-                    measuredItems++
-
-                    if (measuredItems == exerciseSetStates.size) {
-                        allItemsMeasured = true
-                    }
-                }
-            },
+                .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             val shape = RoundedCornerShape(25)
@@ -354,19 +326,22 @@ fun ExerciseSetsViewer(
                     .fillMaxWidth(), // Still need to fill width
                 prototypeItem = { prototypeItem() } // Pass the item for measurement
             ) {
-                Column(
+                LazyColumn(
+                    state = lazyListState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalColumnScrollbar(
-                            scrollState = scrollState,
+                        .verticalLazyColumnScrollbar(
+                            lazyListState = lazyListState,
                             scrollBarColor = MaterialTheme.colorScheme.onBackground,
                             enableTopFade = false,
                             enableBottomFade = false
                         )
-                        .verticalScroll(scrollState)
                 ) {
-                    exerciseSetStates.forEachIndexed { index, nextSetState ->
-                        MeasuredSetTableRow(nextSetState, index)
+                    itemsIndexed(
+                        items = exerciseSetStates,
+                        key = { _, setState -> setState.set.id }
+                    ) { index, setState ->
+                        MeasuredSetTableRow(setState, index)
                     }
                 }
             }
@@ -394,19 +369,23 @@ fun ExerciseSetsViewer(
                     .fillMaxWidth(), // Still need to fill width
                 prototypeItem = { prototypeItem() } // Pass the item for measurement
             ) {
-                Column(
+                LazyColumn(
+                    state = lazyListState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalColumnScrollbar(
-                            scrollState = scrollState,
+                        .verticalLazyColumnScrollbar(
+                            lazyListState = lazyListState,
                             scrollBarColor = MaterialTheme.colorScheme.onBackground,
                             enableTopFade = false,
                             enableBottomFade = false
-                        )
-                        .verticalScroll(scrollState),
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
                 ) {
-                    exerciseSetStates.forEachIndexed { index, nextSetState ->
-                        MeasuredSetTableRow(nextSetState, index)
+                    itemsIndexed(
+                        items = exerciseSetStates,
+                        key = { _, setState -> setState.set.id }
+                    ) { index, setState ->
+                        MeasuredSetTableRow(setState, index)
                     }
                 }
             }

@@ -18,6 +18,7 @@ import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
+import java.time.Duration
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -32,15 +33,18 @@ fun CurrentTime() {
     )
 
     LaunchedEffect(Unit) {
-        val now = LocalDateTime.now()
-        val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-        delay(java.time.Duration.between(now, nextSecond).toMillis())
-        
-        // Now use fixed delay
         while (true) {
+            val now = LocalDateTime.now()
+            val truncated = now.truncatedTo(ChronoUnit.SECONDS)
+            val nanoOfSecond = now.nano
+            val nextHalfSecond = if (nanoOfSecond < 500_000_000) {
+                truncated.plusNanos(500_000_000)
+            } else {
+                truncated.plusSeconds(1)
+            }
             currentTime = LocalDateTime.now()
             showDots = !showDots
-            delay(1000)
+            delay(Duration.between(now, nextHalfSecond).toMillis())
         }
     }
 

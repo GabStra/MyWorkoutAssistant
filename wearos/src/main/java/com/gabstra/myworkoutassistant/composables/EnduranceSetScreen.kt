@@ -7,8 +7,10 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -366,8 +368,9 @@ fun EnduranceSetScreen (
                 )
             } else {
                 Column(
+                    modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
@@ -378,7 +381,8 @@ fun EnduranceSetScreen (
                             extraInfo(state)
                         }
                     }
-                    SetScreen(customModifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    SetScreen(customModifier = Modifier)
                 }
             }
         }

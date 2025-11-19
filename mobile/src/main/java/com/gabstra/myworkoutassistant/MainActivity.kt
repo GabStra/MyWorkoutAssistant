@@ -14,7 +14,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.health.connect.client.HealthConnectClient
+import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
 import com.gabstra.myworkoutassistant.screens.ExerciseHistoryScreen
@@ -142,13 +143,11 @@ class MainActivity : ComponentActivity() {
 
     private val db by lazy { AppDatabase.getDatabase(this) }
 
-    private val appViewModel: AppViewModel by viewModels()
+    private lateinit var appViewModel: AppViewModel
 
-    private val workoutViewModel: WorkoutViewModel by viewModels()
+    private lateinit var workoutViewModel: WorkoutViewModel
 
-    private val hapticsViewModel: HapticsViewModel by viewModels {
-        HapticsViewModelFactory(applicationContext)
-    }
+    private lateinit var hapticsViewModel: HapticsViewModel
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
 
@@ -170,6 +169,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        appViewModel = ViewModelProvider(this)[AppViewModel::class.java]
+        workoutViewModel = ViewModelProvider(this)[WorkoutViewModel::class.java]
+        hapticsViewModel = ViewModelProvider(this, HapticsViewModelFactory(applicationContext))[HapticsViewModel::class.java]
 
         myReceiver = MyReceiver(appViewModel, workoutViewModel,workoutStoreRepository,this)
         val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
@@ -632,6 +635,9 @@ fun MyWorkoutAssistantNavHost(
                             Toast.makeText(context, "All exercise info cleared", Toast.LENGTH_SHORT).show()
                         }
                     },
+                    onViewErrorLogs = {
+                        appViewModel.setScreenData(ScreenData.ErrorLogs())
+                    },
                     selectedTabIndex = appViewModel.selectedHomeTab
                 )
             }
@@ -649,6 +655,16 @@ fun MyWorkoutAssistantNavHost(
                         appViewModel.goBack()
                     },
                     workoutStore = appViewModel.workoutStore
+                )
+            }
+
+            is ScreenData.ErrorLogs -> {
+                ErrorLogsScreen(
+                    errorLogDao = db.errorLogDao(),
+                    dataClient = dataClient,
+                    onBack = {
+                        appViewModel.goBack()
+                    }
                 )
             }
 

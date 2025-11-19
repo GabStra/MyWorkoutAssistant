@@ -11,6 +11,7 @@ import android.os.Vibrator
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -61,6 +62,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -240,6 +242,188 @@ fun Modifier.verticalColumnScrollbar(
     }
 }
 
+@Composable
+fun Modifier.verticalLazyColumnScrollbar(
+    lazyListState: LazyListState,
+    // Scrollbar appearance
+    width: Dp = 4.dp,
+    showScrollBarTrack: Boolean = true,
+    scrollBarTrackColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    scrollBarColor: Color = MaterialTheme.colorScheme.onBackground,
+    scrollBarCornerRadius: Dp = 4.dp,
+    endPadding: Float = 0f,
+    trackHeight: Dp? = null,
+    thumbGap: Dp = 2.dp,
+    // Content fade effect
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
+    contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
+    contentFadeColor: Color = MaterialTheme.colorScheme.background
+): Modifier {
+    val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)
+    val rememberedTrackColor by rememberUpdatedState(scrollBarTrackColor)
+    val rememberedScrollBarColor by rememberUpdatedState(scrollBarColor)
+    val rememberedWidth by rememberUpdatedState(width)
+    val rememberedCornerRadius by rememberUpdatedState(scrollBarCornerRadius)
+    val rememberedEndPadding by rememberUpdatedState(endPadding)
+    val rememberedTrackHeight by rememberUpdatedState(trackHeight)
+    val rememberedEnableTopFade by rememberUpdatedState(enableTopFade)
+    val rememberedEnableBottomFade by rememberUpdatedState(enableBottomFade)
+    val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
+    val rememberedContentFadeColor by rememberUpdatedState(contentFadeColor)
+    val rememberedThumbGap by rememberUpdatedState(thumbGap)
+
+    val layoutInfo = lazyListState.layoutInfo
+    val visibleItemsInfo = layoutInfo.visibleItemsInfo
+
+    return this.drawWithContent {
+        drawContent()
+
+        val componentWidth = size.width
+        val componentHeight = size.height
+        val viewportHeight = componentHeight.toFloat()
+
+        // Calculate scroll position and total content height
+        val firstVisibleItem = visibleItemsInfo.firstOrNull()
+        
+        if (firstVisibleItem == null || layoutInfo.totalItemsCount == 0) {
+            return@drawWithContent
+        }
+
+        // Calculate current scroll position (pixels scrolled)
+        val currentScrollValue = if (firstVisibleItem.index > 0) {
+            // Estimate: sum of heights of items before first visible item
+            // Use average item height from visible items as estimate
+            val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
+                visibleItemsInfo.sumOf { it.size }.toFloat() / visibleItemsInfo.size
+            } else {
+                firstVisibleItem.size.toFloat()
+            }
+            (firstVisibleItem.index * avgItemHeight) - firstVisibleItem.offset
+        } else {
+            (-firstVisibleItem.offset).toFloat()
+        }
+
+        // Calculate total content height
+        // Estimate based on visible items and total item count
+        val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
+            visibleItemsInfo.sumOf { it.size }.toFloat() / visibleItemsInfo.size
+        } else {
+            firstVisibleItem.size.toFloat()
+        }
+        val estimatedTotalHeight = layoutInfo.totalItemsCount * avgItemHeight
+        val maxScrollValue = (estimatedTotalHeight - viewportHeight).coerceAtLeast(0f)
+
+        // --- Fades ---
+        val fadeHeightPx = rememberedContentFadeHeight.toPx()
+        if (fadeHeightPx > 0f) {
+            if (rememberedEnableTopFade) {
+                val topAlpha = (currentScrollValue / fadeHeightPx).coerceIn(0f, 1f)
+                if (topAlpha > 0f) {
+                    val topFadeBrush = Brush.verticalGradient(
+                        colors = listOf(rememberedContentFadeColor, Color.Transparent),
+                        startY = 0f,
+                        endY = fadeHeightPx.coerceAtMost(componentHeight)
+                    )
+                    drawRect(
+                        brush = topFadeBrush,
+                        alpha = topAlpha,
+                        topLeft = Offset.Zero,
+                        size = Size(componentWidth, fadeHeightPx.coerceAtMost(componentHeight))
+                    )
+                }
+            }
+            if (rememberedEnableBottomFade && maxScrollValue > 0) {
+                val distanceToBottom = maxScrollValue - currentScrollValue
+                val bottomAlpha = (distanceToBottom / fadeHeightPx).coerceIn(0f, 1f)
+                if (bottomAlpha > 0f) {
+                    val bottomFadeBrush = Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, rememberedContentFadeColor),
+                        startY = (componentHeight - fadeHeightPx).coerceAtLeast(0f),
+                        endY = componentHeight
+                    )
+                    drawRect(
+                        brush = bottomFadeBrush,
+                        alpha = bottomAlpha,
+                        topLeft = Offset(0f, (componentHeight - fadeHeightPx).coerceAtLeast(0f)),
+                        size = Size(componentWidth, fadeHeightPx.coerceAtMost(componentHeight))
+                    )
+                }
+            }
+        }
+
+        // --- Scrollbar ---
+        val totalContentHeight = (maxScrollValue + viewportHeight).coerceAtLeast(viewportHeight)
+        val visibleRatio = (viewportHeight / totalContentHeight).coerceIn(0f, 1f)
+        if (visibleRatio >= 1f || maxScrollValue <= 0) return@drawWithContent
+
+        val defaultTrackHeight = viewportHeight
+        val actualTrackHeight =
+            rememberedTrackHeight?.toPx()?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
+
+        val trackTop = if (actualTrackHeight < viewportHeight) {
+            (viewportHeight - actualTrackHeight) / 2f
+        } else 0f
+        val trackBottom = trackTop + actualTrackHeight
+
+        val barWidthPx = rememberedWidth.toPx()
+        val paddingPx = rememberedEndPadding
+        val radiusPx = rememberedCornerRadius.toPx()
+        val gapPx = rememberedThumbGap.toPx().coerceAtLeast(0f)
+        val corner = CornerRadius(radiusPx, radiusPx)
+
+        val minThumbHeight = barWidthPx * 2
+        val thumbHeight = (visibleRatio * actualTrackHeight)
+            .coerceAtLeast(minThumbHeight)
+            .coerceAtMost(actualTrackHeight)
+
+        val scrollProgress =
+            if (maxScrollValue > 0f) (currentScrollValue / maxScrollValue).coerceIn(0f, 1f) else 0f
+        val thumbTop = trackTop + scrollProgress * (actualTrackHeight - thumbHeight)
+        val thumbBottom = thumbTop + thumbHeight
+
+        val x = componentWidth - paddingPx - barWidthPx
+
+        // 1) TRACK ABOVE
+        if (rememberedShowTrack) {
+            val topSegTop = trackTop
+            val topSegBottom = (thumbTop - gapPx).coerceAtLeast(topSegTop)
+            val topHeight = (topSegBottom - topSegTop).coerceAtLeast(0f)
+            if (topHeight > 0f) {
+                val r = minOf(radiusPx, topHeight / 2f)
+                drawRoundRect(
+                    color = rememberedTrackColor,
+                    topLeft = Offset(x, topSegTop),
+                    size = Size(barWidthPx, topHeight),
+                    cornerRadius = CornerRadius(r, r)
+                )
+            }
+
+            // 2) TRACK BELOW
+            val botSegTop = (thumbBottom + gapPx).coerceAtMost(trackBottom)
+            val botSegBottom = trackBottom
+            val botHeight = (botSegBottom - botSegTop).coerceAtLeast(0f)
+            if (botHeight > 0f) {
+                val r = minOf(radiusPx, botHeight / 2f)
+                drawRoundRect(
+                    color = rememberedTrackColor,
+                    topLeft = Offset(x, botSegTop),
+                    size = Size(barWidthPx, botHeight),
+                    cornerRadius = CornerRadius(r, r)
+                )
+            }
+        }
+
+        // 3) THUMB
+        drawRoundRect(
+            color = rememberedScrollBarColor,
+            topLeft = Offset(x, thumbTop),
+            size = Size(barWidthPx, thumbHeight),
+            cornerRadius = corner
+        )
+    }
+}
+
 @OptIn(DelicateCoroutinesApi::class)
 fun VibrateAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
@@ -302,7 +486,9 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
     try {
         val result = appHelper.startRemoteOwnApp(phoneNode.id)
         if(result != AppHelperResultCode.APP_HELPER_RESULT_SUCCESS){
-            Toast.makeText(context, "Failed to open app in phone", Toast.LENGTH_SHORT).show()
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Failed to open app in phone", Toast.LENGTH_SHORT).show()
+            }
             return false
         }
 

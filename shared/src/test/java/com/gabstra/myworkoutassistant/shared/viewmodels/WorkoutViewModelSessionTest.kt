@@ -1862,5 +1862,108 @@ class WorkoutViewModelSessionTest {
             )
         }
     }
+
+    // Test 21: Unilateral Exercise - Progress Bar Calculation
+    @Test
+    fun testUnilateralExercise_progressBarCalculation() = runTest(testDispatcher) {
+        val unilateralSetId = UUID.randomUUID()
+        
+        // Create a unilateral exercise (with intraSetRestInSeconds set)
+        val exercise = Exercise(
+            id = testExerciseId,
+            enabled = true,
+            name = "Unilateral Dumbbell Curl",
+            doNotStoreHistory = false,
+            notes = "",
+            sets = listOf(
+                createWeightSetWithValidatedWeight(unilateralSetId, 10, 20.0)
+            ),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 5,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = testEquipmentId,
+            bodyWeightPercentage = null,
+            generateWarmUpSets = false,
+            enableProgression = false,
+            keepScreenOn = false,
+            showCountDownTimer = false,
+            intraSetRestInSeconds = 60, // This makes it unilateral
+            loadJumpDefaultPct = null,
+            loadJumpMaxPct = null,
+            loadJumpOvercapUntil = null
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+        
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+        
+        // Start workout to generate states
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        Thread.sleep(10)
+        delay(10)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        
+        waitForWorkoutToLoad()
+        
+        // Get all workout states - for unilateral exercise, there should be 2 sets with same set.id
+        val allStates = viewModel.allWorkoutStates
+        val exerciseStates = allStates.filterIsInstance<WorkoutState.Set>()
+            .filter { it.exerciseId == testExerciseId }
+            .filter { !it.isWarmupSet }
+        
+        // Verify unilateral sets were created (should have 2 sets with same set.id)
+        assertTrue("Should have 2 unilateral sets", exerciseStates.size >= 2)
+        val unilateralSets = exerciseStates.filter { it.set.id == unilateralSetId }
+        assertEquals("Should have 2 sets with same set.id for unilateral", 2, unilateralSets.size)
+        assertTrue("Both unilateral sets should be same reference", unilateralSets[0] === unilateralSets[1])
+        
+        // Test getAllExerciseWorkoutStates - should return both but distinctBy should give 1
+        val allExerciseStates = viewModel.getAllExerciseWorkoutStates(testExerciseId)
+        val uniqueStates = allExerciseStates.distinctBy { it.set.id }
+        assertEquals("getAllExerciseWorkoutStates should return 2 instances", 2, allExerciseStates.size)
+        assertEquals("distinctBy set.id should return 1 unique set", 1, uniqueStates.size)
+        
+        // Test scenario 1: On first side (no sets completed)
+        val firstSide = unilateralSets[0]
+        @Suppress("UNCHECKED_CAST")
+        val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
+        workoutStateFlow.value = firstSide
+        
+        val completedBeforeFirstSide = viewModel.getAllExerciseCompletedSetsBefore(firstSide)
+        val completedCount = completedBeforeFirstSide.count { it.exerciseId == testExerciseId }
+        assertEquals("On first side, should have 0 completed sets", 0, completedCount)
+        
+        // Test scenario 2: After completing first side (on second side)
+        // Add first side to history
+        val workoutStateHistoryField = WorkoutViewModel::class.java.getDeclaredField("workoutStateHistory")
+        workoutStateHistoryField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val workoutStateHistory = workoutStateHistoryField.get(viewModel) as MutableList<WorkoutState>
+        workoutStateHistory.add(firstSide)
+        
+        val secondSide = unilateralSets[1]
+        workoutStateFlow.value = secondSide
+        
+        val completedBeforeSecondSide = viewModel.getAllExerciseCompletedSetsBefore(secondSide)
+        val completedCountSecondSide = completedBeforeSecondSide.count { it.exerciseId == testExerciseId }
+        assertEquals("On second side, should have 1 completed set (deduplicated)", 1, completedCountSecondSide)
+        
+        // Verify deduplication - should only count unique sets
+        val uniqueCompleted = completedBeforeSecondSide.distinctBy { it.set.id }
+        assertEquals("Completed sets should be deduplicated", completedCountSecondSide, uniqueCompleted.size)
+        
+        // Test scenario 3: Verify total count is correct (should be 1, not 2)
+        val totalUnique = viewModel.getAllExerciseWorkoutStates(testExerciseId).distinctBy { it.set.id }.size
+        assertEquals("Total unique sets should be 1 for unilateral exercise", 1, totalUnique)
+    }
 }
 

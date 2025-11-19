@@ -1,68 +1,11 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 
 object WarmupPlanner {
-
-    fun buildWarmupSetsBestStep(
-        availableTotals: Collection<Double>,
-        workWeight: Double,
-        workReps: Int,
-        baseAnchorTotal: Double? = null,
-        candidateStepsDesc: List<Double> = listOf(20.0,15.0,10.0, 5.0, 2.5, 1.0, 0.5, 0.25),
-        includeNoStep: Boolean = true,
-        maxWarmups: Int = 3,
-        capTotalWarmupReps: Int = 25,
-    ): List<Pair<Double, Int>> {
-        val steps = candidateStepsDesc.filter { it > 0.0 }.distinct().sortedDescending()
-
-        val candidates = mutableListOf<Pair<Double?, List<Pair<Double, Int>>>>()
-
-
-        for (step in steps) {
-            val sets = buildWarmupSets(
-                availableTotals = availableTotals,
-                workWeight = workWeight,
-                workReps = workReps,
-                maxWarmups = maxWarmups,
-                capTotalWarmupReps = capTotalWarmupReps,
-                convenienceStepKgTotal = step,
-                baseAnchorTotal = baseAnchorTotal
-            )
-            candidates += step to sets
-        }
-
-        // Optionally try with no convenience step
-        if (includeNoStep) {
-            val setsNoStep = buildWarmupSets(
-                availableTotals = availableTotals,
-                workWeight = workWeight,
-                workReps = workReps,
-                maxWarmups = maxWarmups,
-                capTotalWarmupReps = capTotalWarmupReps,
-                convenienceStepKgTotal = null,
-                baseAnchorTotal = baseAnchorTotal
-            )
-            candidates += (null to setsNoStep)
-        }
-
-        // Pick the candidate with:
-        // 1) max number of sets, 2) highest convenience step (null treated as -∞)
-        val best = candidates.maxWithOrNull(Comparator { a, b ->
-            val countCmp = a.second.size.compareTo(b.second.size)
-            if (countCmp != 0) countCmp
-            else {
-                val sa = a.first ?: Double.NEGATIVE_INFINITY
-                val sb = b.first ?: Double.NEGATIVE_INFINITY
-                sa.compareTo(sb)
-            }
-        })
-
-        return best?.second ?: emptyList()
-    }
-
     /**
      * Gap-based warm-up planner (device-agnostic) with optional barbell-style convenience filtering.
      *
@@ -167,5 +110,58 @@ object WarmupPlanner {
             if (v <= target) { ans = v; lo = mid + 1 } else hi = mid - 1
         }
         return ans
+    }
+
+    /**
+     * Barbell-specific warm-up planner that optimizes weights to minimize plate changes
+     * while staying close to desired work weight percentages.
+     *
+     * This function combines the percentage-based warm-up planning with plate change optimization
+     * specifically for barbell exercises.
+     *
+     * @param availableTotals Feasible totals for the barbell (including bar weight), sorted
+     * @param workWeight Planned working total (bar + plates)
+     * @param workReps Target reps of the working set
+     * @param barbell The barbell equipment instance
+     * @param initialSetup List of plates already on one side of the bar before the first set
+     * @param maxWarmups Maximum number of warm-up sets to generate
+     * @param capTotalWarmupReps Soft cap on total warm-up reps
+     * @param baseAnchorTotal Anchor to compute convenience steps from (e.g., 20.0 empty bar)
+     * @param convenienceStepKgTotal If set (e.g., 5.0 for barbells = 2.5/side), keep only totals aligned to this step
+     * @return List of optimized warm-up sets as (weight, reps) pairs
+     */
+    fun buildWarmupSetsForBarbell(
+        availableTotals: Collection<Double>,
+        workWeight: Double,
+        workReps: Int,
+        barbell: Barbell,
+        initialSetup: List<Double> = emptyList(),
+        maxWarmups: Int = 3,
+        capTotalWarmupReps: Int = 25,
+        baseAnchorTotal: Double? = null,
+        convenienceStepKgTotal: Double? = null
+    ): List<Pair<Double, Int>> {
+        // First, get initial warm-up targets based on work weight percentages
+        val initialWarmups = buildWarmupSets(
+            availableTotals = availableTotals,
+            workWeight = workWeight,
+            workReps = workReps,
+            maxWarmups = maxWarmups,
+            capTotalWarmupReps = capTotalWarmupReps,
+            baseAnchorTotal = baseAnchorTotal,
+            convenienceStepKgTotal = convenienceStepKgTotal
+        )
+
+        // If no warm-ups were generated, return empty list
+        if (initialWarmups.isEmpty()) return emptyList()
+
+        // Optimize the warm-up weights to minimize plate changes
+        return WarmupPlateOptimizer.optimizeBarbellWarmups(
+            warmups = initialWarmups,
+            availableTotals = availableTotals,
+            workWeight = workWeight,
+            barbell = barbell,
+            initialSetup = initialSetup
+        )
     }
 }

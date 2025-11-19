@@ -9,6 +9,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -228,7 +229,9 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
             outputStream?.write(fileContent.toByteArray())
         }
     } ?: run {
-        Toast.makeText(context, "Failed to write to downloads folder", Toast.LENGTH_SHORT).show()
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            Toast.makeText(context, "Failed to write to downloads folder", Toast.LENGTH_SHORT).show()
+        }
     }
 }
 
@@ -639,6 +642,166 @@ fun Modifier.verticalColumnScrollbar(
         val viewportHeight = componentHeight
         val totalContentHeight = (maxScrollValue + viewportHeight).coerceAtLeast(viewportHeight)
         val scrollValue = currentScrollValue // Use already fetched value
+        val visibleRatio = (viewportHeight / totalContentHeight).coerceIn(0f, 1f)
+
+        if (visibleRatio >= 1f || maxScrollValue <= 0) {
+            return@drawWithContent
+        }
+
+        val defaultTrackHeight = viewportHeight
+        val actualTrackHeight = rememberedTrackHeight?.toPx()?.coerceAtMost(viewportHeight) ?: defaultTrackHeight
+        val trackTopOffset = if (actualTrackHeight < viewportHeight) {
+            (viewportHeight - actualTrackHeight) / 2f
+        } else {
+            0f
+        }
+
+        val minThumbHeight = rememberedWidth.toPx() * 2
+        val scrollBarHeight = (visibleRatio * actualTrackHeight)
+            .coerceAtLeast(minThumbHeight)
+            .coerceAtMost(actualTrackHeight)
+        val availableScrollSpace = maxScrollValue
+        val availableTrackSpace = (actualTrackHeight - scrollBarHeight).coerceAtLeast(0f)
+        val scrollProgress = if (availableScrollSpace > 0) scrollValue / availableScrollSpace else 0f
+        val clampedScrollProgress = scrollProgress.coerceIn(0f, 1f)
+        val scrollBarOffsetWithinTrack = clampedScrollProgress * availableTrackSpace
+        val scrollBarTopOffset = trackTopOffset + scrollBarOffsetWithinTrack
+
+        val cornerRadius = CornerRadius(rememberedCornerRadius)
+        val barWidthPx = rememberedWidth.toPx()
+        val paddingPx = rememberedEndPadding
+
+        if (rememberedShowTrack) {
+            drawRoundRect(
+                color = rememberedTrackColor,
+                topLeft = Offset(componentWidth - paddingPx - barWidthPx, trackTopOffset),
+                size = Size(barWidthPx, actualTrackHeight),
+                cornerRadius = cornerRadius
+            )
+        }
+
+        drawRoundRect(
+            color = rememberedScrollBarColor,
+            topLeft = Offset(componentWidth - paddingPx - barWidthPx, scrollBarTopOffset),
+            size = Size(barWidthPx, scrollBarHeight),
+            cornerRadius = cornerRadius
+        )
+    }
+}
+
+@Composable
+fun Modifier.verticalLazyColumnScrollbar(
+    lazyListState: LazyListState,
+    width: Dp = 4.dp,
+    showScrollBarTrack: Boolean = true,
+    scrollBarTrackColor: Color = DarkGray,
+    scrollBarColor: Color = MediumLightGray,
+    scrollBarCornerRadius: Float = 4f,
+    endPadding: Float = 12f,
+    trackHeight: Dp? = null,
+    // Content fade effect parameters
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
+    contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
+    contentFadeColor: Color = DarkGray
+): Modifier {
+    val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)
+    val rememberedTrackColor by rememberUpdatedState(scrollBarTrackColor)
+    val rememberedScrollBarColor by rememberUpdatedState(scrollBarColor)
+    val rememberedWidth by rememberUpdatedState(width)
+    val rememberedCornerRadius by rememberUpdatedState(scrollBarCornerRadius)
+    val rememberedEndPadding by rememberUpdatedState(endPadding)
+    val rememberedTrackHeight by rememberUpdatedState(trackHeight)
+    val rememberedEnableTopFade by rememberUpdatedState(enableTopFade)
+    val rememberedEnableBottomFade by rememberUpdatedState(enableBottomFade)
+    val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
+    val rememberedContentFadeColor by rememberUpdatedState(contentFadeColor)
+
+    val layoutInfo = lazyListState.layoutInfo
+    val visibleItemsInfo = layoutInfo.visibleItemsInfo
+
+    return this.drawWithContent {
+        drawContent()
+
+        val componentWidth = size.width
+        val componentHeight = size.height
+        val viewportHeight = componentHeight.toFloat()
+
+        // Calculate scroll position and total content height
+        val firstVisibleItem = visibleItemsInfo.firstOrNull()
+        
+        if (firstVisibleItem == null || layoutInfo.totalItemsCount == 0) {
+            return@drawWithContent
+        }
+
+        // Calculate current scroll position (pixels scrolled)
+        val currentScrollValue = if (firstVisibleItem.index > 0) {
+            // Estimate: sum of heights of items before first visible item
+            // Use average item height from visible items as estimate
+            val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
+                visibleItemsInfo.sumOf { it.size }.toFloat() / visibleItemsInfo.size
+            } else {
+                firstVisibleItem.size.toFloat()
+            }
+            (firstVisibleItem.index * avgItemHeight) - firstVisibleItem.offset
+        } else {
+            (-firstVisibleItem.offset).toFloat()
+        }
+
+        // Calculate total content height
+        // Estimate based on visible items and total item count
+        val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
+            visibleItemsInfo.sumOf { it.size }.toFloat() / visibleItemsInfo.size
+        } else {
+            firstVisibleItem.size.toFloat()
+        }
+        val estimatedTotalHeight = layoutInfo.totalItemsCount * avgItemHeight
+        val maxScrollValue = (estimatedTotalHeight - viewportHeight).coerceAtLeast(0f)
+
+        // --- Content Fade Logic ---
+        val fadeHeightPx = rememberedContentFadeHeight.toPx()
+        if (fadeHeightPx > 0f) {
+            // --- Top Fade Calculation ---
+            if (rememberedEnableTopFade) {
+                val topAlpha = (currentScrollValue / fadeHeightPx).coerceIn(0f, 1f)
+                if (topAlpha > 0f) {
+                    val topFadeBrush = Brush.verticalGradient(
+                        colors = listOf(rememberedContentFadeColor, Color.Transparent),
+                        startY = 0f,
+                        endY = fadeHeightPx.coerceAtMost(componentHeight)
+                    )
+                    drawRect(
+                        brush = topFadeBrush,
+                        alpha = topAlpha,
+                        topLeft = Offset.Zero,
+                        size = Size(componentWidth, fadeHeightPx.coerceAtMost(componentHeight))
+                    )
+                }
+            }
+
+            // --- Bottom Fade Calculation ---
+            if (rememberedEnableBottomFade && maxScrollValue > 0) {
+                val distanceToBottom = maxScrollValue - currentScrollValue
+                val bottomAlpha = (distanceToBottom / fadeHeightPx).coerceIn(0f, 1f)
+                if (bottomAlpha > 0f) {
+                    val bottomFadeBrush = Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, rememberedContentFadeColor),
+                        startY = (componentHeight - fadeHeightPx).coerceAtLeast(0f),
+                        endY = componentHeight
+                    )
+                    drawRect(
+                        brush = bottomFadeBrush,
+                        alpha = bottomAlpha,
+                        topLeft = Offset(0f, (componentHeight - fadeHeightPx).coerceAtLeast(0f)),
+                        size = Size(componentWidth, fadeHeightPx.coerceAtMost(componentHeight))
+                    )
+                }
+            }
+        }
+
+        // --- Scrollbar Logic ---
+        val totalContentHeight = (maxScrollValue + viewportHeight).coerceAtLeast(viewportHeight)
+        val scrollValue = currentScrollValue
         val visibleRatio = (viewportHeight / totalContentHeight).coerceIn(0f, 1f)
 
         if (visibleRatio >= 1f || maxScrollValue <= 0) {

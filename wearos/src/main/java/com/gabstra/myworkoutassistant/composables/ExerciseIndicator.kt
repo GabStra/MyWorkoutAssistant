@@ -74,7 +74,7 @@ fun ExerciseIndicator(
         derivedStateOf {
             exerciseIds.associateWith { id ->
                 val completed = viewModel.getAllExerciseCompletedSetsBefore(set).count { it.exerciseId == id }
-                val total = viewModel.getAllExerciseWorkoutStates(id).size
+                val total = viewModel.getAllExerciseWorkoutStates(id).distinctBy { it.set.id }.size
 
                 if (id == set.exerciseId) {
                     if (total == 1) {

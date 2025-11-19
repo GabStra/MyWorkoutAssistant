@@ -61,9 +61,13 @@ fun WorkoutScreen(
 
     LaunchedEffect(triggerMobileNotification){
         if(triggerMobileNotification==null) return@LaunchedEffect
-        val notificationHelper = WorkoutNotificationHelper(context)
-        notificationHelper.clearChannelNotifications()
-        showWorkoutInProgressNotification(context)
+        try {
+            val notificationHelper = WorkoutNotificationHelper(context)
+            notificationHelper.clearChannelNotifications()
+            showWorkoutInProgressNotification(context)
+        } catch (exception: Exception) {
+            android.util.Log.e("WorkoutScreen", "Error showing workout notification", exception)
+        }
     }
 
     @Composable
@@ -106,10 +110,14 @@ fun WorkoutScreen(
             prefs.edit { putBoolean("isWorkoutInProgress", false) }
 
             //viewModel.pushAndStoreWorkoutData(false,context)
-            if(!selectedWorkout.usePolarDevice){
-                hrViewModel.stopMeasuringHeartRate()
-            }else{
-                polarViewModel.disconnectFromDevice()
+            try {
+                if(!selectedWorkout.usePolarDevice){
+                    hrViewModel.stopMeasuringHeartRate()
+                }else{
+                    polarViewModel.disconnectFromDevice()
+                }
+            } catch (exception: Exception) {
+                android.util.Log.e("WorkoutScreen", "Error stopping sensors on workout end", exception)
             }
             cancelWorkoutInProgressNotification(context)
             navController.navigate(Screen.WorkoutSelection.route){
@@ -160,17 +168,25 @@ fun WorkoutScreen(
 
     LifecycleObserver(
         onPaused = {
-            if(!selectedWorkout.usePolarDevice){
-                hrViewModel.stopMeasuringHeartRate()
+            try {
+                if(!selectedWorkout.usePolarDevice){
+                    hrViewModel.stopMeasuringHeartRate()
+                }
+            } catch (exception: Exception) {
+                android.util.Log.e("WorkoutScreen", "Error stopping heart rate measurement", exception)
             }
         },
         onResumed = {
-            if(!selectedWorkout.usePolarDevice){
-                hrViewModel.startMeasuringHeartRate()
-            }
-            else if(hasPolarApiBeenInitialized){
-                polarViewModel.foregroundEntered()
-                polarViewModel.connectToDevice()
+            try {
+                if(!selectedWorkout.usePolarDevice){
+                    hrViewModel.startMeasuringHeartRate()
+                }
+                else if(hasPolarApiBeenInitialized){
+                    polarViewModel.foregroundEntered()
+                    polarViewModel.connectToDevice()
+                }
+            } catch (exception: Exception) {
+                android.util.Log.e("WorkoutScreen", "Error resuming sensor/Polar device", exception)
             }
         }
     )
@@ -209,7 +225,11 @@ fun WorkoutScreen(
                 is WorkoutState.Set -> {
                     val state = updatedWorkoutState
                     LaunchedEffect(state) {
-                        heartRateChangeViewModel.reset()
+                        try {
+                            heartRateChangeViewModel.reset()
+                        } catch (exception: Exception) {
+                            android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
+                        }
                     }
 
                     ExerciseScreen(
@@ -224,7 +244,11 @@ fun WorkoutScreen(
                 is WorkoutState.Rest -> {
                     val state = updatedWorkoutState
                     LaunchedEffect(state) {
-                        heartRateChangeViewModel.reset()
+                        try {
+                            heartRateChangeViewModel.reset()
+                        } catch (exception: Exception) {
+                            android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
+                        }
                     }
 
                     RestScreen(
@@ -233,10 +257,18 @@ fun WorkoutScreen(
                         state,
                         { heartRateChartComposable() },
                         onTimerEnd = {
-                            viewModel.storeSetData()
-                            viewModel.pushAndStoreWorkoutData(false,context){
-                                viewModel.goToNextState()
-                                viewModel.lightScreenUp()
+                            try {
+                                viewModel.storeSetData()
+                                viewModel.pushAndStoreWorkoutData(false,context){
+                                    try {
+                                        viewModel.goToNextState()
+                                        viewModel.lightScreenUp()
+                                    } catch (exception: Exception) {
+                                        android.util.Log.e("WorkoutScreen", "Error in onTimerEnd callback", exception)
+                                    }
+                                }
+                            } catch (exception: Exception) {
+                                android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
                             }
                         }
                     )

@@ -7,9 +7,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,6 +29,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -35,6 +41,9 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.time.Duration
+import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -57,6 +66,25 @@ fun BodyWeightSetScreen(
 
     val isPlateauDetected = remember(state.exerciseId) {
         viewModel.plateauDetectedByExerciseId[state.exerciseId] == true
+    }
+
+    var showRed by remember { mutableStateOf(true) }
+
+    LaunchedEffect(isPlateauDetected) {
+        if (isPlateauDetected) {
+            while (true) {
+                val now = LocalDateTime.now()
+                val truncated = now.truncatedTo(ChronoUnit.SECONDS)
+                val nanoOfSecond = now.nano
+                val nextHalfSecond = if (nanoOfSecond < 500_000_000) {
+                    truncated.plusNanos(500_000_000)
+                } else {
+                    truncated.plusSeconds(1)
+                }
+                delay(Duration.between(now, nextHalfSecond).toMillis())
+                showRed = !showRed
+            }
+        }
     }
 
     val equipment = state.equipment
@@ -379,11 +407,11 @@ fun BodyWeightSetScreen(
 
             }else{
                 Column(
+                    modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Column(
-                        modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
                     ){
                         exerciseTitleComposable()
@@ -392,18 +420,30 @@ fun BodyWeightSetScreen(
                             extraInfo(state)
                         }
                         if (isPlateauDetected) {
-                            Text(
-                                text = "Plateau Detected",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = Red,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Warning,
+                                    contentDescription = "Warning",
+                                    tint = if (showRed) Red else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Plateau Detected",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                         }
                     }
-
+                    Spacer(modifier = Modifier.height(10.dp))
                     SetScreen(
                         customModifier = Modifier
                     )

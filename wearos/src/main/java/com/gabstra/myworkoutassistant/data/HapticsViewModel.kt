@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
 import android.media.AudioManager
+import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -49,12 +50,41 @@ class HapticsHelper(context: Context) {
 
     fun vibrateHard() {
         val amp = if (hasAmp) 255 else VibrationEffect.DEFAULT_AMPLITUDE
-        vibrate(150, amp)
+        
+        // Use waveform pattern for double pulse: 120ms pulse, 40ms gap, 120ms pulse
+        // Pattern: [0 delay, 120ms pulse, 40ms gap, 120ms pulse]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val timings = longArrayOf(0, 120, 40, 120)
+                val effect = if (hasAmp) {
+                    // Amplitude array: [0, max, 0, max] corresponding to timings
+                    val amplitudes = intArrayOf(0, amp, 0, amp)
+                    VibrationEffect.createWaveform(timings, amplitudes, -1)
+                } else {
+                    VibrationEffect.createWaveform(timings, -1)
+                }
+                vibrator?.vibrate(effect)
+                return
+            } catch (e: Exception) {
+                // Preview mode or fallback - ignore
+            }
+        }
+        
+        // Fallback: single 250ms pulse for older APIs or if waveform fails
+        try {
+            vibrate(250, amp)
+        } catch (e: Exception) {
+            // Preview mode - ignore
+        }
     }
 
     fun vibrateGentle() {
         val amp = if (hasAmp) 128 else VibrationEffect.DEFAULT_AMPLITUDE
-        vibrate(50, amp)
+        try {
+            vibrate(80, amp)
+        } catch (e: Exception) {
+            // Preview mode - ignore
+        }
     }
 
     // fire sound + vibration together

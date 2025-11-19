@@ -31,6 +31,7 @@ import java.util.UUID
 sealed class ScreenData() {
     class Workouts(val selectedTabIndex : Int) : ScreenData()
     class Settings() : ScreenData()
+    class ErrorLogs() : ScreenData()
     class NewWorkout() : ScreenData()
     class Workout(val workoutId: UUID) : ScreenData()
     class EditWorkout(val workoutId: UUID) : ScreenData()

@@ -5,4 +5,6 @@ data class WorkoutHistoryStore(
     val SetHistories : List<SetHistory>,
     val ExerciseInfos : List<ExerciseInfo>,
     val WorkoutRecord : WorkoutRecord?,
+    val ExerciseSessionProgressions : List<ExerciseSessionProgression>,
+    val ErrorLogs: List<ErrorLog> = emptyList()
 )

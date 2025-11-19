@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.adapters
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
+import com.google.gson.JsonNull
 import com.google.gson.JsonPrimitive
 import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer
@@ -13,11 +14,19 @@ import java.time.format.DateTimeFormatter
 
 class LocalDateTimeAdapter : JsonSerializer<LocalDateTime>, JsonDeserializer<LocalDateTime> {
 
-    override fun serialize(src: LocalDateTime, typeOfSrc: Type, context: JsonSerializationContext): JsonElement {
-        return JsonPrimitive(src.format(DateTimeFormatter.ISO_DATE_TIME))
+    override fun serialize(src: LocalDateTime?, typeOfSrc: Type, context: JsonSerializationContext): JsonElement {
+        return if (src == null) {
+            JsonNull.INSTANCE
+        } else {
+            JsonPrimitive(src.format(DateTimeFormatter.ISO_DATE_TIME))
+        }
     }
 
-    override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): LocalDateTime {
-        return LocalDateTime.parse(json.asString, DateTimeFormatter.ISO_DATE_TIME)
+    override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): LocalDateTime? {
+        return if (json.isJsonNull || (json.isJsonPrimitive && json.asString.isEmpty())) {
+            null
+        } else {
+            LocalDateTime.parse(json.asString, DateTimeFormatter.ISO_DATE_TIME)
+        }
     }
 }

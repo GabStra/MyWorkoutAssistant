@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.content.Context
-import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -16,6 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -349,29 +350,31 @@ private fun HeartRateDisplay(
                 colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
-        Text(
-            modifier = Modifier.alignByBaseline(),
-            text = textToDisplay,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
-        )
-        if (bpm != 0 && displayMode == 0) {
-            Spacer(modifier = Modifier.width(2.5.dp))
+        Row{
             Text(
                 modifier = Modifier.alignByBaseline(),
-                text = "bpm",
-                style = MaterialTheme.typography.bodyExtraSmall,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.width(5.dp))
-            Text(
-                text = zoneLabel,
+                text = textToDisplay,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (currentZone < 0 || currentZone >= colorsByZone.size)
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                else
-                    MaterialTheme.colorScheme.onBackground
+                color = if (bpm == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
             )
+            if (bpm != 0 && displayMode == 0) {
+                Spacer(modifier = Modifier.width(2.5.dp))
+                Text(
+                    modifier = Modifier.alignByBaseline(),
+                    text = "bpm",
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = zoneLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (currentZone < 0 || currentZone >= colorsByZone.size)
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    else
+                        MaterialTheme.colorScheme.onBackground
+                )
+            }
         }
         Spacer(modifier = Modifier.weight(1f))
     }
@@ -676,14 +679,10 @@ fun extractCurrentHrRotationAngle(
 ): Float? {
     if (segmentArcAngle <= 0f || zoneCount <= 0 || mhrPercentage == null) return null
 
-    Log.d("HeartRateCircularChart", "mhrPercentage: ${mhrPercentage.round(1)}")
-
     for (index in 0 until zoneCount) {
         val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
         val endAngle = startAngle + segmentArcAngle
         val (lowerBound, upperBound) = zoneRanges[index + 1]
-
-        Log.d("HeartRateCircularChart", "Zone $index: is in: ${mhrPercentage.round(1) in lowerBound..upperBound}")
 
         if (mhrPercentage.round(1) in lowerBound..upperBound) {
             val percentageInZone = if (upperBound > lowerBound) {
@@ -764,7 +763,8 @@ private fun HeartRateView(
         HeartRateDisplay(
             modifier = Modifier
                 .width(120.dp)
-                .padding(bottom = 8.dp)
+                .height(20.dp)
+                .offset(y = (-8).dp)
                 .clickable(onClick = onSwitchClick, enabled = hr != 0),
             bpm = hr,
             textToDisplay = textToDisplay,
@@ -840,11 +840,17 @@ private fun HeartRateView(
         }
 
         if (currentHrRotationAngle != null) {
+/*            val animatedAngle by animateFloatAsState(
+                targetValue = currentHrRotationAngle,
+                animationSpec = tween(durationMillis = 300),
+                label = "HeartRateIndicatorAngle"
+            )*/
+
             Box(modifier = Modifier
                 .fillMaxSize()
                 .padding(4.dp)
             ) {
-                AnimatedHeartRateIndicator(
+                HeartRateIndicator(
                     currentHrRotationAngle,
                     MaterialTheme.colorScheme.onBackground,
                     bubbleSize = 15.dp,

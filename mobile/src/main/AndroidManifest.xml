@@ -27,6 +27,9 @@
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/openPagePath"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/clearErrorLogs"/>
             </intent-filter>
         </service>
         <activity

@@ -63,7 +63,11 @@ private fun buildPerSidePlatesLabel(plates: List<Double>): String {
 
 @SuppressLint("DefaultLocale")
 @Composable
-fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?, hapticsViewModel: HapticsViewModel) {
+fun PagePlates(
+    updatedState: WorkoutState.Set,
+    equipment: WeightLoadedEquipment?,
+    hapticsViewModel: HapticsViewModel
+) {
     val scrollState = rememberScrollState()
     var headerMarqueeEnabled by remember { mutableStateOf(false) }
 
@@ -93,11 +97,23 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val previousSideWeightTotal = remember(updatedState.plateChangeResult!!.previousPlates) { updatedState.plateChangeResult!!.previousPlates.sum().round(2) }
-                val currentSideWeightTotal = remember(updatedState.plateChangeResult!!.currentPlates) { updatedState.plateChangeResult!!.currentPlates.sum().round(2) }
+                val previousSideWeightTotal =
+                    remember(updatedState.plateChangeResult!!.previousPlates) {
+                        updatedState.plateChangeResult!!.previousPlates.sum().round(2)
+                    }
+                val currentSideWeightTotal =
+                    remember(updatedState.plateChangeResult!!.currentPlates) {
+                        updatedState.plateChangeResult!!.currentPlates.sum().round(2)
+                    }
 
-                val previousWeightTotal = remember(equipment.barWeight,previousSideWeightTotal) { (equipment.barWeight + (previousSideWeightTotal*2)).round(2) }
-                val currentWeightTotal = remember(equipment.barWeight,currentSideWeightTotal) { (equipment.barWeight + (currentSideWeightTotal*2)).round(2) }
+                val previousWeightTotal = remember(
+                    equipment.barWeight,
+                    previousSideWeightTotal
+                ) { (equipment.barWeight + (previousSideWeightTotal * 2)).round(2) }
+                val currentWeightTotal = remember(
+                    equipment.barWeight,
+                    currentSideWeightTotal
+                ) { (equipment.barWeight + (currentSideWeightTotal * 2)).round(2) }
 
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val topLine = buildAnnotatedString {
@@ -123,13 +139,14 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
-                        modifier = Modifier.clickable {
-                            headerMarqueeEnabled = !headerMarqueeEnabled
-                            hapticsViewModel.doGentleVibration()
-                        }
-                        .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
+                        modifier = Modifier
+                            .clickable {
+                                headerMarqueeEnabled = !headerMarqueeEnabled
+                                hapticsViewModel.doGentleVibration()
+                            }
+                            .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
                     )
-                }else {
+                } else {
                     val topLine = buildAnnotatedString {
                         @Composable
                         fun pipe() {
@@ -144,7 +161,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         }
 
                         append("Σ ${formatWeight(previousWeightTotal)}")
-                        append( " → ")
+                        append(" → ")
                         append("${formatWeight(currentWeightTotal)}")
                         pipe()
                         append("Bar ${formatWeight(equipment.barWeight)}")
@@ -155,11 +172,12 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
-                        modifier = Modifier.clickable {
-                            headerMarqueeEnabled = !headerMarqueeEnabled
-                            hapticsViewModel.doGentleVibration()
-                        }
-                        .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
+                        modifier = Modifier
+                            .clickable {
+                                headerMarqueeEnabled = !headerMarqueeEnabled
+                                hapticsViewModel.doGentleVibration()
+                            }
+                            .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
                     )
                 }
             }
@@ -171,28 +189,34 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 buildPerSidePlatesLabel(updatedState.plateChangeResult!!.currentPlates)
             }
 
-            if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.5.dp),
+            ) {
                 Text(
-                    text = "NO CHANGES REQUIRED",
                     modifier = Modifier.fillMaxWidth(),
+                    text = "PLATE CHANGES (per side)",
                     style = headerStyle,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp),
-                ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "PLATE CHANGES (per side)",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
 
+                if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f),
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "-",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+
+                } else {
                     val style = MaterialTheme.typography.numeralSmall
 
                     val prototypeItem = @Composable {
@@ -224,11 +248,12 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
-                                val color = if (step.action == PlateCalculator.Companion.Action.ADD) {
-                                    Green
-                                } else {
-                                    Red
-                                }
+                                val color =
+                                    if (step.action == PlateCalculator.Companion.Action.ADD) {
+                                        Green
+                                    } else {
+                                        Red
+                                    }
 
                                 Row(
                                     modifier = Modifier
@@ -237,7 +262,8 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                         .height(25.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    val weightText = String.format("%.2f", step.weight).replace(",", ".")
+                                    val weightText =
+                                        String.format("%.2f", step.weight).replace(",", ".")
 
                                     val actionText =
                                         if (step.action == PlateCalculator.Companion.Action.ADD) {
@@ -257,7 +283,9 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         ScalableText(
-                                            modifier = Modifier.fillMaxSize().padding(1.dp),
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(1.dp),
                                             text = "$actionText $weightText",
                                             style = style,
                                             textAlign = TextAlign.Center,
@@ -271,7 +299,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                 }
             }
 
-            Column{
+            Column {
                 Text(
                     modifier = Modifier.fillMaxWidth(),
                     text = "PLATES STACK",

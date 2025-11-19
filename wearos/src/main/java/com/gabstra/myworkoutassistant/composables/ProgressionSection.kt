@@ -16,7 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
-import androidx.compose.material.icons.automirrored.filled.TrendingFlat
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.runtime.Composable
@@ -66,7 +66,7 @@ data class ProgressionInfo(
 private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modifier) {
     val (icon, tint) = when (status) {
         Ternary.ABOVE -> Icons.AutoMirrored.Filled.TrendingUp to Green
-        Ternary.EQUAL -> Icons.AutoMirrored.Filled.TrendingFlat to MaterialTheme.colorScheme.onBackground
+        Ternary.EQUAL -> Icons.Filled.DragHandle to MaterialTheme.colorScheme.onBackground
         Ternary.BELOW -> Icons.AutoMirrored.Filled.TrendingDown to Red
         Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
     }
@@ -116,7 +116,8 @@ private fun ProgressionRow(
 @Composable
 fun ProgressionSection(
     modifier: Modifier = Modifier,
-    viewModel: AppViewModel
+    viewModel: AppViewModel,
+    onProgressionDataCalculated: ((isEmpty: Boolean) -> Unit)? = null
 ) {
     var progressionData by remember { mutableStateOf<List<ProgressionInfo>?>(null) }
 
@@ -197,6 +198,9 @@ fun ProgressionSection(
                 ProgressionInfo(exercise.name, vsExpected, vsLast)
             }
         }
+        
+        // Notify callback when calculation completes
+        onProgressionDataCalculated?.invoke(progressionData.isNullOrEmpty())
     }
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
