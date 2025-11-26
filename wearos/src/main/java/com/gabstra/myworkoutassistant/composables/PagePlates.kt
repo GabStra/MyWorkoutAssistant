@@ -195,6 +195,41 @@ fun PagePlates(
             var animatedPlates by remember(plateChangeResult) {
                 mutableStateOf(plateChangeResult.previousPlates.sortedDescending())
             }
+
+            // Compute the maximum total plate thickness encountered across all configurations
+            // in this transition (previous → all intermediate steps → current). This value
+            // is used to determine the logical sleeve length, so scaling remains stable for
+            // the \"widest\" configuration seen in the animation.
+            val maxLogicalThickness = remember(plateChangeResult, equipment.availablePlates) {
+                // Helper to compute total thickness for a given per-side plate configuration.
+                fun totalThicknessFor(plates: List<Double>): Double {
+                    return plates.sumOf { w ->
+                        equipment.availablePlates.find { it.weight == w }?.thickness ?: 30.0
+                    }
+                }
+
+                var maxThickness = totalThicknessFor(plateChangeResult.previousPlates)
+                val workingPlates = plateChangeResult.previousPlates.toMutableList()
+
+                steps.forEach { step ->
+                    when (step.action) {
+                        PlateCalculator.Companion.Action.ADD -> workingPlates.add(step.weight)
+                        PlateCalculator.Companion.Action.REMOVE -> workingPlates.remove(step.weight)
+                    }
+                    val t = totalThicknessFor(workingPlates)
+                    if (t > maxThickness) {
+                        maxThickness = t
+                    }
+                }
+
+                // Ensure we also consider the final target configuration explicitly.
+                val finalThickness = totalThicknessFor(plateChangeResult.currentPlates)
+                if (finalThickness > maxThickness) {
+                    maxThickness = finalThickness
+                }
+
+                maxThickness.toFloat()
+            }
             
             // Track which specific plate instance is currently being added or removed
             // We need to identify which instance among multiple plates of the same weight
@@ -246,12 +281,13 @@ fun PagePlates(
                     animatedPlates = plateChangeResult.currentPlates.sortedDescending()
                     return@LaunchedEffect
                 }
-                
-                // Continuously loop through the physical steps so the loading guide
-                // keeps replaying while this screen is visible.
+
+                // Continuously loop the full physical transition from previousPlates → currentPlates.
+                // The starting configuration for every loop is always previousPlates (never an
+                // artificial empty bar), so the user repeatedly sees the exact sequence of
+                // plate changes needed for this transition.
                 while (true) {
-                    // Start from the *current* bar configuration for this transition.
-                    // This is the configuration the user should already have on the barbell.
+                    // Start from the previous bar configuration for this transition.
                     animatedPlates = plateChangeResult.previousPlates.sortedDescending()
                     currentStepIndex = -1
 
@@ -259,7 +295,7 @@ fun PagePlates(
                     delay(500)
 
                     // Walk the sequence of physical steps, applying the
-                    // delta to the currently drawn plates instead of restarting from empty.
+                    // delta to the currently drawn plates.
                     for (stepIndex in steps.indices) {
                         val step = steps[stepIndex]
                         currentStepIndex = stepIndex
@@ -303,6 +339,7 @@ fun PagePlates(
                     plates = animatedPlates,
                     barbell = equipment,
                     activePlateInfo = activePlateInfo,
+                    maxLogicalThickness = maxLogicalThickness,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -315,6 +352,7 @@ private fun BarbellVisualization(
     plates: List<Double>,
     barbell: Barbell,
     activePlateInfo: Triple<Double, PlateCalculator.Companion.Action, Int>? = null, // weight, action, instanceIndex
+    maxLogicalThickness: Float? = null,
     modifier: Modifier = Modifier
 ) {
 
@@ -330,8 +368,8 @@ private fun BarbellVisualization(
     }
 
     val barLength = barbell.barLength.toFloat()
-    // Total logical thickness of all plates currently on the sleeve (in the same unit as barLength)
-    val totalThickness = plateData.sumOf { it.thickness }.toFloat()
+    // Total logical thickness of the *current* plates on the sleeve (in the same unit as barLength)
+    val currentTotalThickness = plateData.sumOf { it.thickness }.toFloat()
     // Extra logical length reserved beyond the outermost plate so we always show a bit of empty sleeve.
     // This is expressed as a fraction of the sleeve length per side and capped at non‑negative.
     val extraLogicalOffset = (barLength * 0.15f).coerceAtLeast(0f)
@@ -423,10 +461,12 @@ private fun BarbellVisualization(
         val sleeveX = shaftLength + spacing + stopperWidth + spacing
         val sleeveWidth = canvasWidth - sleeveX - paddingEnd
         // Dynamically scale the logical sleeve length so plates use more of the visible width.
-        // We base this on the total plate thickness plus a small offset, but never exceed
-        // the physical sleeve length per side (barLength).
-        val logicalUsedLength = if (totalThickness > 0f) {
-            val desired = totalThickness + extraLogicalOffset
+        // We base this on the maximum total thickness encountered across all configurations in
+        // the animation (if provided), plus a small offset, but never exceed the physical sleeve
+        // length per side (barLength).
+        val baseThickness = (maxLogicalThickness ?: currentTotalThickness).coerceAtLeast(0f)
+        val logicalUsedLength = if (baseThickness > 0f) {
+            val desired = baseThickness + extraLogicalOffset
             if (barLength > 0f) {
                 desired.coerceAtMost(barLength)
             } else {
