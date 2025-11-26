@@ -246,44 +246,51 @@ fun PagePlates(
                     animatedPlates = plateChangeResult.currentPlates.sortedDescending()
                     return@LaunchedEffect
                 }
+                
+                // Continuously loop through the physical steps so the loading guide
+                // keeps replaying while this screen is visible.
+                while (true) {
+                    // Start from the *current* bar configuration for this transition.
+                    // This is the configuration the user should already have on the barbell.
+                    animatedPlates = plateChangeResult.previousPlates.sortedDescending()
+                    currentStepIndex = -1
 
-                // Start from the *current* bar configuration for this transition.
-                // This is the configuration the user should already have on the barbell.
-                animatedPlates = plateChangeResult.previousPlates.sortedDescending()
-                currentStepIndex = -1
+                    // Small initial pause so the user can see the starting point.
+                    delay(500)
 
-                // Small initial pause so the user can see the starting point.
-                delay(500)
+                    // Walk the sequence of physical steps, applying the
+                    // delta to the currently drawn plates instead of restarting from empty.
+                    for (stepIndex in steps.indices) {
+                        val step = steps[stepIndex]
+                        currentStepIndex = stepIndex
 
-                // Walk the sequence of physical steps exactly once, applying the
-                // delta to the currently drawn plates instead of restarting from empty.
-                for (stepIndex in steps.indices) {
-                    val step = steps[stepIndex]
-                    currentStepIndex = stepIndex
+                        // Apply this step to the current animated plates.
+                        animatedPlates = animatedPlates.toMutableList().also { currentPlates ->
+                            when (step.action) {
+                                PlateCalculator.Companion.Action.ADD -> {
+                                    currentPlates.add(step.weight)
+                                }
 
-                    // Apply this step to the current animated plates.
-                    animatedPlates = animatedPlates.toMutableList().also { currentPlates ->
-                        when (step.action) {
-                            PlateCalculator.Companion.Action.ADD -> {
-                                currentPlates.add(step.weight)
+                                PlateCalculator.Companion.Action.REMOVE -> {
+                                    // Remove one instance of this plate, matching the physical action
+                                    // (outermost plate of that weight). Since the list is sorted
+                                    // descending, any instance is visually equivalent.
+                                    currentPlates.remove(step.weight)
+                                }
                             }
+                        }.sortedDescending()
 
-                            PlateCalculator.Companion.Action.REMOVE -> {
-                                // Remove one instance of this plate, matching the physical action
-                                // (outermost plate of that weight). Since the list is sorted
-                                // descending, any instance is visually equivalent.
-                                currentPlates.remove(step.weight)
-                            }
-                        }
-                    }.sortedDescending()
+                        // Give time for the highlight / alpha animation and for the user to see the step.
+                        delay(900)
+                    }
 
-                    // Give time for the highlight / alpha animation and for the user to see the step.
-                    delay(900)
+                    // After the last step, show the final configuration and clear the highlight.
+                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
+                    currentStepIndex = -1
+
+                    // Pause before replaying the guide again.
+                    delay(1200)
                 }
-
-                // After the last step, show the final configuration and clear the highlight.
-                animatedPlates = plateChangeResult.currentPlates.sortedDescending()
-                currentStepIndex = -1
             }
             
             Box(
