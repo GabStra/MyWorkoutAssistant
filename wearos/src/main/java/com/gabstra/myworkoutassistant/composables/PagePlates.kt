@@ -120,8 +120,6 @@ fun PagePlates(
                         }
 
                         append("Σ ${formatWeight(currentWeightTotal)}")
-                        pipe()
-                        append("Bar ${formatWeight(equipment.barWeight)}")
                     }
 
                     Text(
@@ -156,8 +154,6 @@ fun PagePlates(
                         append("Σ ${formatWeight(previousWeightTotal)}")
                         append(" → ")
                         append("${formatWeight(currentWeightTotal)}")
-                        pipe()
-                        append("Bar ${formatWeight(equipment.barWeight)}")
                     }
 
                     Text(

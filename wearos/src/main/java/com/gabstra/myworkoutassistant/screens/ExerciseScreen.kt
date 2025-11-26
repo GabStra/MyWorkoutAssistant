@@ -395,7 +395,7 @@ fun ExerciseScreen(
 
                                         if (equipment != null) {
                                             sep()
-                                            append(equipment.name)
+                                            append("Eq: "+equipment.name)
                                         }
                                         val isWarmupSet = when(val set = updatedState.set) {
                                             is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
