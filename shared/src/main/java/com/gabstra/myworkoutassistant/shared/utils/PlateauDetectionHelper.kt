@@ -16,10 +16,12 @@ object PlateauDetectionHelper {
     // CONFIG (TUNE THESE)
     // -----------------------------
     private const val DEFAULT_BIN_SIZE = 0.25    // kg; fallback BIN_SIZE when equipment unavailable
-    private const val REP_TOL = 2                 // allowed rep drop when increasing weight
+    private const val REP_TOL_BASE = 2            // base allowed rep drop when increasing weight
+    private const val REP_TOL_PERCENT = 0.15      // percentage of reps for flexible tolerance (15%)
     private const val MIN_VOLUME_DELTA = 2        // extra total reps to count as progress
-    private const val WINDOW_SESS = 3             // how many recent sessions to inspect
+    private const val WINDOW_SESS = 3             // how many recent sessions to inspect for plateau
     private const val MIN_SESS_FOR_PLAT = 3       // minimal sessions before calling plateau
+    private const val RECENT_BASELINE_WINDOW = 10 // how many recent sessions to use for baseline comparison
     
     // Cache for BIN_SIZE per equipment
     private val binSizeCache: MutableMap<UUID, Double> = mutableMapOf()
@@ -30,7 +32,8 @@ object PlateauDetectionHelper {
     data class Session(
         val id: UUID,              // workoutHistoryId
         val date: LocalDate,
-        val sets: List<SimpleSet>  // weight and reps for working sets only
+        val sets: List<SimpleSet>, // weight and reps for working sets only
+        val isDeload: Boolean = false // true if this session was marked as DELOAD
     )
 
     // -----------------------------
@@ -151,9 +154,71 @@ object PlateauDetectionHelper {
     }
 
     /**
+     * Calculates flexible rep tolerance based on rep count.
+     * Uses percentage-based tolerance with a minimum base value.
+     */
+    private fun calculateRepTolerance(reps: Int): Int {
+        val percentBased = (reps * REP_TOL_PERCENT).toInt()
+        return maxOf(REP_TOL_BASE, percentBased)
+    }
+
+    /**
+     * Gets recent baseline stats from a sliding window of sessions.
+     * Returns maps of bin -> best reps and bin -> last total reps seen in the window.
+     * 
+     * @param baselineResetIndex The index where baseline was last reset (e.g., after deload).
+     *                           Will not look back before this index.
+     */
+    private fun getRecentBaseline(
+        sessions: List<Session>,
+        currentIndex: Int,
+        windowSize: Int,
+        binSize: Double,
+        baselineResetIndex: Int
+    ): Pair<Map<Double, Int>, Map<Double, Int>> {
+        val bestRepsAtBin = mutableMapOf<Double, Int>()
+        val lastTotalRepsAtBin = mutableMapOf<Double, Int>()
+        
+        // Look back up to windowSize sessions, but not beyond baselineResetIndex or index 0
+        val startIndex = maxOf(baselineResetIndex, currentIndex - windowSize)
+        
+        for (i in startIndex until currentIndex) {
+            val session = sessions[i]
+            // Skip deload sessions in baseline calculation
+            if (session.isDeload) continue
+            
+            val perBinStats = mutableMapOf<Double, Pair<Int, Int>>()
+            
+            for (set in session.sets) {
+                val b = weightBin(set.weight, binSize)
+                val r = set.reps
+                
+                val currentStats = perBinStats[b] ?: Pair(0, 0)
+                val bestReps = maxOf(currentStats.first, r)
+                val totalReps = currentStats.second + r
+                
+                perBinStats[b] = Pair(bestReps, totalReps)
+            }
+            
+            // Update baseline stats
+            for ((b, stats) in perBinStats) {
+                val bestR = stats.first
+                val totalR = stats.second
+                
+                if (b !in bestRepsAtBin || bestR > bestRepsAtBin[b]!!) {
+                    bestRepsAtBin[b] = bestR
+                }
+                lastTotalRepsAtBin[b] = totalR
+            }
+        }
+        
+        return Pair(bestRepsAtBin, lastTotalRepsAtBin)
+    }
+
+    /**
      * Converts SetHistory records to Session objects.
      * Groups by workoutHistoryId, filters for WorkSet only, and sorts by date.
-     * Excludes sessions that are marked as DELOAD in the progressionStates map.
+     * Includes deload sessions but marks them with isDeload flag for baseline reset handling.
      */
     fun convertToSessions(
         setHistories: List<SetHistory>,
@@ -165,11 +230,8 @@ object PlateauDetectionHelper {
         val setsByWorkoutHistoryId = setHistories
             .filter { it.workoutHistoryId != null }
             .groupBy { it.workoutHistoryId!! }
-        
-        val filteredOutCount = setHistories.count { it.workoutHistoryId == null }
 
         // Convert to sessions
-        var deloadExcludedCount = 0
         var noWorkoutHistoryCount = 0
         var noWorkingSetsCount = 0
         
@@ -179,12 +241,9 @@ object PlateauDetectionHelper {
                 return@mapNotNull null
             }
 
-            // Exclude deload sessions from plateau detection
+            // Check if this is a deload session
             val progressionState = progressionStatesByWorkoutHistoryId[workoutHistoryId]
-            if (progressionState == ProgressionState.DELOAD) {
-                deloadExcludedCount++
-                return@mapNotNull null
-            }
+            val isDeload = progressionState == ProgressionState.DELOAD
 
             // Filter for WorkSet only and extract weight/reps
             val workingSets = setHistories
@@ -209,7 +268,7 @@ object PlateauDetectionHelper {
                 noWorkingSetsCount++
                 null
             } else {
-                Session(workoutHistoryId, workoutHistory.date, workingSets)
+                Session(workoutHistoryId, workoutHistory.date, workingSets, isDeload)
             }
         }
 
@@ -221,6 +280,7 @@ object PlateauDetectionHelper {
 
     /**
      * Main plateau detection function.
+     * Uses a sliding window approach to compare against recent baseline instead of all-time bests.
      *
      * Input:
      *   sessions: list of Session sorted by date asc
@@ -234,24 +294,28 @@ object PlateauDetectionHelper {
         val n = sessions.size
 
         if (n < MIN_SESS_FOR_PLAT) {
-            return false to List(n) { false } // instead of emptyList()
+            return false to List(n) { false }
         }
-
-        // Per-bin historical info
-        val bestRepsAtBin = mutableMapOf<Double, Int>()        // bin -> best single-set reps ever at this bin
-        val lastTotalRepsAtBin = mutableMapOf<Double, Int>()    // bin -> total reps last time this bin was used
 
         val sessionImproved = MutableList(n) { false }
 
-        var heaviestBinSeen = Double.NEGATIVE_INFINITY
+        // Track recent baseline that resets after deload sessions
+        var baselineResetIndex = 0 // Index where baseline window should start (resets after deload)
 
         // -----------------------------
         // MAIN LOOP OVER SESSIONS
         // -----------------------------
         for (i in 0 until n) {
             val session = sessions[i]
+            
+            // Reset baseline if we encounter a deload session
+            if (session.isDeload) {
+                baselineResetIndex = i + 1 // Reset baseline window starting from next session
+                sessionImproved[i] = false // Deload sessions don't count as improvement
+                continue
+            }
+            
             // Aggregate per-bin stats for this session
-            // per_bin_stats: bin -> { best_reps, total_reps }
             val perBinStats = mutableMapOf<Double, Pair<Int, Int>>() // bin -> (best_reps, total_reps)
 
             for (set in session.sets) {
@@ -265,95 +329,99 @@ object PlateauDetectionHelper {
                 perBinStats[b] = Pair(bestReps, totalReps)
             }
 
+            // Get recent baseline from sliding window (starting from baselineResetIndex)
+            val (recentBestRepsAtBin, recentLastTotalRepsAtBin) = getRecentBaseline(
+                sessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex
+            )
+
             var improved = false
 
-            // 1) CONDITION A & C: same-weight improvements
-            for ((b, stats) in perBinStats) {
-                val bestR = stats.first
-                val totalR = stats.second
-
-                // Condition A: at same weight bin, best reps increase by ≥1
-                if (b in bestRepsAtBin) {
-                    val previousBest = bestRepsAtBin[b]!!
-                    val conditionAMet = bestR >= previousBest + 1
-                    if (conditionAMet) {
-                        improved = true
-                    }
-                }
-
-                // Condition C: at same weight bin, total volume increases by ≥ MIN_VOLUME_DELTA
-                if (b in lastTotalRepsAtBin) {
-                    val previousTotal = lastTotalRepsAtBin[b]!!
-                    val conditionCMet = totalR >= previousTotal + MIN_VOLUME_DELTA
-                    if (conditionCMet) {
-                        improved = true
-                    }
-                }
-            }
-
-            // 2) CONDITION B: higher weight with acceptable rep drop
-            //    For each bin used in this session, compare to lower-weight history
-            //    (only matters if we have previous bins below it)
-            if (!improved) {
+            // If there's no recent baseline (first session or first after deload), mark as improvement
+            // This establishes the new baseline
+            if (recentBestRepsAtBin.isEmpty()) {
+                improved = true
+            } else {
+                // 1) CONDITION A & C: same-weight improvements (against recent baseline)
                 for ((b, stats) in perBinStats) {
-                    val higherBin = b
-                    val higherReps = stats.first
+                    val bestR = stats.first
+                    val totalR = stats.second
 
-                    // NEW heaviest bin?
-                    if (higherBin <= heaviestBinSeen) {
-                        continue
+                    // Condition A: at same weight bin, best reps increase by ≥1 compared to recent baseline
+                    if (b in recentBestRepsAtBin) {
+                        val recentBest = recentBestRepsAtBin[b]!!
+                        val conditionAMet = bestR >= recentBest + 1
+                        if (conditionAMet) {
+                            improved = true
+                        }
+                    } else {
+                        // First time seeing this weight in recent baseline window = improvement
+                        improved = true
                     }
 
-                    // find best reps among all lower bins we've seen in the past
-                    var bestRepsLower = Int.MIN_VALUE
-                    for ((bHist, repsHist) in bestRepsAtBin) {
-                        if (bHist < higherBin) {
-                            if (repsHist > bestRepsLower) {
-                                bestRepsLower = repsHist
+                    // Condition C: at same weight bin, total volume increases by ≥ MIN_VOLUME_DELTA
+                    if (b in recentLastTotalRepsAtBin) {
+                        val recentTotal = recentLastTotalRepsAtBin[b]!!
+                        val conditionCMet = totalR >= recentTotal + MIN_VOLUME_DELTA
+                        if (conditionCMet) {
+                            improved = true
+                        }
+                    }
+                }
+
+                // 2) CONDITION B: weight increase with acceptable rep drop
+                //    Compare to recent baseline, and handle weight increases to previously-seen weights
+                if (!improved) {
+                    val maxWeightInBaseline = recentBestRepsAtBin.keys.maxOrNull() ?: Double.NEGATIVE_INFINITY
+                    
+                    for ((b, stats) in perBinStats) {
+                        val currentBin = b
+                        val currentReps = stats.first
+
+                        // Check if this weight is higher than any weight in recent baseline
+                        if (currentBin > maxWeightInBaseline) {
+                            // New heaviest weight: compare to best reps at lower weights in recent baseline
+                            var bestRepsLower = Int.MIN_VALUE
+                            for ((bHist, repsHist) in recentBestRepsAtBin) {
+                                if (bHist < currentBin && repsHist > bestRepsLower) {
+                                    bestRepsLower = repsHist
+                                }
+                            }
+                            
+                            if (bestRepsLower != Int.MIN_VALUE) {
+                                val repTolerance = calculateRepTolerance(bestRepsLower)
+                                val conditionBMet = currentReps >= bestRepsLower - repTolerance
+                                if (conditionBMet) {
+                                    improved = true
+                                    break
+                                }
+                            } else {
+                                // No lower weight in baseline, but this is new max = improvement
+                                improved = true
+                                break
+                            }
+                        } else if (currentBin in recentBestRepsAtBin) {
+                            // Weight was seen in recent baseline
+                            // Check if current reps are higher than recent baseline for this weight
+                            // (This supplements Condition A for cases where we're revisiting a weight)
+                            val recentRepsAtBin = recentBestRepsAtBin[currentBin]!!
+                            if (currentReps > recentRepsAtBin) {
+                                improved = true
+                                break
                             }
                         }
                     }
-
-                    if (bestRepsLower == Int.MIN_VALUE) {
-                        continue // no lower weight history to compare against
-                    }
-
-                    // Condition B:
-                    // weight increased (implicitly, because higher_bin > any lower b_hist)
-                    // and reps did NOT fall more than REP_TOL below best at lower weights
-                    val repDrop = bestRepsLower - higherReps
-                    val conditionBMet = higherReps >= bestRepsLower - REP_TOL
-                    if (conditionBMet) {
-                        improved = true
-                        break
-                    }
                 }
             }
 
-            // 3) Mark this session
+            // Mark this session
             sessionImproved[i] = improved
-
-            // 4) Update historical per-bin info AFTER checking improvement
-            for ((b, stats) in perBinStats) {
-                val bestR = stats.first
-                val totalR = stats.second
-
-                val previousBest = bestRepsAtBin[b]
-                if (b !in bestRepsAtBin || bestR > bestRepsAtBin[b]!!) {
-                    bestRepsAtBin[b] = bestR
-                }
-
-                lastTotalRepsAtBin[b] = totalR
-
-                if (b > heaviestBinSeen) heaviestBinSeen = b
-            }
         }
 
         // -----------------------------
         // PLATEAU DECISION
         // -----------------------------
 
-        // Look at the last WINDOW_SESS sessions
+        // Look at the last WINDOW_SESS sessions (excluding deload sessions)
         val start = maxOf(0, n - WINDOW_SESS)
         val end = n - 1
 

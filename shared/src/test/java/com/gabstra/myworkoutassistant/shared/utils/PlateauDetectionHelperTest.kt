@@ -244,7 +244,7 @@ class PlateauDetectionHelperTest {
 
     @Test
     fun testPlateauDetection() {
-        // Last WINDOW_SESS (5) sessions show no improvement
+        // Last WINDOW_SESS (3) sessions show no improvement
         val exerciseId = UUID.randomUUID()
         val baseDate = LocalDate.now().minusDays(10)
         val workoutHistory1 = createWorkoutHistory(date = baseDate)
@@ -287,7 +287,7 @@ class PlateauDetectionHelperTest {
             workoutHistories
         )
 
-        assertTrue("Should detect plateau when last 5 sessions show no improvement", isPlateau)
+        assertTrue("Should detect plateau when last 3 sessions show no improvement", isPlateau)
         assertTrue("Early sessions should show improvement", sessionImproved[1])
         assertTrue("Early sessions should show improvement", sessionImproved[3])
         // Last 5 sessions (indices 4-8) should not show improvement

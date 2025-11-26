@@ -815,13 +815,24 @@ open class WorkoutViewModel(
         val sessionDecision = computeSessionDecision(exercise.id)
 
         // Check for plateau detection
+        // Get all set histories for this exercise (across all workouts)
         val setHistories = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
+        
+        // Get all workout history IDs referenced by these set histories
+        val workoutHistoryIds = setHistories
+            .mapNotNull { it.workoutHistoryId }
+            .toSet()
+        
+        // Get all workout histories that contain sets for this exercise (across all workouts)
+        // This ensures we have complete data for plateau detection regardless of workout template
         val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-            .filter { it.globalId == selectedWorkout.value.globalId && it.isDone }
+            .filter { it.id in workoutHistoryIds && it.isDone }
             .associateBy { it.id }
         
+        // Get progression states for all workout histories with this exercise
         val exerciseProgressions = exerciseSessionProgressionDao.getByExerciseId(exercise.id)
         val progressionStatesByWorkoutHistoryId = exerciseProgressions
+            .filter { it.workoutHistoryId in workoutHistoryIds }
             .associate { it.workoutHistoryId to it.progressionState }
         
         // Get equipment for BIN_SIZE calculation
