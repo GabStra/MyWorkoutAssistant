@@ -1,40 +1,44 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -44,21 +48,12 @@ import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import kotlinx.coroutines.delay
+import kotlin.math.sqrt
 
 private fun Double.compact(): String {
     val s = String.format("%.2f", this).replace(',', '.')
     return s.trimEnd('0').trimEnd('.')
-}
-
-private fun buildPerSidePlatesLabel(plates: List<Double>): String {
-    if (plates.isEmpty()) return "—"
-    val counts = plates.groupingBy { it }.eachCount()
-    // Keep descending order by weight
-    return counts.keys.sorted().joinToString(" - ") { w ->
-        val c = counts.getValue(w)
-        val ws = w.compact()
-        if (c == 1) ws else "${ws}x$c"
-    }
 }
 
 @SuppressLint("DefaultLocale")
@@ -68,7 +63,6 @@ fun PagePlates(
     equipment: WeightLoadedEquipment?,
     hapticsViewModel: HapticsViewModel
 ) {
-    val scrollState = rememberScrollState()
     var headerMarqueeEnabled by remember { mutableStateOf(false) }
 
     Column(
@@ -117,11 +111,9 @@ fun PagePlates(
 
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val topLine = buildAnnotatedString {
-                        @Composable
                         fun pipe() {
                             withStyle(
                                 SpanStyle(
-                                    //color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     fontWeight = FontWeight.Bold
                                 )
                             ) {
@@ -144,15 +136,18 @@ fun PagePlates(
                                 headerMarqueeEnabled = !headerMarqueeEnabled
                                 hapticsViewModel.doGentleVibration()
                             }
-                            .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
+                            .then(
+                                if (headerMarqueeEnabled)
+                                    Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                                else
+                                    Modifier
+                            )
                     )
                 } else {
                     val topLine = buildAnnotatedString {
-                        @Composable
                         fun pipe() {
                             withStyle(
                                 SpanStyle(
-                                    //color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     fontWeight = FontWeight.Bold
                                 )
                             ) {
@@ -177,155 +172,498 @@ fun PagePlates(
                                 headerMarqueeEnabled = !headerMarqueeEnabled
                                 hapticsViewModel.doGentleVibration()
                             }
-                            .then(if (headerMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier)
+                            .then(
+                                if (headerMarqueeEnabled)
+                                    Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                                else
+                                    Modifier
+                            )
                     )
                 }
             }
 
-            val headerStyle = MaterialTheme.typography.bodyExtraSmall
-            var platesMarqueeEnabled by remember { mutableStateOf(false) }
-
-            val perSideLabel = remember(updatedState.plateChangeResult!!.currentPlates) {
-                buildPerSidePlatesLabel(updatedState.plateChangeResult!!.currentPlates)
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.5.dp),
-            ) {
-                Text(
-                    modifier = Modifier.fillMaxWidth(),
-                    text = "PLATE CHANGES (per side)",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-
-                if (updatedState.plateChangeResult!!.change.steps.isEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f),
-                    ) {
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = "-",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-
+            // Visual barbell representation with animation
+            val plateChangeResult = updatedState.plateChangeResult!!
+            val steps = plateChangeResult.change.steps
+            
+            var currentStepIndex by remember(plateChangeResult) { mutableIntStateOf(-1) }
+            
+            // Compute current plate configuration based on animation step
+            // For REMOVE actions, keep the plate in the list during the animation step so it can fade out
+            val animatedPlates = remember(currentStepIndex, plateChangeResult) {
+                if (currentStepIndex < 0 || steps.isEmpty()) {
+                    plateChangeResult.previousPlates.sortedDescending()
                 } else {
-                    val style = MaterialTheme.typography.numeralSmall
-
-                    val prototypeItem = @Composable {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(25.dp)
-                                .padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) { }
-                    }
-
-                    DynamicHeightColumn(
-                        modifier = Modifier
-                            .weight(1f) // Fills remaining vertical space
-                            .fillMaxWidth(), // Still need to fill width
-                        prototypeItem = { prototypeItem() }
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalColumnScrollbar(
-                                    scrollState = scrollState,
-                                    scrollBarColor = MaterialTheme.colorScheme.onBackground,
-                                    enableTopFade = false,
-                                    enableBottomFade = false
-                                )
-                                .verticalScroll(scrollState),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
-                                val color =
-                                    if (step.action == PlateCalculator.Companion.Action.ADD) {
-                                        Green
-                                    } else {
-                                        Red
-                                    }
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp)
-                                        .height(25.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val weightText =
-                                        String.format("%.2f", step.weight).replace(",", ".")
-
-                                    val actionText =
-                                        if (step.action == PlateCalculator.Companion.Action.ADD) {
-                                            "+"
-                                        } else {
-                                            "-"
-                                        }
-
-                                    val shape = RoundedCornerShape(25)
-
-                                    Row(
-                                        modifier = Modifier
-                                            .height(22.5.dp)
-                                            .padding(bottom = 2.5.dp)
-                                            .border(BorderStroke(1.dp, color), shape)
-                                            .clip(shape), // keep if you want content clipped to the rounded shape
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        ScalableText(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(1.dp),
-                                            text = "$actionText $weightText",
-                                            style = style,
-                                            textAlign = TextAlign.Center,
-                                            color = color
-                                        )
-                                    }
-                                }
+                    val currentPlates = plateChangeResult.previousPlates.toMutableList()
+                    val currentStep = steps[currentStepIndex]
+                    
+                    // Apply all steps up to but not including the current one
+                    for (i in 0 until currentStepIndex) {
+                        val step = steps[i]
+                        when (step.action) {
+                            PlateCalculator.Companion.Action.ADD -> {
+                                currentPlates.add(step.weight)
+                            }
+                            PlateCalculator.Companion.Action.REMOVE -> {
+                                currentPlates.remove(step.weight)
                             }
                         }
                     }
+                    
+                    // For the current step:
+                    // - If ADD: add the plate (it will fade in)
+                    // - If REMOVE: ensure it's in the list (it will fade out, then be removed in next iteration)
+                    when (currentStep.action) {
+                        PlateCalculator.Companion.Action.ADD -> {
+                            currentPlates.add(currentStep.weight)
+                        }
+                        PlateCalculator.Companion.Action.REMOVE -> {
+                            // Ensure plate is in list for fade-out animation
+                            // (it should already be there from previous steps)
+                            if (!currentPlates.contains(currentStep.weight)) {
+                                currentPlates.add(currentStep.weight)
+                            }
+                        }
+                    }
+                    
+                    currentPlates.sortedDescending()
                 }
             }
-
-            Column {
-                Text(
-                    modifier = Modifier.fillMaxWidth(),
-                    text = "PLATES STACK",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(modifier = Modifier.height(2.5.dp))
-                Text(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp)
-                        .clickable {
-                            platesMarqueeEnabled = !platesMarqueeEnabled
-                            hapticsViewModel.doGentleVibration()
+            
+            // Track which specific plate instance is currently being added or removed
+            // We need to identify which instance among multiple plates of the same weight
+            val activePlateInfo = remember(currentStepIndex, steps, animatedPlates) {
+                if (currentStepIndex >= 0 && currentStepIndex < steps.size) {
+                    val step = steps[currentStepIndex]
+                    
+                    // Calculate plates state before current step
+                    val platesBeforeStep = if (currentStepIndex > 0) {
+                        val before = plateChangeResult.previousPlates.toMutableList()
+                        for (i in 0 until currentStepIndex) {
+                            val s = steps[i]
+                            when (s.action) {
+                                PlateCalculator.Companion.Action.ADD -> before.add(s.weight)
+                                PlateCalculator.Companion.Action.REMOVE -> before.remove(s.weight)
+                            }
                         }
-                        .then(if (platesMarqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    text = perSideLabel,                       // e.g., "20 - 10 - 5x2 - 1.25 - 0.25"
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    textAlign = TextAlign.Center,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLines = 1
+                        before.sortedDescending()
+                    } else {
+                        plateChangeResult.previousPlates.sortedDescending()
+                    }
+                    
+                    // Count how many plates of this weight exist before the current step
+                    val countBefore = platesBeforeStep.count { it == step.weight }
+                    
+                    // For ADD: the new plate will be at position countBefore in the sorted list of same-weight plates
+                    // For REMOVE: we remove the plate from the end (outermost), which is the last instance
+                    val instanceIndex = when (step.action) {
+                        PlateCalculator.Companion.Action.ADD -> countBefore // New plate will be at this index (0-indexed)
+                        PlateCalculator.Companion.Action.REMOVE -> {
+                            // For REMOVE, the algorithm removes from the end (outermost)
+                            // In sorted descending order, this is the last instance of that weight
+                            // If countBefore is 2 (instances 0 and 1), we remove instance 1 (the last one)
+                            countBefore - 1
+                        }
+                    }
+                    
+                    Triple(step.weight, step.action, instanceIndex)
+                } else {
+                    null
+                }
+            }
+            
+            // Animate the plate changes
+            LaunchedEffect(plateChangeResult) {
+                if (steps.isEmpty()) {
+                    return@LaunchedEffect
+                }
+                
+                while (true) {
+                    // Start from beginning
+                    currentStepIndex = -1
+                    delay(500) // Initial delay before starting
+                    
+                    // Animate through each step
+                    for (stepIndex in steps.indices) {
+                        currentStepIndex = stepIndex
+                        delay(900) // Delay between steps
+                    }
+                    
+                    // Hold final state briefly before looping
+                    delay(800)
+                }
+            }
+            
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+            ) {
+                BarbellVisualization(
+                    plates = animatedPlates,
+                    barbell = equipment,
+                    activePlateInfo = activePlateInfo,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
-
-
         }
     }
 }
+
+@Composable
+private fun BarbellVisualization(
+    plates: List<Double>,
+    barbell: Barbell,
+    activePlateInfo: Triple<Double, PlateCalculator.Companion.Action, Int>? = null, // weight, action, instanceIndex
+    modifier: Modifier = Modifier
+) {
+
+    // plateData matches the order of sortedPlates, so indices align
+    val plateData = remember(plates, barbell.availablePlates) {
+        plates.sortedDescending().map { weight ->
+            val plate = barbell.availablePlates.find { it.weight == weight }
+            PlateData(
+                weight = weight,
+                thickness = plate?.thickness ?: 30.0
+            )
+        }
+    }
+
+    val barLength = barbell.barLength.toFloat()
+    val maxPlateWeight = remember(plateData) {
+        plateData.maxOfOrNull { it.weight } ?: 25.0
+    }
+
+    val barbellColor = MaterialTheme.colorScheme.onBackground
+    val defaultPlateColor = MaterialTheme.colorScheme.primary
+    val borderColor = MaterialTheme.colorScheme.background
+
+    val labelColor = MaterialTheme.colorScheme.onBackground
+    
+    // Determine color and alpha for each plate based on animation state
+    // Only highlight the specific instance being modified, not all plates of the same weight
+    val sortedPlates = plates.sortedDescending()
+    
+    // Calculate which plate indices should be highlighted (based on instance position among same-weight plates)
+    val highlightedPlateIndices = remember(sortedPlates, activePlateInfo) {
+        if (activePlateInfo == null) {
+            emptySet<Int>()
+        } else {
+            val (targetWeight, _, instanceIndex) = activePlateInfo
+            sortedPlates.mapIndexedNotNull { index, plateWeight ->
+                if (plateWeight == targetWeight) {
+                    // Count how many plates of this weight come before this one (0-indexed)
+                    val instanceCount = sortedPlates.subList(0, index + 1).count { it == targetWeight } - 1
+                    if (instanceCount == instanceIndex) index else null
+                } else {
+                    null
+                }
+            }.toSet()
+        }
+    }
+    
+    // Animate alpha for active plates
+    // For ADD: fade in (target 1.0), for REMOVE: fade out (target 0.4)
+    val targetAlphaForActive = when (activePlateInfo?.second) {
+        PlateCalculator.Companion.Action.ADD -> 1f
+        PlateCalculator.Companion.Action.REMOVE -> 0.4f
+        null -> 1f
+    }
+    
+    // Use the active plate info as a key to reset animation when plate changes
+    val animationKey = activePlateInfo?.let { "${it.first}-${it.second}-${it.third}" } ?: "none"
+    
+    val animatedAlpha = animateFloatAsState(
+        targetValue = targetAlphaForActive,
+        animationSpec = tween(durationMillis = 400),
+        label = "plate-alpha-$animationKey"
+    )
+
+    val labelTextSize = MaterialTheme.typography.bodySmall.fontSize
+
+    Canvas(modifier = modifier) {
+        val canvasWidth = size.width
+        val canvasHeight = size.height
+        val centerX = canvasWidth / 2f
+        val centerY = canvasHeight / 2f
+
+        // --- 1. SETUP PAINT & METRICS ---
+        val textSizePx = labelTextSize.toPx()
+        val textPaint = android.graphics.Paint().apply {
+            color = labelColor.toArgb()
+            textSize = textSizePx
+            textAlign = android.graphics.Paint.Align.CENTER
+            isAntiAlias = true
+        }
+
+        val fontMetrics = textPaint.fontMetrics
+        val textHeight = fontMetrics.descent - fontMetrics.ascent
+
+        val textToPlatePadding = 4.dp.toPx()
+
+        // --- CHANGE HERE: Increased padding from 2.dp to 12.dp ---
+        // This forces labels to jump to the next stack level if they are
+        // horizontally closer than 12dp.
+        val labelCollisionPadding = 12.dp.toPx()
+
+        val rowSpacing = 2.dp.toPx() // Optional: add a tiny bit of vertical spacing between text rows
+
+        // Barbell Geometry
+        val shaftLength = 20.dp.toPx()
+        val stopperWidth = 5.dp.toPx()
+        val spacing = 0.dp.toPx()
+        val paddingEnd = 0.dp.toPx()
+
+        val sleeveX = shaftLength + spacing + stopperWidth + spacing
+        val sleeveWidth = canvasWidth - sleeveX - paddingEnd
+        val scaleFactor = if (barLength > 0f) sleeveWidth / barLength else 1f
+
+        // --- HELPER FUNCTION ---
+        fun drawRoundedBlock(
+            topLeft: Offset,
+            size: Size,
+            cornerRadiusPx: Float,
+            fillColor: androidx.compose.ui.graphics.Color,
+            strokeColor: androidx.compose.ui.graphics.Color? = null,
+            strokeWidthPx: Float = 0f
+        ) {
+            val rect = androidx.compose.ui.geometry.Rect(offset = topLeft, size = size)
+            val cornerRadius = CornerRadius(cornerRadiusPx, cornerRadiusPx)
+
+            val roundRect = androidx.compose.ui.geometry.RoundRect(
+                rect = rect,
+                topLeft = cornerRadius,
+                topRight = cornerRadius,
+                bottomRight = cornerRadius,
+                bottomLeft = cornerRadius
+            )
+
+            val path = Path().apply { addRoundRect(roundRect) }
+
+            drawPath(path = path, color = fillColor)
+
+            if (strokeColor != null && strokeWidthPx > 0f) {
+                drawPath(
+                    path = path,
+                    color = strokeColor,
+                    style = Stroke(width = strokeWidthPx)
+                )
+            }
+        }
+
+        // --- 2. PASS 1: SIMULATION ---
+        var simCurrentX = sleeveX
+        val maxLabelStacks = 4 // Increased max stacks slightly to accommodate more spreading
+        val topStackRightX = FloatArray(maxLabelStacks) { -1f }
+        val bottomStackRightX = FloatArray(maxLabelStacks) { -1f }
+
+        var maxStackUsedTop = 0
+        var maxStackUsedBottom = 0
+
+        plateData.forEach { plateInfo ->
+            val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
+            val plateWidth = scaledThickness.coerceAtLeast(4.dp.toPx()).coerceAtMost(sleeveX + sleeveWidth - simCurrentX)
+            val plateCenterX = simCurrentX + plateWidth / 2f
+
+            val weightText = plateInfo.weight.compact()
+            val labelWidth = textPaint.measureText(weightText)
+            val labelLeft = plateCenterX - labelWidth / 2f
+            val labelRight = plateCenterX + labelWidth / 2f
+
+            // Collision Logic
+            var bestTopStackIdx = -1
+            for (i in 0 until maxLabelStacks) {
+                // Determine if this stack level has enough space (including the new larger padding)
+                if (labelLeft > topStackRightX[i] + labelCollisionPadding) {
+                    bestTopStackIdx = i
+                    break
+                }
+            }
+
+            var bestBottomStackIdx = -1
+            for (i in 0 until maxLabelStacks) {
+                if (labelLeft > bottomStackRightX[i] + labelCollisionPadding) {
+                    bestBottomStackIdx = i
+                    break
+                }
+            }
+
+            // Logic to balance top vs bottom
+            val isTop = when {
+                bestTopStackIdx == -1 && bestBottomStackIdx == -1 -> true // Default to top if both full (overflow)
+                bestTopStackIdx != -1 && bestBottomStackIdx == -1 -> true
+                bestTopStackIdx == -1 && bestBottomStackIdx != -1 -> false
+                else -> bestTopStackIdx <= bestBottomStackIdx // Pick the smaller stack index
+            }
+
+            val chosenStackIdx = if (isTop)
+                bestTopStackIdx.coerceAtLeast(0)
+            else
+                bestBottomStackIdx.coerceAtLeast(0)
+
+            if (isTop) {
+                if (chosenStackIdx < maxLabelStacks) topStackRightX[chosenStackIdx] = labelRight
+                maxStackUsedTop = maxOf(maxStackUsedTop, chosenStackIdx + 1)
+            } else {
+                if (chosenStackIdx < maxLabelStacks) bottomStackRightX[chosenStackIdx] = labelRight
+                maxStackUsedBottom = maxOf(maxStackUsedBottom, chosenStackIdx + 1)
+            }
+
+            simCurrentX += plateWidth
+        }
+
+        // --- 3. CALCULATE BOUNDARIES ---
+        val stacksNeeded = maxOf(maxStackUsedTop, maxStackUsedBottom).coerceAtLeast(1)
+        val totalTextReserve = textToPlatePadding +
+                (stacksNeeded * textHeight) +
+                ((stacksNeeded - 1) * rowSpacing)
+
+        val maxAvailablePlateHeight = (canvasHeight - (totalTextReserve * 2)).coerceAtLeast(10f)
+
+        val globalPlateTopY = centerY - (maxAvailablePlateHeight / 2f)
+        val globalPlateBottomY = centerY + (maxAvailablePlateHeight / 2f)
+
+        // --- 4. PASS 2: DRAWING ---
+        val sleeveHeight = maxAvailablePlateHeight * 0.15f
+        val sleeveY = centerY - (sleeveHeight / 2f)
+        val stopperHeight = sleeveHeight * 3f
+        val stopperY = centerY - (stopperHeight / 2f)
+        val barbellCornerRadius = 3.dp.toPx()
+
+        // Draw Barbell parts
+        drawRoundedBlock(
+            topLeft = Offset(0f, sleeveY),
+            size = Size(shaftLength+stopperWidth+sleeveWidth, sleeveHeight),
+            cornerRadiusPx = barbellCornerRadius,
+            fillColor = barbellColor
+        )
+        drawRoundedBlock(
+            topLeft = Offset(shaftLength + spacing, stopperY),
+            size = Size(stopperWidth, stopperHeight),
+            cornerRadiusPx = barbellCornerRadius,
+            fillColor = barbellColor
+        )
+
+        // Reset for drawing pass
+        topStackRightX.fill(-1f)
+        bottomStackRightX.fill(-1f)
+        var currentX = sleeveX
+
+        val plateBorderWidth = 1.5.dp.toPx()
+        val plateCornerRadius = 3.dp.toPx()
+
+        plateData.forEachIndexed { plateIndex, plateInfo ->
+            val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
+            val plateWidth = scaledThickness.coerceAtLeast(4.dp.toPx()).coerceAtMost(sleeveX + sleeveWidth - currentX)
+
+            val minHeightRatio = 0.3f
+            val weightRatio = sqrt(
+                (plateInfo.weight.toFloat() / maxPlateWeight.toFloat()).coerceIn(0f, 1f)
+            )
+            val plateHeight = maxAvailablePlateHeight * (minHeightRatio + (1f - minHeightRatio) * weightRatio)
+
+            val localPlateY = centerY - (plateHeight / 2f)
+            val localPlateTopY = localPlateY
+            val localPlateBottomY = localPlateY + plateHeight
+
+            // Get color and alpha for this specific plate instance
+            val isHighlighted = highlightedPlateIndices.contains(plateIndex)
+            val plateColor = if (isHighlighted && activePlateInfo != null) {
+                when (activePlateInfo.second) {
+                    PlateCalculator.Companion.Action.ADD -> Green
+                    PlateCalculator.Companion.Action.REMOVE -> Red
+                }
+            } else {
+                defaultPlateColor
+            }
+            val plateAlpha = if (isHighlighted) animatedAlpha.value else 1f
+
+            // Draw Plate with color and alpha
+            drawRoundedBlock(
+                topLeft = Offset(currentX, localPlateY),
+                size = Size(plateWidth, plateHeight),
+                cornerRadiusPx = plateCornerRadius,
+                fillColor = plateColor.copy(alpha = plateAlpha),
+                strokeColor = borderColor.copy(alpha = plateAlpha),
+                strokeWidthPx = plateBorderWidth
+            )
+
+            // Draw Text
+            val plateCenterX = currentX + plateWidth / 2f
+            val weightText = plateInfo.weight.compact()
+            val labelWidth = textPaint.measureText(weightText)
+            val labelLeft = plateCenterX - labelWidth / 2f
+            val labelRight = plateCenterX + labelWidth / 2f
+
+            // Recalculate stack logic (Must match simulation pass logic EXACTLY)
+            var bestTopStackIdx = -1
+            for (i in 0 until maxLabelStacks) {
+                if (labelLeft > topStackRightX[i] + labelCollisionPadding) {
+                    bestTopStackIdx = i
+                    break
+                }
+            }
+            var bestBottomStackIdx = -1
+            for (i in 0 until maxLabelStacks) {
+                if (labelLeft > bottomStackRightX[i] + labelCollisionPadding) {
+                    bestBottomStackIdx = i
+                    break
+                }
+            }
+            val isTop = when {
+                bestTopStackIdx == -1 && bestBottomStackIdx == -1 -> true
+                bestTopStackIdx != -1 && bestBottomStackIdx == -1 -> true
+                bestTopStackIdx == -1 && bestBottomStackIdx != -1 -> false
+                else -> bestTopStackIdx <= bestBottomStackIdx
+            }
+            val chosenStackIdx = if (isTop) bestTopStackIdx.coerceAtLeast(0) else bestBottomStackIdx.coerceAtLeast(0)
+
+            if (isTop && chosenStackIdx < maxLabelStacks) topStackRightX[chosenStackIdx] = labelRight
+            else if (!isTop && chosenStackIdx < maxLabelStacks) bottomStackRightX[chosenStackIdx] = labelRight
+
+            val stackOffset = chosenStackIdx * (textHeight + rowSpacing)
+
+            // Draw text and guidelines
+            val textBaseline: Float
+            val lineStartY: Float
+            val lineEndY: Float
+
+            if (isTop) {
+                val textBoxTop = globalPlateTopY - textToPlatePadding - stackOffset - textHeight
+                textBaseline = textBoxTop - fontMetrics.ascent
+                lineStartY = textBaseline + fontMetrics.descent
+                lineEndY = localPlateTopY
+            } else {
+                val textBoxTop = globalPlateBottomY + textToPlatePadding + stackOffset
+                textBaseline = textBoxTop - fontMetrics.ascent
+                lineStartY = localPlateBottomY
+                lineEndY = textBoxTop
+            }
+
+            drawContext.canvas.nativeCanvas.drawText(weightText, plateCenterX, textBaseline, textPaint)
+
+            if (kotlin.math.abs(lineEndY - lineStartY) > 2.dp.toPx()) {
+                val dashPath = Path().apply {
+                    moveTo(plateCenterX, lineStartY)
+                    lineTo(plateCenterX, lineEndY)
+                }
+                drawPath(
+                    path = dashPath,
+                    color = labelColor.copy(alpha = 0.5f),
+                    style = Stroke(
+                        width = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f)
+                    )
+                )
+            }
+
+            currentX += plateWidth
+        }
+    }
+}
+
+private data class PlateData(
+    val weight: Double,
+    val thickness: Double
+)
