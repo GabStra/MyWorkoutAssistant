@@ -323,6 +323,12 @@ private fun BarbellVisualization(
     }
 
     val barLength = barbell.barLength.toFloat()
+    // Total logical thickness of all plates currently on the sleeve (in the same unit as barLength)
+    val totalThickness = plateData.sumOf { it.thickness }.toFloat()
+    // Extra logical length reserved beyond the outermost plate so we always show a bit of empty sleeve.
+    // This is expressed as a fraction of the sleeve length per side and capped at non‑negative.
+    val extraLogicalOffset = (barLength * 0.15f).coerceAtLeast(0f)
+
     val maxPlateWeight = remember(plateData) {
         plateData.maxOfOrNull { it.weight } ?: 25.0
     }
@@ -409,7 +415,23 @@ private fun BarbellVisualization(
 
         val sleeveX = shaftLength + spacing + stopperWidth + spacing
         val sleeveWidth = canvasWidth - sleeveX - paddingEnd
-        val scaleFactor = if (barLength > 0f) sleeveWidth / barLength else 1f
+        // Dynamically scale the logical sleeve length so plates use more of the visible width.
+        // We base this on the total plate thickness plus a small offset, but never exceed
+        // the physical sleeve length per side (barLength).
+        val logicalUsedLength = if (totalThickness > 0f) {
+            val desired = totalThickness + extraLogicalOffset
+            if (barLength > 0f) {
+                desired.coerceAtMost(barLength)
+            } else {
+                desired
+            }
+        } else {
+            // If there are no plates, fall back to showing the whole physical sleeve if known,
+            // otherwise just map 1:1 to the canvas sleeve width.
+            if (barLength > 0f) barLength else sleeveWidth
+        }.coerceAtLeast(1f)
+
+        val scaleFactor = sleeveWidth / logicalUsedLength
 
         // --- HELPER FUNCTION ---
         fun drawRoundedBlock(
