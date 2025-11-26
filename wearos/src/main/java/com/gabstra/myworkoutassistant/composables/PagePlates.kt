@@ -185,49 +185,15 @@ fun PagePlates(
             // Visual barbell representation with animation
             val plateChangeResult = updatedState.plateChangeResult!!
             val steps = plateChangeResult.change.steps
-            
+
+            // Index of the current step being animated (or -1 when idle)
             var currentStepIndex by remember(plateChangeResult) { mutableIntStateOf(-1) }
-            
-            // Compute current plate configuration based on animation step
-            // For REMOVE actions, keep the plate in the list during the animation step so it can fade out
-            val animatedPlates = remember(currentStepIndex, plateChangeResult) {
-                if (currentStepIndex < 0 || steps.isEmpty()) {
-                    plateChangeResult.previousPlates.sortedDescending()
-                } else {
-                    val currentPlates = plateChangeResult.previousPlates.toMutableList()
-                    val currentStep = steps[currentStepIndex]
-                    
-                    // Apply all steps up to but not including the current one
-                    for (i in 0 until currentStepIndex) {
-                        val step = steps[i]
-                        when (step.action) {
-                            PlateCalculator.Companion.Action.ADD -> {
-                                currentPlates.add(step.weight)
-                            }
-                            PlateCalculator.Companion.Action.REMOVE -> {
-                                currentPlates.remove(step.weight)
-                            }
-                        }
-                    }
-                    
-                    // For the current step:
-                    // - If ADD: add the plate (it will fade in)
-                    // - If REMOVE: ensure it's in the list (it will fade out, then be removed in next iteration)
-                    when (currentStep.action) {
-                        PlateCalculator.Companion.Action.ADD -> {
-                            currentPlates.add(currentStep.weight)
-                        }
-                        PlateCalculator.Companion.Action.REMOVE -> {
-                            // Ensure plate is in list for fade-out animation
-                            // (it should already be there from previous steps)
-                            if (!currentPlates.contains(currentStep.weight)) {
-                                currentPlates.add(currentStep.weight)
-                            }
-                        }
-                    }
-                    
-                    currentPlates.sortedDescending()
-                }
+
+            // We keep track of the *actual* plates currently shown on the bar.
+            // This lets us always start the animation from the current state instead of
+            // reconstructing everything from an implicit empty bar or looping forever.
+            var animatedPlates by remember(plateChangeResult) {
+                mutableStateOf(plateChangeResult.previousPlates.sortedDescending())
             }
             
             // Track which specific plate instance is currently being added or removed
@@ -274,24 +240,50 @@ fun PagePlates(
             
             // Animate the plate changes
             LaunchedEffect(plateChangeResult) {
+                // If there are no steps we just show the current configuration and do not animate.
                 if (steps.isEmpty()) {
+                    currentStepIndex = -1
+                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
                     return@LaunchedEffect
                 }
-                
-                while (true) {
-                    // Start from beginning
-                    currentStepIndex = -1
-                    delay(500) // Initial delay before starting
-                    
-                    // Animate through each step
-                    for (stepIndex in steps.indices) {
-                        currentStepIndex = stepIndex
-                        delay(900) // Delay between steps
-                    }
-                    
-                    // Hold final state briefly before looping
-                    delay(800)
+
+                // Start from the *current* bar configuration for this transition.
+                // This is the configuration the user should already have on the barbell.
+                animatedPlates = plateChangeResult.previousPlates.sortedDescending()
+                currentStepIndex = -1
+
+                // Small initial pause so the user can see the starting point.
+                delay(500)
+
+                // Walk the sequence of physical steps exactly once, applying the
+                // delta to the currently drawn plates instead of restarting from empty.
+                for (stepIndex in steps.indices) {
+                    val step = steps[stepIndex]
+                    currentStepIndex = stepIndex
+
+                    // Apply this step to the current animated plates.
+                    animatedPlates = animatedPlates.toMutableList().also { currentPlates ->
+                        when (step.action) {
+                            PlateCalculator.Companion.Action.ADD -> {
+                                currentPlates.add(step.weight)
+                            }
+
+                            PlateCalculator.Companion.Action.REMOVE -> {
+                                // Remove one instance of this plate, matching the physical action
+                                // (outermost plate of that weight). Since the list is sorted
+                                // descending, any instance is visually equivalent.
+                                currentPlates.remove(step.weight)
+                            }
+                        }
+                    }.sortedDescending()
+
+                    // Give time for the highlight / alpha animation and for the user to see the step.
+                    delay(900)
                 }
+
+                // After the last step, show the final configuration and clear the highlight.
+                animatedPlates = plateChangeResult.currentPlates.sortedDescending()
+                currentStepIndex = -1
             }
             
             Box(
