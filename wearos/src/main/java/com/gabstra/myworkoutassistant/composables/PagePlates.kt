@@ -38,6 +38,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.LabelGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -112,6 +113,7 @@ fun PagePlates(
                         fun pipe() {
                             withStyle(
                                 SpanStyle(
+                                    color = LabelGray,
                                     fontWeight = FontWeight.Bold
                                 )
                             ) {
@@ -119,7 +121,10 @@ fun PagePlates(
                             }
                         }
 
-                        append("Σ ${formatWeight(currentWeightTotal)}")
+                        withStyle(SpanStyle(color = LabelGray)) {
+                            append("Σ ")
+                        }
+                        append(formatWeight(currentWeightTotal))
                     }
 
                     Text(
@@ -144,6 +149,7 @@ fun PagePlates(
                         fun pipe() {
                             withStyle(
                                 SpanStyle(
+                                    color = LabelGray,
                                     fontWeight = FontWeight.Bold
                                 )
                             ) {
@@ -151,9 +157,14 @@ fun PagePlates(
                             }
                         }
 
-                        append("Σ ${formatWeight(previousWeightTotal)}")
-                        append(" → ")
-                        append("${formatWeight(currentWeightTotal)}")
+                        withStyle(SpanStyle(color = LabelGray)) {
+                            append("Σ ")
+                        }
+                        append(formatWeight(previousWeightTotal))
+                        withStyle(SpanStyle(color = LabelGray)) {
+                            append(" → ")
+                        }
+                        append(formatWeight(currentWeightTotal))
                     }
 
                     Text(

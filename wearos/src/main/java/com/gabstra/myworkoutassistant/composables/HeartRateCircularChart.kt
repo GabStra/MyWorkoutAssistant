@@ -68,6 +68,7 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.data.round
+import com.gabstra.myworkoutassistant.shared.LabelGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -173,7 +174,7 @@ fun HrStatusDialog(
                             modifier = Modifier.alignByBaseline(),
                             text = "bpm",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.onBackground
+                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerHigh else LabelGray
                         )
                     }
                 }
@@ -363,7 +364,7 @@ private fun HeartRateDisplay(
                     modifier = Modifier.alignByBaseline(),
                     text = "bpm",
                     style = MaterialTheme.typography.bodyExtraSmall,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = LabelGray
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
@@ -372,7 +373,7 @@ private fun HeartRateDisplay(
                     color = if (currentZone < 0 || currentZone >= colorsByZone.size)
                         MaterialTheme.colorScheme.surfaceContainerHigh
                     else
-                        MaterialTheme.colorScheme.onBackground
+                        LabelGray
                 )
             }
         }

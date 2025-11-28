@@ -33,6 +33,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.LabelGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -120,7 +121,7 @@ fun PageExercises(
                 fun pipe() {
                     withStyle(
                         SpanStyle(
-                            //color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            color = LabelGray,
                             fontWeight = FontWeight.Bold
                         )
                     ) {
@@ -128,18 +129,27 @@ fun PageExercises(
                     }
                 }
                 fun separator() {
-                    withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
+                    withStyle(SpanStyle(
+                        color = LabelGray,
+                        baselineShift = BaselineShift(0.18f)
+                    )) { // tweak 0.12–0.25f as needed
                         append( "↔")
                     }
                 }
 
-                append("Ex: ${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
+                withStyle(SpanStyle(color = LabelGray)) {
+                    append("Ex: ")
+                }
+                append("${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
 
                 if(currentExercise == selectedExercise) {
                     if (currentExerciseSetIds.size > 1) {
                         pipe()
                         val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
-                        append("Set: ${setIndex + 1}/${currentExerciseSetIds.size}")
+                        withStyle(SpanStyle(color = LabelGray)) {
+                            append("Set: ")
+                        }
+                        append("${setIndex + 1}/${currentExerciseSetIds.size}")
                     }
 
 

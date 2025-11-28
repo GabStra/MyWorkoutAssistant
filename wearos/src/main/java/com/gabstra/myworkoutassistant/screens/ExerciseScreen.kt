@@ -57,6 +57,7 @@ import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.LabelGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -295,7 +296,7 @@ fun ExerciseScreen(
                                         fun pipe() {
                                             withStyle(
                                                 SpanStyle(
-                                                    //color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                    color = LabelGray,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             ) {
@@ -303,16 +304,25 @@ fun ExerciseScreen(
                                             }
                                         }
                                         fun separator() {
-                                            withStyle(SpanStyle(baselineShift = BaselineShift(0.18f))) { // tweak 0.12–0.25f as needed
+                                            withStyle(SpanStyle(
+                                                color = LabelGray,
+                                                baselineShift = BaselineShift(0.18f)
+                                            )) { // tweak 0.12–0.25f as needed
                                                 append( "↔")
                                             }
                                         }
 
-                                        append("Ex: ${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
+                                        withStyle(SpanStyle(color = LabelGray)) {
+                                            append("Ex: ")
+                                        }
+                                        append("${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
 
                                         if (exerciseSetIds.size > 1) {
                                             pipe()
-                                            append("Set: ${setIndex.value + 1}/${exerciseSetIds.size}")
+                                            withStyle(SpanStyle(color = LabelGray)) {
+                                                append("Set: ")
+                                            }
+                                            append("${setIndex.value + 1}/${exerciseSetIds.size}")
                                         }
 
                                         if (isSuperset) {
@@ -383,7 +393,7 @@ fun ExerciseScreen(
                                             if (!first){
                                                 withStyle(
                                                     SpanStyle(
-                                                        //color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                        color = LabelGray,
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                 ) {
@@ -395,7 +405,10 @@ fun ExerciseScreen(
 
                                         if (equipment != null) {
                                             sep()
-                                            append("Eq: "+equipment.name)
+                                            withStyle(SpanStyle(color = LabelGray)) {
+                                                append("Eq: ")
+                                            }
+                                            append(equipment.name)
                                         }
                                         val isWarmupSet = when(val set = updatedState.set) {
                                             is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
