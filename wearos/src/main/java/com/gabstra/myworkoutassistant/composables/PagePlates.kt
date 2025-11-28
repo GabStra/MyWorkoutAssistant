@@ -492,7 +492,7 @@ private fun BarbellVisualization(
     val sortedPlatesForHighlighting = platesForDrawing
     
     // Check if we're in final state (all plates should be primary)
-    val isFinalState = currentStepIndex == totalSteps && totalSteps > 0
+    val isFinalState = (currentStepIndex == totalSteps) || (totalSteps == 0)
     
     // Calculate which plate indices should be highlighted (based on instance position among same-weight plates)
     // In final state, no plates should be highlighted

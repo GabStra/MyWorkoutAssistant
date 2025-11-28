@@ -14,10 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -25,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -33,7 +33,6 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.verticalLazyColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
@@ -232,19 +231,24 @@ fun ExerciseSetsViewer(
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
-    val lazyListState = rememberLazyListState()
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    
+    // Calculate item height: 27.5.dp (row height) + 2.5.dp (spacing) = 30.dp per item
+    val itemHeightDp = 30.dp
 
     // Reset scroll position immediately when exercise changes
     LaunchedEffect(exercise.id) {
-        lazyListState.animateScrollToItem(0)
+        scrollState.animateScrollTo(0)
     }
 
     // Scroll to current set when it changes
     LaunchedEffect(setIndex, exercise.id) {
         if (setIndex != -1 && setIndex < exerciseSetStates.size) {
-            lazyListState.animateScrollToItem(setIndex)
+            val scrollPosition = with(density) { (setIndex * itemHeightDp.toPx()).toInt() }
+            scrollState.animateScrollTo(scrollPosition)
         } else {
-            lazyListState.animateScrollToItem(0)
+            scrollState.animateScrollTo(0)
         }
     }
 
@@ -326,21 +330,12 @@ fun ExerciseSetsViewer(
                     .fillMaxWidth(), // Still need to fill width
                 prototypeItem = { prototypeItem() } // Pass the item for measurement
             ) {
-                LazyColumn(
-                    state = lazyListState,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalLazyColumnScrollbar(
-                            lazyListState = lazyListState,
-                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
-                            enableTopFade = false,
-                            enableBottomFade = false
-                        )
+                        .verticalScroll(scrollState)
                 ) {
-                    itemsIndexed(
-                        items = exerciseSetStates,
-                        key = { _, setState -> setState.set.id }
-                    ) { index, setState ->
+                    exerciseSetStates.forEachIndexed { index, setState ->
                         MeasuredSetTableRow(setState, index)
                     }
                 }
@@ -369,22 +364,12 @@ fun ExerciseSetsViewer(
                     .fillMaxWidth(), // Still need to fill width
                 prototypeItem = { prototypeItem() } // Pass the item for measurement
             ) {
-                LazyColumn(
-                    state = lazyListState,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalLazyColumnScrollbar(
-                            lazyListState = lazyListState,
-                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
-                            enableTopFade = false,
-                            enableBottomFade = false
-                        ),
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        .verticalScroll(scrollState)
                 ) {
-                    itemsIndexed(
-                        items = exerciseSetStates,
-                        key = { _, setState -> setState.set.id }
-                    ) { index, setState ->
+                    exerciseSetStates.forEachIndexed { index, setState ->
                         MeasuredSetTableRow(setState, index)
                     }
                 }

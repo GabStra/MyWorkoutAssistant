@@ -14,7 +14,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
@@ -32,25 +31,19 @@ fun TimeViewer(
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
 
-    // Measure once for "baseText..."
-
-
-
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
-
-    val monospacedStyle = style.copy(fontFamily = FontFamily.Monospace)
 
     val baseText = when{
         hours > 0 -> "00:00:00"
         else -> "00:00"
     }
 
-    val fullWidthDp = remember(measurer, baseText, monospacedStyle, density) {
+    val fullWidthDp = remember(measurer, baseText, style, density) {
         with(density) {
             measurer
-                .measure(text = AnnotatedString(baseText), style = monospacedStyle, maxLines = 1)
+                .measure(text = AnnotatedString(baseText), style = style, maxLines = 1)
                 .size.width
                 .toDp()
         }
@@ -101,7 +94,7 @@ fun TimeViewer(
     Text(
         modifier = modifier.width(fullWidthDp),
         text = annotatedText,
-        style = monospacedStyle,
+        style = style,
         textAlign = TextAlign.Start
     )
 }

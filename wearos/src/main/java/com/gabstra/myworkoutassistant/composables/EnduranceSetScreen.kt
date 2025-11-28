@@ -369,8 +369,7 @@ fun EnduranceSetScreen (
             } else {
                 Column(
                     modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
@@ -381,7 +380,7 @@ fun EnduranceSetScreen (
                             extraInfo(state)
                         }
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(5.dp))
                     SetScreen(customModifier = Modifier)
                 }
             }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -356,36 +357,41 @@ fun WeightSetScreen(
             modifier = customModifier,
             verticalArrangement = Arrangement.Top
         ){
-            Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
             ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Text(
-                        text = "WEIGHT (KG)",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color =  MaterialTheme.colorScheme.onBackground,
-                    )
-                    WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
-                }
+                    Column(
+                        modifier = Modifier.width(70.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
+                    ) {
+                        Text(
+                            text = "WEIGHT (KG)",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color =  MaterialTheme.colorScheme.onBackground,
+                        )
+                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
 
-                Column(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
-                ) {
-                    Text(
-                        text = "REPS",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color =  MaterialTheme.colorScheme.onBackground,
-                    )
-                    RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    Column(
+                        modifier = Modifier.width(70.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
+                    ) {
+                        Text(
+                            text = "REPS",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color =  MaterialTheme.colorScheme.onBackground,
+                        )
+                        RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
                 }
             }
         }

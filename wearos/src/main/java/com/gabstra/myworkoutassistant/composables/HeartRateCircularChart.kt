@@ -48,7 +48,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
@@ -368,12 +371,22 @@ private fun HeartRateDisplay(
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
-                    text = zoneLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (currentZone < 0 || currentZone >= colorsByZone.size)
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    else
-                        LabelGray
+                    text = buildAnnotatedString {
+                        val prefix = "Z: "
+                        val rest = zoneLabel.removePrefix(prefix)
+                        val restColor = if (currentZone < 0 || currentZone >= colorsByZone.size)
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        else
+                            MaterialTheme.colorScheme.onBackground
+                        
+                        withStyle(SpanStyle(color = LabelGray)) {
+                            append(prefix)
+                        }
+                        withStyle(SpanStyle(color = restColor)) {
+                            append(rest)
+                        }
+                    },
+                    style = MaterialTheme.typography.labelMedium
                 )
             }
         }
@@ -408,7 +421,6 @@ private fun TargetRangeArc(
 
     fun dpToDegrees(gap: Dp, diameter: Dp): Float =
         (gap.value / (PI * diameter.value).toFloat()) * 360f
-
 
     BoxWithConstraints(
         modifier = modifier
@@ -830,13 +842,13 @@ private fun HeartRateView(
             TargetRangeArc(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(2.dp),
+                    .padding(4.5.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
                 color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
-                strokeWidth = 20.dp,
-                borderWidth = 8.dp,
-                innerBorderWidth = 6.dp
+                strokeWidth = 14.dp,
+                borderWidth = 5.dp,
+                innerBorderWidth = 3.dp
             )
         }
 
@@ -849,12 +861,12 @@ private fun HeartRateView(
 
             Box(modifier = Modifier
                 .fillMaxSize()
-                .padding(4.dp)
+                .padding(2.dp)
             ) {
                 HeartRateIndicator(
                     currentHrRotationAngle,
                     MaterialTheme.colorScheme.onBackground,
-                    bubbleSize = 15.dp,
+                    bubbleSize = 19.dp,
                     borderWidth = 2.dp
                 )
             }
@@ -950,7 +962,7 @@ private fun HeartRateCircularChartPreview() {
         appViewModel = previewAppViewModel,
         hapticsViewModel = hapticsViewModel,
         heartRateChangeViewModel = previewHeartRateChangeViewModel,
-        hr = 105,
+        hr = getHeartRateFromPercentage(70f,30),
         age = 30,
         lowerBoundMaxHRPercent = 70f,
         upperBoundMaxHRPercent = 80f
