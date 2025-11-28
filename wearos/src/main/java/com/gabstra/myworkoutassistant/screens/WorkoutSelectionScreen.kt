@@ -10,12 +10,16 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
@@ -41,8 +45,6 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.Card
-import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OpenOnPhoneDialog
@@ -179,6 +181,7 @@ fun WorkoutSelectionScreen(
     val canScheduleExactAlarms by rememberCanScheduleExactAlarmsState(context)
 
     var showClearData by remember { mutableStateOf(false) }
+    var showOpenOnPhoneDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
@@ -233,59 +236,74 @@ fun WorkoutSelectionScreen(
 
             if(!canScheduleExactAlarms){
                 item {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                        ),
-                        transformation = SurfaceTransformation(spec),
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .transformedHeight(this, spec)
                             .animateItem(),
                     ) {
                         Text(
-                            modifier = Modifier,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 5.dp, vertical = 10.dp),
                             text = "Enable Alarms for scheduled workouts",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Button(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                val intent = Intent(
-                                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                                    "package:${context.packageName}".toUri()
-                                )
-
-                                context.startActivity(intent)
-                            }
-                        ) {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "Open Alarms Settings",
-                                textAlign = TextAlign.Center,
-                                style =  MaterialTheme.typography.bodyLarge,
+                    }
+                }
+                item {
+                    Spacer(modifier = Modifier.height(5.dp))
+                }
+                item {
+                    Button(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec)
+                            .animateItem(),
+                        transformation = SurfaceTransformation(spec),
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            val intent = Intent(
+                                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                "package:${context.packageName}".toUri()
                             )
+
+                            context.startActivity(intent)
                         }
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Open Alarms Settings",
+                            textAlign = TextAlign.Center,
+                            style =  MaterialTheme.typography.bodyLarge,
+                        )
                     }
                 }
             }
 
             if (userAge == currentYear) {
                 item{
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                        ),
-                        transformation = SurfaceTransformation(spec),
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .transformedHeight(this, spec)
                             .animateItem(),
                     ) {
                         if(viewModel.isPhoneConnectedAndHasApp){
                             Text(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 5.dp, vertical = 10.dp),
                                 text = "Input your age on the mobile app",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodySmall,
@@ -293,40 +311,41 @@ fun WorkoutSelectionScreen(
                             )
                         }else{
                             Text(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 5.dp, vertical = 10.dp),
                                 text = "Install the mobile app on your phone",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        var showOpenOnPhoneDialog by remember { mutableStateOf(false) }
-                        Button(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                showOpenOnPhoneDialog = true
-                                scope.launch {
-                                    openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
-                                }
+                    }
+                }
+                item {
+                    Spacer(modifier = Modifier.height(5.dp))
+                }
+                item {
+                    Button(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec)
+                            .animateItem(),
+                        transformation = SurfaceTransformation(spec),
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            showOpenOnPhoneDialog = true
+                            scope.launch {
+                                openSettingsOnPhoneApp(context, dataClient, viewModel.phoneNode!!, appHelper)
                             }
-                        ) {
-
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "Open mobile app",
-                                textAlign = TextAlign.Center,
-                                style =  MaterialTheme.typography.bodyLarge,
-                            )
-                            val text = OpenOnPhoneDialogDefaults.text
-                            val style = OpenOnPhoneDialogDefaults.curvedTextStyle
-
-                            OpenOnPhoneDialog(
-                                visible = showOpenOnPhoneDialog,
-                                onDismissRequest = { showOpenOnPhoneDialog = false },
-                                curvedText = { openOnPhoneDialogCurvedText(text = text, style = style) },
-                            )
                         }
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Open mobile app",
+                            textAlign = TextAlign.Center,
+                            style =  MaterialTheme.typography.bodyLarge,
+                        )
                     }
                 }
 
@@ -364,6 +383,15 @@ fun WorkoutSelectionScreen(
             }
         }
     }
+
+    val text = OpenOnPhoneDialogDefaults.text
+    val style = OpenOnPhoneDialogDefaults.curvedTextStyle
+
+    OpenOnPhoneDialog(
+        visible = showOpenOnPhoneDialog,
+        onDismissRequest = { showOpenOnPhoneDialog = false },
+        curvedText = { openOnPhoneDialogCurvedText(text = text, style = style) },
+    )
 
     CustomDialogYesOnLongPress(
         show = showClearData,
