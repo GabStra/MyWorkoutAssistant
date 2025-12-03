@@ -22,6 +22,7 @@ import androidx.core.content.edit
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
@@ -47,6 +48,12 @@ fun WorkoutScreen(
     heartRateChangeViewModel : HeartRateChangeViewModel,
     hrViewModel: SensorDataViewModel,
     polarViewModel: PolarViewModel,
+    showHeartRateTutorial: Boolean,
+    onDismissHeartRateTutorial: () -> Unit,
+    showSetScreenTutorial: Boolean,
+    onDismissSetScreenTutorial: () -> Unit,
+    showRestScreenTutorial: Boolean,
+    onDismissRestScreenTutorial: () -> Unit,
 ){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -238,7 +245,9 @@ fun WorkoutScreen(
                         state,
                         hearthRateChart = {
                             heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
-                        }
+                        },
+                        showTutorial = showSetScreenTutorial,
+                        onDismissTutorial = onDismissSetScreenTutorial
                     )
                 }
                 is WorkoutState.Rest -> {
@@ -270,7 +279,9 @@ fun WorkoutScreen(
                             } catch (exception: Exception) {
                                 android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
                             }
-                        }
+                        },
+                        showTutorial = showRestScreenTutorial,
+                        onDismissTutorial = onDismissRestScreenTutorial
                     )
                 }
                 is WorkoutState.Completed -> {
@@ -286,5 +297,11 @@ fun WorkoutScreen(
                 }
             }
         }
+
+        TutorialOverlay(
+            visible = showHeartRateTutorial,
+            text = "This circular chart shows your heart rate and zone. Tap the value to switch display modes and use the back button gestures to pause or end the workout.",
+            onDismiss = onDismissHeartRateTutorial
+        )
     }
 }

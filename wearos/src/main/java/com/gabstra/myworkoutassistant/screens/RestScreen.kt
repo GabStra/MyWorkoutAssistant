@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.pager.rememberPagerState
@@ -47,6 +48,7 @@ import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.TimeViewer
+import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -71,6 +73,8 @@ fun RestScreen(
     state: WorkoutState.Rest,
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
+    showTutorial: Boolean = false,
+    onDismissTutorial: () -> Unit = {},
 ) {
     val set = state.set as RestSet
 
@@ -117,6 +121,7 @@ fun RestScreen(
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
     val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
+    var showTutorialWithDelay by remember { mutableStateOf(false) }
 
     val exercise = remember(state.nextStateSets.first().exerciseId) {
         viewModel.exercisesById[state.nextStateSets.first().exerciseId]!!
@@ -264,6 +269,15 @@ fun RestScreen(
         }
     }
 
+    LaunchedEffect(showTutorial) {
+        if (showTutorial) {
+            delay(1500) // Brief delay to let screen render
+            showTutorialWithDelay = true
+        } else {
+            showTutorialWithDelay = false
+        }
+    }
+
     val isPaused by viewModel.isPaused
 
     LaunchedEffect(isPaused) {
@@ -280,8 +294,20 @@ fun RestScreen(
         }
     }
 
+    val typography = MaterialTheme.typography
+    val timerTextStyle = remember(typography) {
+        typography.numeralSmall.copy(
+            fontWeight = W700,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+
     @Composable
-    fun textComposable(seconds:Int,modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.numeralExtraSmall){
+    fun textComposable(
+        seconds: Int,
+        modifier: Modifier = Modifier,
+        style: TextStyle = timerTextStyle,
+    ) {
         Row(
             modifier = modifier
                 .fillMaxWidth(),
@@ -335,7 +361,7 @@ fun RestScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     content = {
-                        textComposable(seconds = currentSecondsFreeze, style = MaterialTheme.typography.numeralSmall.copy(fontWeight = W700))
+                        textComposable(seconds = currentSecondsFreeze)
                     }
                 )
             }
@@ -429,9 +455,8 @@ fun RestScreen(
         )
 
         textComposable(
-            seconds = if(isTimerInEditMode) currentSecondsFreeze else currentSeconds,
+            seconds = if (isTimerInEditMode) currentSecondsFreeze else currentSeconds,
             modifier = Modifier.align(Alignment.BottomCenter),
-            style = MaterialTheme.typography.labelMedium
         )
     }
 
@@ -464,6 +489,15 @@ fun RestScreen(
             } else {
                 viewModel.reEvaluateDimmingForCurrentState()
             }
+        }
+    )
+
+    TutorialOverlay(
+        visible = showTutorialWithDelay,
+        text = "Rest timer starts automatically. Long-press the timer to adjust rest time. Swipe horizontally to see next exercise info. Screen lights up at 5 seconds remaining. Use back button double-press to skip rest early.",
+        onDismiss = {
+            showTutorialWithDelay = false
+            onDismissTutorial()
         }
     )
 }

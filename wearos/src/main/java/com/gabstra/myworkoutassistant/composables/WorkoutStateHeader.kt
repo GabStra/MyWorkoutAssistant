@@ -23,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -85,8 +84,7 @@ fun WorkoutStateHeader(
             }
         }else{
             val captionStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = FontWeight.Medium,
-                fontFamily = FontFamily.Monospace
+                fontWeight = FontWeight.Medium
             )
 
             val hours = remember(duration) { duration.toHours() }

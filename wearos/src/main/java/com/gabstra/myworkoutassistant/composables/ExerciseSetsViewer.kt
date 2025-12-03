@@ -233,9 +233,8 @@ fun ExerciseSetsViewer(
 
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
-    
-    // Calculate item height: 27.5.dp (row height) + 2.5.dp (spacing) = 30.dp per item
-    val itemHeightDp = 30.dp
+
+    val itemHeightDp = 27.5.dp
 
     // Reset scroll position immediately when exercise changes
     LaunchedEffect(exercise.id) {

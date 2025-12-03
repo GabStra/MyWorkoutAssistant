@@ -54,6 +54,7 @@ import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -79,9 +80,12 @@ fun ExerciseScreen(
     hapticsViewModel: HapticsViewModel,
     state: WorkoutState.Set,
     hearthRateChart: @Composable () -> Unit,
+    showTutorial: Boolean = false,
+    onDismissTutorial: () -> Unit = {},
 ) {
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
+    var showTutorialWithDelay by remember { mutableStateOf(false) }
 
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
@@ -149,6 +153,15 @@ fun ExerciseScreen(
         pagerState.scrollToPage(exerciseDetailPageIndex)
         allowHorizontalScrolling = true
         viewModel.closeCustomDialog()
+    }
+
+    LaunchedEffect(showTutorial) {
+        if (showTutorial) {
+            delay(1500) // Brief delay to let screen render
+            showTutorialWithDelay = true
+        } else {
+            showTutorialWithDelay = false
+        }
     }
 
     val scope = rememberCoroutineScope()
@@ -545,6 +558,15 @@ fun ExerciseScreen(
 
             hearthRateChart()
         }
+
+        TutorialOverlay(
+            visible = showTutorialWithDelay,
+            text = "Swipe horizontally to navigate between pages. Tap exercise title or header to enable marquee scrolling. The screen auto-returns to exercise details after 10 seconds. Use the Complete Set button or back button gestures to finish the set.",
+            onDismiss = {
+                showTutorialWithDelay = false
+                onDismissTutorial()
+            }
+        )
     }
 
     DisposableEffect(Unit) {

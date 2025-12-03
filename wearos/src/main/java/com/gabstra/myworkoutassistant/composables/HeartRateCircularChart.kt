@@ -417,7 +417,7 @@ private fun TargetRangeArc(
     var shouldCaptureMask1 by remember { mutableStateOf(true) }
     var shouldCaptureMask2 by remember { mutableStateOf(true) }
 
-    val nudgeAmount = 5.dp
+    val nudgeAmount = 2.dp
 
     fun dpToDegrees(gap: Dp, diameter: Dp): Float =
         (gap.value / (PI * diameter.value).toFloat()) * 360f
@@ -848,7 +848,7 @@ private fun HeartRateView(
                 color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
                 strokeWidth = 14.dp,
                 borderWidth = 5.dp,
-                innerBorderWidth = 3.dp
+                innerBorderWidth = 4.dp
             )
         }
 
@@ -861,7 +861,7 @@ private fun HeartRateView(
 
             Box(modifier = Modifier
                 .fillMaxSize()
-                .padding(2.dp)
+                .padding(2.5.dp)
             ) {
                 HeartRateIndicator(
                     currentHrRotationAngle,
