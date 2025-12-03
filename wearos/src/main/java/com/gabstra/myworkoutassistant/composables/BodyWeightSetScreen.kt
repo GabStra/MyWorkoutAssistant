@@ -318,7 +318,7 @@ fun BodyWeightSetScreen(
                 else -> Green
             }
 
-            val weightText = if(currentSetData.additionalWeight != 0.0) equipment!!.formatWeight(currentSetData.additionalWeight) else "-"
+            val weightText = if(currentSetData.additionalWeight != 0.0) equipment!!.formatWeight(currentSetData.additionalWeight) else "BW"
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
@@ -333,7 +333,7 @@ fun BodyWeightSetScreen(
     @SuppressLint("DefaultLocale")
     @Composable
     fun SetScreen(customModifier: Modifier) {
-        val shouldShowWeights = availableWeights.isNotEmpty() && currentSetData.additionalWeight != 0.0
+        val shouldShowWeights = currentSetData.additionalWeight == 0.0 || availableWeights.isNotEmpty()
 
         Column (
             modifier = customModifier,

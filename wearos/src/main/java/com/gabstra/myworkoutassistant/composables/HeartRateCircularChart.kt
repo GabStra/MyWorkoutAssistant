@@ -50,6 +50,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Devices
@@ -369,8 +370,14 @@ private fun HeartRateDisplay(
                     style = MaterialTheme.typography.bodyExtraSmall,
                     color = LabelGray
                 )
-                Spacer(modifier = Modifier.width(5.dp))
                 Text(
+                    modifier = Modifier.alignByBaseline(),
+                    text = " | ",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Thin),
+                    color = LabelGray
+                )
+                Text(
+                    modifier = Modifier.alignByBaseline(),
                     text = buildAnnotatedString {
                         val prefix = "Z: "
                         val rest = zoneLabel.removePrefix(prefix)
@@ -742,7 +749,7 @@ private fun HeartRateView(
     val zoneCount = colorsByZone.size - 1
     val totalStartAngle = 125f
     val totalEndAngle = 235f
-    val paddingAngle = 2f
+    val paddingAngle = 1f
 
     val totalArcAngle by remember { derivedStateOf { totalEndAngle - totalStartAngle } }
     val segmentArcAngle by remember(zoneCount, totalArcAngle, paddingAngle) {

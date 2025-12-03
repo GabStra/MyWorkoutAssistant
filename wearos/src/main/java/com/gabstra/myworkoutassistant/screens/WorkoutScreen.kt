@@ -300,7 +300,7 @@ fun WorkoutScreen(
 
         TutorialOverlay(
             visible = showHeartRateTutorial,
-            text = "This circular chart shows your heart rate and zone. Tap the value to switch display modes and use the back button gestures to pause or end the workout.",
+            text = "Heart Rate Chart (Left)\nTap the value to switch display modes.\n\nExercise Indicator (Right)\nShows your progress through the workout.\n\nBack Button Gestures\nUse to pause or end the workout.",
             onDismiss = onDismissHeartRateTutorial
         )
     }

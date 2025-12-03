@@ -41,25 +41,6 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
-private fun computeEdgeDotsReserveDeg(
-    ringRadiusPx: Float,
-    dotDiameterPx: Float,
-    gapDeg: Float,
-    paddingDeg: Float,
-    arcStrokeWidthPx: Float = 0f,
-    includePadding: Boolean = true,
-    includeStrokeClearance: Boolean = false
-): Float {
-    if (ringRadiusPx <= 0f) return 0f
-    val x = (dotDiameterPx / (4f * ringRadiusPx)).coerceIn(0f, 1f)
-    val halfDotDeg = Math.toDegrees(2.0 * kotlin.math.asin(x.toDouble())).toFloat()
-    val strokeHalfDeg = if (includeStrokeClearance && arcStrokeWidthPx > 0f) {
-        Math.toDegrees(kotlin.math.atan2(arcStrokeWidthPx / 2f, ringRadiusPx).toDouble()).toFloat()
-    } else 0f
-    val padding = if (includePadding) paddingDeg else 0f
-    return 3f * gapDeg + padding + 2f * halfDotDeg + 2f * strokeHalfDeg
-}
-
 @OptIn(ExperimentalHorologistApi::class)
 @Composable
 fun ExerciseIndicator(
@@ -130,7 +111,7 @@ fun ExerciseIndicator(
 
     val startingAngle = -55f
     val totalArcAngle = 110f
-    val paddingAngle = 2f
+    val paddingAngle = 1f
 
     val dotAngleGapDeg = 4f
     val dotSpan = 2 * dotAngleGapDeg

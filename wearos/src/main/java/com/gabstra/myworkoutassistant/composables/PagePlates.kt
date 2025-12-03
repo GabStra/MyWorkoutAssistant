@@ -110,19 +110,8 @@ fun PagePlates(
 
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val topLine = buildAnnotatedString {
-                        fun pipe() {
-                            withStyle(
-                                SpanStyle(
-                                    color = LabelGray,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            ) {
-                                append(" • ")
-                            }
-                        }
-
                         withStyle(SpanStyle(color = LabelGray)) {
-                            append("Σ ")
+                            append("Tot: ")
                         }
                         append(formatWeight(currentWeightTotal))
                     }
@@ -150,17 +139,18 @@ fun PagePlates(
                             withStyle(
                                 SpanStyle(
                                     color = LabelGray,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Thin
                                 )
                             ) {
-                                append(" • ")
+                                append(" | ")
                             }
                         }
 
                         withStyle(SpanStyle(color = LabelGray)) {
-                            append("Σ ")
+                            append("Tot: ")
                         }
                         append(formatWeight(previousWeightTotal))
+                        pipe()
                         withStyle(SpanStyle(color = LabelGray)) {
                             append(" → ")
                         }

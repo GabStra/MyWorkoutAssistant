@@ -48,14 +48,15 @@ fun TutorialOverlay(
         ) {
             Column(
                 modifier = Modifier
-                    .padding(16.dp),
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Text(
                     text = text,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center
                 )
 
                 Button(

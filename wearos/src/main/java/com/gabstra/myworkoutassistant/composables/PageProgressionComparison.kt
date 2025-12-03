@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.LabelGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -362,6 +363,16 @@ fun PageProgressionComparison(
         if (maxSets > 0) {
             val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, colorScheme.primary, colorScheme.tertiary) {
                 buildAnnotatedString {
+                    fun pipe() {
+                        withStyle(
+                            SpanStyle(
+                                color = LabelGray,
+                                fontWeight = FontWeight.Thin
+                            )
+                        ) {
+                            append(" | ")
+                        }
+                    }
                     if (isRetry) {
                         withStyle(
                             style = SpanStyle(
@@ -371,7 +382,7 @@ fun PageProgressionComparison(
                         ) {
                             append("Repeat")
                         }
-                        append(" • ")
+                        pipe()
                     }
                     append("Set: ${currentSetIndex + 1}/$maxSets")
                 }

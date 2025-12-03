@@ -243,17 +243,12 @@ fun WorkoutSelectionScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(
-                                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                                    shape = RoundedCornerShape(16.dp)
-                                )
                                 .transformedHeight(this, spec)
                                 .animateItem(),
                         ) {
                             Text(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 5.dp, vertical = 10.dp),
+                                    .fillMaxWidth(),
                                 text = "Enable Alarms for scheduled workouts",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodySmall,
@@ -296,18 +291,13 @@ fun WorkoutSelectionScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(
-                                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                                    shape = RoundedCornerShape(16.dp)
-                                )
                                 .transformedHeight(this, spec)
                                 .animateItem(),
                         ) {
                             if (viewModel.isPhoneConnectedAndHasApp) {
                                 Text(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 5.dp, vertical = 10.dp),
+                                        .fillMaxWidth(),
                                     text = "Input your age on the mobile app",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall,
@@ -394,7 +384,7 @@ fun WorkoutSelectionScreen(
 
             TutorialOverlay(
                 visible = showTutorial,
-                text = "Tap a workout below to see its details and start it. Use the list header for app version and data tools.",
+                text = "Select a Workout\nTap below to see details and start.\n\nList Header\nLong-press for version info.\nDouble-tap for data tools.",
                 onDismiss = onDismissTutorial
             )
         }

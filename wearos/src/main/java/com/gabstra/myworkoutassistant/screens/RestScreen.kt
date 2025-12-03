@@ -494,7 +494,7 @@ fun RestScreen(
 
     TutorialOverlay(
         visible = showTutorialWithDelay,
-        text = "Rest timer starts automatically. Long-press the timer to adjust rest time. Swipe horizontally to see next exercise info. Screen lights up at 5 seconds remaining. Use back button double-press to skip rest early.",
+        text = "Rest Timer\nStarts automatically.\nLong-press to adjust time.\n\nNavigation\nSwipe horizontally for next exercise info.\n\nNotifications\nScreen lights up at 5 seconds.\n\nSkip Rest\nDouble-press back button to skip early.",
         onDismiss = {
             showTutorialWithDelay = false
             onDismissTutorial()

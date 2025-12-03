@@ -305,15 +305,14 @@ fun ExerciseScreen(
                                 ) {
 
                                     val topLine = buildAnnotatedString {
-                                        @Composable
                                         fun pipe() {
                                             withStyle(
                                                 SpanStyle(
                                                     color = LabelGray,
-                                                    fontWeight = FontWeight.Bold
+                                                    fontWeight = FontWeight.Thin
                                                 )
                                             ) {
-                                                append(" • ")
+                                                append(" | ")
                                             }
                                         }
                                         fun separator() {
@@ -407,10 +406,10 @@ fun ExerciseScreen(
                                                 withStyle(
                                                     SpanStyle(
                                                         color = LabelGray,
-                                                        fontWeight = FontWeight.Bold
+                                                        fontWeight = FontWeight.Thin
                                                     )
                                                 ) {
-                                                    append(" • ")
+                                                    append(" | ")
                                                 }
                                             }
                                             first = false
@@ -561,7 +560,7 @@ fun ExerciseScreen(
 
         TutorialOverlay(
             visible = showTutorialWithDelay,
-            text = "Swipe horizontally to navigate between pages. Tap exercise title or header to enable marquee scrolling. The screen auto-returns to exercise details after 10 seconds. Use the Complete Set button or back button gestures to finish the set.",
+            text = "Navigation\nSwipe horizontally between pages.\n\nMarquee Scrolling\nTap exercise title or header to enable.\n\nAuto-Return\nScreen returns to details after 10 seconds.\n\nComplete Set\nUse Complete Set button or back gestures.",
             onDismiss = {
                 showTutorialWithDelay = false
                 onDismissTutorial()

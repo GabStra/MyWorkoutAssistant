@@ -117,15 +117,14 @@ fun PageExercises(
             )
 
             val topLine = buildAnnotatedString {
-                @Composable
                 fun pipe() {
                     withStyle(
                         SpanStyle(
                             color = LabelGray,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Thin
                         )
                     ) {
-                        append(" • ")
+                        append(" | ")
                     }
                 }
                 fun separator() {
