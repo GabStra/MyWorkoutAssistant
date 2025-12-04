@@ -437,7 +437,7 @@ fun WearApp(
                         if (showWorkoutSelectionTutorial) {
                             TutorialOverlay(
                                 visible = true,
-                                text = "Select a Workout\nTap below to see details and start.\n\nList Header\nLong-press for version info.\nDouble-tap for data tools.",
+                                text = "Choose a workout\nTap one to see details and start.\n\nTop header\nLong-press for app version.\nDouble-tap for data tools.",
                                 onDismiss = {
                                     showWorkoutSelectionTutorial = false
                                     tutorialState = TutorialPreferences.update(localContext, tutorialState) {

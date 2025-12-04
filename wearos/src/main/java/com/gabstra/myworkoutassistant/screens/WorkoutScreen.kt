@@ -215,7 +215,7 @@ fun WorkoutScreen(
         if (showHeartRateTutorial) {
             TutorialOverlay(
                 visible = true,
-                text = "Heart Rate Chart (Left)\nTap the value to switch display modes.\n\nExercise Indicator (Right)\nShows your progress through the workout.\n\nBack Button Gestures\nUse to pause or end the workout.",
+                text = "Heart rate (left)\nTap the number to change how it’s shown.\n\nWorkout progress (right)\nShows where you are in the workout.\n\nBack button\nUse presses to pause or end.",
                 onDismiss = onDismissHeartRateTutorial
             )
         } else {
@@ -249,7 +249,7 @@ fun WorkoutScreen(
                         if (showSetScreenTutorial) {
                             TutorialOverlay(
                                 visible = true,
-                                text = "Navigation\nSwipe horizontally between pages.\n\nMarquee Scrolling\nTap exercise title or header to enable.\n\nAuto-Return\nScreen returns to details after 10 seconds.\n\nComplete Set\nUse Complete Set button or back gestures.",
+                                text = "Move between pages\nSwipe left or right.\n\nScroll long text\nTap the exercise title or header.\n\nReturn to details\nScreen goes back after 10 seconds.\n\nFinish the set\nUse Complete Set or back button.",
                                 onDismiss = onDismissSetScreenTutorial
                             )
                         } else {
@@ -276,7 +276,7 @@ fun WorkoutScreen(
                         if (showRestScreenTutorial) {
                             TutorialOverlay(
                                 visible = true,
-                                text = "Rest Timer\nStarts automatically.\nLong-press to adjust time.\n\nNavigation\nSwipe horizontally for next exercise info.\n\nNotifications\nScreen lights up at 5 seconds.\n\nSkip Rest\nDouble-press back button to skip early.",
+                                text = "Rest timer\nStarts on its own.\nLong-press the time to edit, then use +/−.\n\nExercises\nCurrent and upcoming exercises are shown.\nTap the left or right side to see previous or next.\n\nHeads-up\nScreen lights up with 5 seconds left.\n\nSkip rest\nDouble-press the back button to continue early.",
                                 onDismiss = onDismissRestScreenTutorial
                             )
                         } else {
