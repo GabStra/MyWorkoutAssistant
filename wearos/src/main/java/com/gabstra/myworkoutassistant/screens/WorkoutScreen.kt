@@ -254,9 +254,9 @@ fun WorkoutScreen(
                             )
                         } else {
                             ExerciseScreen(
-                                viewModel,
-                                hapticsViewModel,
-                                state,
+                                viewModel = viewModel,
+                                hapticsViewModel = hapticsViewModel,
+                                state = state,
                                 hearthRateChart = {
                                     heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
                                 },
@@ -281,10 +281,10 @@ fun WorkoutScreen(
                             )
                         } else {
                             RestScreen(
-                                viewModel,
-                                hapticsViewModel,
-                                state,
-                                { heartRateChartComposable() },
+                                viewModel = viewModel,
+                                hapticsViewModel = hapticsViewModel,
+                                state = state,
+                                hearthRateChart = { heartRateChartComposable() },
                                 onTimerEnd = {
                                     try {
                                         viewModel.storeSetData()

@@ -24,6 +24,7 @@ data class TutorialState(
     val hasSeenWorkoutHeartRateTutorial: Boolean = false,
     val hasSeenSetScreenTutorial: Boolean = false,
     val hasSeenRestScreenTutorial: Boolean = false,
+    val hasSeenCoachmarkTutorial: Boolean = false,
 )
 
 object TutorialPreferences {
@@ -32,6 +33,7 @@ object TutorialPreferences {
     private const val KEY_HAS_SEEN_WORKOUT_HEART_RATE = "has_seen_workout_heart_rate_tutorial"
     private const val KEY_HAS_SEEN_SET_SCREEN = "has_seen_set_screen_tutorial"
     private const val KEY_HAS_SEEN_REST_SCREEN = "has_seen_rest_screen_tutorial"
+    private const val KEY_HAS_SEEN_COACHMARK = "has_seen_coachmark_tutorial"
 
     fun load(context: Context): TutorialState {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -40,6 +42,7 @@ object TutorialPreferences {
             hasSeenWorkoutHeartRateTutorial = prefs.getBoolean(KEY_HAS_SEEN_WORKOUT_HEART_RATE, false),
             hasSeenSetScreenTutorial = prefs.getBoolean(KEY_HAS_SEEN_SET_SCREEN, false),
             hasSeenRestScreenTutorial = prefs.getBoolean(KEY_HAS_SEEN_REST_SCREEN, false),
+            hasSeenCoachmarkTutorial = prefs.getBoolean(KEY_HAS_SEEN_COACHMARK, false),
         )
     }
 
@@ -55,6 +58,7 @@ object TutorialPreferences {
             .putBoolean(KEY_HAS_SEEN_WORKOUT_HEART_RATE, updated.hasSeenWorkoutHeartRateTutorial)
             .putBoolean(KEY_HAS_SEEN_SET_SCREEN, updated.hasSeenSetScreenTutorial)
             .putBoolean(KEY_HAS_SEEN_REST_SCREEN, updated.hasSeenRestScreenTutorial)
+            .putBoolean(KEY_HAS_SEEN_COACHMARK, updated.hasSeenCoachmarkTutorial)
             .apply()
         return updated
     }

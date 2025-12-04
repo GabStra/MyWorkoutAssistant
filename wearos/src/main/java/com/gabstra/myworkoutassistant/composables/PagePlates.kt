@@ -546,7 +546,7 @@ private fun BarbellVisualization(
         // --- CHANGE HERE: Increased padding from 2.dp to 12.dp ---
         // This forces labels to jump to the next stack level if they are
         // horizontally closer than 12dp.
-        val labelCollisionPadding = 12.dp.toPx()
+        val labelCollisionPadding = 2.dp.toPx()
 
         val rowSpacing = 2.dp.toPx() // Optional: add a tiny bit of vertical spacing between text rows
 
