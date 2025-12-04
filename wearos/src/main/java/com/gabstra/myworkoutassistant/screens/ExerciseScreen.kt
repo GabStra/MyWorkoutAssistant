@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -54,7 +53,6 @@ import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.ScalableText
-import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -80,12 +78,9 @@ fun ExerciseScreen(
     hapticsViewModel: HapticsViewModel,
     state: WorkoutState.Set,
     hearthRateChart: @Composable () -> Unit,
-    showTutorial: Boolean = false,
-    onDismissTutorial: () -> Unit = {},
 ) {
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
-    var showTutorialWithDelay by remember { mutableStateOf(false) }
 
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
@@ -148,20 +143,11 @@ fun ExerciseScreen(
         }
     )
 
-    LaunchedEffect(state.set.id) {
+    androidx.compose.runtime.LaunchedEffect(state.set.id) {
         // Navigate to the exercise detail page
         pagerState.scrollToPage(exerciseDetailPageIndex)
         allowHorizontalScrolling = true
         viewModel.closeCustomDialog()
-    }
-
-    LaunchedEffect(showTutorial) {
-        if (showTutorial) {
-            delay(1500) // Brief delay to let screen render
-            showTutorialWithDelay = true
-        } else {
-            showTutorialWithDelay = false
-        }
     }
 
     val scope = rememberCoroutineScope()
@@ -558,14 +544,6 @@ fun ExerciseScreen(
             hearthRateChart()
         }
 
-        TutorialOverlay(
-            visible = showTutorialWithDelay,
-            text = "Navigation\nSwipe horizontally between pages.\n\nMarquee Scrolling\nTap exercise title or header to enable.\n\nAuto-Return\nScreen returns to details after 10 seconds.\n\nComplete Set\nUse Complete Set button or back gestures.",
-            onDismiss = {
-                showTutorialWithDelay = false
-                onDismissTutorial()
-            }
-        )
     }
 
     DisposableEffect(Unit) {

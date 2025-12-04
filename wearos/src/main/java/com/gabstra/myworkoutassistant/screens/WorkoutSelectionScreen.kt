@@ -57,7 +57,6 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.openOnPhoneDialogCurvedText
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
@@ -169,8 +168,6 @@ fun WorkoutSelectionScreen(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     appHelper: WearDataLayerAppHelper,
-    showTutorial: Boolean,
-    onDismissTutorial: () -> Unit
 ) {
     val workouts by viewModel.workouts.collectAsState()
 
@@ -382,11 +379,6 @@ fun WorkoutSelectionScreen(
                 }
             }
 
-            TutorialOverlay(
-                visible = showTutorial,
-                text = "Select a Workout\nTap below to see details and start.\n\nList Header\nLong-press for version info.\nDouble-tap for data tools.",
-                onDismiss = onDismissTutorial
-            )
         }
 
         val text = OpenOnPhoneDialogDefaults.text

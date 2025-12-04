@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -48,7 +47,6 @@ import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.TimeViewer
-import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -73,8 +71,6 @@ fun RestScreen(
     state: WorkoutState.Rest,
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
-    showTutorial: Boolean = false,
-    onDismissTutorial: () -> Unit = {},
 ) {
     val set = state.set as RestSet
 
@@ -121,7 +117,6 @@ fun RestScreen(
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
     val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
-    var showTutorialWithDelay by remember { mutableStateOf(false) }
 
     val exercise = remember(state.nextStateSets.first().exerciseId) {
         viewModel.exercisesById[state.nextStateSets.first().exerciseId]!!
@@ -266,15 +261,6 @@ fun RestScreen(
 
         if (state.startTime == null) {
             state.startTime = LocalDateTime.now()
-        }
-    }
-
-    LaunchedEffect(showTutorial) {
-        if (showTutorial) {
-            delay(1500) // Brief delay to let screen render
-            showTutorialWithDelay = true
-        } else {
-            showTutorialWithDelay = false
         }
     }
 
@@ -492,12 +478,4 @@ fun RestScreen(
         }
     )
 
-    TutorialOverlay(
-        visible = showTutorialWithDelay,
-        text = "Rest Timer\nStarts automatically.\nLong-press to adjust time.\n\nNavigation\nSwipe horizontally for next exercise info.\n\nNotifications\nScreen lights up at 5 seconds.\n\nSkip Rest\nDouble-press back button to skip early.",
-        onDismiss = {
-            showTutorialWithDelay = false
-            onDismissTutorial()
-        }
-    )
 }

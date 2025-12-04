@@ -64,6 +64,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.screens.LoadingScreen
+import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
@@ -433,21 +434,27 @@ fun WearApp(
                     }
                 ) {
                     composable(Screen.WorkoutSelection.route) {
-                        WorkoutSelectionScreen(
-                            alarmManager,
-                            dataClient,
-                            navController,
-                            appViewModel,
-                            hapticsViewModel,
-                            appHelper,
-                            showTutorial = showWorkoutSelectionTutorial,
-                            onDismissTutorial = {
-                                showWorkoutSelectionTutorial = false
-                                tutorialState = TutorialPreferences.update(localContext, tutorialState) {
-                                    it.copy(hasSeenWorkoutSelectionTutorial = true)
+                        if (showWorkoutSelectionTutorial) {
+                            TutorialOverlay(
+                                visible = true,
+                                text = "Select a Workout\nTap below to see details and start.\n\nList Header\nLong-press for version info.\nDouble-tap for data tools.",
+                                onDismiss = {
+                                    showWorkoutSelectionTutorial = false
+                                    tutorialState = TutorialPreferences.update(localContext, tutorialState) {
+                                        it.copy(hasSeenWorkoutSelectionTutorial = true)
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        } else {
+                            WorkoutSelectionScreen(
+                                alarmManager,
+                                dataClient,
+                                navController,
+                                appViewModel,
+                                hapticsViewModel,
+                                appHelper,
+                            )
+                        }
                     }
                     composable(Screen.WorkoutDetail.route) {
                         WorkoutDetailScreen(navController, appViewModel, hapticsViewModel,hrViewModel)

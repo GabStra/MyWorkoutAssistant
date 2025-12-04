@@ -22,10 +22,10 @@ import androidx.core.content.edit
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
+import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -212,96 +212,110 @@ fun WorkoutScreen(
             return@Box
         }
 
-        AnimatedContent(
-            targetState = workoutState,
-            transitionSpec = {
-                fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-            }, label = "",
-            contentAlignment = Alignment.TopCenter
-        ) { updatedWorkoutState ->
-            WorkoutStateHeader(updatedWorkoutState,viewModel,hapticsViewModel)
+        if (showHeartRateTutorial) {
+            TutorialOverlay(
+                visible = true,
+                text = "Heart Rate Chart (Left)\nTap the value to switch display modes.\n\nExercise Indicator (Right)\nShows your progress through the workout.\n\nBack Button Gestures\nUse to pause or end the workout.",
+                onDismiss = onDismissHeartRateTutorial
+            )
+        } else {
+            AnimatedContent(
+                targetState = workoutState,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                }, label = "",
+                contentAlignment = Alignment.TopCenter
+            ) { updatedWorkoutState ->
+                WorkoutStateHeader(updatedWorkoutState,viewModel,hapticsViewModel)
 
-            when(updatedWorkoutState){
-                is WorkoutState.Preparing -> {
-                    val state = updatedWorkoutState
-                    if(!selectedWorkout.usePolarDevice)
-                        PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
-                    else
-                        PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
-                }
-                is WorkoutState.Set -> {
-                    val state = updatedWorkoutState
-                    LaunchedEffect(state) {
-                        try {
-                            heartRateChangeViewModel.reset()
-                        } catch (exception: Exception) {
-                            android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
-                        }
+                when(updatedWorkoutState){
+                    is WorkoutState.Preparing -> {
+                        val state = updatedWorkoutState
+                        if(!selectedWorkout.usePolarDevice)
+                            PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
+                        else
+                            PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
                     }
-
-                    ExerciseScreen(
-                        viewModel,
-                        hapticsViewModel,
-                        state,
-                        hearthRateChart = {
-                            heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
-                        },
-                        showTutorial = showSetScreenTutorial,
-                        onDismissTutorial = onDismissSetScreenTutorial
-                    )
-                }
-                is WorkoutState.Rest -> {
-                    val state = updatedWorkoutState
-                    LaunchedEffect(state) {
-                        try {
-                            heartRateChangeViewModel.reset()
-                        } catch (exception: Exception) {
-                            android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
-                        }
-                    }
-
-                    RestScreen(
-                        viewModel,
-                        hapticsViewModel,
-                        state,
-                        { heartRateChartComposable() },
-                        onTimerEnd = {
+                    is WorkoutState.Set -> {
+                        val state = updatedWorkoutState
+                        LaunchedEffect(state) {
                             try {
-                                viewModel.storeSetData()
-                                viewModel.pushAndStoreWorkoutData(false,context){
-                                    try {
-                                        viewModel.goToNextState()
-                                        viewModel.lightScreenUp()
-                                    } catch (exception: Exception) {
-                                        android.util.Log.e("WorkoutScreen", "Error in onTimerEnd callback", exception)
-                                    }
-                                }
+                                heartRateChangeViewModel.reset()
                             } catch (exception: Exception) {
-                                android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
+                                android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
                             }
-                        },
-                        showTutorial = showRestScreenTutorial,
-                        onDismissTutorial = onDismissRestScreenTutorial
-                    )
-                }
-                is WorkoutState.Completed -> {
-                    val state = updatedWorkoutState
-                    WorkoutCompleteScreen(
-                        navController,
-                        viewModel,
-                        state,
-                        hrViewModel,
-                        hapticsViewModel,
-                        polarViewModel
-                    )
+                        }
+
+                        if (showSetScreenTutorial) {
+                            TutorialOverlay(
+                                visible = true,
+                                text = "Navigation\nSwipe horizontally between pages.\n\nMarquee Scrolling\nTap exercise title or header to enable.\n\nAuto-Return\nScreen returns to details after 10 seconds.\n\nComplete Set\nUse Complete Set button or back gestures.",
+                                onDismiss = onDismissSetScreenTutorial
+                            )
+                        } else {
+                            ExerciseScreen(
+                                viewModel,
+                                hapticsViewModel,
+                                state,
+                                hearthRateChart = {
+                                    heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
+                                },
+                            )
+                        }
+                    }
+                    is WorkoutState.Rest -> {
+                        val state = updatedWorkoutState
+                        LaunchedEffect(state) {
+                            try {
+                                heartRateChangeViewModel.reset()
+                            } catch (exception: Exception) {
+                                android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
+                            }
+                        }
+
+                        if (showRestScreenTutorial) {
+                            TutorialOverlay(
+                                visible = true,
+                                text = "Rest Timer\nStarts automatically.\nLong-press to adjust time.\n\nNavigation\nSwipe horizontally for next exercise info.\n\nNotifications\nScreen lights up at 5 seconds.\n\nSkip Rest\nDouble-press back button to skip early.",
+                                onDismiss = onDismissRestScreenTutorial
+                            )
+                        } else {
+                            RestScreen(
+                                viewModel,
+                                hapticsViewModel,
+                                state,
+                                { heartRateChartComposable() },
+                                onTimerEnd = {
+                                    try {
+                                        viewModel.storeSetData()
+                                        viewModel.pushAndStoreWorkoutData(false,context){
+                                            try {
+                                                viewModel.goToNextState()
+                                                viewModel.lightScreenUp()
+                                            } catch (exception: Exception) {
+                                                android.util.Log.e("WorkoutScreen", "Error in onTimerEnd callback", exception)
+                                            }
+                                        }
+                                    } catch (exception: Exception) {
+                                        android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    is WorkoutState.Completed -> {
+                        val state = updatedWorkoutState
+                        WorkoutCompleteScreen(
+                            navController,
+                            viewModel,
+                            state,
+                            hrViewModel,
+                            hapticsViewModel,
+                            polarViewModel
+                        )
+                    }
                 }
             }
         }
-
-        TutorialOverlay(
-            visible = showHeartRateTutorial,
-            text = "Heart Rate Chart (Left)\nTap the value to switch display modes.\n\nExercise Indicator (Right)\nShows your progress through the workout.\n\nBack Button Gestures\nUse to pause or end the workout.",
-            onDismiss = onDismissHeartRateTutorial
-        )
     }
 }
