@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material3.MaterialTheme
+import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -476,6 +477,30 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
         dataClient.putDataItem(request)
         return true
     } catch(exception: Exception) {
+        exception.printStackTrace()
+        return false
+    }
+}
+
+fun sendErrorLogsToMobile(dataClient: DataClient, errorLogs: List<ErrorLog>): Boolean {
+    try {
+        if (errorLogs.isEmpty()) {
+            return true // No logs to send, consider it successful
+        }
+        
+        val gson = GsonBuilder()
+            .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+            .create()
+        val jsonString = gson.toJson(errorLogs)
+        val compressedData = compressString(jsonString)
+        val request = PutDataMapRequest.create("/errorLogsSync").apply {
+            dataMap.putByteArray("compressedJson", compressedData)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+
+        dataClient.putDataItem(request)
+        return true
+    } catch (exception: Exception) {
         exception.printStackTrace()
         return false
     }

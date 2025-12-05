@@ -101,6 +101,22 @@ class AppViewModel() : ViewModel() {
         _updateMobileFlow.value = System.currentTimeMillis().toString()
     }
 
+    private val _showResumeWorkoutDialog = mutableStateOf(false)
+    val showResumeWorkoutDialog: State<Boolean> = _showResumeWorkoutDialog
+
+    private val _incompleteWorkouts = mutableStateOf<List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>>(emptyList())
+    val incompleteWorkouts: State<List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>> = _incompleteWorkouts
+
+    fun showResumeWorkoutDialog(incompleteWorkouts: List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>) {
+        _incompleteWorkouts.value = incompleteWorkouts
+        _showResumeWorkoutDialog.value = true
+    }
+
+    fun hideResumeWorkoutDialog() {
+        _showResumeWorkoutDialog.value = false
+        _incompleteWorkouts.value = emptyList()
+    }
+
     fun setHomeTab(tabIndex: Int) {
         selectedHomeTab = tabIndex
     }

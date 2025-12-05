@@ -471,6 +471,41 @@ open class WorkoutViewModel(
         }
     }
 
+    data class IncompleteWorkout(
+        val workoutHistory: WorkoutHistory,
+        val workoutName: String,
+        val workoutId: UUID
+    )
+
+    suspend fun getIncompleteWorkouts(): List<IncompleteWorkout> {
+        return withContext(dispatchers.io) {
+            val incompleteHistories = workoutHistoryDao.getAllUnfinishedWorkoutHistories(isDone = false)
+            
+            // Group by workoutId and get the most recent one for each workout
+            val groupedByWorkoutId = incompleteHistories
+                .groupBy { it.workoutId }
+                .mapValues { (_, histories) ->
+                    histories.maxByOrNull { it.startTime } ?: histories.first()
+                }
+            
+            // Map to IncompleteWorkout with workout name
+            groupedByWorkoutId.values.mapNotNull { workoutHistory ->
+                val workout = workoutStore.workouts.find { it.id == workoutHistory.workoutId }
+                    ?: workoutStore.workouts.find { it.globalId == workoutHistory.globalId }
+                
+                if (workout != null) {
+                    IncompleteWorkout(
+                        workoutHistory = workoutHistory,
+                        workoutName = workout.name,
+                        workoutId = workout.id
+                    )
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
     open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
         viewModelScope.launch(dispatchers.main) {
             withContext(dispatchers.io) {
@@ -492,7 +527,17 @@ open class WorkoutViewModel(
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
-                startWorkoutTime = currentWorkoutHistory!!.startTime
+                
+                // Calculate actual elapsed workout time from completed set histories
+                // This ensures the timer shows only actual workout time, excluding time when app was closed
+                val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(currentWorkoutHistory!!.id)
+                val completedSetHistories = setHistories.filter { it.startTime != null && it.endTime != null }
+                val totalElapsedSeconds = completedSetHistories.sumOf { 
+                    Duration.between(it.startTime!!, it.endTime!!).seconds 
+                }
+                
+                // Adjust startWorkoutTime so that Duration.between(startWorkoutTime, now) equals actual workout time
+                startWorkoutTime = LocalDateTime.now().minusSeconds(totalElapsedSeconds)
 
                 restoreExecutedSets()
                 loadWorkoutHistory()
@@ -1012,8 +1057,9 @@ open class WorkoutViewModel(
             
             when {
                 set is TimedDurationSet && setData is TimedDurationSetData -> {
-                    // Only restore if timer was running (endTimer < startTimer)
-                    if (setData.endTimer < setData.startTimer) {
+                    // Only restore if timer was running (endTimer < startTimer and endTimer > 0)
+                    // This excludes cases where timer finished (endTimer = 0) or never started (endTimer = startTimer)
+                    if (setData.endTimer < setData.startTimer && setData.endTimer > 0) {
                         // Calculate elapsed time: startTimer - endTimer
                         val elapsedMillis = setData.startTimer - setData.endTimer
                         // Restore startTime so that elapsed time matches

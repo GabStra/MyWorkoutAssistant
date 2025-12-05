@@ -53,7 +53,9 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
+import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.TutorialPreferences
 import com.gabstra.myworkoutassistant.data.TutorialState
@@ -75,6 +77,7 @@ import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MyReceiver(
@@ -358,6 +361,21 @@ fun WearApp(
 
                     appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
+                    // Check for incomplete workouts
+                    val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                    val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+                    
+                    if (!isWorkoutInProgress) {
+                        try {
+                            val incompleteWorkouts = appViewModel.getIncompleteWorkouts()
+                            if (incompleteWorkouts.isNotEmpty()) {
+                                appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
+                            }
+                        } catch (exception: Exception) {
+                            Log.e("MainActivity", "Error checking for incomplete workouts", exception)
+                        }
+                    }
+
                     val now = System.currentTimeMillis()
                     if (now - startTime < 2000) {
                         delay(2000 - (now - startTime))
@@ -428,6 +446,31 @@ fun WearApp(
                     }
                 } catch (exception: Exception) {
                     Log.e("MainActivity", "Error handling nodes update", exception)
+                }
+            }
+
+            // Sync error logs when app opens and phone is connected
+            LaunchedEffect(nodes) {
+                val phoneNode = nodes.firstOrNull()
+                if (phoneNode != null) {
+                    launch(Dispatchers.IO) {
+                        try {
+                            val errorLogs = (localContext.applicationContext as? MyApplication)?.getErrorLogs() ?: emptyList()
+                            if (errorLogs.isNotEmpty()) {
+                                val success = sendErrorLogsToMobile(dataClient, errorLogs)
+                                if (success) {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(localContext, "Sent ${errorLogs.size} error log(s) to mobile", Toast.LENGTH_SHORT).show()
+                                    }
+                                    Log.d("MainActivity", "Error logs synced to mobile: ${errorLogs.size} logs")
+                                } else {
+                                    Log.e("MainActivity", "Failed to sync error logs to mobile")
+                                }
+                            }
+                        } catch (exception: Exception) {
+                            Log.e("MainActivity", "Error syncing error logs", exception)
+                        }
+                    }
                 }
             }
 
@@ -554,6 +597,50 @@ fun WearApp(
                             }
                         }
                 }
+                
+                // Resume workout dialog
+                val showResumeDialog by appViewModel.showResumeWorkoutDialog
+                val incompleteWorkouts by appViewModel.incompleteWorkouts
+                
+                val basePermissions = listOf(
+                    android.Manifest.permission.BODY_SENSORS,
+                    android.Manifest.permission.BLUETOOTH_SCAN,
+                    android.Manifest.permission.BLUETOOTH_CONNECT,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                )
+                
+                val permissionLauncherResume = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+                ) { result ->
+                    if (result.all { it.value }) {
+                        val workoutId = appViewModel.selectedWorkoutId.value
+                        if (workoutId != null) {
+                            appViewModel.resumeWorkoutFromRecord()
+                            val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+                            navController.navigate(Screen.Workout.route)
+                        }
+                    }
+                }
+                
+                com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog(
+                    show = showResumeDialog,
+                    incompleteWorkouts = incompleteWorkouts,
+                    onDismiss = {
+                        appViewModel.hideResumeWorkoutDialog()
+                    },
+                    onResumeWorkout = { workoutId ->
+                        appViewModel.hideResumeWorkoutDialog()
+                        val workoutStore = workoutStoreRepository.getWorkoutStore()
+                        val workout = workoutStore.workouts.find { it.id == workoutId }
+                        if (workout != null) {
+                            appViewModel.setSelectedWorkoutId(workout.id)
+                            permissionLauncherResume.launch(basePermissions.toTypedArray())
+                        }
+                    }
+                )
             }
             
 

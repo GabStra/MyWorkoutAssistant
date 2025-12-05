@@ -274,6 +274,21 @@ fun MyWorkoutAssistantNavHost(
             val workoutStore = workoutStoreRepository.getWorkoutStore()
             appViewModel.updateWorkoutStore(workoutStore)
             workoutViewModel.updateWorkoutStore(workoutStore)
+            
+            // Check for incomplete workouts
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+            
+            if (!isWorkoutInProgress) {
+                try {
+                    val incompleteWorkouts = workoutViewModel.getIncompleteWorkouts()
+                    if (incompleteWorkouts.isNotEmpty()) {
+                        appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
+                    }
+                } catch (exception: Exception) {
+                    Log.e("MainActivity", "Error checking for incomplete workouts", exception)
+                }
+            }
         }catch (ex: Exception) {
             Log.e("MainActivity", "Error getting workout store", ex)
             Toast.makeText(context, "Error during startup, please check logs", Toast.LENGTH_SHORT).show()
@@ -1344,6 +1359,26 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
         }
+        
+        // Resume workout dialog
+        val showResumeDialog by appViewModel.showResumeWorkoutDialog
+        val incompleteWorkouts by appViewModel.incompleteWorkouts
+        
+        com.gabstra.myworkoutassistant.workout.ResumeWorkoutDialog(
+            show = showResumeDialog,
+            incompleteWorkouts = incompleteWorkouts,
+            onDismiss = {
+                appViewModel.hideResumeWorkoutDialog()
+            },
+            onResumeWorkout = { workoutId ->
+                appViewModel.hideResumeWorkoutDialog()
+                workoutViewModel.setSelectedWorkoutId(workoutId)
+                workoutViewModel.resumeWorkoutFromRecord()
+                val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                prefs.edit { putBoolean("isWorkoutInProgress", true) }
+                appViewModel.setScreenData(ScreenData.Workout(workoutId))
+            }
+        )
     }
 }
 

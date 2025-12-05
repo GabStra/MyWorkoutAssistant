@@ -119,7 +119,16 @@ fun EnduranceSetScreen (
         state.currentSetData = currentSet
     }
 
-    var currentMillis by remember(set.id) { mutableIntStateOf(0) }
+    var currentMillis by remember(set.id) { 
+        mutableIntStateOf(
+            // If timer was in progress (endTimer > 0), use elapsed time
+            if (currentSet.endTimer > 0) {
+                currentSet.endTimer
+            } else {
+                0
+            }
+        )
+    }
     var showStopDialog by remember { mutableStateOf(false) }
 
 

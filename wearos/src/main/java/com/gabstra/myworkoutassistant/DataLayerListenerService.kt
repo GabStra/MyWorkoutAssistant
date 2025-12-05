@@ -447,6 +447,7 @@ class DataLayerListenerService : WearableListenerService() {
         private const val WORKOUT_STORE_PATH = "/workoutStore"
         private const val BACKUP_CHUNK_PATH = "/backupChunkPath"
         const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
+        const val ERROR_LOGS_SYNC_PATH = "/errorLogsSync"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"
         const val WORKOUT_STORE_JSON = "workoutStoreJson"
         const val APP_BACKUP_START_JSON = "appBackupStartJson"

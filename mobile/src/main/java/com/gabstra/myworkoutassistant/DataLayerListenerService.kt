@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant
 import android.content.Intent
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ErrorLogDao
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
@@ -201,6 +202,33 @@ class DataLayerListenerService : WearableListenerService() {
                             }
                         }
                     }
+
+                    ERROR_LOGS_SYNC_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val compressedJson = dataMap.getByteArray("compressedJson")
+
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val errorLogsJson = decompressToString(compressedJson!!)
+
+                                val gson = GsonBuilder()
+                                    .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+                                    .create()
+
+                                val errorLogs = gson.fromJson(
+                                    errorLogsJson,
+                                    Array<ErrorLog>::class.java
+                                ).toList()
+
+                                if (errorLogs.isNotEmpty()) {
+                                    errorLogDao.insertAll(*errorLogs.toTypedArray())
+                                    Log.d("DataLayerListenerService", "Synced ${errorLogs.size} error logs from watch")
+                                }
+                            } catch (exception: Exception) {
+                                Log.e("DataLayerListenerService", "Error processing error logs sync", exception)
+                            }
+                        }
+                    }
                 }
             }
         } catch (exception: Exception) {
@@ -219,6 +247,7 @@ class DataLayerListenerService : WearableListenerService() {
         private const val WORKOUT_HISTORY_STORE_PATH = "/workoutHistoryStore"
         private const val OPEN_PAGE_PATH = "/openPagePath" // Define your new URI path here
         const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
+        const val ERROR_LOGS_SYNC_PATH = "/errorLogsSync"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.WORKOUT_STORE"
         const val UPDATE_WORKOUTS = "update_workouts"
         const val PAGE = "page"

@@ -115,7 +115,16 @@ fun TimedDurationSetScreen(
         state.currentSetData = currentSet
     }
 
-    var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
+    var currentMillis by remember(set.id) { 
+        mutableIntStateOf(
+            // If timer was in progress (endTimer < startTimer), use remaining time
+            if (currentSet.endTimer < currentSet.startTimer && currentSet.endTimer > 0) {
+                currentSet.endTimer
+            } else {
+                currentSet.startTimer
+            }
+        )
+    }
     var showStopDialog by remember { mutableStateOf(false) }
 
 

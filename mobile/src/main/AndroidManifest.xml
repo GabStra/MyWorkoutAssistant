@@ -30,6 +30,9 @@
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/clearErrorLogs"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/errorLogsSync"/>
             </intent-filter>
         </service>
         <activity
