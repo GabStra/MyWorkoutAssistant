@@ -53,13 +53,12 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
-import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
-import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.TutorialPreferences
 import com.gabstra.myworkoutassistant.data.TutorialState
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
@@ -619,7 +618,9 @@ fun WearApp(
                         if (workoutId != null) {
                             appViewModel.resumeWorkoutFromRecord()
                             val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-                            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+                            prefs.edit()
+                                .putBoolean("isWorkoutInProgress", true)
+                                .apply()
                             navController.navigate(Screen.Workout.route)
                         }
                     }
