@@ -53,11 +53,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.BodyView
+import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -155,6 +158,11 @@ fun ExerciseForm(
 
     val selectedEquipmentId = rememberSaveable { mutableStateOf<UUID?>(exercise?.equipmentId ?: viewModel.GENERIC_ID) }
     var equipmentExpanded by rememberSaveable { mutableStateOf(false) }
+
+    val selectedMuscleGroups = rememberSaveable { 
+        mutableStateOf(exercise?.muscleGroups ?: emptySet<MuscleGroup>())
+    }
+    var currentBodyView by rememberSaveable { mutableStateOf(BodyView.FRONT) }
 
     val scrollState = rememberScrollState()
 
@@ -333,6 +341,63 @@ fun ExerciseForm(
                 }
 
             }
+
+            // Muscle Groups Selection
+            Spacer(Modifier.height(Spacing.lg))
+            Text(
+                text = "Muscle Groups",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = Spacing.sm)
+            )
+            
+            // View toggle buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Button(
+                    onClick = { currentBodyView = BodyView.FRONT },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = if (currentBodyView == BodyView.FRONT) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text("Front", style = MaterialTheme.typography.bodyLarge)
+                }
+                Button(
+                    onClick = { currentBodyView = BodyView.BACK },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = if (currentBodyView == BodyView.BACK) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text("Back", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+            
+            Spacer(Modifier.height(Spacing.md))
+            
+            // Interactive Muscle Heat Map
+            InteractiveMuscleHeatMap(
+                selectedMuscles = selectedMuscleGroups.value,
+                onMuscleToggled = { muscle ->
+                    selectedMuscleGroups.value = if (selectedMuscleGroups.value.contains(muscle)) {
+                        selectedMuscleGroups.value - muscle
+                    } else {
+                        selectedMuscleGroups.value + muscle
+                    }
+                },
+                currentView = currentBodyView
+            )
+            
+            Spacer(Modifier.height(Spacing.lg))
+            HorizontalDivider(color = MediumLightGray)
 
             // Weight / Bodyweight sections
             if (selectedExerciseType.value == ExerciseType.WEIGHT ||
@@ -611,7 +676,7 @@ fun ExerciseForm(
                             loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble(),
                             loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble(),
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
-                            muscleGroups = exercise?.muscleGroups ?: emptySet()
+                            muscleGroups = selectedMuscleGroups.value
                         )
                         onExerciseUpsert(newExercise)
                     },
