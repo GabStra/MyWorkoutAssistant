@@ -31,5 +31,5 @@ data class Exercise (
     val loadJumpDefaultPct: Double? = null,
     val loadJumpMaxPct: Double? = null,
     val loadJumpOvercapUntil: Int? = null,
-    val muscleGroups: Set<MuscleGroup> = emptySet(),
+    val muscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
     ): WorkoutComponent(id,enabled)

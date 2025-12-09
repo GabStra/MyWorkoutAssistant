@@ -54,7 +54,6 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BodyView
-import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
@@ -381,7 +380,7 @@ fun ExerciseForm(
                 }
             }
             
-            Spacer(Modifier.height(Spacing.md))
+/*            Spacer(Modifier.height(Spacing.md))
             
             // Interactive Muscle Heat Map
             InteractiveMuscleHeatMap(
@@ -394,7 +393,7 @@ fun ExerciseForm(
                     }
                 },
                 currentView = currentBodyView
-            )
+            )*/
             
             Spacer(Modifier.height(Spacing.lg))
             HorizontalDivider(color = MediumLightGray)
@@ -676,7 +675,7 @@ fun ExerciseForm(
                             loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble(),
                             loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble(),
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
-                            muscleGroups = selectedMuscleGroups.value
+                            muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value
                         )
                         onExerciseUpsert(newExercise)
                     },

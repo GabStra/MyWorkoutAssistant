@@ -1,18 +1,19 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.graphics.RectF
+import android.graphics.Region
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
@@ -22,10 +23,34 @@ import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.MusclePathProvider
 import com.gabstra.myworkoutassistant.shared.Orange
+import kotlin.math.roundToInt
 
 enum class BodyView {
     FRONT,
     BACK
+}
+
+fun Path.contains(offset: Offset): Boolean {
+    // 1. Convert Compose Path to Android native Path
+    val androidPath = this.asAndroidPath()
+
+    // 2. Create a Region to check for containment
+    val rectF = RectF()
+    androidPath.computeBounds(rectF, true)
+
+    val region = Region()
+    region.setPath(
+        androidPath,
+        Region(
+            rectF.left.toInt(),
+            rectF.top.toInt(),
+            rectF.right.toInt(),
+            rectF.bottom.toInt()
+        )
+    )
+
+    // 3. Check if point is inside
+    return region.contains(offset.x.roundToInt(), offset.y.roundToInt())
 }
 
 @Composable
@@ -47,7 +72,7 @@ fun InteractiveMuscleHeatMap(
         MuscleGroup.ANTERIOR_DELTOIDS,
         MuscleGroup.MIDDLE_DELTOIDS,   
         MuscleGroup.PECTORALS,
-        MuscleGroup.SERRATUS_ANTERIOR, /
+        MuscleGroup.SERRATUS_ANTERIOR,
         MuscleGroup.ABDOMINALS,
         MuscleGroup.OBLIQUES,
         MuscleGroup.BICEPS,
