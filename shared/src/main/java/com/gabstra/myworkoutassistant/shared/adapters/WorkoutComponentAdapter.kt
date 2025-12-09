@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -78,6 +79,10 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 }
                 if (src.loadJumpOvercapUntil != null) {
                     jsonObject.addProperty("loadJumpOvercapUntil", src.loadJumpOvercapUntil)
+                }
+
+                if (src.muscleGroups.isNotEmpty()) {
+                    jsonObject.add("muscleGroups", context.serialize(src.muscleGroups))
                 }
             }
 
@@ -230,6 +235,13 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     null
                 }
 
+                val muscleGroups = if (jsonObject.has("muscleGroups")) {
+                    val muscleGroupsType = object : TypeToken<Set<MuscleGroup>>() {}.type
+                    context.deserialize(jsonObject.get("muscleGroups"), muscleGroupsType)
+                } else {
+                    emptySet<MuscleGroup>()
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -253,7 +265,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     intraSetRestInSeconds,
                     loadJumpDefaultPct,
                     loadJumpMaxPct,
-                    loadJumpOvercapUntil
+                    loadJumpOvercapUntil,
+                    muscleGroups
                 )
             }
 

@@ -610,7 +610,8 @@ fun ExerciseForm(
                             intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
                             loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble(),
                             loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble(),
-                            loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue
+                            loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
+                            muscleGroups = exercise?.muscleGroups ?: emptySet()
                         )
                         onExerciseUpsert(newExercise)
                     },

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.workoutcomponents
 
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
 
@@ -30,4 +31,5 @@ data class Exercise (
     val loadJumpDefaultPct: Double? = null,
     val loadJumpMaxPct: Double? = null,
     val loadJumpOvercapUntil: Int? = null,
+    val muscleGroups: Set<MuscleGroup> = emptySet(),
     ): WorkoutComponent(id,enabled)
