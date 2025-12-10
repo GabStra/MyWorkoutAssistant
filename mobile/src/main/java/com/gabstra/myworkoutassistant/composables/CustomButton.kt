@@ -23,9 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 @Composable
 fun CustomButton(
@@ -33,13 +30,13 @@ fun CustomButton(
     text: String,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
     onClick: () -> Unit,
-    backgroundColor: Color = MediumDarkGray,
+    backgroundColor: Color = MaterialTheme.colorScheme.surfaceVariant,
     enabled: Boolean = true
 ) {
     val backgroundOnPress = lerp(backgroundColor, textColor, 0.2f)
     val textColorOnPress = lerp(textColor, MaterialTheme.colorScheme.background, 0.2f)
 
-    val disabledColor = MediumLightGray
+    val disabledColor = MaterialTheme.colorScheme.onSurfaceVariant
     val interactionSource = remember { MutableInteractionSource() }
     val interactions = interactionSource.interactions
     val isPressed = if (enabled) interactions.collectAsState(initial = null).value is PressInteraction.Press else false
@@ -56,7 +53,7 @@ fun CustomButton(
             .clip(RoundedCornerShape(50))
             .background(
                 when {
-                    !enabled -> DarkGray
+                    !enabled -> MaterialTheme.colorScheme.scrim
                     isPressed -> backgroundOnPress
                     else -> backgroundColor
                 }

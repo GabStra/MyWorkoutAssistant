@@ -17,12 +17,11 @@ import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MaleMusclePathProvider
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
-import com.gabstra.myworkoutassistant.shared.Orange
 import kotlin.math.roundToInt
 
 enum class BodyView {
@@ -59,9 +58,9 @@ fun InteractiveMuscleHeatMap(
     selectedMuscles: Set<MuscleGroup>,
     onMuscleToggled: (MuscleGroup) -> Unit,
     currentView: BodyView,
-    highlightColor: Color = Orange,
-    baseColor: Color = LightGray,
-    outlineColor: Color = Color.Black
+    highlightColor: Color = MaterialTheme.colorScheme.primary,
+    baseColor: Color = MaterialTheme.colorScheme.onBackground,
+    outlineColor: Color = MaterialTheme.colorScheme.background
 ) {
     // Load paths once
     val frontPaths = remember { MaleMusclePathProvider.getFrontMusclePaths() }

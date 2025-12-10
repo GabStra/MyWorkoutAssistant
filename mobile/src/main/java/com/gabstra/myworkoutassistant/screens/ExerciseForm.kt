@@ -59,7 +59,6 @@ import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
@@ -171,7 +170,7 @@ fun ExerciseForm(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MediumLightGray,
+                        color = MaterialTheme.colorScheme.outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()
@@ -244,7 +243,7 @@ fun ExerciseForm(
                     ExposedDropdownMenu(
                         expanded = exerciseTypeExpanded,
                         modifier =  Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MediumLightGray),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         onDismissRequest = { exerciseTypeExpanded = false }
                     ) {
                         exerciseTypeDescriptions.forEach { desc ->
@@ -262,7 +261,7 @@ fun ExerciseForm(
                     }
                 }
                 Spacer(Modifier.height(Spacing.lg))
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
             // Toggles
@@ -276,7 +275,7 @@ fun ExerciseForm(
                     )
                 }
             )
-            HorizontalDivider(color = MediumLightGray)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
             if (selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP) {
                 ListItem(
@@ -289,7 +288,7 @@ fun ExerciseForm(
                         )
                     }
                 )
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
             if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
@@ -318,7 +317,7 @@ fun ExerciseForm(
                     ExposedDropdownMenu(
                         expanded = equipmentExpanded,
                         modifier =  Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MediumLightGray),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         onDismissRequest = { equipmentExpanded = false }
                     ) {
                         DropdownMenuItem(
@@ -397,7 +396,7 @@ fun ExerciseForm(
             )
             
             Spacer(Modifier.height(Spacing.lg))
-            HorizontalDivider(color = MediumLightGray)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
             // Weight / Bodyweight sections
             if (selectedExerciseType.value == ExerciseType.WEIGHT ||
@@ -461,7 +460,7 @@ fun ExerciseForm(
                         )
                     }
                 )
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 // Enable progression
                 ListItem(
@@ -474,7 +473,7 @@ fun ExerciseForm(
                         )
                     }
                 )
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 if (enableProgression.value) {
                     Spacer(Modifier.height(Spacing.lg))
@@ -528,7 +527,7 @@ fun ExerciseForm(
                 )
 
                 Spacer(Modifier.height(Spacing.lg))
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             } else {
                 // Cardio HR target zone
                 Text(
@@ -557,7 +556,7 @@ fun ExerciseForm(
                     ExposedDropdownMenu(
                         expanded = hrZoneExpanded,
                         modifier =  Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MediumLightGray),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         onDismissRequest = { hrZoneExpanded = false }
                     ) {
                         heartRateZones.forEachIndexed { index, zoneLabel ->
@@ -606,7 +605,7 @@ fun ExerciseForm(
                         valueRange = 1f..100f
                     )
                 }
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
             // Do not store history
@@ -621,7 +620,7 @@ fun ExerciseForm(
                     )
                 }
             )
-            HorizontalDivider(color = MediumLightGray)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
             // Notes
             Spacer(Modifier.height(Spacing.lg))

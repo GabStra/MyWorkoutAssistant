@@ -38,8 +38,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -290,7 +288,7 @@ fun TimedDurationSetScreen(
                                 showStartButton = false
                             }
                         },
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.secondary),
                     ){
                         Icon(modifier =Modifier.size(35.dp),imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
                     }
@@ -302,7 +300,7 @@ fun TimedDurationSetScreen(
                             timerJob?.cancel()
                             showStopDialog = true
                         },
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.error),
                     ) {
                         Icon( modifier =Modifier.size(35.dp),imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
                     }

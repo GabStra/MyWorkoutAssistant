@@ -57,7 +57,6 @@ import com.gabstra.myworkoutassistant.screens.equipments.PlateLoadedCableForm
 import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
@@ -241,7 +240,7 @@ fun MyWorkoutAssistantNavHost(
     workoutViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
     val systemUiController = rememberSystemUiController()
-    val backgroundColor = DarkGray
+    val backgroundColor = MaterialTheme.colorScheme.background
 
     DisposableEffect(systemUiController,backgroundColor) {
         // Update all of the system bar colors to be transparent, and use
@@ -490,7 +489,7 @@ fun MyWorkoutAssistantNavHost(
     AnimatedContent(
         modifier = Modifier
             .fillMaxSize()
-            .background(DarkGray),
+            .background(MaterialTheme.colorScheme.background),
         targetState = appViewModel.currentScreenData,
         transitionSpec = {
             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))

@@ -24,8 +24,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
@@ -106,9 +104,9 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             updatedState.plateChangeResult!!.change.steps.forEachIndexed { index, step ->
 
                                 val backgroundColor = if (step.action == PlateCalculator.Companion.Action.ADD) {
-                                    Green.copy(0.35f)
+                                    MaterialTheme.colorScheme.secondary.copy(0.35f)
                                 } else {
-                                    Red.copy(0.35f)
+                                    MaterialTheme.colorScheme.error.copy(0.35f)
                                 }
 
                                 Row(

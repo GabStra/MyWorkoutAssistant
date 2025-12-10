@@ -35,11 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -267,7 +263,7 @@ fun ExerciseSetsViewer(
         val backgroundColor = if(rowIndex == setIndex)
             MaterialTheme.colorScheme.primary
         else
-            MediumDarkGray
+            MaterialTheme.colorScheme.surfaceVariant
 
         Row(
             modifier = Modifier
@@ -289,9 +285,9 @@ fun ExerciseSetsViewer(
                 markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
                 color = customColor
                     ?: when {
-                        rowIndex < setIndex -> MediumLightGray // MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
-                        rowIndex == setIndex -> DarkGray
-                        else -> LightGray
+                        rowIndex < setIndex -> MaterialTheme.colorScheme.onSurfaceVariant
+                        rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
+                        else -> MaterialTheme.colorScheme.onBackground
                     }
             )
         }

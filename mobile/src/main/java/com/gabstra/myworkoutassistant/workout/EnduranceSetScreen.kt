@@ -37,8 +37,6 @@ import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -193,7 +191,7 @@ fun EnduranceSetScreen (
                     ),
                 seconds = (if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000,
                 style = itemStyle,
-                color = if(isOverLimit) Green else if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                color = if(isOverLimit) MaterialTheme.colorScheme.secondary else if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
             )
         }
     }
@@ -322,7 +320,7 @@ fun EnduranceSetScreen (
                                 showStartButton = false
                             }
                         },
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.secondary),
                     ){
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
                     }
@@ -334,7 +332,7 @@ fun EnduranceSetScreen (
                             timerJob?.cancel()
                             showStopDialog = true
                         },
-                        colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.error),
                     ) {
                         Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
                     }

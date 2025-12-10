@@ -7,14 +7,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
+import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.Yellow
@@ -22,37 +25,37 @@ import com.gabstra.myworkoutassistant.shared.Yellow
 private val DarkColorScheme = darkColorScheme(
     primary = Orange,
     onPrimary = DarkGray,
-    primaryContainer = MediumDarkGray,
-    onPrimaryContainer = LightGray,
+    primaryContainer = MediumDarkerGray,
+    onPrimaryContainer = LighterGray,
     inversePrimary = Orange,
 
     secondary = Green,
-    onSecondary = LightGray,
+    onSecondary = DarkGray,
     secondaryContainer = MediumDarkerGray,
-    onSecondaryContainer = LightGray,
+    onSecondaryContainer = LighterGray,
 
     tertiary = Yellow,
     onTertiary = DarkGray,
     tertiaryContainer = MediumDarkerGray,
-    onTertiaryContainer = LightGray,
+    onTertiaryContainer = LighterGray,
 
-    background = DarkGray,
-    onBackground = LightGray,
+    background = Color.Black,
+    onBackground = LighterGray,
     surface = MediumDarkerGray,
-    onSurface = LightGray,
+    onSurface = LighterGray,
     surfaceVariant = MediumDarkGray,
-    onSurfaceVariant = LightGray,
+    onSurfaceVariant = MediumLightGray,
     surfaceTint = Orange,
-    inverseSurface = LightGray,
+    inverseSurface = LighterGray,
     inverseOnSurface = DarkGray,
 
     error = Red,
-    onError = LightGray,
+    onError = LighterGray,
     errorContainer = MediumDarkerGray,
-    onErrorContainer = LightGray,
+    onErrorContainer = Red,
 
     outline = MediumGray,
-    outlineVariant = MediumDarkGray,
+    outlineVariant = MediumLightGray,
     scrim = DarkGray
 )
 

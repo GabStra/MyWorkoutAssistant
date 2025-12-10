@@ -67,9 +67,6 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -108,11 +105,11 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 
                         Text(
                             text = "Weight (KG): ${equipment!!.formatWeight(set.weight)}",
-                            color = LightGray,
+                            color = MaterialTheme.colorScheme.onBackground,
                             style = MaterialTheme.typography.bodyMedium,)
                         Text(
                             text = "Reps: ${set.reps}",
-                             color = LightGray,
+                             color = MaterialTheme.colorScheme.onBackground,
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.End
                         )
@@ -138,13 +135,13 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         if(set.additionalWeight != 0.0 && equipment != null){
                             Text(
                                 text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
-                                color = LightGray,
+                                color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         Text(
                             text = "Reps: ${set.reps}",
-                            color = LightGray,
+                            color = MaterialTheme.colorScheme.onBackground,
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.End
                         )
@@ -165,7 +162,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.weight(1f),
                         text = formatTime(set.timeInMillis / 1000),
                         textAlign = TextAlign.Center,
-                        color = LightGray,
+                        color = MaterialTheme.colorScheme.onBackground,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -184,7 +181,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.weight(1f),
                         text = formatTime(set.timeInMillis / 1000),
                         textAlign = TextAlign.Center,
-                         color = LightGray,
+                         color = MaterialTheme.colorScheme.onBackground,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -208,7 +205,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         Text(
                             text = "Rest ${formatTime(set.timeInSeconds)}",
                             textAlign = TextAlign.Center,
-                             color = LightGray,
+                             color = MaterialTheme.colorScheme.onBackground,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -249,7 +246,7 @@ fun ExerciseDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = LightGray),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
                 title = {
                     Text(
                         modifier = Modifier
@@ -292,7 +289,7 @@ fun ExerciseDetailScreen(
                         Icon(
                             imageVector = Icons.Default.FileDownload,
                             contentDescription = "Export History",
-                            tint = if (exercise.doNotStoreHistory) MediumLightGray else LightGray
+                            tint = if (exercise.doNotStoreHistory) MediumMaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground
                         )
                     }
                     IconButton(onClick = {
@@ -366,7 +363,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Filled.ArrowUpward,
                                         contentDescription = "Go Higher",
-                                        tint = LightGray
+                                        tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
 
@@ -416,7 +413,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Filled.ArrowDownward,
                                         contentDescription = "Go Lower"
-                                        ,tint = LightGray
+                                        ,tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
 
@@ -442,7 +439,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Default.Delete,
                                         contentDescription = "Delete",
-                                        tint = LightGray
+                                        tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
                                 IconButton(
@@ -475,7 +472,7 @@ fun ExerciseDetailScreen(
                                         selectedSets = emptyList()
                                     }) {
                                     val isEnabled = selectedSets.isNotEmpty()
-                                    val color = if (isEnabled) LightGray else MediumLightGray
+                                    val color = if (isEnabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground
 
                                     Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
                                 }
@@ -490,12 +487,12 @@ fun ExerciseDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(DarkGray)
+                    .background(MaterialTheme.colorScheme.background)
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
                 TabRow(
-                    contentColor = DarkGray,
+                    contentColor = MaterialTheme.colorScheme.background,
                     selectedTabIndex = 0,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
@@ -506,12 +503,12 @@ fun ExerciseDetailScreen(
                     }
                 ) {
                     Tab(
-                        modifier = Modifier.background(DarkGray),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         selected = true,
                         onClick = { },
                         text = { Text(text = "Overview") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumLightGray,
+                        unselectedContentColor = MediumMaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -523,7 +520,7 @@ fun ExerciseDetailScreen(
                         }
                     )
                     Tab(
-                        modifier = Modifier.background(DarkGray),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         enabled = !exercise.doNotStoreHistory,
                         selected = false,
                         onClick = {
@@ -534,7 +531,7 @@ fun ExerciseDetailScreen(
                         },
                         text = { Text(text = "History") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumLightGray,
+                        unselectedContentColor = MediumMaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 

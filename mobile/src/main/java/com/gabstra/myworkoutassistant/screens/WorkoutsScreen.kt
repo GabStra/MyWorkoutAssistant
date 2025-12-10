@@ -83,12 +83,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -148,8 +143,8 @@ fun Menu(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MediumDarkerGray),
-                border = BorderStroke(1.dp, MediumLightGray)
+                modifier = Modifier.background(MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 DropdownMenuItem(
                     text = { Text("Settings") },
@@ -274,7 +269,7 @@ fun WorkoutTitle(
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name,
-            color = if (workout.enabled) LightGray else MediumLightGray,
+            color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
             style = style,
         )
         content()
@@ -568,7 +563,7 @@ fun WorkoutsScreen(
                                 Icon(
                                     imageVector = Icons.Default.Delete,
                                     contentDescription = "Delete",
-                                    tint = LightGray
+                                    tint = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Button(
@@ -641,7 +636,7 @@ fun WorkoutsScreen(
                                 appViewModel.updateEquipments(newTotalEquipments)
                                 isEquipmentSelectionModeActive = false
                             }) {
-                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = LightGray)
+                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = MaterialTheme.colorScheme.onBackground)
                             }
                             IconButton(onClick = {
                                 val newEquipments = equipments.filter { item ->
@@ -650,7 +645,7 @@ fun WorkoutsScreen(
                                 appViewModel.updateEquipments(newEquipments)
                                 isEquipmentSelectionModeActive = false
                             }) {
-                                Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = LightGray)
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = MaterialTheme.colorScheme.onBackground)
                             }
                         }
                     }
@@ -673,7 +668,7 @@ fun WorkoutsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = LightGray),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
                 title = {
                     Text(
                         modifier = Modifier
@@ -717,13 +712,13 @@ fun WorkoutsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(DarkGray)
+                .background(MaterialTheme.colorScheme.background)
                 .padding(it),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
             TabRow(
-                contentColor = DarkGray,
+                contentColor = MaterialTheme.colorScheme.background,
                 selectedTabIndex = pagerState.currentPage,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
@@ -736,14 +731,14 @@ fun WorkoutsScreen(
                 tabTitles.forEachIndexed { index, title ->
                     val isSelected = index == pagerState.currentPage
                     Tab(
-                        modifier = Modifier.background(DarkGray),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         selected = isSelected,
                         onClick = {
                             appViewModel.setHomeTab(index)
                         },
                         text = { Text(text = title) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumLightGray,
+                        unselectedContentColor = MediumMaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -760,19 +755,19 @@ fun WorkoutsScreen(
             HorizontalPager(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(DarkGray),
+                    .background(MaterialTheme.colorScheme.background),
                 state = pagerState,
             ) { pageIndex ->
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(DarkGray),
+                        .background(MaterialTheme.colorScheme.background),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     HealthConnectHandler(appViewModel, healthConnectClient)
 
                     AnimatedContent(
-                        modifier = Modifier.background(DarkGray),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         targetState = pageIndex,
                         transitionSpec = {
                             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
@@ -815,7 +810,7 @@ fun WorkoutsScreen(
                                             CircularProgressIndicator(
                                                 modifier = Modifier.width(32.dp),
                                                 color = MaterialTheme.colorScheme.primary,
-                                                trackColor = Color.DarkGray,
+                                                trackColor = Color.MaterialTheme.colorScheme.background,
                                             )
                                         }
                                     } else {
@@ -845,7 +840,7 @@ fun WorkoutsScreen(
                                                         text = "Weekly progress (${dateText}):",
                                                         style = MaterialTheme.typography.titleMedium,
                                                         textAlign = TextAlign.Center,
-                                                        color = LightGray
+                                                        color = MaterialTheme.colorScheme.onBackground
                                                     )
                                                     ExpandableContainer(
                                                         isOpen = false,
@@ -862,7 +857,7 @@ fun WorkoutsScreen(
                                                                     text = "${(objectiveProgress * 100).toInt()}%",
                                                                     style = MaterialTheme.typography.titleMedium,
                                                                     textAlign = TextAlign.Center,
-                                                                    color = LightGray,
+                                                                    color = MaterialTheme.colorScheme.onBackground,
                                                                 )
                                                                 Spacer(modifier = Modifier.width(10.dp))
                                                                 ObjectiveProgressBar(
@@ -888,12 +883,12 @@ fun WorkoutsScreen(
                                                                             modifier = Modifier.weight(
                                                                                 1f
                                                                             ),
-                                                                            color = LightGray,
+                                                                            color = MaterialTheme.colorScheme.onBackground,
                                                                             style = MaterialTheme.typography.bodyLarge,
                                                                         )
                                                                         Text(
                                                                             text = "${pair.first}/${pair.second}",
-                                                                            color = LightGray,
+                                                                            color = MaterialTheme.colorScheme.onBackground,
                                                                             style = MaterialTheme.typography.bodyLarge,
                                                                         )
                                                                     }
@@ -919,7 +914,7 @@ fun WorkoutsScreen(
                                                     text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
                                                     style = MaterialTheme.typography.titleMedium,
                                                     textAlign = TextAlign.Center,
-                                                    color = LightGray
+                                                    color = MaterialTheme.colorScheme.onBackground
                                                 )
 
                                                 if (selectedCalendarWorkouts.isNullOrEmpty()) {
@@ -933,7 +928,7 @@ fun WorkoutsScreen(
                                                                 .padding(15.dp),
                                                             text = "No workouts on this day",
                                                             textAlign = TextAlign.Center,
-                                                            color = MediumLightGray,
+                                                            color = MediumMaterialTheme.colorScheme.onBackground,
                                                         )
                                                     }
                                                 } else {
@@ -969,7 +964,7 @@ fun WorkoutsScreen(
 
                                                                             imageVector = Icons.Filled.Search,
                                                                             contentDescription = "Details",
-                                                                            tint = LightGray
+                                                                            tint = MaterialTheme.colorScheme.onBackground
                                                                         )
                                                                     }
 
@@ -978,7 +973,7 @@ fun WorkoutsScreen(
                                                                             .weight(1f)
                                                                             .basicMarquee(iterations = Int.MAX_VALUE),
                                                                         text = if(workoutHistory.isDone) workout.name else workout.name + " (Incomplete)",
-                                                                        color = LightGray,
+                                                                        color = MaterialTheme.colorScheme.onBackground,
                                                                         style = MaterialTheme.typography.bodyLarge,
                                                                     )
 
@@ -988,7 +983,7 @@ fun WorkoutsScreen(
                                                                                 timeFormatter
                                                                             ),
                                                                             textAlign = TextAlign.End,
-                                                                            color = LightGray,
+                                                                            color = MaterialTheme.colorScheme.onBackground,
                                                                             style = MaterialTheme.typography.bodyLarge,
                                                                         )
                                                                     }
@@ -1014,7 +1009,7 @@ fun WorkoutsScreen(
                                                                                 Text(
                                                                                     modifier = Modifier.fillMaxWidth(),
                                                                                     text =  historyAndWorkoutList.size.toString(),
-                                                                                    color = DarkGray,
+                                                                                    color = MaterialTheme.colorScheme.background,
                                                                                     textAlign = TextAlign.Center,
                                                                                     style = MaterialTheme.typography.titleMedium
                                                                                 )
@@ -1026,7 +1021,7 @@ fun WorkoutsScreen(
                                                                                     .padding(start = 5.dp)
                                                                                     .basicMarquee(iterations = Int.MAX_VALUE),
                                                                                 text = workout.name,
-                                                                                color = LightGray,
+                                                                                color = MaterialTheme.colorScheme.onBackground,
                                                                                 style = MaterialTheme.typography.bodyLarge,
                                                                             )
                                                                         }
@@ -1113,14 +1108,14 @@ fun WorkoutsScreen(
                                                 text = "All Muscle Groups",
                                                 style = MaterialTheme.typography.titleMedium,
                                                 textAlign = TextAlign.Center,
-                                                color = LightGray
+                                                color = MaterialTheme.colorScheme.onBackground
                                             )
                                             
                                             if (allMuscleGroups.isEmpty()) {
                                                 Text(
                                                     text = "No muscle groups found in workouts",
                                                     style = MaterialTheme.typography.bodySmall,
-                                                    color = MediumLightGray,
+                                                    color = MediumMaterialTheme.colorScheme.onBackground,
                                                     textAlign = TextAlign.Center,
                                                     modifier = Modifier.fillMaxWidth()
                                                 )
@@ -1131,9 +1126,9 @@ fun WorkoutsScreen(
                                                         .height(300.dp),
                                                     activeMuscles = allMuscleGroups,
                                                     viewMode = effectiveViewMode,
-                                                    highlightColor = Orange,
-                                                    baseColor = MediumDarkerGray,
-                                                    outlineColor = MediumDarkerGray
+                                                    highlightColor = MaterialTheme.colorScheme.primary,
+                                                    baseColor = MaterialTheme.colorScheme.surface,
+                                                    outlineColor = MaterialTheme.colorScheme.surface
                                                 )
                                             }
                                         }

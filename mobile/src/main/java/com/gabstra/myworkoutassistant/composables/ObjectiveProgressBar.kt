@@ -14,10 +14,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 @Composable
@@ -26,13 +26,13 @@ fun CheckboxWithGreenCircle(modifier: Modifier = Modifier) {
         modifier = modifier
             .size(40.dp) // Circle size
             .clip(CircleShape) // Clip the box to a circle shape
-            .background(Color(0xFFff6700)),
+            .background(MaterialTheme.colorScheme.primary),
 
     ) {
         Icon(
             imageVector = Icons.Default.Check,
             contentDescription = "Checkbox",
-            tint = Color.DarkGray, // Icon color
+            tint = MaterialTheme.colorScheme.onPrimary, // Icon color
             modifier = Modifier.align(Alignment.Center) // Center the icon within the circle
         )
     }
@@ -49,8 +49,8 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
     ) {
         SimpleProgressIndicator(
             progress = progress,
-            trackColor = MediumDarkGray,
-            progressBarColor =  Color(0xFFff6700),
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            progressBarColor =  MaterialTheme.colorScheme.primary,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(16.dp)

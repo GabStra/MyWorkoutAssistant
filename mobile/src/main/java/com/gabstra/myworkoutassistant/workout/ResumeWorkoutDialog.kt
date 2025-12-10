@@ -27,7 +27,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -51,7 +50,7 @@ fun ResumeWorkoutDialog(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(DarkGray),
+                    .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center
             ) {
                 val density = LocalDensity.current.density
