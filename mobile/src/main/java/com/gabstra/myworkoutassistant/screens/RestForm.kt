@@ -47,12 +47,13 @@ fun RestForm(
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(rest?.timeInSeconds ?: 0)) }
     val (hours, minutes, seconds) = hms.value
 
+    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MaterialTheme.colorScheme.outlineVariant,
+                        color = outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()

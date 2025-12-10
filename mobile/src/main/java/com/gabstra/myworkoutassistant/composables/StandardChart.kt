@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material3.MaterialTheme
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
@@ -56,15 +55,17 @@ fun StandardChart(
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
 ) {
-    val shapeComponent =  rememberShapeComponent(fill(MaterialTheme.colorScheme.onBackground), CorneredShape.Pill)
+    val onBackgroundColor = MaterialTheme.colorScheme.onBackground
+    val onBackgroundColorArgb = onBackgroundColor.toArgb()
+    val shapeComponent =  rememberShapeComponent(fill(onBackgroundColor), CorneredShape.Pill)
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
-            color = MaterialTheme.colorScheme.onBackground,
+            color = onBackgroundColor,
             padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER,
         ),
-        guideline =  rememberAxisGuidelineComponent(fill(MaterialTheme.colorScheme.onBackground)),
+        guideline =  rememberAxisGuidelineComponent(fill(onBackgroundColor)),
         indicatorSize = 10.dp,
         valueFormatter = { _, targets ->
             val target = targets.first() as LineCartesianLayerMarkerTarget
@@ -72,7 +73,7 @@ fun StandardChart(
             SpannableStringBuilder().apply {
                 append(
                     markerTextFormatter?.invoke(point.entry.y),
-                    ForegroundColorSpan(MaterialTheme.colorScheme.onBackground.toArgb()),
+                    ForegroundColorSpan(onBackgroundColorArgb),
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
             }
@@ -129,7 +130,7 @@ fun StandardChart(
                             rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
                         ),
                         startAxis = VerticalAxis.rememberStart(
-                            line = rememberAxisLineComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
+                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
                                 color = MaterialTheme.colorScheme.onBackground,
                                 textSize = 12.sp,
@@ -138,11 +139,11 @@ fun StandardChart(
                             ),
                             valueFormatter = startAxisValueFormatter,
                             itemPlacer = remember { VerticalAxis.ItemPlacer.count() },
-                            tick = rememberAxisTickComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
+                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.onBackground)),
                             guideline = null,
                         ),
                         bottomAxis = HorizontalAxis.rememberBottom(
-                            line = rememberAxisLineComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
+                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
                                 color = MaterialTheme.colorScheme.onBackground,
                                 textSize = 12.sp,
@@ -153,7 +154,7 @@ fun StandardChart(
                             labelRotationDegrees = -90f,
                             valueFormatter = bottomAxisValueFormatter,
                             guideline = null,
-                            tick = rememberAxisTickComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
+                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.onBackground)),
 
                             ),
                         persistentMarkers = if (markerPosition != null)  { _ ->

@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
-import androidx.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -137,7 +136,7 @@ fun SetHistoriesRenderer(
                                 text = "${setData.actualReps}",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                             )
                         }
 

@@ -454,7 +454,7 @@ fun ExerciseHistoryScreen(
                 }
             ) {
                 Tab(
-                    modifier = Modifier.background(DarkGray),
+                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
                     selected = false,
                     onClick = {
                         appViewModel.setScreenData(
@@ -473,7 +473,7 @@ fun ExerciseHistoryScreen(
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Tab(
-                    modifier = Modifier.background(DarkGray),
+                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
                     selected = true,
                     onClick = { },
                     text = {

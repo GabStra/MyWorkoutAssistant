@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -83,13 +82,14 @@ internal fun SpannableStringBuilder.appendCompat(
 
 internal class DefaultValueFormatter(
     private val formatter: (Double) -> String,
+    private val textColor: Int,
     private val colorCode: Boolean = true,
 ) : DefaultCartesianMarker.ValueFormatter {
     private fun SpannableStringBuilder.append(y: Double, color: Int? = null) {
         if (colorCode && color != null) {
             appendCompat(
                 formatter(y),
-                ForegroundColorSpan(MaterialTheme.colorScheme.onBackground.toArgb()),
+                ForegroundColorSpan(textColor),
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
         } else {
@@ -153,9 +153,10 @@ internal class DefaultValueFormatter(
         this === other ||
                 other is DefaultValueFormatter &&
                 formatter == other.formatter &&
+                textColor == other.textColor &&
                 colorCode == other.colorCode
 
-    override fun hashCode(): Int = 31 * formatter.hashCode() + colorCode.hashCode()
+    override fun hashCode(): Int = 31 * (31 * formatter.hashCode() + textColor.hashCode()) + colorCode.hashCode()
 }
 
 @Composable
@@ -170,12 +171,13 @@ fun HeartRateChart(
             getHeartRateFromPercentage(value.toFloat(),userAge).toString()
         }
 
+    val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
     val shapeComponent = rememberShapeComponent(fill(Color.White), CorneredShape.Pill)
     val marker = rememberDefaultCartesianMarker(
         valueFormatter = remember {
             DefaultValueFormatter({
                 getHeartRateFromPercentage(it.toFloat(),userAge).toString()
-            })
+            }, textColor)
         },
         label = rememberTextComponent(
             color = Color.White,

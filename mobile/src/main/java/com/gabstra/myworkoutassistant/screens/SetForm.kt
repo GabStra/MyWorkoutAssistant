@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -73,12 +74,13 @@ fun SetForm(
     val selectedSetType = remember { mutableStateOf(getSetTypeFromExerciseType(exerciseType)) }
     val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
 
+    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
                         drawLine(
-                            color = MaterialTheme.colorScheme.outlineVariant,
+                            color = outlineVariant,
                             start = Offset(0f, size.height),
                             end = Offset(size.width, size.height),
                             strokeWidth = 1.dp.toPx()

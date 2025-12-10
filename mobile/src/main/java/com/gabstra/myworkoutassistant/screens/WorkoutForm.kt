@@ -65,7 +65,6 @@ import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.WorkoutTypes
-import com.gabstra.myworkoutassistant.shared.MaterialTheme.colorScheme.outlineVariant
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -104,13 +103,14 @@ fun WorkoutForm(
     val newGlobalId = remember { workout?.globalId ?: UUID.randomUUID() }
 
     val scrollState = rememberScrollState()
+    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
     Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MaterialTheme.colorScheme.outlineVariant,
+                        color = outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()

@@ -48,7 +48,7 @@ fun ExerciseRenderer(
                     .basicMarquee(iterations = Int.MAX_VALUE),
                 text = exercise.name,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
             )
         }
     }else{
@@ -64,7 +64,7 @@ fun ExerciseRenderer(
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                 )
             },
             content = {
@@ -130,7 +130,7 @@ fun ExerciseRenderer(
                                     text = "$index",
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
-                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                 )
                                 when (set) {
                                     is WeightSet -> {
@@ -141,14 +141,14 @@ fun ExerciseRenderer(
                                             text = weightText,
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                         )
                                         Text(
                                             modifier = Modifier.weight(1f),
                                             text = "${set.reps}",
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                         )
                                     }
 
@@ -166,14 +166,14 @@ fun ExerciseRenderer(
                                             text = weightText,
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                         )
                                         Text(
                                             modifier = Modifier.weight(1f),
                                             text = "${set.reps}",
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                         )
                                     }
 
@@ -183,7 +183,7 @@ fun ExerciseRenderer(
                                             text = formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
                                             textAlign = TextAlign.Center,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                         )
                                     }
 
@@ -193,7 +193,7 @@ fun ExerciseRenderer(
                                             text =formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
                                             textAlign = TextAlign.Center,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                         )
                                     }
                                     else -> throw IllegalArgumentException("Unknown set type")
@@ -208,7 +208,7 @@ fun ExerciseRenderer(
                                 Text(
                                     "Rest "+formatTime(set.timeInSeconds),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
+                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground,
                                 )
                             }
                         }

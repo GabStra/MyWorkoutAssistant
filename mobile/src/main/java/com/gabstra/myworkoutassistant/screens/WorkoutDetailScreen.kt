@@ -375,7 +375,7 @@ fun WorkoutDetailScreen(
                         }) {
                         Icon(
                             imageVector = Icons.Filled.ArrowDownward,
-                            contentDescription = "Go Lower", tint = LightGray
+                            contentDescription = "Go Lower", tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                     if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
@@ -584,7 +584,7 @@ fun WorkoutDetailScreen(
                     }
                 ) {
                     Tab(
-                        modifier = Modifier.background(DarkGray),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         selected = true,
                         onClick = { },
                         text = {
@@ -605,7 +605,7 @@ fun WorkoutDetailScreen(
                         }
                     )
                     Tab(
-                        modifier = Modifier.background(DarkGray),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         selected = false,
                         onClick = {
                             appViewModel.setScreenData(

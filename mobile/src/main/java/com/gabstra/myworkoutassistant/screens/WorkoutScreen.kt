@@ -77,13 +77,14 @@ fun WorkoutScreen(
     }
 
     val enableDimming by workoutViewModel.enableDimming
+    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     KeepOn(workoutViewModel,enableDimming = enableDimming) {
         Scaffold(
             topBar = {
                 TopAppBar(
                     modifier = Modifier.drawBehind {
                         drawLine(
-                            color = MaterialTheme.colorScheme.outlineVariant,
+                            color = outlineVariant,
                             start = Offset(0f, size.height),
                             end = Offset(size.width, size.height),
                             strokeWidth = 1.dp.toPx()
