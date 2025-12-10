@@ -54,12 +54,14 @@ fun SettingsScreen(
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
     val progressionPercentageAmount = remember { mutableStateOf(workoutStore.progressionPercentageAmount) }
 
+    val outlineColor = MaterialTheme.colorScheme.outlineVariant
+
     Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MaterialTheme.colorScheme.outlineVariant,
+                        color = outlineColor,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()

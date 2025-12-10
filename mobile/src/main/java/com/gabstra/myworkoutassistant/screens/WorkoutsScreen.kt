@@ -738,7 +738,7 @@ fun WorkoutsScreen(
                         },
                         text = { Text(text = title) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumMaterialTheme.colorScheme.onBackground,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -810,7 +810,7 @@ fun WorkoutsScreen(
                                             CircularProgressIndicator(
                                                 modifier = Modifier.width(32.dp),
                                                 color = MaterialTheme.colorScheme.primary,
-                                                trackColor = Color.MaterialTheme.colorScheme.background,
+                                                trackColor = MaterialTheme.colorScheme.background,
                                             )
                                         }
                                     } else {
@@ -928,7 +928,7 @@ fun WorkoutsScreen(
                                                                 .padding(15.dp),
                                                             text = "No workouts on this day",
                                                             textAlign = TextAlign.Center,
-                                                            color = MediumMaterialTheme.colorScheme.onBackground,
+                                                            color = MaterialTheme.colorScheme.onBackground,
                                                         )
                                                     }
                                                 } else {
@@ -1115,7 +1115,7 @@ fun WorkoutsScreen(
                                                 Text(
                                                     text = "No muscle groups found in workouts",
                                                     style = MaterialTheme.typography.bodySmall,
-                                                    color = MediumMaterialTheme.colorScheme.onBackground,
+                                                    color = MaterialTheme.colorScheme.onBackground,
                                                     textAlign = TextAlign.Center,
                                                     modifier = Modifier.fillMaxWidth()
                                                 )

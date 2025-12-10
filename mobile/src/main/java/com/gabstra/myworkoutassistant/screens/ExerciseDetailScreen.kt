@@ -68,7 +68,6 @@ import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -289,7 +288,7 @@ fun ExerciseDetailScreen(
                         Icon(
                             imageVector = Icons.Default.FileDownload,
                             contentDescription = "Export History",
-                            tint = if (exercise.doNotStoreHistory) MediumMaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground
+                            tint = if (exercise.doNotStoreHistory) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground
                         )
                     }
                     IconButton(onClick = {
@@ -472,7 +471,7 @@ fun ExerciseDetailScreen(
                                         selectedSets = emptyList()
                                     }) {
                                     val isEnabled = selectedSets.isNotEmpty()
-                                    val color = if (isEnabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground
+                                    val color = if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground
 
                                     Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
                                 }
@@ -508,7 +507,7 @@ fun ExerciseDetailScreen(
                         onClick = { },
                         text = { Text(text = "Overview") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumMaterialTheme.colorScheme.onBackground,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -531,7 +530,7 @@ fun ExerciseDetailScreen(
                         },
                         text = { Text(text = "History") },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumMaterialTheme.colorScheme.onBackground,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
