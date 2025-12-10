@@ -54,7 +54,7 @@ fun TutorialOverlay(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(start = 25.dp, top = 50.dp, end = 25.dp, bottom = 10.dp),
+                        .padding(25.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     val scrollState = rememberScrollState()

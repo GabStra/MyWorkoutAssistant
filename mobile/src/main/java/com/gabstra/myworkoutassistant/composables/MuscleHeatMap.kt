@@ -70,7 +70,7 @@ fun InteractiveMuscleHeatMap(
     val outlineBack = remember { MaleMusclePathProvider.BODY_OUTLINE_BACK }
 
     // Define Viewport Constants
-    val virtualHeight = 1530f
+    val virtualHeight = 1450f
 
     // Width for a single body view (with margins)
     val singleBodyWidth = 750f

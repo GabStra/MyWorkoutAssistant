@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -19,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -87,6 +87,8 @@ import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -96,7 +98,11 @@ import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.workout.MuscleHeatMap
+import com.gabstra.myworkoutassistant.workout.MuscleViewMode
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
@@ -219,6 +225,36 @@ fun Menu(
         }
     }
 
+}
+
+/**
+ * Aggregates all muscle groups from all workouts.
+ * Includes muscle groups from exercises and exercises within Supersets.
+ */
+fun aggregateAllMuscleGroups(workouts: List<Workout>): Set<MuscleGroup> {
+    val allMuscleGroups = mutableSetOf<MuscleGroup>()
+    
+    workouts.forEach { workout ->
+        workout.workoutComponents.forEach { component ->
+            when (component) {
+                is Exercise -> {
+                    component.muscleGroups?.let { muscleGroups ->
+                        allMuscleGroups.addAll(muscleGroups)
+                    }
+                }
+                is Superset -> {
+                    component.exercises.forEach { exercise ->
+                        exercise.muscleGroups?.let { muscleGroups ->
+                            allMuscleGroups.addAll(muscleGroups)
+                        }
+                    }
+                }
+                else -> { /* Rest or other components don't have muscle groups */ }
+            }
+        }
+    }
+    
+    return allMuscleGroups
 }
 
 @Composable
@@ -1031,6 +1067,27 @@ fun WorkoutsScreen(
 
                             1 -> {
                                 val scrollState = rememberScrollState()
+                                
+                                // Aggregate all muscle groups from all workouts
+                                val allMuscleGroups = remember(workouts) {
+                                    aggregateAllMuscleGroups(workouts)
+                                }
+                                
+                                // Determine view mode based on available muscle groups
+                                val hasFrontMuscles = remember(allMuscleGroups) {
+                                    allMuscleGroups.any { it.name.startsWith("FRONT_") }
+                                }
+                                val hasBackMuscles = remember(allMuscleGroups) {
+                                    allMuscleGroups.any { it.name.startsWith("BACK_") }
+                                }
+                                val effectiveViewMode = remember(hasFrontMuscles, hasBackMuscles) {
+                                    when {
+                                        hasFrontMuscles && hasBackMuscles -> MuscleViewMode.BOTH
+                                        hasFrontMuscles -> MuscleViewMode.FRONT_ONLY
+                                        hasBackMuscles -> MuscleViewMode.BACK_ONLY
+                                        else -> MuscleViewMode.BOTH
+                                    }
+                                }
 
                                 Column(
                                     modifier = Modifier
@@ -1038,8 +1095,50 @@ fun WorkoutsScreen(
                                         .padding(horizontal = 5.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
-                                        .padding(horizontal = 15.dp),
+                                        .padding(horizontal = 15.dp)
+                                        .padding(top = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
+                                    // Display all muscle groups
+                                    StyledCard(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 5.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(vertical = 5.dp)
+                                        ) {
+                                            Text(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                text = "All Muscle Groups",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                textAlign = TextAlign.Center,
+                                                color = LightGray
+                                            )
+                                            
+                                            if (allMuscleGroups.isEmpty()) {
+                                                Text(
+                                                    text = "No muscle groups found in workouts",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MediumLightGray,
+                                                    textAlign = TextAlign.Center,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            } else {
+                                                MuscleHeatMap(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(300.dp),
+                                                    activeMuscles = allMuscleGroups,
+                                                    viewMode = effectiveViewMode,
+                                                    highlightColor = Orange,
+                                                    baseColor = MediumDarkerGray,
+                                                    outlineColor = MediumDarkerGray
+                                                )
+                                            }
+                                        }
+                                    }
+                                    
                                     if (activeAndEnabledWorkouts.isEmpty()) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth().padding(5.dp),

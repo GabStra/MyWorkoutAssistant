@@ -47,6 +47,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.composables.KeepOn
+import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -626,8 +627,9 @@ fun WearApp(
                     }
                 }
                 
-                com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog(
+                ResumeWorkoutDialog(
                     show = showResumeDialog,
+                    hapticsViewModel = hapticsViewModel,
                     incompleteWorkouts = incompleteWorkouts,
                     onDismiss = {
                         appViewModel.hideResumeWorkoutDialog()
