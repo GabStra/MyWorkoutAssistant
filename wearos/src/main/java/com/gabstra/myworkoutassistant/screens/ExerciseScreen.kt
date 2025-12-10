@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.composables.ExerciseDetail
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.PageMuscles
 import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
@@ -69,7 +70,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class PageType {
-    PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS, PROGRESSION_COMPARISON
+    PLATES, EXERCISE_DETAIL, MUSCLES, EXERCISES, NOTES, BUTTONS, PROGRESSION_COMPARISON
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
@@ -106,6 +107,8 @@ fun ExerciseScreen(
         exercise.notes.isNotEmpty()
     }
 
+    val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
+
     val showProgressionComparisonPage = remember(exercise) {
         viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
                 viewModel.lastSessionWorkout != null &&
@@ -114,9 +117,10 @@ fun ExerciseScreen(
                             .flatMap { it.exercises }).any { it.id == exercise.id })
     }
 
-    val pageTypes = remember(showPlatesPage, showNotesPage, showProgressionComparisonPage) {
+    val pageTypes = remember(showPlatesPage, showNotesPage, showProgressionComparisonPage, hasMuscleInfo) {
         mutableListOf<PageType>().apply {
             add(PageType.EXERCISE_DETAIL)
+            if (hasMuscleInfo) add(PageType.MUSCLES)
             if (showPlatesPage) add(PageType.PLATES)
             if (showProgressionComparisonPage) add(PageType.PROGRESSION_COMPARISON)
             if (showNotesPage) add(PageType.NOTES)
@@ -468,6 +472,12 @@ fun ExerciseScreen(
                                         content()
                                     }
                                 )
+                            }
+                        }
+
+                        PageType.MUSCLES -> {
+                            key(pageType, pageIndex) {
+                                PageMuscles(exercise = exercise)
                             }
                         }
 

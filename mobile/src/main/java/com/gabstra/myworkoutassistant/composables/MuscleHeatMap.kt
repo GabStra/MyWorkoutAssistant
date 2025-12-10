@@ -16,12 +16,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
-import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.LightGray
+import com.gabstra.myworkoutassistant.shared.MaleMusclePathProvider
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
-import com.gabstra.myworkoutassistant.shared.MusclePathProvider
 import com.gabstra.myworkoutassistant.shared.Orange
 import kotlin.math.roundToInt
 
@@ -64,78 +64,67 @@ fun InteractiveMuscleHeatMap(
     outlineColor: Color = Color.Black
 ) {
     // Load paths once
-    val musclePaths = remember { MusclePathProvider.getMusclePaths() }
-    
-    // Filter muscles based on current view
-    val frontMuscles = setOf(
-        MuscleGroup.TRAPEZIUS_FRONT,   
-        MuscleGroup.ANTERIOR_DELTOIDS,
-        MuscleGroup.MIDDLE_DELTOIDS,   
-        MuscleGroup.PECTORALS,
-        MuscleGroup.SERRATUS_ANTERIOR,
-        MuscleGroup.ABDOMINALS,
-        MuscleGroup.OBLIQUES,
-        MuscleGroup.BICEPS,
-        MuscleGroup.FOREARMS,
-        MuscleGroup.ADDUCTORS,         
-        MuscleGroup.QUADRICEPS,
-        MuscleGroup.TIBIALIS
-    )
+    val frontPaths = remember { MaleMusclePathProvider.getFrontMusclePaths() }
+    val backPaths = remember { MaleMusclePathProvider.getBackMusclePaths() }
+    val outlineFront = remember { MaleMusclePathProvider.BODY_OUTLINE_FRONT }
+    val outlineBack = remember { MaleMusclePathProvider.BODY_OUTLINE_BACK }
 
-    val backMuscles = setOf(
-        MuscleGroup.TRAPEZIUS,         
-        MuscleGroup.POSTERIOR_DELTOIDS,
-        MuscleGroup.LATISSIMUS,
-        MuscleGroup.TRICEPS,
-        MuscleGroup.ERECTORS,
-        MuscleGroup.GLUTES,
-        MuscleGroup.ABDUCTORS,        
-        MuscleGroup.HAMSTRINGS,
-        MuscleGroup.CALVES
-    )
-    
-    val visibleMuscles = if (currentView == BodyView.FRONT) frontMuscles else backMuscles
-    
-    // Virtual dimensions for the current view
-    val virtualWidth = if (currentView == BodyView.FRONT) 100f else 100f
-    val virtualHeight = 260f
-    val backOffsetX = 120f // Offset for back muscles
+    // Define Viewport Constants
+    val virtualHeight = 1530f
+
+    // Width for a single body view (with margins)
+    val singleBodyWidth = 750f
+
+    // Center X coordinates for specific targets (based on SVG data)
+    val centerOfFront = 360f
+    val centerOfBack = 1085f
+
+    // Determine "Camera" Settings based on View
+    val (virtualWidth, targetCenterX) = when (currentView) {
+        BodyView.FRONT -> Pair(singleBodyWidth, centerOfFront)
+        BodyView.BACK -> Pair(singleBodyWidth, centerOfBack)
+    }
+
+    val targetCenterY = 765f // Middle of height
     
     Box(modifier = modifier) {
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(300.dp)
-                .pointerInput(Unit) {
+                .pointerInput(currentView, frontPaths, backPaths) {
                     detectTapGestures { tapOffset ->
-                        // Transform tap coordinates to virtual coordinates
+                        // Calculate the same transformation as in drawing
                         val scaleX = size.width / virtualWidth
                         val scaleY = size.height / virtualHeight
-                        val scale = minOf(scaleX, scaleY) * 0.9f
+                        val scale = minOf(scaleX, scaleY)
                         
-                        val translateX = (size.width - (virtualWidth * scale)) / 2f
-                        val translateY = (size.height - (virtualHeight * scale)) / 2f
+                        // Reverse the transformation pipeline
+                        // 1. Start from screen coordinates
+                        // 2. Translate to center
+                        val centeredX = tapOffset.x - size.width / 2f
+                        val centeredY = tapOffset.y - size.height / 2f
                         
-                        // Convert tap coordinates to virtual coordinates
-                        val virtualX = (tapOffset.x - translateX) / scale
-                        val virtualY = (tapOffset.y - translateY) / scale
+                        // 3. Scale back
+                        val scaledX = centeredX / scale
+                        val scaledY = centeredY / scale
                         
-                        // For back view, we need to add the offset to match the path coordinates
-                        // For front view, paths are in 0-100 range, so use virtualX directly
-                        val checkX = if (currentView == BodyView.BACK) {
-                            virtualX + backOffsetX
+                        // 4. Translate to target center
+                        val virtualX = scaledX + targetCenterX
+                        val virtualY = scaledY + targetCenterY
+                        
+                        val checkPoint = Offset(virtualX, virtualY)
+                        
+                        // Get the appropriate path map based on current view
+                        val pathsToCheck = if (currentView == BodyView.FRONT) {
+                            frontPaths.entries.reversed()
                         } else {
-                            virtualX
+                            backPaths.entries.reversed()
                         }
-                        val checkPoint = Offset(checkX, virtualY)
                         
                         // Check each muscle path in reverse order (last drawn = top)
                         // to handle overlapping muscles correctly
-                        val musclesInView = musclePaths.entries
-                            .filter { (muscle, _) -> visibleMuscles.contains(muscle) }
-                            .reversed()
-                        
-                        for ((muscle, path) in musclesInView) {
+                        for ((muscle, path) in pathsToCheck) {
                             if (path.contains(checkPoint)) {
                                 onMuscleToggled(muscle)
                                 break
@@ -144,71 +133,45 @@ fun InteractiveMuscleHeatMap(
                     }
                 }
         ) {
-            // Calculate scaling to fit the canvas
+            // Calculate Scale
+            // Fit the chosen virtual width into the available screen width
             val scaleX = size.width / virtualWidth
             val scaleY = size.height / virtualHeight
-            val scale = minOf(scaleX, scaleY) * 0.9f
-            
-            // Center the drawing
-            val translateX = (size.width - (virtualWidth * scale)) / 2f
-            val translateY = (size.height - (virtualHeight * scale)) / 2f
-            
-            translate(left = translateX, top = translateY) {
-                scale(scale, pivot = Offset.Zero) {
-                    if (currentView == BodyView.BACK) {
-                        // For back view, translate the drawing to account for the offset
-                        translate(left = -backOffsetX, top = 0f) {
-                            // Draw Head (Decoration only - not a muscle)
-                            drawCircle(color = baseColor, center = Offset(50f + backOffsetX, 25f), radius = 15f)
-                            drawCircle(color = outlineColor, center = Offset(50f + backOffsetX, 25f), radius = 15f, style = Stroke(1.5f))
-                            
-                            // Draw visible muscles
-                            musclePaths.forEach { (muscle, path) ->
-                                if (!visibleMuscles.contains(muscle)) return@forEach
-                                
-                                val isSelected = selectedMuscles.contains(muscle)
-                                val fillColor = if (isSelected) highlightColor else baseColor
-                                
-                                // 1. Fill
-                                drawPath(
-                                    path = path,
-                                    color = fillColor
-                                )
-                                
-                                // 2. Outline
-                                drawPath(
-                                    path = path,
-                                    color = outlineColor,
-                                    style = Stroke(width = 2f)
-                                )
-                            }
-                        }
-                    } else {
-                        // For front view, draw normally
-                        // Draw Head (Decoration only - not a muscle)
-                        drawCircle(color = baseColor, center = Offset(50f, 25f), radius = 15f)
-                        drawCircle(color = outlineColor, center = Offset(50f, 25f), radius = 15f, style = Stroke(1.5f))
+            val scale = minOf(scaleX, scaleY)
+
+            withTransform({
+                // Center the canvas
+                translate(left = size.width / 2f, top = size.height / 2f)
+                // Apply Zoom
+                scale(scale, pivot = Offset.Zero)
+                // Move camera to specific target (Front or Back)
+                translate(left = -targetCenterX, top = -targetCenterY)
+            }) {
+                // Draw Front (If applicable)
+                if (currentView == BodyView.FRONT) {
+                    // Base
+                    drawPath(path = outlineFront, color = baseColor)
+                    // Muscles
+                    frontPaths.forEach { (muscle, path) ->
+                        val isSelected = selectedMuscles.contains(muscle)
+                        val fillColor = if (isSelected) highlightColor else baseColor
                         
-                        // Draw visible muscles
-                        musclePaths.forEach { (muscle, path) ->
-                            if (!visibleMuscles.contains(muscle)) return@forEach
-                            
-                            val isSelected = selectedMuscles.contains(muscle)
-                            val fillColor = if (isSelected) highlightColor else baseColor
-                            
-                            // 1. Fill
-                            drawPath(
-                                path = path,
-                                color = fillColor
-                            )
-                            
-                            // 2. Outline
-                            drawPath(
-                                path = path,
-                                color = outlineColor,
-                                style = Stroke(width = 2f)
-                            )
-                        }
+                        drawPath(path = path, color = fillColor)
+                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
+                    }
+                }
+
+                // Draw Back (If applicable)
+                if (currentView == BodyView.BACK) {
+                    // Base
+                    drawPath(path = outlineBack, color = baseColor)
+                    // Muscles
+                    backPaths.forEach { (muscle, path) ->
+                        val isSelected = selectedMuscles.contains(muscle)
+                        val fillColor = if (isSelected) highlightColor else baseColor
+                        
+                        drawPath(path = path, color = fillColor)
+                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
                     }
                 }
             }

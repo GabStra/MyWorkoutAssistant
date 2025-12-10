@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.workout
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
@@ -99,3 +99,4 @@ fun MuscleHeatMap(
         }
     }
 }
+

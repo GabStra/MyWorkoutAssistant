@@ -237,7 +237,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
 
                 val muscleGroups = if (jsonObject.has("muscleGroups")) {
                     val muscleGroupsType = object : TypeToken<kotlin.collections.Set<MuscleGroup>>() {}.type
-                    context.deserialize(jsonObject.get("muscleGroups"), muscleGroupsType)
+                    context.deserialize<kotlin.collections.Set<MuscleGroup>>(jsonObject.get("muscleGroups"), muscleGroupsType)
                 } else {
                     null
                 }

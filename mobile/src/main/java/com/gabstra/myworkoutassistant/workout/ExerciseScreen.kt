@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 enum class PageType {
-    PLATES, EXERCISE_DETAIL, EXERCISES, NOTES, BUTTONS
+    PLATES, EXERCISE_DETAIL, MUSCLES, EXERCISES, NOTES, BUTTONS
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
@@ -80,14 +80,14 @@ fun ExerciseScreen(
                 && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
     }
 
-    val showNotesPage = remember(exercise) {
-        exercise.notes.isNotEmpty()
-    }
+    val showNotesPage = remember(exercise) { exercise.notes.isNotEmpty() }
+    val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
 
-    val pageTypes = remember(showPlatesPage, showNotesPage) {
+    val pageTypes = remember(showPlatesPage, showNotesPage, hasMuscleInfo) {
         mutableListOf<PageType>().apply {
             if (showPlatesPage) add(PageType.PLATES)
             add(PageType.EXERCISE_DETAIL)
+            if (hasMuscleInfo) add(PageType.MUSCLES)
             add(PageType.EXERCISES)
             // if (showNotesPage) add(PageType.NOTES)
             add(PageType.BUTTONS)
@@ -100,6 +100,10 @@ fun ExerciseScreen(
 
     val exerciseDetailPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.EXERCISE_DETAIL)
+    }
+
+    val musclesPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.MUSCLES)
     }
 
     val platesPageIndex = remember(pageTypes) {
@@ -310,6 +314,8 @@ fun ExerciseScreen(
                         content()
                     }
                 )
+
+                PageType.MUSCLES -> PageMuscles(exercise = exercise)
 
                 PageType.EXERCISES ->PageExercises(
                             updatedState,

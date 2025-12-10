@@ -56,16 +56,15 @@ fun TutorialOverlay(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     // Scrollable text container that fills available space
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(vertical = 10.dp),
+                            .verticalScroll(rememberScrollState()),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -79,8 +78,7 @@ fun TutorialOverlay(
                     // Fixed button at the bottom
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 10.dp),
+                            .fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
                         Button(

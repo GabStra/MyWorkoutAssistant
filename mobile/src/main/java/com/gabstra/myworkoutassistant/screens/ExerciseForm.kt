@@ -55,6 +55,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BodyView
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -380,7 +381,7 @@ fun ExerciseForm(
                 }
             }
             
-/*            Spacer(Modifier.height(Spacing.md))
+            Spacer(Modifier.height(Spacing.md))
             
             // Interactive Muscle Heat Map
             InteractiveMuscleHeatMap(
@@ -393,7 +394,7 @@ fun ExerciseForm(
                     }
                 },
                 currentView = currentBodyView
-            )*/
+            )
             
             Spacer(Modifier.height(Spacing.lg))
             HorizontalDivider(color = MediumLightGray)
