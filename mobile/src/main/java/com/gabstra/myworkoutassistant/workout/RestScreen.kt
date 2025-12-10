@@ -379,6 +379,7 @@ fun RestScreen(
                 )
 
                 PageType.NOTES -> {}
+                PageType.MUSCLES -> {}
             }
         }
 

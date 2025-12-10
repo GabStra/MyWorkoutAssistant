@@ -72,7 +72,7 @@ fun PagePlates(
         Text(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 30.dp),
             text = "Loading Guide",
             style = MaterialTheme.typography.titleSmall,
             textAlign = TextAlign.Center
@@ -458,6 +458,8 @@ private fun BarbellVisualization(
         }
     }
 
+    val isFinalState = (currentStepIndex == totalSteps) || (totalSteps == 0)
+
     val barLength = barbell.barLength.toFloat()
     // Total logical thickness of the *current* plates on the sleeve (in the same unit as barLength)
     val currentTotalThickness = plateData.sumOf { it.thickness }.toFloat()
@@ -469,20 +471,26 @@ private fun BarbellVisualization(
         plateData.maxOfOrNull { it.weight } ?: 25.0
     }
 
-    val barbellColor = MaterialTheme.colorScheme.onBackground
-    val defaultPlateColor = MaterialTheme.colorScheme.onBackground // Default color for non-highlighted plates
-    val finalStatePlateColor = MaterialTheme.colorScheme.primary // Color for all plates in final state
-    val borderColor = MaterialTheme.colorScheme.background
 
+    val defaultColor = MaterialTheme.colorScheme.onBackground
+    val finalStatePlateColor = MaterialTheme.colorScheme.primary
+    val borderColor = MaterialTheme.colorScheme.background
     val labelColor = MaterialTheme.colorScheme.onBackground
+    val defaultPlateColor = MaterialTheme.colorScheme.onBackground
+
+    // 2. Determine Barbell Color
+    // If we are in the final state AND the bar is empty, color the bar Primary.
+    // Otherwise, keep it the default color.
+    val barbellColor = if (isFinalState && platesForDrawing.isEmpty()) {
+        finalStatePlateColor
+    } else {
+        defaultColor
+    }
     
     // Determine color and alpha for each plate based on animation state
     // Only highlight the specific instance being modified, not all plates of the same weight
     // Use platesForDrawing which includes the removed plate for REMOVE actions
     val sortedPlatesForHighlighting = platesForDrawing
-    
-    // Check if we're in final state (all plates should be primary)
-    val isFinalState = (currentStepIndex == totalSteps) || (totalSteps == 0)
     
     // Calculate which plate indices should be highlighted (based on instance position among same-weight plates)
     // In final state, no plates should be highlighted

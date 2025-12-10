@@ -33,6 +33,7 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
@@ -332,6 +333,10 @@ fun ExerciseSetsViewer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .verticalColumnScrollbar(
+                            scrollState = scrollState,
+                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
+                        )
                         .verticalScroll(scrollState)
                 ) {
                     exerciseSetStates.forEachIndexed { index, setState ->
@@ -366,6 +371,10 @@ fun ExerciseSetsViewer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .verticalColumnScrollbar(
+                            scrollState = scrollState,
+                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
+                        )
                         .verticalScroll(scrollState)
                 ) {
                     exerciseSetStates.forEachIndexed { index, setState ->

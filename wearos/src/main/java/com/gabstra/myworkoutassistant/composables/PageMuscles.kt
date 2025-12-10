@@ -1,21 +1,16 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -46,11 +41,7 @@ fun PageMuscles(
     }
     
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+        modifier = Modifier.fillMaxSize(),
     ) {
         if (muscleGroups.isEmpty()) {
             Text(
@@ -66,8 +57,8 @@ fun PageMuscles(
                 activeMuscles = muscleGroups,
                 viewMode = effectiveViewMode,
                 highlightColor = Orange,
-                baseColor = MediumDarkerGray,
-                outlineColor = MediumDarkerGray
+                baseColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                outlineColor = MaterialTheme.colorScheme.surfaceContainerHigh
             )
         }
     }

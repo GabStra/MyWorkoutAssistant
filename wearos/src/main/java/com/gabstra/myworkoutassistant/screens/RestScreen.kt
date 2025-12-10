@@ -406,6 +406,7 @@ fun RestScreen(
                                 }
                             }
 
+                            PageType.MUSCLES -> {}
                         }
                     }
                 }
@@ -445,6 +446,7 @@ fun RestScreen(
             seconds = if (isTimerInEditMode) currentSecondsFreeze else currentSeconds,
             modifier = Modifier
                 .align(Alignment.BottomCenter),
+            style = MaterialTheme.typography.labelMedium
         )
     }
 

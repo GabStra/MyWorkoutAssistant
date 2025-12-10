@@ -275,9 +275,7 @@ fun ExerciseScreen(
                 ) {
                     when (pageType) {
                         PageType.PLATES -> {
-                            key(pageType, pageIndex) {
-                                PagePlates(updatedState, equipment, hapticsViewModel)
-                            }
+                            PagePlates(updatedState, equipment, hapticsViewModel)
                         }
 
                         PageType.EXERCISE_DETAIL -> {
@@ -476,9 +474,7 @@ fun ExerciseScreen(
                         }
 
                         PageType.MUSCLES -> {
-                            key(pageType, pageIndex) {
-                                PageMuscles(exercise = exercise)
-                            }
+                            PageMuscles(exercise = exercise)
                         }
 
                         PageType.EXERCISES -> {
@@ -496,26 +492,20 @@ fun ExerciseScreen(
                         }
 
                         PageType.PROGRESSION_COMPARISON -> {
-                            key(pageType, pageIndex) {
-                                PageProgressionComparison(
-                                    viewModel = viewModel,
-                                    hapticsViewModel = hapticsViewModel,
-                                    exercise = exercise,
-                                    state = updatedState
-                                )
-                            }
+                            PageProgressionComparison(
+                                viewModel = viewModel,
+                                hapticsViewModel = hapticsViewModel,
+                                exercise = exercise,
+                                state = updatedState
+                            )
                         }
 
                         PageType.NOTES -> {
-                            key(pageType, pageIndex) {
-                                PageNotes(exercise.notes)
-                            }
+                            PageNotes(exercise.notes)
                         }
 
                         PageType.BUTTONS -> {
-                            key(pageType, pageIndex) {
-                                PageButtons(updatedState, viewModel, hapticsViewModel)
-                            }
+                            PageButtons(updatedState, viewModel, hapticsViewModel)
                         }
                     }
                 }
