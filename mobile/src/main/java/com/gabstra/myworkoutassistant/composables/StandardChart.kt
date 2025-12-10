@@ -16,8 +16,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import androidx.compose.material3.MaterialTheme
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
@@ -57,15 +56,15 @@ fun StandardChart(
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
 ) {
-    val shapeComponent =  rememberShapeComponent(fill(LightGray), CorneredShape.Pill)
+    val shapeComponent =  rememberShapeComponent(fill(MaterialTheme.colorScheme.onBackground), CorneredShape.Pill)
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
-            color = LightGray,
+            color = MaterialTheme.colorScheme.onBackground,
             padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER,
         ),
-        guideline =  rememberAxisGuidelineComponent(fill(LightGray)),
+        guideline =  rememberAxisGuidelineComponent(fill(MaterialTheme.colorScheme.onBackground)),
         indicatorSize = 10.dp,
         valueFormatter = { _, targets ->
             val target = targets.first() as LineCartesianLayerMarkerTarget
@@ -73,7 +72,7 @@ fun StandardChart(
             SpannableStringBuilder().apply {
                 append(
                     markerTextFormatter?.invoke(point.entry.y),
-                    ForegroundColorSpan(LightGray.toArgb()),
+                    ForegroundColorSpan(MaterialTheme.colorScheme.onBackground.toArgb()),
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
             }
@@ -104,7 +103,7 @@ fun StandardChart(
                         .padding(top = 10.dp),
                     text = title,
                     textAlign = TextAlign.Center,
-                    color = LightGray,
+                    color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.titleMedium,
                 )
             },
@@ -130,22 +129,22 @@ fun StandardChart(
                             rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
                         ),
                         startAxis = VerticalAxis.rememberStart(
-                            line = rememberAxisLineComponent(fill(MediumLightGray)),
+                            line = rememberAxisLineComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
-                                color = LightGray,
+                                color = MaterialTheme.colorScheme.onBackground,
                                 textSize = 12.sp,
                                 padding = Insets(4f, 4f),
                                 textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
                             ),
                             valueFormatter = startAxisValueFormatter,
                             itemPlacer = remember { VerticalAxis.ItemPlacer.count() },
-                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
+                            tick = rememberAxisTickComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
                             guideline = null,
                         ),
                         bottomAxis = HorizontalAxis.rememberBottom(
-                            line = rememberAxisLineComponent(fill(MediumLightGray)),
+                            line = rememberAxisLineComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
-                                color = LightGray,
+                                color = MaterialTheme.colorScheme.onBackground,
                                 textSize = 12.sp,
                                 padding = Insets(4f, 4f),
                                 textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
@@ -154,7 +153,7 @@ fun StandardChart(
                             labelRotationDegrees = -90f,
                             valueFormatter = bottomAxisValueFormatter,
                             guideline = null,
-                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
+                            tick = rememberAxisTickComponent(fill(MediumMaterialTheme.colorScheme.onBackground)),
 
                             ),
                         persistentMarkers = if (markerPosition != null)  { _ ->

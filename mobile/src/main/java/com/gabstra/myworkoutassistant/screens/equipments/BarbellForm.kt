@@ -50,8 +50,6 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -83,7 +81,7 @@ fun BarbellForm(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MediumLightGray,
+                        color = MaterialTheme.colorScheme.outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()
@@ -189,7 +187,7 @@ fun BarbellForm(
                                 .size(35.dp),
                             onClick = { showAvailablePlateDialog.value = true }
                         ) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add plate", tint = DarkGray)
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add plate", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 

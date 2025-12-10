@@ -37,13 +37,12 @@ import androidx.health.connect.client.units.Energy
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.DarkGray
+import androidx.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -551,8 +550,8 @@ fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
-    scrollBarTrackColor: Color = DarkGray,
-    scrollBarColor: Color = MediumLightGray,
+    scrollBarTrackColor: Color? = null,
+    scrollBarColor: Color? = null,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
     trackHeight: Dp? = null,
@@ -560,12 +559,15 @@ fun Modifier.verticalColumnScrollbar(
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
-    contentFadeColor: Color = DarkGray
+    contentFadeColor: Color? = null
 ): Modifier {
+    val defaultTrackColor = scrollBarTrackColor ?: MaterialTheme.colorScheme.scrim
+    val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onSurfaceVariant
+    val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.scrim
     // Remember updated state for all parameters accessed within draw lambda
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)
-    val rememberedTrackColor by rememberUpdatedState(scrollBarTrackColor)
-    val rememberedScrollBarColor by rememberUpdatedState(scrollBarColor)
+    val rememberedTrackColor by rememberUpdatedState(defaultTrackColor)
+    val rememberedScrollBarColor by rememberUpdatedState(defaultScrollBarColor)
     val rememberedWidth by rememberUpdatedState(width)
     val rememberedCornerRadius by rememberUpdatedState(scrollBarCornerRadius)
     val rememberedEndPadding by rememberUpdatedState(endPadding)
@@ -573,7 +575,7 @@ fun Modifier.verticalColumnScrollbar(
     val rememberedEnableTopFade by rememberUpdatedState(enableTopFade)
     val rememberedEnableBottomFade by rememberUpdatedState(enableBottomFade)
     val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
-    val rememberedContentFadeColor by rememberUpdatedState(contentFadeColor)
+    val rememberedContentFadeColor by rememberUpdatedState(defaultFadeColor)
 
     return this.drawWithContent {
         // --- Draw the actual content first ---
@@ -694,8 +696,8 @@ fun Modifier.verticalLazyColumnScrollbar(
     lazyListState: LazyListState,
     width: Dp = 4.dp,
     showScrollBarTrack: Boolean = true,
-    scrollBarTrackColor: Color = DarkGray,
-    scrollBarColor: Color = MediumLightGray,
+    scrollBarTrackColor: Color? = null,
+    scrollBarColor: Color? = null,
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
     trackHeight: Dp? = null,
@@ -703,11 +705,14 @@ fun Modifier.verticalLazyColumnScrollbar(
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
-    contentFadeColor: Color = DarkGray
+    contentFadeColor: Color? = null
 ): Modifier {
+    val defaultTrackColor = scrollBarTrackColor ?: MaterialTheme.colorScheme.scrim
+    val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onSurfaceVariant
+    val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.scrim
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)
-    val rememberedTrackColor by rememberUpdatedState(scrollBarTrackColor)
-    val rememberedScrollBarColor by rememberUpdatedState(scrollBarColor)
+    val rememberedTrackColor by rememberUpdatedState(defaultTrackColor)
+    val rememberedScrollBarColor by rememberUpdatedState(defaultScrollBarColor)
     val rememberedWidth by rememberUpdatedState(width)
     val rememberedCornerRadius by rememberUpdatedState(scrollBarCornerRadius)
     val rememberedEndPadding by rememberUpdatedState(endPadding)
@@ -715,7 +720,7 @@ fun Modifier.verticalLazyColumnScrollbar(
     val rememberedEnableTopFade by rememberUpdatedState(enableTopFade)
     val rememberedEnableBottomFade by rememberUpdatedState(enableBottomFade)
     val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
-    val rememberedContentFadeColor by rememberUpdatedState(contentFadeColor)
+    val rememberedContentFadeColor by rememberUpdatedState(defaultFadeColor)
 
     val layoutInfo = lazyListState.layoutInfo
     val visibleItemsInfo = layoutInfo.visibleItemsInfo

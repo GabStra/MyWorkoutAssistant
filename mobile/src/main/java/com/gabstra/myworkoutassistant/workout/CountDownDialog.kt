@@ -13,7 +13,6 @@ import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.gabstra.myworkoutassistant.shared.DarkGray
 
 @Composable
 fun CountDownDialog(
@@ -31,7 +30,7 @@ fun CountDownDialog(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(DarkGray.copy(alpha = 0.75f)),
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.75f)),
                 contentAlignment = Alignment.Center
             ) {
                 Text(

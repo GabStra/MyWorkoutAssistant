@@ -16,8 +16,6 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -50,7 +48,7 @@ fun ExerciseRenderer(
                     .basicMarquee(iterations = Int.MAX_VALUE),
                 text = exercise.name,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (exercise.enabled) LightGray else MediumLightGray,
+                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
             )
         }
     }else{
@@ -66,7 +64,7 @@ fun ExerciseRenderer(
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (exercise.enabled) LightGray else MediumLightGray,
+                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                 )
             },
             content = {
@@ -91,7 +89,7 @@ fun ExerciseRenderer(
                             text = "#",
                             style = MaterialTheme.typography.titleSmall,
                             textAlign = TextAlign.Center,
-                            color = LightGray,
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         if(exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT){
                             Text(
@@ -99,14 +97,14 @@ fun ExerciseRenderer(
                                 text = "WEIGHT (KG)",
                                 style = MaterialTheme.typography.titleSmall,
                                 textAlign = TextAlign.Center,
-                                color = LightGray,
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                             Text(
                                 modifier = Modifier.weight(1f),
                                 text = "REPS",
                                 style = MaterialTheme.typography.titleSmall,
                                 textAlign = TextAlign.Center,
-                                color = LightGray,
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                         }else{
                             Text(
@@ -114,7 +112,7 @@ fun ExerciseRenderer(
                                 text = "TIME",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.titleSmall,
-                                color = LightGray,
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
                     }
@@ -132,7 +130,7 @@ fun ExerciseRenderer(
                                     text = "$index",
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
-                                    color = if (exercise.enabled) LightGray else MediumLightGray,
+                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                 )
                                 when (set) {
                                     is WeightSet -> {
@@ -143,14 +141,14 @@ fun ExerciseRenderer(
                                             text = weightText,
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) LightGray else MediumLightGray,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                         )
                                         Text(
                                             modifier = Modifier.weight(1f),
                                             text = "${set.reps}",
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) LightGray else MediumLightGray,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                         )
                                     }
 
@@ -168,14 +166,14 @@ fun ExerciseRenderer(
                                             text = weightText,
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) LightGray else MediumLightGray,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                         )
                                         Text(
                                             modifier = Modifier.weight(1f),
                                             text = "${set.reps}",
                                             textAlign = TextAlign.Center,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) LightGray else MediumLightGray,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                         )
                                     }
 
@@ -185,7 +183,7 @@ fun ExerciseRenderer(
                                             text = formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
                                             textAlign = TextAlign.Center,
-                                            color = if (exercise.enabled) LightGray else MediumLightGray,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                         )
                                     }
 
@@ -195,7 +193,7 @@ fun ExerciseRenderer(
                                             text =formatTime(set.timeInMillis / 1000),
                                             style = MaterialTheme.typography.bodyMedium,
                                             textAlign = TextAlign.Center,
-                                            color = if (exercise.enabled) LightGray else MediumLightGray,
+                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                         )
                                     }
                                     else -> throw IllegalArgumentException("Unknown set type")
@@ -210,7 +208,7 @@ fun ExerciseRenderer(
                                 Text(
                                     "Rest "+formatTime(set.timeInSeconds),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = if (exercise.enabled) LightGray else MediumLightGray,
+                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                                 )
                             }
                         }

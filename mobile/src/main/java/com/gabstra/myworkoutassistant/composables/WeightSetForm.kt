@@ -38,9 +38,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -124,8 +121,8 @@ fun WeightSetForm(
                     properties = PopupProperties(focusable = true)
                 ) {
                     Surface(
-                        modifier = Modifier.background(MediumDarkerGray).requiredHeight(300.dp),
-                        border = BorderStroke(1.dp, MediumLightGray)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface).requiredHeight(300.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Column(
                             modifier = Modifier.padding(10.dp),
@@ -188,7 +185,7 @@ fun WeightSetForm(
                 CircularProgressIndicator(
                     modifier = Modifier.width(32.dp),
                     color = MaterialTheme.colorScheme.primary,
-                    trackColor = Color.DarkGray,
+                    trackColor = MaterialTheme.colorScheme.scrim,
                 )
             }
         }
@@ -229,7 +226,7 @@ fun WeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (weightSet == null) Text("Insert Weight Set", color = DarkGray) else Text("Edit Weight Set", color = DarkGray)
+            if (weightSet == null) Text("Insert Weight Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Weight Set", color = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }

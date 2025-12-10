@@ -31,7 +31,6 @@ import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
-import com.gabstra.myworkoutassistant.shared.LightGray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Duration

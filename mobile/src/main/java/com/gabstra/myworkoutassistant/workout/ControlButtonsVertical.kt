@@ -20,8 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.repeatActionOnLongPressOrTap
-import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Red
+import androidx.compose.material3.MaterialTheme
 
 
 @Composable
@@ -57,7 +56,7 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(70.dp)
                     .clip(CircleShape)
-                    .background(Green),
+                    .background(MaterialTheme.colorScheme.secondary),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(modifier = Modifier.size(35.dp), imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add")
@@ -86,7 +85,7 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(70.dp)
                     .clip(CircleShape)
-                    .background(Red),
+                    .background(MaterialTheme.colorScheme.error),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(modifier = Modifier.size(35.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract")

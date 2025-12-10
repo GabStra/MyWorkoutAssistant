@@ -22,7 +22,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ErrorLogDao
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MaterialTheme.colorScheme.outlineVariant
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +47,7 @@ fun ErrorLogsScreen(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MediumLightGray,
+                        color = MaterialTheme.colorScheme.outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()

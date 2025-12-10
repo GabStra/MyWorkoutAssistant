@@ -14,7 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import androidx.compose.material3.MaterialTheme
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
@@ -24,7 +24,7 @@ fun EnhancedIconButton(
     boxModifier: Modifier = Modifier,
     buttonModifier: Modifier = Modifier,
     enabled: Boolean = true,
-    colors: IconButtonColors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MediumDarkGray),
+    colors: IconButtonColors? = null,
     buttonSize: Dp = 48.dp,  // Default button size
     hitBoxScale: Float = 1.5f,
     content: @Composable () -> Unit
@@ -33,6 +33,8 @@ fun EnhancedIconButton(
     val hitBoxSize = remember(buttonSize, hitBoxScale) {
         buttonSize * hitBoxScale
     }
+    val defaultColors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    val buttonColors = colors ?: defaultColors
 
     Box(
         modifier = boxModifier
@@ -66,7 +68,7 @@ fun EnhancedIconButton(
                 .size(buttonSize)
                 .align(Alignment.Center),
             enabled = enabled,
-            colors = colors,
+            colors = buttonColors,
             interactionSource = interactionSource
         ) {
             content()

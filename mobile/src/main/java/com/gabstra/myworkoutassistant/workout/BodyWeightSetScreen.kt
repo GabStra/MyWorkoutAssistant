@@ -26,8 +26,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -231,8 +229,8 @@ fun BodyWeightSetScreen(
         ) {
             val textColor  = when {
                 currentSetData.actualReps == previousSetData.actualReps -> MaterialTheme.colorScheme.onBackground
-                currentSetData.actualReps < previousSetData.actualReps  -> Red
-                else -> Green
+                currentSetData.actualReps < previousSetData.actualReps  -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.secondary
             }
 
             ScalableText(
@@ -279,8 +277,8 @@ fun BodyWeightSetScreen(
         ) {
             val textColor = when {
                 currentSetData.additionalWeight == previousSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
-                currentSetData.additionalWeight < previousSetData.additionalWeight  -> Red
-                else -> Green
+                currentSetData.additionalWeight < previousSetData.additionalWeight  -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.secondary
             }
 
             val weightText = if(currentSetData.additionalWeight != 0.0) equipment!!.formatWeight(currentSetData.additionalWeight) else "-"

@@ -16,9 +16,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import com.gabstra.myworkoutassistant.shared.LightGray
 
 @Composable
 fun ExpandableContainer(
@@ -54,7 +54,7 @@ fun ExpandableContainer(
                             onClose()
                         }
                     }) {
-                    Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = LightGray)
+                    Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = MaterialTheme.colorScheme.onBackground)
                 }
             }
         }

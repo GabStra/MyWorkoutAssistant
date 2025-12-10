@@ -47,8 +47,6 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
@@ -84,7 +82,7 @@ fun MachineForm(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MediumLightGray,
+                        color = MaterialTheme.colorScheme.outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()
@@ -97,7 +95,7 @@ fun MachineForm(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        color = LightGray,
+                        color = MaterialTheme.colorScheme.onBackground,
                         text = if(machine == null) "Insert Machine" else "Edit Machine"
                     )
                 },

@@ -35,8 +35,6 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
@@ -56,7 +54,7 @@ fun RestSetForm(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MediumLightGray,
+                        color = MaterialTheme.colorScheme.outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()
@@ -69,7 +67,7 @@ fun RestSetForm(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        color = LightGray,
+                        color = MaterialTheme.colorScheme.onBackground,
                         text = if (restSet == null) "Insert Rest" else "Edit Rest",
                     )
                 },

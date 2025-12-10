@@ -68,9 +68,6 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.round
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.OneRM.calculateOneRepMax
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -322,7 +319,7 @@ fun ExerciseHistoryScreen(
                 enabled = selectedWorkoutHistory != selectableWorkoutHistories.first()
             ) {
                 val isEnabled = selectedWorkoutHistory != selectableWorkoutHistories.first()
-                val color =  if (isEnabled) LightGray else MediumLightGray
+                val color =  if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
 
                 Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous",tint = color)
             }
@@ -332,7 +329,7 @@ fun ExerciseHistoryScreen(
                     .weight(1f),
                 text = selectedWorkoutHistory!!.date.format(dateFormatter) + " "+ selectedWorkoutHistory!!.time.format(timeFormatter),
                 textAlign = TextAlign.Center,
-                color = LightGray,
+                color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.titleMedium,
             )
             Spacer(modifier = Modifier.width(10.dp))
@@ -347,7 +344,7 @@ fun ExerciseHistoryScreen(
                 enabled = selectedWorkoutHistory != selectableWorkoutHistories.last()
             ) {
                 val isEnabled = selectedWorkoutHistory != selectableWorkoutHistories.last()
-                val color =  if (isEnabled) LightGray else MediumLightGray
+                val color =  if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
 
                 Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next",tint = color)
             }
@@ -376,10 +373,10 @@ fun ExerciseHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.ShowChart,
                         contentDescription = "Graphs",
-                        tint = if (selectedMode == 0) DarkGray else MediumLightGray
+                        tint = if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Graphs", color =  if (selectedMode == 0) DarkGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
+                    Text("Graphs", color =  if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium,)
                 }
             }
 
@@ -397,10 +394,10 @@ fun ExerciseHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.List,
                         contentDescription = "Sets",
-                        tint = if (selectedMode == 1) DarkGray else MediumLightGray
+                        tint = if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Sets", color =  if (selectedMode == 1) DarkGray else MediumLightGray, style = MaterialTheme.typography.titleMedium,)
+                    Text("Sets", color =  if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium,)
                 }
             }
         }
@@ -409,7 +406,7 @@ fun ExerciseHistoryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = LightGray),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
                 title = {
                     Text(
                         modifier = Modifier
@@ -441,12 +438,12 @@ fun ExerciseHistoryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(DarkGray)
+                .background(MaterialTheme.colorScheme.background)
                 .padding(it),
             verticalArrangement = Arrangement.Top,
         ) {
             TabRow(
-                contentColor = DarkGray,
+                contentColor = MaterialTheme.colorScheme.background,
                 selectedTabIndex = 1,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
@@ -473,7 +470,7 @@ fun ExerciseHistoryScreen(
                         )
                     },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MediumLightGray,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Tab(
                     modifier = Modifier.background(DarkGray),
@@ -485,7 +482,7 @@ fun ExerciseHistoryScreen(
                         )
                     },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MediumLightGray,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
@@ -498,7 +495,7 @@ fun ExerciseHistoryScreen(
                     CircularProgressIndicator(
                         modifier = Modifier.width(32.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = Color.DarkGray,
+                        trackColor = MaterialTheme.colorScheme.scrim,
                     )
                 }
             } else {
@@ -517,7 +514,7 @@ fun ExerciseHistoryScreen(
                                     .padding(15.dp),
                                 text = "No history found",
                                 textAlign = TextAlign.Center,
-                                color = DarkGray,
+                                color = MaterialTheme.colorScheme.onSurface,
                             )
                         }
                     }
@@ -639,7 +636,7 @@ fun ExerciseHistoryScreen(
 
                                                     Text(
                                                         text = "Target HR",
-                                                        color = LightGray,
+                                                        color = MaterialTheme.colorScheme.onBackground,
                                                         style = MaterialTheme.typography.bodyMedium,
                                                     )
                                                     Spacer(Modifier.height(5.dp))
@@ -657,7 +654,7 @@ fun ExerciseHistoryScreen(
                                                         Text(
                                                             "$lowHr - $highHr bpm",
                                                             Modifier.weight(1f),
-                                                            color = LightGray,
+                                                            color = MaterialTheme.colorScheme.onBackground,
                                                             style = MaterialTheme.typography.bodySmall,
                                                         )
                                                         Spacer(Modifier.weight(1f))
@@ -670,13 +667,13 @@ fun ExerciseHistoryScreen(
                                                             Modifier.weight(1f),
                                                             style = MaterialTheme.typography.bodySmall,
                                                             textAlign = TextAlign.End,
-                                                            color = LightGray,
+                                                            color = MaterialTheme.colorScheme.onBackground,
                                                         )
                                                     }
                                                     Spacer(Modifier.height(5.dp))
                                                     SimpleProgressIndicator(
                                                         progress = progress,
-                                                        trackColor = MediumLightGray,
+                                                        trackColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .height(16.dp)

@@ -45,8 +45,6 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 
 fun SetType.toReadableString(): String {
@@ -80,7 +78,7 @@ fun SetForm(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                         drawLine(
-                            color = MediumLightGray,
+                            color = MaterialTheme.colorScheme.outlineVariant,
                             start = Offset(0f, size.height),
                             end = Offset(size.width, size.height),
                             strokeWidth = 1.dp.toPx()
@@ -92,7 +90,7 @@ fun SetForm(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
-                        color = LightGray,
+                        color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center,
                         text = if(set == null) "Insert Set" else "Edit Set",
                     )

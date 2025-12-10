@@ -15,9 +15,8 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
 import com.gabstra.myworkoutassistant.formatTime
+import androidx.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -57,7 +56,7 @@ fun SetHistoriesRenderer(
                 text = "#",
                 style = MaterialTheme.typography.titleSmall,
                 textAlign = TextAlign.Center,
-                color = LightGray,
+                color = MaterialTheme.colorScheme.onBackground,
             )
             if(exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT){
                 Text(
@@ -65,14 +64,14 @@ fun SetHistoriesRenderer(
                     text = "WEIGHT (KG)",
                     style = MaterialTheme.typography.titleSmall,
                     textAlign = TextAlign.Center,
-                    color = LightGray,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "REPS",
                     style = MaterialTheme.typography.titleSmall,
                     textAlign = TextAlign.Center,
-                    color = LightGray,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }else{
                 Text(
@@ -80,7 +79,7 @@ fun SetHistoriesRenderer(
                     text = "TIME",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.titleSmall,
-                    color = LightGray,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
         }
@@ -138,7 +137,7 @@ fun SetHistoriesRenderer(
                                 text = "${setData.actualReps}",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (exercise.enabled) LightGray else MediumLightGray,
+                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MediumMaterialTheme.colorScheme.onBackground,
                             )
                         }
 
@@ -149,7 +148,7 @@ fun SetHistoriesRenderer(
                                     text = "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
-                                    color = LightGray,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                             }else{
                                 Text(
@@ -157,7 +156,7 @@ fun SetHistoriesRenderer(
                                     text = "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
-                                    color = LightGray,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                             }
                         }
@@ -169,7 +168,7 @@ fun SetHistoriesRenderer(
                                     text = "For: ${formatSecondsToMinutesSeconds(setData.startTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
-                                    color = LightGray,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                             }else{
                                 Text(
@@ -177,7 +176,7 @@ fun SetHistoriesRenderer(
                                     text = "From: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
-                                    color = LightGray,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                             }
                         }
@@ -195,13 +194,13 @@ fun SetHistoriesRenderer(
                         Text(
                             "Rest for: ${formatSecondsToMinutesSeconds(setData.startTimer)}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = VeryLightGray,
+                            color = VeryMaterialTheme.colorScheme.onBackground,
                         )
                     }else{
                         Text(
                             "Rest from: ${formatTime(setData.startTimer / 1000)} to ${formatTime(setData.endTimer / 1000)}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = VeryLightGray,
+                            color = VeryMaterialTheme.colorScheme.onBackground,
                         )
                     }
                 }*/

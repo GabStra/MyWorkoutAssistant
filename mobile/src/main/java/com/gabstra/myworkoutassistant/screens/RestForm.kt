@@ -35,7 +35,6 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,7 +52,7 @@ fun RestForm(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MediumLightGray,
+                        color = MaterialTheme.colorScheme.outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()

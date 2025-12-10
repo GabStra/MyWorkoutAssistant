@@ -42,8 +42,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
@@ -85,7 +83,7 @@ fun WorkoutScreen(
                 TopAppBar(
                     modifier = Modifier.drawBehind {
                         drawLine(
-                            color = MediumLightGray,
+                            color = MaterialTheme.colorScheme.outlineVariant,
                             start = Offset(0f, size.height),
                             end = Offset(size.width, size.height),
                             strokeWidth = 1.dp.toPx()
@@ -99,7 +97,7 @@ fun WorkoutScreen(
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             textAlign = TextAlign.Center,
                             text = selectedWorkout.name,
-                            color = LightGray,
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                     },
                     navigationIcon = {

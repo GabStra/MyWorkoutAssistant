@@ -19,8 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 enum class FilterRange {
     LAST_WEEK,
@@ -58,8 +56,8 @@ fun RangeDropdown(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MediumDarkerGray),
-                border = BorderStroke(1.dp, MediumLightGray)
+                modifier = Modifier.background(MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 DropdownMenuItem(text = { Text("Last 7 days") }, onClick = {
                     onSelectedRangeChange(FilterRange.LAST_7_DAYS); expanded = false

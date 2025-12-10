@@ -16,10 +16,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.formatTime
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
@@ -91,7 +89,7 @@ internal class DefaultValueFormatter(
         if (colorCode && color != null) {
             appendCompat(
                 formatter(y),
-                ForegroundColorSpan(LightGray.toArgb()),
+                ForegroundColorSpan(MaterialTheme.colorScheme.onBackground.toArgb()),
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
         } else {
@@ -184,7 +182,7 @@ fun HeartRateChart(
             padding = Insets(8f),
             textAlignment = Layout.Alignment.ALIGN_CENTER
         ),
-        guideline =  rememberAxisGuidelineComponent(fill(DarkGray)),
+        guideline =  rememberAxisGuidelineComponent(fill(MaterialTheme.colorScheme.background)),
         indicatorSize = 10.dp,
         indicator = { _ -> shapeComponent }
     )
@@ -207,7 +205,7 @@ fun HeartRateChart(
                         .padding(vertical = 10.dp),
                     text = title,
                     textAlign = TextAlign.Center,
-                    color = LightGray,
+                    color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.titleMedium,
                 )
             },
@@ -252,14 +250,14 @@ fun HeartRateChart(
                             rememberHorizontalLine(Color.Black, 100.0),
                         ),
                         startAxis = VerticalAxis.rememberStart(
-                            line = rememberAxisLineComponent(fill(MediumLightGray)),
-                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
+                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
                             guideline = null,
                             valueFormatter = startAxisValueFormatter,
                             itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
                         bottomAxis = HorizontalAxis.rememberBottom(
-                            line = rememberAxisLineComponent(fill(MediumLightGray)),
-                            tick = rememberAxisTickComponent(fill(MediumLightGray)),
+                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
                             guideline = null,
                             valueFormatter = bottomAxisValueFormatter,
                             itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),

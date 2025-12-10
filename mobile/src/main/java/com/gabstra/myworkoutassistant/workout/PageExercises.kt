@@ -28,8 +28,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -215,8 +213,8 @@ fun PageExercises(
                         else -> null
                     },
                     customColor = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MediumLightGray
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> LightGray
+                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurfaceVariant
+                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
                         else -> null
                     },
                     overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {

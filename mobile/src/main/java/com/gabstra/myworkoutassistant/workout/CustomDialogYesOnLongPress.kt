@@ -39,8 +39,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.gabstra.myworkoutassistant.repeatActionOnLongPress
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -149,7 +147,7 @@ fun CustomDialogYesOnLongPress(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(DarkGray),
+                    .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -192,7 +190,7 @@ fun CustomDialogYesOnLongPress(
                                 buttonModifier = Modifier
                                     .clip(CircleShape),
                             ) {
-                                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Close, contentDescription = "Close",tint = LightGray)
+                                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Close, contentDescription = "Close",tint = MaterialTheme.colorScheme.onBackground)
                             }
                             Spacer(modifier = Modifier.width(5.dp))
                             Box(
@@ -216,7 +214,7 @@ fun CustomDialogYesOnLongPress(
                                         .background(MaterialTheme.colorScheme.primary),
                                     contentAlignment = Alignment.Center
                                 ){
-                                    Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Check, contentDescription = "Done", tint = DarkGray)
+                                    Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.onPrimary)
                                 }
                             }
                         }

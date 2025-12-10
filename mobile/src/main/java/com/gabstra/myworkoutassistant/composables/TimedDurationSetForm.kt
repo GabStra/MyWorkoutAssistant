@@ -19,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import java.util.UUID
@@ -109,7 +108,7 @@ fun TimedDurationSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (timedDurationSet == null) Text("Insert Count-Down Set", color = DarkGray) else Text("Edit Count-Down Set", color = DarkGray)
+            if (timedDurationSet == null) Text("Insert Count-Down Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Count-Down Set", color = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }

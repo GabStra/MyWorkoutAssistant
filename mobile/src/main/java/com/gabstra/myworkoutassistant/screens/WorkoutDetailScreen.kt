@@ -85,12 +85,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -129,8 +124,8 @@ fun Menu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RectangleShape,
-            modifier = Modifier.background(MediumDarkerGray),
-            border = BorderStroke(1.dp, MediumLightGray)
+            modifier = Modifier.background(MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             DropdownMenuItem(
                 text = { Text("Edit Workout") },
@@ -184,7 +179,7 @@ fun WorkoutComponentRenderer(
                         Text(
                             text = "Rest " + formatTime(workoutComponent.timeInSeconds),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = if (workoutComponent.enabled) LightGray else MediumLightGray,
+                            color = if (workoutComponent.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -197,7 +192,7 @@ fun WorkoutComponentRenderer(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, MediumLightGray),
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Text(
@@ -206,7 +201,7 @@ fun WorkoutComponentRenderer(
                         .padding(10.dp),
                     text = "Superset",
                     style = MaterialTheme.typography.bodyLarge,
-                    color =  if (superSet.enabled) LightGray else MediumDarkGray,
+                    color =  if (superSet.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceVariant,
                 )
                 Column(
                     modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp),
@@ -336,7 +331,7 @@ fun WorkoutDetailScreen(
                         Icon(
                             imageVector = Icons.Filled.ArrowUpward,
                             contentDescription = "Go Higher",
-                            tint = LightGray
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                     IconButton(
@@ -459,7 +454,7 @@ fun WorkoutDetailScreen(
                         }) {
                         val isEnabled = selectedWorkoutComponents.isNotEmpty()
                         val color =
-                            if (isEnabled) LightGray else MediumLightGray
+                            if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
 
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
@@ -474,7 +469,7 @@ fun WorkoutDetailScreen(
                         Icon(
                             imageVector = Icons.Default.MoveDown,
                             contentDescription = "Move to Another Workout",
-                            tint = LightGray
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                     IconButton(onClick = {
@@ -511,7 +506,7 @@ fun WorkoutDetailScreen(
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "Delete",
-                            tint = LightGray
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 }
@@ -522,7 +517,7 @@ fun WorkoutDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkGray, titleContentColor = LightGray),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
                 title = {
                     Text(
                         modifier = Modifier
@@ -573,12 +568,12 @@ fun WorkoutDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(DarkGray)
+                    .background(MaterialTheme.colorScheme.background)
                     .padding(it),
                 verticalArrangement = Arrangement.Center,
             ) {
                 TabRow(
-                    contentColor = DarkGray,
+                    contentColor = MaterialTheme.colorScheme.background,
                     selectedTabIndex = 0,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
@@ -598,7 +593,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumLightGray,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -625,7 +620,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MediumLightGray,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -700,7 +695,7 @@ fun WorkoutDetailScreen(
                             }
 
                             Spacer(Modifier.height(Spacing.md))
-                            HorizontalDivider(color = MediumLightGray)
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
 
 

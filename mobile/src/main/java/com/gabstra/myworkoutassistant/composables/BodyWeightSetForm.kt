@@ -34,8 +34,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -127,7 +125,7 @@ fun BodyWeightSetForm(
                         expanded = expandedWeights.value,
                         onDismissRequest = { expandedWeights.value = false },
                         modifier =  Modifier.background(MaterialTheme.colorScheme.background).fillMaxWidth(.75f),
-                        border = BorderStroke(1.dp, MediumLightGray)
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Column(
                             modifier = Modifier.padding(horizontal = 10.dp),
@@ -191,7 +189,7 @@ fun BodyWeightSetForm(
                     CircularProgressIndicator(
                         modifier = Modifier.width(32.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = Color.DarkGray,
+                        trackColor = MaterialTheme.colorScheme.scrim,
                     )
                 }
             }
@@ -236,7 +234,7 @@ fun BodyWeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (bodyWeightSet == null) Text("Insert Body Weight Set", color = DarkGray) else Text("Edit Body Weight Set", color = DarkGray)
+            if (bodyWeightSet == null) Text("Insert Body Weight Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Body Weight Set", color = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }

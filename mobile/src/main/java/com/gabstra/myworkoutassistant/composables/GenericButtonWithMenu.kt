@@ -20,8 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 
 data class MenuItem(
     val label: String,
@@ -51,9 +49,9 @@ fun GenericButtonWithMenu(
                 onDismissRequest = { expanded = false },
                 matchAnchorWidth = false,
                 modifier = Modifier
-                    .border(BorderStroke(1.dp, MediumLightGray)),
+                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)),
                 shape = RectangleShape,
-                containerColor = MediumDarkerGray
+                containerColor = MaterialTheme.colorScheme.surface
             ) {
                 menuItems.forEach { item ->
                     DropdownMenuItem(

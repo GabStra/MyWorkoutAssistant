@@ -31,10 +31,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
-import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.LightGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
 import com.kizitonwose.calendar.compose.rememberCalendarState
@@ -77,7 +73,7 @@ fun MonthHeader(
             Text(
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center,
-                color = LightGray,
+                color = MaterialTheme.colorScheme.onBackground,
                 text = dayOfWeek.displayText(),
                 style = MaterialTheme.typography.bodyLarge,
             )
@@ -105,7 +101,7 @@ private fun Day(
             .padding(horizontal = 5.dp, vertical = 2.dp)
             .border(
                 width = if (isSelected || isToday) 1.dp else 0.dp,
-                color = if (isSelected) LightGray else (if (isToday) Color(0xFF4CAF50) else Color.Transparent),
+                color = if (isSelected) MaterialTheme.colorScheme.onBackground else (if (isToday) MaterialTheme.colorScheme.secondary else Color.Transparent),
             )
     ){
         Box(
@@ -120,11 +116,11 @@ private fun Day(
                 )
                 .padding(3.dp)
         ) {
-            val textColor = if(isOutOfBounds || isAfterToday) MediumLightGray else if(shouldHighlight) DarkGray else LightGray
+            val textColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.onSurfaceVariant else if(shouldHighlight) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground
 
             val shape = if(shouldHighlight) CircleShape else null
 
-            val backgroundColor = if(isOutOfBounds || isAfterToday) MediumDarkGray else highlightColor
+            val backgroundColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.surfaceVariant else highlightColor
 
             Box(
                 modifier = Modifier
@@ -189,7 +185,7 @@ fun SimpleCalendarTitle(
             Icon(
                 imageVector = Icons.Filled.ArrowBack,
                 contentDescription = "Previous Month", // More descriptive
-                tint = LightGray
+                tint = MaterialTheme.colorScheme.onBackground
             )
         }
 
@@ -198,7 +194,7 @@ fun SimpleCalendarTitle(
             text = currentVisibleMonthYearMonth.displayText(), // Use the animated month
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
-            color = LightGray
+            color = MaterialTheme.colorScheme.onBackground
         )
 
         IconButton(
@@ -215,7 +211,7 @@ fun SimpleCalendarTitle(
                 imageVector = Icons.Filled.ArrowForward,
                 contentDescription = "Next Month", // More descriptive
                 // Tint based on whether it's the real-world current month
-                tint = if (isRealCurrentMonth) MediumLightGray else LightGray
+                tint = if (isRealCurrentMonth) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onBackground
             )
         }
     }

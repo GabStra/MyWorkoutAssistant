@@ -65,7 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.WorkoutTypes
-import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MaterialTheme.colorScheme.outlineVariant
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -110,7 +110,7 @@ fun WorkoutForm(
             TopAppBar(
                 modifier = Modifier.drawBehind {
                     drawLine(
-                        color = MediumLightGray,
+                        color = MaterialTheme.colorScheme.outlineVariant,
                         start = Offset(0f, size.height),
                         end = Offset(size.width, size.height),
                         strokeWidth = 1.dp.toPx()
@@ -203,7 +203,7 @@ fun WorkoutForm(
                 ExposedDropdownMenu(
                     expanded = workoutTypeExpanded,
                     modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                    border = BorderStroke(1.dp, MediumLightGray),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     onDismissRequest = { workoutTypeExpanded = false }
                 ) {
                     WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
@@ -250,7 +250,7 @@ fun WorkoutForm(
                     )
                 }
             )
-            HorizontalDivider(color = MediumLightGray)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
             // ---- Schedules --------------------------------------------------
             Spacer(Modifier.height(Spacing.lg))
@@ -307,7 +307,7 @@ fun WorkoutForm(
             }
 
             Spacer(Modifier.height(Spacing.md))
-            HorizontalDivider(color = MediumLightGray)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
             Spacer(Modifier.height(Spacing.xl))
 
@@ -440,7 +440,7 @@ fun ScheduleDialog(
                 }
 
                 Spacer(Modifier.height(Spacing.lg))
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
 
                 ListItem(
@@ -453,7 +453,7 @@ fun ScheduleDialog(
                         )
                     }
                 )
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 Spacer(Modifier.height(Spacing.lg))
 
@@ -484,7 +484,7 @@ fun ScheduleDialog(
                 }
 
                 Spacer(Modifier.height(Spacing.lg))
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
 
                 ListItem(
@@ -809,7 +809,7 @@ fun BatchScheduleDialog(
                         )
                     }
                 )
-                HorizontalDivider(color = MediumLightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         },
         confirmButton = {

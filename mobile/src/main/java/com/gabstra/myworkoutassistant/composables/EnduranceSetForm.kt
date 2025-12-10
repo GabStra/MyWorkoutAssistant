@@ -19,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
@@ -111,7 +110,7 @@ fun EnduranceSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (enduranceSet == null) Text("Insert Count-Up Set", color = DarkGray) else Text("Edit Count-Up Set", color = DarkGray)
+            if (enduranceSet == null) Text("Insert Count-Up Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Count-Up Set", color = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }
