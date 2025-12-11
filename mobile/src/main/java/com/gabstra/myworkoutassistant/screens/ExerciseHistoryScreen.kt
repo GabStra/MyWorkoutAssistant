@@ -470,7 +470,7 @@ fun ExerciseHistoryScreen(
                         )
                     },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                 )
                 Tab(
                     modifier = Modifier.background(MaterialTheme.colorScheme.background),
@@ -482,7 +482,7 @@ fun ExerciseHistoryScreen(
                         )
                     },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                 )
             }
 

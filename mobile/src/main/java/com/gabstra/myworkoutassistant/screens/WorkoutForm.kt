@@ -38,6 +38,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -53,6 +55,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.interaction.Interaction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -76,6 +80,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -708,9 +714,51 @@ fun BatchScheduleDialog(
                     .fillMaxWidth()
                     .padding(Spacing.sm)
             ) {
-                TabRow(selectedTabIndex = selectedTabIndex.value) {
-                    Tab(selected = selectedTabIndex.value == 0, onClick = { selectedTabIndex.value = 0 }, text = { Text("Recurring") })
-                    Tab(selected = selectedTabIndex.value == 1, onClick = { selectedTabIndex.value = 1 }, text = { Text("One-time") })
+                TabRow(
+                    contentColor = MaterialTheme.colorScheme.background,
+                    selectedTabIndex = selectedTabIndex.value,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex.value]),
+                            color = MaterialTheme.colorScheme.primary,
+                            height = 2.dp
+                        )
+                    }
+                ) {
+                    Tab(
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                        selected = selectedTabIndex.value == 0,
+                        onClick = { selectedTabIndex.value = 0 },
+                        text = { Text("Recurring") },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                        interactionSource = object : MutableInteractionSource {
+                            override val interactions: Flow<Interaction> = emptyFlow()
+
+                            override suspend fun emit(interaction: Interaction) {
+                                // Empty implementation
+                            }
+
+                            override fun tryEmit(interaction: Interaction): Boolean = true
+                        }
+                    )
+                    Tab(
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                        selected = selectedTabIndex.value == 1,
+                        onClick = { selectedTabIndex.value = 1 },
+                        text = { Text("One-time") },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                        interactionSource = object : MutableInteractionSource {
+                            override val interactions: Flow<Interaction> = emptyFlow()
+
+                            override suspend fun emit(interaction: Interaction) {
+                                // Empty implementation
+                            }
+
+                            override fun tryEmit(interaction: Interaction): Boolean = true
+                        }
+                    )
                 }
 
                 Spacer(Modifier.height(Spacing.lg))

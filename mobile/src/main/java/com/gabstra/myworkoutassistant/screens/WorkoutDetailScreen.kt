@@ -593,7 +593,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -620,7 +620,7 @@ fun WorkoutDetailScreen(
                             )
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -690,6 +690,7 @@ fun WorkoutDetailScreen(
                                         text = "Start Workout",
                                         textAlign = TextAlign.Center,
                                         style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.background
                                     )
                                 }
                             }

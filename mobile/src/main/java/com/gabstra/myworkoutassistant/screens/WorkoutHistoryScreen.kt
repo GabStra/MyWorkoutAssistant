@@ -1008,7 +1008,7 @@ fun WorkoutHistoryScreen(
                     },
                     text = { Text(text = "Overview") },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                     interactionSource = object : MutableInteractionSource {
                         override val interactions: Flow<Interaction> = emptyFlow()
 
@@ -1025,7 +1025,7 @@ fun WorkoutHistoryScreen(
                     onClick = { },
                     text = { Text(text = "History") },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                     interactionSource = object : MutableInteractionSource {
                         override val interactions: Flow<Interaction> = emptyFlow()
 
