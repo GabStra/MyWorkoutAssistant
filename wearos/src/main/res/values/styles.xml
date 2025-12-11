@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Define a new custom theme inheriting from the system default -->
+    <style name="MyCustomWearTheme" parent="@android:style/Theme.DeviceDefault">
+
+        <!-- Disable the system-level swipe to dismiss -->
+        <item name="android:windowSwipeToDismiss">false</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+</resources>

@@ -433,7 +433,19 @@ open class WorkoutViewModel(
         viewModelScope.launch(dispatchers.main) {
             withContext(dispatchers.io) {
                 _workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
-                _hasWorkoutRecord.value = _workoutRecord != null
+                if (_workoutRecord != null) {
+                    val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
+                    if (workoutHistory == null) {
+                        // Workout record exists but history doesn't - delete the orphaned record
+                        workoutRecordDao.deleteById(_workoutRecord!!.id)
+                        _workoutRecord = null
+                        _hasWorkoutRecord.value = false
+                    } else {
+                        _hasWorkoutRecord.value = true
+                    }
+                } else {
+                    _hasWorkoutRecord.value = false
+                }
             }
         }
     }
@@ -526,6 +538,7 @@ open class WorkoutViewModel(
 
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
+                
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
                 
                 // Calculate actual elapsed workout time from completed set histories
