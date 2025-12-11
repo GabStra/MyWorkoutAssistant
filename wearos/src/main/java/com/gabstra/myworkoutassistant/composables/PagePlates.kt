@@ -30,7 +30,6 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -135,22 +134,10 @@ fun PagePlates(
                     )
                 } else {
                     val topLine = buildAnnotatedString {
-                        fun pipe() {
-                            withStyle(
-                                SpanStyle(
-                                    color = LabelGray,
-                                    fontWeight = FontWeight.Thin
-                                )
-                            ) {
-                                append(" | ")
-                            }
-                        }
-
                         withStyle(SpanStyle(color = LabelGray)) {
                             append("Tot: ")
                         }
                         append(formatWeight(previousWeightTotal))
-                        pipe()
                         withStyle(SpanStyle(color = LabelGray)) {
                             append(" → ")
                         }

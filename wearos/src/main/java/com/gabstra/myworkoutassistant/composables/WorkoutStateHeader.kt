@@ -6,11 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTimeFilled
 import androidx.compose.runtime.Composable
@@ -31,6 +29,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.LabelGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
 import java.time.Duration
@@ -79,7 +78,12 @@ fun WorkoutStateHeader(
         if(displayMode == 0){
             Row(verticalAlignment = Alignment.CenterVertically){
                 CurrentBattery()
-                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    modifier = Modifier.alignByBaseline(),
+                    text = " | ",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Thin),
+                    color = LabelGray
+                )
                 CurrentTime()
             }
         }else{

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,6 +26,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.tooling.preview.Devices
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
@@ -33,9 +37,13 @@ import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
+import java.util.LinkedList
 import java.util.UUID
 import kotlin.math.cos
 import kotlin.math.min
@@ -109,8 +117,8 @@ fun ExerciseIndicator(
     val showLeftDots = hiddenLeft > 0
     val showRightDots = hiddenRight > 0
 
-    val startingAngle = -55f
-    val totalArcAngle = 110f
+    val startingAngle = -50f
+    val totalArcAngle = 100f
     val paddingAngle = 1f
 
     val dotAngleGapDeg = 4f
@@ -211,6 +219,177 @@ fun ExerciseIndicator(
             ShowRotatingIndicator(set.exerciseId,MaterialTheme.colorScheme.surfaceContainerHigh)
         } else {
             ShowRotatingIndicator(set.exerciseId)
+        }
+    }
+}
+
+// Create ViewModel outside composable to avoid "Constructing a view model in a composable" warning
+private val previewAppViewModel = AppViewModel()
+
+@SuppressLint("UnrememberedMutableState")
+@Preview(device = Devices.WEAR_OS_SMALL_ROUND, showBackground = true)
+@Composable
+private fun ExerciseIndicatorPreview() {
+    MaterialTheme {
+        // Create mock exercise IDs
+        val exercise1Id = UUID.fromString("11111111-1111-1111-1111-111111111111")
+        val exercise2Id = UUID.fromString("22222222-2222-2222-2222-222222222222")
+        val exercise3Id = UUID.fromString("33333333-3333-3333-3333-333333333333")
+        val exercise4Id = UUID.fromString("44444444-4444-4444-4444-444444444444")
+        val supersetId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        
+        // Create mock sets
+        val set1_1 = WeightSet(UUID.randomUUID(), 10, 100.0, SetSubCategory.WorkSet)
+        val set1_2 = WeightSet(UUID.randomUUID(), 10, 100.0, SetSubCategory.WorkSet)
+        val set1_3 = WeightSet(UUID.randomUUID(), 10, 100.0, SetSubCategory.WorkSet)
+        
+        val set2_1 = WeightSet(UUID.randomUUID(), 8, 80.0, SetSubCategory.WorkSet)
+        val set2_2 = WeightSet(UUID.randomUUID(), 8, 80.0, SetSubCategory.WorkSet)
+        
+        val set3_1 = WeightSet(UUID.randomUUID(), 12, 60.0, SetSubCategory.WorkSet)
+        val set3_2 = WeightSet(UUID.randomUUID(), 12, 60.0, SetSubCategory.WorkSet)
+        val set3_3 = WeightSet(UUID.randomUUID(), 12, 60.0, SetSubCategory.WorkSet)
+        val set3_4 = WeightSet(UUID.randomUUID(), 12, 60.0, SetSubCategory.WorkSet)
+        
+        val set4_1 = WeightSet(UUID.randomUUID(), 15, 40.0, SetSubCategory.WorkSet)
+        
+        // Create mock WorkoutState.Set instances
+        val workoutState1_1 = WorkoutState.Set(
+            exerciseId = exercise1Id,
+            set = set1_1,
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(WeightSetData(10, 100.0, 1000.0)),
+            hasNoHistory = true,
+            startTime = null,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 70.0,
+            plateChangeResult = null,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipment = null,
+            isUnilateral = false,
+            intraSetTotal = null,
+            intraSetCounter = 0u
+        )
+        
+        val workoutState1_2 = workoutState1_1.copy(
+            set = set1_2,
+            setIndex = 1u,
+            previousSetData = WeightSetData(10, 100.0, 1000.0)
+        )
+        
+        val workoutState1_3 = workoutState1_1.copy(
+            set = set1_3,
+            setIndex = 2u,
+            previousSetData = WeightSetData(10, 100.0, 1000.0)
+        )
+        
+        val workoutState2_1 = workoutState1_1.copy(
+            exerciseId = exercise2Id,
+            set = set2_1,
+            setIndex = 0u,
+            currentSetDataState = mutableStateOf(WeightSetData(8, 80.0, 640.0))
+        )
+        
+        val workoutState2_2 = workoutState2_1.copy(
+            set = set2_2,
+            setIndex = 1u,
+            previousSetData = WeightSetData(8, 80.0, 640.0)
+        )
+        
+        val workoutState3_1 = workoutState1_1.copy(
+            exerciseId = exercise3Id,
+            set = set3_1,
+            setIndex = 0u,
+            currentSetDataState = mutableStateOf(WeightSetData(12, 60.0, 720.0))
+        )
+        
+        val workoutState3_2 = workoutState3_1.copy(
+            set = set3_2,
+            setIndex = 1u,
+            previousSetData = WeightSetData(12, 60.0, 720.0)
+        )
+        
+        val workoutState3_3 = workoutState3_1.copy(
+            set = set3_3,
+            setIndex = 2u,
+            previousSetData = WeightSetData(12, 60.0, 720.0)
+        )
+        
+        val workoutState3_4 = workoutState3_1.copy(
+            set = set3_4,
+            setIndex = 3u,
+            previousSetData = WeightSetData(12, 60.0, 720.0)
+        )
+        
+        val workoutState4_1 = workoutState1_1.copy(
+            exerciseId = exercise4Id,
+            set = set4_1,
+            setIndex = 0u,
+            currentSetDataState = mutableStateOf(WeightSetData(15, 40.0, 600.0))
+        )
+        
+        // Set up ViewModel state using reflection
+        val viewModel = previewAppViewModel
+        
+        // Populate allWorkoutStates (accessible as open val)
+        viewModel.allWorkoutStates.clear()
+        viewModel.allWorkoutStates.addAll(listOf(
+            workoutState1_1, workoutState1_2, workoutState1_3,
+            workoutState2_1, workoutState2_2,
+            workoutState3_1, workoutState3_2, workoutState3_3, workoutState3_4,
+            workoutState4_1
+        ))
+        
+        // Populate setStates using reflection (protected field)
+        try {
+            val setStatesField = viewModel::class.java.superclass
+                ?.declaredFields?.find { it.name == "setStates" }
+            setStatesField?.isAccessible = true
+            val setStates = setStatesField?.get(viewModel) as? LinkedList<WorkoutState.Set>
+            setStates?.clear()
+            setStates?.addAll(listOf(
+                workoutState1_1, workoutState1_2, workoutState1_3,
+                workoutState2_1, workoutState2_2,
+                workoutState3_1, workoutState3_2, workoutState3_3, workoutState3_4,
+                workoutState4_1
+            ))
+        } catch (e: Exception) {
+            // If reflection fails, the preview may not work perfectly but won't crash
+        }
+        
+        // Populate workoutStateHistory using reflection (protected field)
+        try {
+            val historyField = viewModel::class.java.superclass
+                ?.declaredFields?.find { it.name == "workoutStateHistory" }
+            historyField?.isAccessible = true
+            val history = historyField?.get(viewModel) as? MutableList<WorkoutState>
+            history?.clear()
+            // Mark first exercise's first two sets as completed
+            history?.addAll(listOf(workoutState1_1, workoutState1_2))
+        } catch (e: Exception) {
+            // If reflection fails, the preview may not work perfectly but won't crash
+        }
+        
+        // Set up superset mapping (exercise2 and exercise3 are in a superset)
+        viewModel.supersetIdByExerciseId = mapOf(
+            exercise2Id to supersetId,
+            exercise3Id to supersetId
+        )
+        
+        // Current set is the third set of exercise 1 (middle of workout)
+        val currentSet = workoutState1_3
+        
+        Box(modifier = Modifier.fillMaxSize()) {
+            ExerciseIndicator(
+                viewModel = viewModel,
+                set = currentSet,
+                selectedExerciseId = null
+            )
         }
     }
 }

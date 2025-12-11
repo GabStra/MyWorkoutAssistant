@@ -95,10 +95,10 @@ fun PageExercises(
 
         Column(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(5.dp,Alignment.Bottom),
+            verticalArrangement = Arrangement.spacedBy(5.dp,Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(
+            ScalableText(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 30.dp)
@@ -112,7 +112,6 @@ fun PageExercises(
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.SemiBold
                 ),
-                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 

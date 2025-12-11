@@ -60,7 +60,7 @@ fun MuscleHeatMap(
         // Fit the chosen virtual width into the available screen width
         val scaleX = size.width / virtualWidth
         val scaleY = size.height / virtualHeight
-        val scale = minOf(scaleX, scaleY)
+        val scale = minOf(scaleX, scaleY) * 1.05f
 
         withTransform({
             // Center the canvas

@@ -747,8 +747,8 @@ private fun HeartRateView(
     }
 
     val zoneCount = colorsByZone.size - 1
-    val totalStartAngle = 125f
-    val totalEndAngle = 235f
+    val totalStartAngle = 130f
+    val totalEndAngle = 230f
     val paddingAngle = 1f
 
     val totalArcAngle by remember { derivedStateOf { totalEndAngle - totalStartAngle } }
@@ -849,11 +849,11 @@ private fun HeartRateView(
             TargetRangeArc(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(4.5.dp),
+                    .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
                 color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
-                strokeWidth = 14.dp,
+                strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp
             )
@@ -868,12 +868,12 @@ private fun HeartRateView(
 
             Box(modifier = Modifier
                 .fillMaxSize()
-                .padding(2.5.dp)
+                .padding(3.dp)
             ) {
                 HeartRateIndicator(
                     currentHrRotationAngle,
                     MaterialTheme.colorScheme.onBackground,
-                    bubbleSize = 19.dp,
+                    bubbleSize = 18.dp,
                     borderWidth = 2.dp
                 )
             }

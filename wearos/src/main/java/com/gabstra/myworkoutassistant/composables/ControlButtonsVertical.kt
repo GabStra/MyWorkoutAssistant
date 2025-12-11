@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.wear.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -20,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPressOrTap
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
@@ -61,11 +61,11 @@ fun ControlButtonsVertical(
                     .background(Green),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add", tint = MaterialTheme.colorScheme.background)
+                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add", tint = MaterialTheme.colorScheme.onSurface)
             }
         }
         Box(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.5.dp),
             contentAlignment = Alignment.Center
         ) {
             content()
@@ -90,7 +90,7 @@ fun ControlButtonsVertical(
                     .background(Red),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract", tint = MaterialTheme.colorScheme.background)
+                Icon(modifier = Modifier.size(30.dp),imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract", tint = MaterialTheme.colorScheme.onSurface)
             }
         }
 
