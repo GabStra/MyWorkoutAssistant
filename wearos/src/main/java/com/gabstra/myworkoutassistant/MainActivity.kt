@@ -23,8 +23,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,11 +39,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.navigation.SwipeDismissableNavHost
+import androidx.wear.compose.navigation.composable
+import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
@@ -309,316 +307,317 @@ fun WearApp(
     onNavControllerAvailable: (NavHostController) -> Unit
 ) {
     MyWorkoutAssistantTheme {
-        val navController = rememberNavController()
-            val localContext = LocalContext.current
-            appViewModel.initExerciseHistoryDao(localContext)
-            appViewModel.initWorkoutHistoryDao(localContext)
-            appViewModel.initWorkoutScheduleDao(localContext)
-            appViewModel.initWorkoutRecordDao(localContext)
-            appViewModel.initExerciseInfoDao(localContext)
-            appViewModel.initExerciseSessionProgressionDao(localContext)
+        val navController = rememberSwipeDismissableNavController()
+        val localContext = LocalContext.current
+        appViewModel.initExerciseHistoryDao(localContext)
+        appViewModel.initWorkoutHistoryDao(localContext)
+        appViewModel.initWorkoutScheduleDao(localContext)
+        appViewModel.initWorkoutRecordDao(localContext)
+        appViewModel.initExerciseInfoDao(localContext)
+        appViewModel.initExerciseSessionProgressionDao(localContext)
 
-            var initialized by remember { mutableStateOf(false) }
+        var initialized by remember { mutableStateOf(false) }
 
-            var startDestination by remember { mutableStateOf<String?>(null) }
+        var startDestination by remember { mutableStateOf<String?>(null) }
 
-            var tutorialState by remember { mutableStateOf(TutorialState()) }
+        var tutorialState by remember { mutableStateOf(TutorialState()) }
 
-            var showWorkoutSelectionTutorial by remember { mutableStateOf(false) }
-            var showWorkoutHeartRateTutorial by remember { mutableStateOf(false) }
-            var showSetScreenTutorial by remember { mutableStateOf(false) }
-            var showRestScreenTutorial by remember { mutableStateOf(false) }
+        var showWorkoutSelectionTutorial by remember { mutableStateOf(false) }
+        var showWorkoutHeartRateTutorial by remember { mutableStateOf(false) }
+        var showSetScreenTutorial by remember { mutableStateOf(false) }
+        var showRestScreenTutorial by remember { mutableStateOf(false) }
 
-            LaunchedEffect(Unit) {
-                val startTime = System.currentTimeMillis()
-                try {
-                    val workoutStore = workoutStoreRepository.getWorkoutStore()
-                    appViewModel.updateWorkoutStore(workoutStore)
-                } catch (exception: Exception) {
-                    Log.e("MainActivity", "Failed to load workout repository", exception)
-                    Toast.makeText(
-                        localContext,
-                        "Failed to load workout repository",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-
-                try {
-                    tutorialState = TutorialPreferences.load(localContext)
-                    startDestination = Screen.WorkoutSelection.route
-
-                    showWorkoutSelectionTutorial = !tutorialState.hasSeenWorkoutSelectionTutorial
-                    showWorkoutHeartRateTutorial = !tutorialState.hasSeenWorkoutHeartRateTutorial
-                    showSetScreenTutorial = !tutorialState.hasSeenSetScreenTutorial
-                    showRestScreenTutorial = !tutorialState.hasSeenRestScreenTutorial
-                    //showCoachmarks = !tutorialState.hasSeenCoachmarkTutorial
-
-                    if (!tutorialState.hasSeenCoachmarkTutorial) {
-                        tutorialState = TutorialPreferences.update(localContext, tutorialState) {
-                            it.copy(hasSeenCoachmarkTutorial = true)
-                        }
-                    }
-
-                    appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
-
-                    // Check for incomplete workouts
-                    val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-                    val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-                    
-                    if (!isWorkoutInProgress) {
-                        try {
-                            val incompleteWorkouts = appViewModel.getIncompleteWorkouts()
-                            if (incompleteWorkouts.isNotEmpty()) {
-                                appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
-                            }
-                        } catch (exception: Exception) {
-                            Log.e("MainActivity", "Error checking for incomplete workouts", exception)
-                        }
-                    }
-
-                    val now = System.currentTimeMillis()
-                    if (now - startTime < 2000) {
-                        delay(2000 - (now - startTime))
-                    }
-
-                    initialized = true
-
-                    onNavControllerAvailable(navController)
-                } catch (exception: Exception) {
-                    Log.e("MainActivity", "Error initializing workout store repository", exception)
-                    initialized = true // Still set initialized to prevent blocking the UI
-                }
+        LaunchedEffect(Unit) {
+            val startTime = System.currentTimeMillis()
+            try {
+                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                appViewModel.updateWorkoutStore(workoutStore)
+            } catch (exception: Exception) {
+                Log.e("MainActivity", "Failed to load workout repository", exception)
+                Toast.makeText(
+                    localContext,
+                    "Failed to load workout repository",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
 
-            LaunchedEffect(appViewModel.executeStartWorkout) {
-                if (appViewModel.executeStartWorkout.value == null) return@LaunchedEffect
+            try {
+                tutorialState = TutorialPreferences.load(localContext)
+                startDestination = Screen.WorkoutSelection.route
 
-                try {
-                    // Check if a workout is already in progress
-                    val prefs =
-                        localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-                    val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+                showWorkoutSelectionTutorial = !tutorialState.hasSeenWorkoutSelectionTutorial
+                showWorkoutHeartRateTutorial = !tutorialState.hasSeenWorkoutHeartRateTutorial
+                showSetScreenTutorial = !tutorialState.hasSeenSetScreenTutorial
+                showRestScreenTutorial = !tutorialState.hasSeenRestScreenTutorial
+                //showCoachmarks = !tutorialState.hasSeenCoachmarkTutorial
 
-                    val workoutStore = workoutStoreRepository.getWorkoutStore()
-                    val workout =
-                        workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }
-
-                    if (workout == null) {
-                        Log.e(
-                            "MainActivity",
-                            "Workout not found for id: ${appViewModel.executeStartWorkout.value}"
-                        )
-                        return@LaunchedEffect
+                if (!tutorialState.hasSeenCoachmarkTutorial) {
+                    tutorialState = TutorialPreferences.update(localContext, tutorialState) {
+                        it.copy(hasSeenCoachmarkTutorial = true)
                     }
-
-                    appViewModel.setSelectedWorkoutId(workout.id)
-
-                    if (isWorkoutInProgress) {
-                        // A workout is already active, navigate to WorkoutScreen instead
-                        startDestination = Screen.Workout.route
-                        navController.navigate(Screen.Workout.route) {
-                            popUpTo(0) { inclusive = true }
-                        }
-                    } else {
-                        startDestination = Screen.WorkoutDetail.route
-                    }
-                } catch (exception: Exception) {
-                    Log.e("MainActivity", "Error executing start workout", exception)
                 }
-            }
 
-            val hrViewModel: SensorDataViewModel = viewModel(
-                factory = SensorDataViewModelFactory(
-                    sensorDataRepository = SensorDataRepository(localContext)
-                )
+                appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
+
+                // Check for incomplete workouts
+                val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+
+                if (!isWorkoutInProgress) {
+                    try {
+                        val incompleteWorkouts = appViewModel.getIncompleteWorkouts()
+                        if (incompleteWorkouts.isNotEmpty()) {
+                            appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
+                        }
+                    } catch (exception: Exception) {
+                        Log.e("MainActivity", "Error checking for incomplete workouts", exception)
+                    }
+                }
+
+                val now = System.currentTimeMillis()
+                if (now - startTime < 2000) {
+                    delay(2000 - (now - startTime))
+                }
+
+                initialized = true
+
+                onNavControllerAvailable(navController)
+            } catch (exception: Exception) {
+                Log.e("MainActivity", "Error initializing workout store repository", exception)
+                initialized = true // Still set initialized to prevent blocking the UI
+            }
+        }
+
+        LaunchedEffect(appViewModel.executeStartWorkout) {
+            if (appViewModel.executeStartWorkout.value == null) return@LaunchedEffect
+
+            try {
+                // Check if a workout is already in progress
+                val prefs =
+                    localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+
+                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                val workout =
+                    workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }
+
+                if (workout == null) {
+                    Log.e(
+                        "MainActivity",
+                        "Workout not found for id: ${appViewModel.executeStartWorkout.value}"
+                    )
+                    return@LaunchedEffect
+                }
+
+                appViewModel.setSelectedWorkoutId(workout.id)
+
+                if (isWorkoutInProgress) {
+                    // A workout is already active, navigate to WorkoutScreen instead
+                    startDestination = Screen.Workout.route
+                    navController.navigate(Screen.Workout.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                } else {
+                    startDestination = Screen.WorkoutDetail.route
+                }
+            } catch (exception: Exception) {
+                Log.e("MainActivity", "Error executing start workout", exception)
+            }
+        }
+
+        val hrViewModel: SensorDataViewModel = viewModel(
+            factory = SensorDataViewModelFactory(
+                sensorDataRepository = SensorDataRepository(localContext)
             )
-            hrViewModel.initApplicationContext(localContext)
+        )
+        hrViewModel.initApplicationContext(localContext)
 
-            val polarViewModel: PolarViewModel = viewModel()
+        val polarViewModel: PolarViewModel = viewModel()
 
-            val nodes by appHelper.connectedAndInstalledNodes.collectAsState(initial = emptyList())
+        val nodes by appHelper.connectedAndInstalledNodes.collectAsState(initial = emptyList())
 
-            LaunchedEffect(nodes) {
-                try {
-                    appViewModel.phoneNode = nodes.firstOrNull()
-                    if (appViewModel.phoneNode != null) {
-                        //appViewModel.sendAll(localContext)
+        LaunchedEffect(nodes) {
+            try {
+                appViewModel.phoneNode = nodes.firstOrNull()
+                if (appViewModel.phoneNode != null) {
+                    //appViewModel.sendAll(localContext)
+                }
+            } catch (exception: Exception) {
+                Log.e("MainActivity", "Error handling nodes update", exception)
+            }
+        }
+
+        // Sync error logs when app opens and phone is connected
+        LaunchedEffect(nodes) {
+            val phoneNode = nodes.firstOrNull()
+            if (phoneNode != null) {
+                launch(Dispatchers.IO) {
+                    try {
+                        val errorLogs =
+                            (localContext.applicationContext as? MyApplication)?.getErrorLogs()
+                                ?: emptyList()
+                        if (errorLogs.isNotEmpty()) {
+                            val success = sendErrorLogsToMobile(dataClient, errorLogs)
+                            if (success) {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(
+                                        localContext,
+                                        "Sent ${errorLogs.size} error log(s) to mobile",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                Log.d(
+                                    "MainActivity",
+                                    "Error logs synced to mobile: ${errorLogs.size} logs"
+                                )
+                            } else {
+                                Log.e("MainActivity", "Failed to sync error logs to mobile")
+                            }
+                        }
+                    } catch (exception: Exception) {
+                        Log.e("MainActivity", "Error syncing error logs", exception)
                     }
-                } catch (exception: Exception) {
-                    Log.e("MainActivity", "Error handling nodes update", exception)
                 }
             }
+        }
 
-            // Sync error logs when app opens and phone is connected
-            LaunchedEffect(nodes) {
-                val phoneNode = nodes.firstOrNull()
-                if (phoneNode != null) {
-                    launch(Dispatchers.IO) {
-                        try {
-                            val errorLogs = (localContext.applicationContext as? MyApplication)?.getErrorLogs() ?: emptyList()
-                            if (errorLogs.isNotEmpty()) {
-                                val success = sendErrorLogsToMobile(dataClient, errorLogs)
-                                if (success) {
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(localContext, "Sent ${errorLogs.size} error log(s) to mobile", Toast.LENGTH_SHORT).show()
+        // Note: Swipe-to-dismiss prevention is handled in WorkoutScreen using BackHandler
+        // Programmatic control via reflection is not reliable across all Wear OS versions
+
+        if (!initialized || startDestination == null) {
+            LoadingScreen(appViewModel)
+        } else {
+            val enableDimming by appViewModel.enableDimming
+            KeepOn(appViewModel, enableDimming = enableDimming) {
+                SwipeDismissableNavHost(
+                    modifier = Modifier.fillMaxSize(),
+                    userSwipeEnabled = false,
+                    navController = navController,
+                    startDestination = startDestination!!
+                ) {
+                    composable(Screen.WorkoutSelection.route) {
+                        if (showWorkoutSelectionTutorial) {
+                            TutorialOverlay(
+                                visible = true,
+                                text = "Choose a workout\nTap one to see details and start.\n\nTop header\nLong-press for app version.\nDouble-tap for data tools.",
+                                onDismiss = {
+                                    showWorkoutSelectionTutorial = false
+                                    tutorialState = TutorialPreferences.update(
+                                        localContext,
+                                        tutorialState
+                                    ) {
+                                        it.copy(hasSeenWorkoutSelectionTutorial = true)
                                     }
-                                    Log.d("MainActivity", "Error logs synced to mobile: ${errorLogs.size} logs")
-                                } else {
-                                    Log.e("MainActivity", "Failed to sync error logs to mobile")
                                 }
-                            }
-                        } catch (exception: Exception) {
-                            Log.e("MainActivity", "Error syncing error logs", exception)
+                            )
+                        } else {
+                            WorkoutSelectionScreen(
+                                alarmManager,
+                                dataClient,
+                                navController,
+                                appViewModel,
+                                hapticsViewModel,
+                                appHelper,
+                            )
                         }
                     }
-                }
-            }
+                    composable(Screen.WorkoutDetail.route) {
+                        WorkoutDetailScreen(
+                            navController,
+                            appViewModel,
+                            hapticsViewModel,
+                            hrViewModel
+                        )
+                    }
+                    composable(Screen.Workout.route) {
+                        WorkoutScreen(
+                            navController,
+                            appViewModel,
+                            hapticsViewModel,
+                            heartRateChangeViewModel,
+                            hrViewModel,
+                            polarViewModel,
+                            showHeartRateTutorial = showWorkoutHeartRateTutorial,
+                            onDismissHeartRateTutorial = {
+                                showWorkoutHeartRateTutorial = false
+                                tutorialState =
+                                    TutorialPreferences.update(
+                                        localContext,
+                                        tutorialState
+                                    ) {
+                                        it.copy(hasSeenWorkoutHeartRateTutorial = true)
+                                    }
+                            },
+                            showSetScreenTutorial = showSetScreenTutorial,
+                            onDismissSetScreenTutorial = {
+                                showSetScreenTutorial = false
+                                tutorialState =
+                                    TutorialPreferences.update(
+                                        localContext,
+                                        tutorialState
+                                    ) {
+                                        it.copy(hasSeenSetScreenTutorial = true)
+                                    }
+                            },
+                            showRestScreenTutorial = showRestScreenTutorial,
+                            onDismissRestScreenTutorial = {
+                                showRestScreenTutorial = false
+                                tutorialState =
+                                    TutorialPreferences.update(
+                                        localContext,
+                                        tutorialState
+                                    ) {
+                                        it.copy(hasSeenRestScreenTutorial = true)
+                                    }
+                            },
+                        )
+                    }
+                    composable(Screen.Loading.route) {
+                        val progress by appViewModel.backupProgress
+                        val animatedProgress by animateFloatAsState(
+                            targetValue = progress,
+                            animationSpec = tween(durationMillis = 400)
+                        )
 
-            // Note: Swipe-to-dismiss prevention is handled in WorkoutScreen using BackHandler
-            // Programmatic control via reflection is not reliable across all Wear OS versions
-
-            if (!initialized || startDestination == null) {
-                LoadingScreen(appViewModel)
-            } else {
-                val enableDimming by appViewModel.enableDimming
-                KeepOn(appViewModel, enableDimming = enableDimming) {
-                    NavHost(
+                        CircularProgressIndicator(
+                            progress = animatedProgress,
                             modifier = Modifier
                                 .fillMaxSize(),
-                            navController = navController,
-                            startDestination = startDestination!!,
-                            enterTransition = {
-                                fadeIn(animationSpec = tween(500))
-                            },
-                            exitTransition = {
-                                fadeOut(animationSpec = tween(500))
-                            },
-                            popEnterTransition = {
-                                fadeIn(animationSpec = tween(500))
-                            },
-                            popExitTransition = {
-                                fadeOut(animationSpec = tween(500))
-                            }
-                        ) {
-                            composable(Screen.WorkoutSelection.route) {
-                                if (showWorkoutSelectionTutorial) {
-                                    TutorialOverlay(
-                                        visible = true,
-                                        text = "Choose a workout\nTap one to see details and start.\n\nTop header\nLong-press for app version.\nDouble-tap for data tools.",
-                                        onDismiss = {
-                                            showWorkoutSelectionTutorial = false
-                                            tutorialState = TutorialPreferences.update(
-                                                localContext,
-                                                tutorialState
-                                            ) {
-                                                it.copy(hasSeenWorkoutSelectionTutorial = true)
-                                            }
-                                        }
-                                    )
-                                } else {
-                                    WorkoutSelectionScreen(
-                                        alarmManager,
-                                        dataClient,
-                                        navController,
-                                        appViewModel,
-                                        hapticsViewModel,
-                                        appHelper,
-                                    )
-                                }
-                            }
-                            composable(Screen.WorkoutDetail.route) {
-                                WorkoutDetailScreen(
-                                    navController,
-                                    appViewModel,
-                                    hapticsViewModel,
-                                    hrViewModel
-                                )
-                            }
-                            composable(Screen.Workout.route) {
-                                WorkoutScreen(
-                                    navController,
-                                    appViewModel,
-                                    hapticsViewModel,
-                                    heartRateChangeViewModel,
-                                    hrViewModel,
-                                    polarViewModel,
-                                    showHeartRateTutorial = showWorkoutHeartRateTutorial,
-                                    onDismissHeartRateTutorial = {
-                                        showWorkoutHeartRateTutorial = false
-                                        tutorialState =
-                                            TutorialPreferences.update(
-                                                localContext,
-                                                tutorialState
-                                            ) {
-                                                it.copy(hasSeenWorkoutHeartRateTutorial = true)
-                                            }
-                                    },
-                                    showSetScreenTutorial = showSetScreenTutorial,
-                                    onDismissSetScreenTutorial = {
-                                        showSetScreenTutorial = false
-                                        tutorialState =
-                                            TutorialPreferences.update(
-                                                localContext,
-                                                tutorialState
-                                            ) {
-                                                it.copy(hasSeenSetScreenTutorial = true)
-                                            }
-                                    },
-                                    showRestScreenTutorial = showRestScreenTutorial,
-                                    onDismissRestScreenTutorial = {
-                                        showRestScreenTutorial = false
-                                        tutorialState =
-                                            TutorialPreferences.update(
-                                                localContext,
-                                                tutorialState
-                                            ) {
-                                                it.copy(hasSeenRestScreenTutorial = true)
-                                            }
-                                    },
-                                )
-                            }
-                            composable(Screen.Loading.route) {
-                                val progress by appViewModel.backupProgress
-                                val animatedProgress by animateFloatAsState(
-                                    targetValue = progress,
-                                    animationSpec = tween(durationMillis = 400)
-                                )
+                            strokeWidth = 4.dp,
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        )
 
-                                CircularProgressIndicator(
-                                    progress = animatedProgress,
-                                    modifier = Modifier
-                                        .fillMaxSize(),
-                                    strokeWidth = 4.dp,
-                                    indicatorColor = MaterialTheme.colorScheme.primary,
-                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                )
-
-                                LoadingScreen(appViewModel, "Syncing with phone")
-                            }
-                        }
+                        LoadingScreen(appViewModel, "Syncing with phone")
+                    }
                 }
-                
-                // Resume workout dialog
-                val showResumeDialog by appViewModel.showResumeWorkoutDialog
-                val incompleteWorkouts by appViewModel.incompleteWorkouts
-                
-                val basePermissions = listOf(
-                    android.Manifest.permission.BODY_SENSORS,
-                    android.Manifest.permission.BLUETOOTH_SCAN,
-                    android.Manifest.permission.BLUETOOTH_CONNECT,
-                    android.Manifest.permission.ACCESS_FINE_LOCATION,
-                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
-                    android.Manifest.permission.POST_NOTIFICATIONS
-                )
-                
-                val permissionLauncherResume = androidx.activity.compose.rememberLauncherForActivityResult(
+            }
+
+            // Resume workout dialog
+            val showResumeDialog by appViewModel.showResumeWorkoutDialog
+            val incompleteWorkouts by appViewModel.incompleteWorkouts
+
+            val basePermissions = listOf(
+                android.Manifest.permission.BODY_SENSORS,
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            )
+
+            val permissionLauncherResume =
+                androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
                 ) { result ->
                     if (result.all { it.value }) {
                         val workoutId = appViewModel.selectedWorkoutId.value
                         if (workoutId != null) {
                             appViewModel.resumeWorkoutFromRecord()
-                            val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                            val prefs = localContext.getSharedPreferences(
+                                "workout_state",
+                                Context.MODE_PRIVATE
+                            )
                             prefs.edit()
                                 .putBoolean("isWorkoutInProgress", true)
                                 .apply()
@@ -626,26 +625,24 @@ fun WearApp(
                         }
                     }
                 }
-                
-                ResumeWorkoutDialog(
-                    show = showResumeDialog,
-                    hapticsViewModel = hapticsViewModel,
-                    incompleteWorkouts = incompleteWorkouts,
-                    onDismiss = {
-                        appViewModel.hideResumeWorkoutDialog()
-                    },
-                    onResumeWorkout = { workoutId ->
-                        appViewModel.hideResumeWorkoutDialog()
-                        val workoutStore = workoutStoreRepository.getWorkoutStore()
-                        val workout = workoutStore.workouts.find { it.id == workoutId }
-                        if (workout != null) {
-                            appViewModel.setSelectedWorkoutId(workout.id)
-                            permissionLauncherResume.launch(basePermissions.toTypedArray())
-                        }
-                    }
-                )
-            }
-            
 
+            ResumeWorkoutDialog(
+                show = showResumeDialog,
+                hapticsViewModel = hapticsViewModel,
+                incompleteWorkouts = incompleteWorkouts,
+                onDismiss = {
+                    appViewModel.hideResumeWorkoutDialog()
+                },
+                onResumeWorkout = { workoutId ->
+                    appViewModel.hideResumeWorkoutDialog()
+                    val workoutStore = workoutStoreRepository.getWorkoutStore()
+                    val workout = workoutStore.workouts.find { it.id == workoutId }
+                    if (workout != null) {
+                        appViewModel.setSelectedWorkoutId(workout.id)
+                        permissionLauncherResume.launch(basePermissions.toTypedArray())
+                    }
+                }
+            )
         }
+    }
 }
