@@ -9,7 +9,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
@@ -23,12 +22,7 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun CurrentTime() {
     var currentTime by remember { mutableStateOf(LocalDateTime.now()) }
-
     var showDots by remember { mutableStateOf(true) }
-
-    val captionStyle = MaterialTheme.typography.bodyMedium.copy(
-        fontWeight = FontWeight.Medium
-    )
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -65,7 +59,7 @@ fun CurrentTime() {
 
     Text(
         text = annotatedText,
-        style = captionStyle,
+        style = MaterialTheme.typography.bodyMedium,
         textAlign = TextAlign.Center
     )
 }

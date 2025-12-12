@@ -390,7 +390,6 @@ fun PagePlates(
             
             Box(
                 modifier = Modifier
-                    .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp)
             ) {
@@ -668,7 +667,11 @@ private fun BarbellVisualization(
         }
 
         // --- 3. CALCULATE BOUNDARIES ---
-        val stacksNeeded = maxOf(maxStackUsedTop, maxStackUsedBottom).coerceAtLeast(1)
+        val stacksNeeded = if (plateData.isEmpty()) {
+            0
+        } else {
+            maxOf(maxStackUsedTop, maxStackUsedBottom).coerceAtLeast(1)
+        }
         val totalTextReserve = textToPlatePadding +
                 (stacksNeeded * textHeight) +
                 ((stacksNeeded - 1) * rowSpacing)

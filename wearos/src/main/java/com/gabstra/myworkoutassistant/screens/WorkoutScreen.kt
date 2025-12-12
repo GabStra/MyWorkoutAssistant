@@ -260,6 +260,7 @@ fun WorkoutScreen(
                                 hearthRateChart = {
                                     heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
                                 },
+                                navController = navController,
                             )
                         }
                     }
@@ -300,6 +301,7 @@ fun WorkoutScreen(
                                         android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
                                     }
                                 },
+                                navController = navController,
                             )
                         }
                     }

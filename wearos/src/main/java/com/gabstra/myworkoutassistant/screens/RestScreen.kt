@@ -34,6 +34,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
@@ -72,6 +73,7 @@ fun RestScreen(
     state: WorkoutState.Rest,
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
+    navController: NavController,
 ) {
     val set = state.set as RestSet
 
@@ -156,6 +158,10 @@ fun RestScreen(
 
     val platesPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.PLATES)
+    }
+
+    val progressionComparisonPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.PROGRESSION_COMPARISON)
     }
 
     val pagerState = rememberPagerState(
@@ -391,7 +397,8 @@ fun RestScreen(
                             PageType.BUTTONS -> PageButtons(
                                 state.nextStateSets.first(),
                                 viewModel,
-                                hapticsViewModel
+                                hapticsViewModel,
+                                navController
                             )
 
                             PageType.NOTES -> TODO()
@@ -401,7 +408,8 @@ fun RestScreen(
                                         viewModel = viewModel,
                                         hapticsViewModel = hapticsViewModel,
                                         exercise = exercise,
-                                        state = state.nextStateSets.first()
+                                        state = state.nextStateSets.first(),
+                                        isPageVisible = pagerState.currentPage == progressionComparisonPageIndex
                                     )
                                 }
                             }

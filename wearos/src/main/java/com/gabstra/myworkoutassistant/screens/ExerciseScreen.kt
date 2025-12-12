@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -81,6 +82,7 @@ fun ExerciseScreen(
     hapticsViewModel: HapticsViewModel,
     state: WorkoutState.Set,
     hearthRateChart: @Composable () -> Unit,
+    navController: NavController,
 ) {
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
@@ -140,6 +142,10 @@ fun ExerciseScreen(
 
     val platesPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.PLATES)
+    }
+
+    val progressionComparisonPageIndex = remember(pageTypes) {
+        pageTypes.indexOf(PageType.PROGRESSION_COMPARISON)
     }
 
     val pagerState = rememberPagerState(
@@ -498,7 +504,8 @@ fun ExerciseScreen(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 exercise = exercise,
-                                state = updatedState
+                                state = updatedState,
+                                isPageVisible = pagerState.currentPage == progressionComparisonPageIndex
                             )
                         }
 
@@ -507,7 +514,7 @@ fun ExerciseScreen(
                         }
 
                         PageType.BUTTONS -> {
-                            PageButtons(updatedState, viewModel, hapticsViewModel)
+                            PageButtons(updatedState, viewModel, hapticsViewModel, navController)
                         }
                     }
                 }

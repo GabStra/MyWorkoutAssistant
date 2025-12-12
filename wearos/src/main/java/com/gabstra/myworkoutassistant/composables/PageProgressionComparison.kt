@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -275,7 +276,8 @@ fun PageProgressionComparison(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     exercise: Exercise,
-    state: WorkoutState.Set
+    state: WorkoutState.Set,
+    isPageVisible: Boolean = true
 ) {
     val progressionData = remember(exercise.id) {
         viewModel.exerciseProgressionByExerciseId[exercise.id]
@@ -284,15 +286,16 @@ fun PageProgressionComparison(
     val progressionState = progressionData?.second
     val isRetry = progressionState == ProgressionState.RETRY
 
-    var previousSetStates by remember(exercise.id) {
-        mutableStateOf<List<WorkoutState.Set>>(
-            emptyList()
-        )
+    // Memoize previous set states - only compute once per exercise
+    val previousSetStates = remember(exercise.id) {
+        mutableStateOf<List<WorkoutState.Set>>(emptyList())
     }
     val scope = rememberCoroutineScope()
 
-    // Get previous sets from lastSessionWorkout
-    LaunchedEffect(exercise.id) {
+    // Get previous sets from lastSessionWorkout - only when page is visible
+    LaunchedEffect(exercise.id, isPageVisible) {
+        if (!isPageVisible) return@LaunchedEffect
+        
         scope.launch {
             withContext(Dispatchers.IO) {
                 val lastSessionWorkout = viewModel.lastSessionWorkout
@@ -305,7 +308,7 @@ fun PageProgressionComparison(
 
                     if (lastSessionExercise != null) {
                         val states = viewModel.createStatesFromExercise(lastSessionExercise)
-                        previousSetStates = states.filterIsInstance<WorkoutState.Set>()
+                        previousSetStates.value = states.filterIsInstance<WorkoutState.Set>()
                             .filter { it.set !is RestSet }
                             .distinctBy { it.set.id }
                     }
@@ -331,8 +334,10 @@ fun PageProgressionComparison(
 
     // Set index state for navigation
     var currentSetIndex by remember(exercise.id, setIndex) { mutableIntStateOf(setIndex) }
-    val maxSets = remember(previousSetStates.size, progressionSetStates.size) {
-        maxOf(previousSetStates.size, progressionSetStates.size)
+    val maxSets by remember(previousSetStates.value.size, progressionSetStates.size) {
+        derivedStateOf {
+            maxOf(previousSetStates.value.size, progressionSetStates.size)
+        }
     }
 
     // Reset index when exercise or setIndex changes
@@ -398,79 +403,78 @@ fun PageProgressionComparison(
             )
         }
 
-        // Calculate comparison data
-        val beforeSetData = remember(currentSetIndex, previousSetStates) {
-            if (currentSetIndex < previousSetStates.size) {
-                previousSetStates[currentSetIndex].currentSetData
-            } else null
+        // Calculate comparison data - use derivedStateOf for performance
+        val beforeSetData by remember(currentSetIndex, previousSetStates.value) {
+            derivedStateOf {
+                if (currentSetIndex < previousSetStates.value.size) {
+                    previousSetStates.value[currentSetIndex].currentSetData
+                } else null
+            }
         }
 
-        val afterSetData = remember(currentSetIndex, setIndex, state.currentSetData, progressionSetStates) {
-            if (currentSetIndex == setIndex) {
-                // Use the current state's set data directly to reflect real-time changes
-                state.currentSetData
-            } else if (currentSetIndex < progressionSetStates.size) {
-                progressionSetStates[currentSetIndex].currentSetData
-            } else null
+        val afterSetData by remember(currentSetIndex, setIndex, state.currentSetData, progressionSetStates) {
+            derivedStateOf {
+                if (currentSetIndex == setIndex) {
+                    // Use the current state's set data directly to reflect real-time changes
+                    state.currentSetData
+                } else if (currentSetIndex < progressionSetStates.size) {
+                    progressionSetStates[currentSetIndex].currentSetData
+                } else null
+            }
         }
 
-        val beforeSetState = remember(currentSetIndex, previousSetStates) {
-            if (currentSetIndex < previousSetStates.size) {
-                previousSetStates[currentSetIndex]
-            } else null
+        val beforeSetState by remember(currentSetIndex, previousSetStates.value) {
+            derivedStateOf {
+                if (currentSetIndex < previousSetStates.value.size) {
+                    previousSetStates.value[currentSetIndex]
+                } else null
+            }
         }
 
-        val afterSetState = remember(currentSetIndex, setIndex, state, progressionSetStates) {
-            if (currentSetIndex == setIndex) {
-                // Use the current state directly to reflect real-time changes
-                state
-            } else if (currentSetIndex < progressionSetStates.size) {
-                progressionSetStates[currentSetIndex]
-            } else null
+        val afterSetState by remember(currentSetIndex, setIndex, state, progressionSetStates) {
+            derivedStateOf {
+                if (currentSetIndex == setIndex) {
+                    // Use the current state directly to reflect real-time changes
+                    state
+                } else if (currentSetIndex < progressionSetStates.size) {
+                    progressionSetStates[currentSetIndex]
+                } else null
+            }
         }
 
-        val comparison = remember(beforeSetData, afterSetData) {
-            compareSets(beforeSetData, afterSetData)
+        val comparison by remember(beforeSetData, afterSetData) {
+            derivedStateOf {
+                compareSets(beforeSetData, afterSetData)
+            }
         }
 
-        val differenceText = remember(
-            beforeSetData,
-            afterSetData,
-            afterSetState?.equipment,
-            beforeSetState?.equipment
-        ) {
-            calculateSetDifference(
-                beforeSetData,
-                afterSetData,
-                afterSetState?.equipment ?: beforeSetState?.equipment
-            )
+        val differenceText by remember(beforeSetData, afterSetData, afterSetState?.equipment, beforeSetState?.equipment) {
+            derivedStateOf {
+                calculateSetDifference(
+                    beforeSetData,
+                    afterSetData,
+                    afterSetState?.equipment ?: beforeSetState?.equipment
+                )
+            }
         }
 
         val rowIndex = currentSetIndex
-        val backgroundColor = remember(
-            currentSetIndex,
-            setIndex,
-            colorScheme.primary,
-            colorScheme.onBackground,
-            colorScheme.surfaceContainerHigh
-        ) {
-            when {
-                rowIndex < setIndex -> colorScheme.primary
-                rowIndex == setIndex -> colorScheme.onBackground
-                else -> colorScheme.surfaceContainerHigh
+        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.onBackground, colorScheme.surfaceContainerHigh) {
+            derivedStateOf {
+                when {
+                    rowIndex < setIndex -> colorScheme.primary
+                    rowIndex == setIndex -> colorScheme.onBackground
+                    else -> colorScheme.surfaceContainerHigh
+                }
             }
         }
-        val textColor = remember(
-            currentSetIndex,
-            setIndex,
-            colorScheme.primary,
-            colorScheme.onBackground,
-            colorScheme.surfaceContainerHigh
-        ) {
-            when {
-                rowIndex < setIndex -> colorScheme.primary
-                rowIndex == setIndex -> colorScheme.onBackground
-                else -> colorScheme.surfaceContainerHigh
+        val textColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.onBackground, colorScheme.surfaceContainerHigh) {
+            derivedStateOf {
+                when {
+                    rowIndex < setIndex -> colorScheme.primary
+                    rowIndex == setIndex -> colorScheme.onBackground
+                    else -> colorScheme.surfaceContainerHigh
+                }
             }
         }
         val shape = remember { RoundedCornerShape(25) }
@@ -483,7 +487,7 @@ fun PageProgressionComparison(
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (currentSetIndex < previousSetStates.size) {
+            if (currentSetIndex < previousSetStates.value.size) {
                 SetTableRow(
                     modifier = Modifier
                         .fillMaxSize()
@@ -493,7 +497,7 @@ fun PageProgressionComparison(
                         .clip(shape),
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
-                    setState = previousSetStates[currentSetIndex],
+                    setState = previousSetStates.value[currentSetIndex],
                     index = currentSetIndex,
                     isCurrentSet = false,
                     markAsDone = false,
@@ -525,12 +529,14 @@ fun PageProgressionComparison(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val comparisonColor = remember(comparison, colorScheme.onBackground, colorScheme.tertiary) {
-                when (comparison) {
-                    SetComparison.BETTER -> Green
-                    SetComparison.WORSE -> Red
-                    SetComparison.EQUAL -> colorScheme.onBackground
-                    SetComparison.MIXED -> colorScheme.tertiary
+            val comparisonColor by remember(comparison, colorScheme.onBackground, colorScheme.tertiary) {
+                derivedStateOf {
+                    when (comparison) {
+                        SetComparison.BETTER -> Green
+                        SetComparison.WORSE -> Red
+                        SetComparison.EQUAL -> colorScheme.onBackground
+                        SetComparison.MIXED -> colorScheme.tertiary
+                    }
                 }
             }
 

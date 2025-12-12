@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
@@ -24,6 +25,7 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -33,7 +35,8 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 fun PageButtons(
     updatedState: WorkoutState.Set,
     viewModel: AppViewModel,
-    hapticsViewModel: HapticsViewModel
+    hapticsViewModel: HapticsViewModel,
+    navController: NavController
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
 
@@ -150,6 +153,21 @@ fun PageButtons(
                     }
                 )
             }*/
+            item {
+                ButtonWithText(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec).animateItem(),
+                    transformation = SurfaceTransformation(spec),
+                    text = "Home",
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        navController.navigate(Screen.WorkoutSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                )
+            }
         }
     }
 

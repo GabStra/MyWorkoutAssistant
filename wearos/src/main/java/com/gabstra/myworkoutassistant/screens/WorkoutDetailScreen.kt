@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.screens
 import android.Manifest
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.basicMarquee
@@ -51,6 +52,10 @@ fun WorkoutDetailScreen(
 
     val workout = remember(selectedWorkoutId,workouts) { workouts.find { it.id == selectedWorkoutId }!! }
     val context = LocalContext.current
+
+    BackHandler(true) {
+        navController.popBackStack()
+    }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
 
@@ -209,6 +214,19 @@ fun WorkoutDetailScreen(
                             }
                         },
                         enabled = hasExercises
+                    )
+                }
+                item {
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec).animateItem(),
+                        transformation = SurfaceTransformation(spec),
+                        text = "Back",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            navController.popBackStack()
+                        }
                     )
                 }
             }

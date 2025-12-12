@@ -859,8 +859,11 @@ private fun HeartRateView(
             )
         }
 
+        /*
         if (currentHrRotationAngle != null) {
-/*            val animatedAngle by animateFloatAsState(
+            /*
+            val animatedAngle by animateFloatAsState(
+
                 targetValue = currentHrRotationAngle,
                 animationSpec = tween(durationMillis = 300),
                 label = "HeartRateIndicatorAngle"
@@ -878,6 +881,7 @@ private fun HeartRateView(
                 )
             }
         }
+        */
     }
 }
 
