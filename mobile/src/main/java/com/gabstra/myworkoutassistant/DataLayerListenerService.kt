@@ -38,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.gabstra.myworkoutassistant.saveWorkoutStoreToDownloads
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -153,6 +154,7 @@ class DataLayerListenerService : WearableListenerService() {
                                         )
                                     )
                                     workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+                                    saveWorkoutStoreToDownloads(this@DataLayerListenerService, updatedWorkoutStore)
                                 }
 
                                 // Save error logs if present

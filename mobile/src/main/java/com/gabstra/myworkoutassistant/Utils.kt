@@ -234,6 +234,57 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
     }
 }
 
+suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore) {
+    withContext(Dispatchers.IO) {
+        try {
+            val fileName = "workout_store.json"
+            val jsonString = fromWorkoutStoreToJSON(workoutStore)
+            val resolver = context.contentResolver
+
+            // Query for existing file with the same name
+            val projection = arrayOf(MediaStore.Downloads._ID)
+            val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+            val selectionArgs = arrayOf(fileName)
+            val sortOrder = null
+
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                sortOrder
+            )?.use { cursor ->
+                // Delete existing file(s) with the same name
+                while (cursor.moveToNext()) {
+                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                    val id = cursor.getLong(idIndex)
+                    val deleteUri = android.content.ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        id
+                    )
+                    resolver.delete(deleteUri, null, null)
+                }
+            }
+
+            // Insert the new file
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            uri?.let {
+                resolver.openOutputStream(it).use { outputStream ->
+                    outputStream?.write(jsonString.toByteArray())
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error saving workout store to Downloads folder", e)
+        }
+    }
+}
+
 suspend fun writeMarkdownToDownloadsFolder(context: Context, fileName: String, fileContent: String) {
     val contentValues = ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)

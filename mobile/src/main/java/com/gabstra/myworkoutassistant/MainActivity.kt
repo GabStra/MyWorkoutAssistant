@@ -68,6 +68,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.saveWorkoutStoreToDownloads
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -660,11 +661,16 @@ fun MyWorkoutAssistantNavHost(
             is ScreenData.Settings -> {
                 SettingsScreen(
                     onSave = { newWorkoutStore ->
-                        appViewModel.updateWorkoutStore(newWorkoutStore)
-                        workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
-                        syncWithWatch()
-                        Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
-                        appViewModel.goBack()
+                        scope.launch {
+                            appViewModel.updateWorkoutStore(newWorkoutStore)
+                            workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
+                            withContext(Dispatchers.IO) {
+                                saveWorkoutStoreToDownloads(context, newWorkoutStore)
+                            }
+                            syncWithWatch()
+                            Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = {
                         appViewModel.goBack()
@@ -714,6 +720,7 @@ fun MyWorkoutAssistantNavHost(
                                 appViewModel.addNewWorkout(newWorkout)
                                 withContext(Dispatchers.IO) {
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore)
                                 }
                                 appViewModel.goBack()
                             }
@@ -760,6 +767,7 @@ fun MyWorkoutAssistantNavHost(
                                 withContext(Dispatchers.IO) {
                                     workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
+                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore)
                                 }
                                 appViewModel.goBack()
                             }
