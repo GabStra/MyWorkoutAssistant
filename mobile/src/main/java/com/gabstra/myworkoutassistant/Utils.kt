@@ -249,68 +249,35 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
             val workoutRecordDao = db.workoutRecordDao()
             val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
 
-            // Get all workout histories and workout records
+            // Get all workout histories
             val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-            val workoutRecords = workoutRecordDao.getAll()
 
             // Filter workouts: only active ones or ones with histories
             val allowedWorkouts = workoutStore.workouts.filter { workout ->
                 workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
             }
 
-            // Filter workout histories by allowed workouts and done status
-            val filteredWorkoutHistories = workoutHistories
-                .filter { workoutHistory ->
-                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } &&
-                    (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id })
-                }
-
-            // Collect all exercises from allowed workouts (including exercises from Supersets)
-            val allExercises = allowedWorkouts.flatMap { workout ->
-                workout.workoutComponents.filterIsInstance<Exercise>() +
-                workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-            }.distinctBy { it.id }
-
-            // For each exercise, get set histories and extract workout history IDs
-            // Group by exercise and keep the most recent 15 workout histories per exercise
-            val workoutHistoryIdsByExercise = allExercises.mapNotNull { exercise ->
-                val setHistoriesForExercise = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
-                val workoutHistoryIds = setHistoriesForExercise
-                    .mapNotNull { it.workoutHistoryId }
-                    .distinct()
-
-                if (workoutHistoryIds.isEmpty()) null
-                else exercise.id to workoutHistoryIds
-            }.toMap()
-
-            // Get workout histories for each exercise and keep the most recent 15 per exercise
-            val workoutHistoriesByExerciseId = workoutHistoryIdsByExercise.mapValues { (_, workoutHistoryIds) ->
-                filteredWorkoutHistories
-                    .filter { it.id in workoutHistoryIds }
-                    .sortedByDescending { it.startTime }
-                    .take(15)
-                    .map { it.id }
+            // Filter workout histories by allowed workouts only (original backup logic - no exercise-based filtering)
+            val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
+                allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
             }
 
-            // Union all workout history IDs across exercises
-            val requiredWorkoutHistoryIds = workoutHistoriesByExerciseId.values.flatten().toSet()
-
-            // Filter to only include required workout histories
-            val validWorkoutHistories = filteredWorkoutHistories
-                .filter { it.id in requiredWorkoutHistoryIds }
-
+            // Filter set histories to match valid workout histories
             val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
                 validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
             }
 
+            // Get all exercise infos, workout schedules, workout records
             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
             val workoutSchedules = workoutScheduleDao.getAllSchedules()
+            val workoutRecords = workoutRecordDao.getAll()
 
+            // Filter exercise session progressions to match valid workout histories
             val exerciseSessionProgressions = exerciseSessionProgressionDao.getAllExerciseSessionProgressions().filter { progression ->
                 validWorkoutHistories.any { it.id == progression.workoutHistoryId }
             }
 
-            // Create AppBackup with the same structure as manual backup
+            // Create AppBackup with the same structure as original manual backup
             val appBackup = AppBackup(
                 workoutStore.copy(workouts = allowedWorkouts),
                 validWorkoutHistories,

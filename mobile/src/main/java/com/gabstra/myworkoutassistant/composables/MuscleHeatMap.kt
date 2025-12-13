@@ -56,9 +56,12 @@ fun Path.contains(offset: Offset): Boolean {
 fun InteractiveMuscleHeatMap(
     modifier: Modifier = Modifier,
     selectedMuscles: Set<MuscleGroup>,
+    selectedSecondaryMuscles: Set<MuscleGroup> = emptySet(),
     onMuscleToggled: (MuscleGroup) -> Unit,
+    onSecondaryMuscleToggled: ((MuscleGroup) -> Unit)? = null,
     currentView: BodyView,
     highlightColor: Color = MaterialTheme.colorScheme.primary,
+    secondaryHighlightColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
     baseColor: Color = MaterialTheme.colorScheme.onBackground,
     outlineColor: Color = MaterialTheme.colorScheme.background
 ) {
@@ -125,7 +128,12 @@ fun InteractiveMuscleHeatMap(
                         // to handle overlapping muscles correctly
                         for ((muscle, path) in pathsToCheck) {
                             if (path.contains(checkPoint)) {
-                                onMuscleToggled(muscle)
+                                // Check if it's a secondary muscle first
+                                if (selectedSecondaryMuscles.contains(muscle) && onSecondaryMuscleToggled != null) {
+                                    onSecondaryMuscleToggled(muscle)
+                                } else {
+                                    onMuscleToggled(muscle)
+                                }
                                 break
                             }
                         }
@@ -152,11 +160,18 @@ fun InteractiveMuscleHeatMap(
                     drawPath(path = outlineFront, color = baseColor)
                     // Muscles
                     frontPaths.forEach { (muscle, path) ->
-                        val isSelected = selectedMuscles.contains(muscle)
-                        val fillColor = if (isSelected) highlightColor else baseColor
+                        val isPrimarySelected = selectedMuscles.contains(muscle)
+                        val isSecondarySelected = selectedSecondaryMuscles.contains(muscle) && !isPrimarySelected
+                        val fillColor = when {
+                            isPrimarySelected -> highlightColor
+                            isSecondarySelected -> secondaryHighlightColor
+                            else -> baseColor
+                        }
                         
                         drawPath(path = path, color = fillColor)
-                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
+                        if (isPrimarySelected || isSecondarySelected) {
+                            drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
+                        }
                     }
                 }
 
@@ -166,11 +181,18 @@ fun InteractiveMuscleHeatMap(
                     drawPath(path = outlineBack, color = baseColor)
                     // Muscles
                     backPaths.forEach { (muscle, path) ->
-                        val isSelected = selectedMuscles.contains(muscle)
-                        val fillColor = if (isSelected) highlightColor else baseColor
+                        val isPrimarySelected = selectedMuscles.contains(muscle)
+                        val isSecondarySelected = selectedSecondaryMuscles.contains(muscle) && !isPrimarySelected
+                        val fillColor = when {
+                            isPrimarySelected -> highlightColor
+                            isSecondarySelected -> secondaryHighlightColor
+                            else -> baseColor
+                        }
                         
                         drawPath(path = path, color = fillColor)
-                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
+                        if (isPrimarySelected || isSecondarySelected) {
+                            drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
+                        }
                     }
                 }
             }

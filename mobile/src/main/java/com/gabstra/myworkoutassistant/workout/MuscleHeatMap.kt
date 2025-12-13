@@ -22,8 +22,10 @@ enum class MuscleViewMode {
 fun MuscleHeatMap(
     modifier: Modifier = Modifier,
     activeMuscles: Set<MuscleGroup>,
+    secondaryMuscles: Set<MuscleGroup> = emptySet(),
     viewMode: MuscleViewMode = MuscleViewMode.BOTH, // Default to showing both
     highlightColor: Color = Color(0xFFFF8C00), // Orange
+    secondaryHighlightColor: Color = Color(0xFFFF8C00).copy(alpha = 0.6f), // Lighter orange
     baseColor: Color = Color(0xFFF0E0D6),      // Flesh/Pale
     outlineColor: Color = Color.Black
 ) {
@@ -75,7 +77,14 @@ fun MuscleHeatMap(
             if (viewMode == MuscleViewMode.FRONT_ONLY || viewMode == MuscleViewMode.BOTH) {
                 // Base
                 drawPath(path = outlineFront, color = baseColor)
-                // Muscles
+                // Secondary muscles first (so they don't obscure primary)
+                frontPaths.forEach { (muscle, path) ->
+                    if (secondaryMuscles.contains(muscle) && !activeMuscles.contains(muscle)) {
+                        drawPath(path = path, color = secondaryHighlightColor)
+                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
+                    }
+                }
+                // Primary muscles
                 frontPaths.forEach { (muscle, path) ->
                     if (activeMuscles.contains(muscle)) {
                         drawPath(path = path, color = highlightColor)
@@ -88,7 +97,14 @@ fun MuscleHeatMap(
             if (viewMode == MuscleViewMode.BACK_ONLY || viewMode == MuscleViewMode.BOTH) {
                 // Base
                 drawPath(path = outlineBack, color = baseColor)
-                // Muscles
+                // Secondary muscles first (so they don't obscure primary)
+                backPaths.forEach { (muscle, path) ->
+                    if (secondaryMuscles.contains(muscle) && !activeMuscles.contains(muscle)) {
+                        drawPath(path = path, color = secondaryHighlightColor)
+                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
+                    }
+                }
+                // Primary muscles
                 backPaths.forEach { (muscle, path) ->
                     if (activeMuscles.contains(muscle)) {
                         drawPath(path = path, color = highlightColor)

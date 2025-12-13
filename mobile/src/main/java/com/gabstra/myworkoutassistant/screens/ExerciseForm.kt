@@ -161,7 +161,11 @@ fun ExerciseForm(
     val selectedMuscleGroups = rememberSaveable { 
         mutableStateOf(exercise?.muscleGroups ?: emptySet<MuscleGroup>())
     }
+    val selectedSecondaryMuscleGroups = rememberSaveable {
+        mutableStateOf(exercise?.secondaryMuscleGroups ?: emptySet<MuscleGroup>())
+    }
     var currentBodyView by rememberSaveable { mutableStateOf(BodyView.FRONT) }
+    var isSelectingSecondary by rememberSaveable { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
@@ -351,6 +355,39 @@ fun ExerciseForm(
                 modifier = Modifier.padding(bottom = Spacing.sm)
             )
             
+            // Primary/Secondary toggle buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Button(
+                    onClick = { isSelectingSecondary = false },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = if (!isSelectingSecondary) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text("Primary", style = MaterialTheme.typography.bodyLarge)
+                }
+                Button(
+                    onClick = { isSelectingSecondary = true },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = if (isSelectingSecondary) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text("Secondary", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+            
+            Spacer(Modifier.height(Spacing.sm))
+            
             // View toggle buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -387,13 +424,40 @@ fun ExerciseForm(
             // Interactive Muscle Heat Map
             InteractiveMuscleHeatMap(
                 selectedMuscles = selectedMuscleGroups.value,
+                selectedSecondaryMuscles = selectedSecondaryMuscleGroups.value,
                 onMuscleToggled = { muscle ->
-                    selectedMuscleGroups.value = if (selectedMuscleGroups.value.contains(muscle)) {
-                        selectedMuscleGroups.value - muscle
+                    if (isSelectingSecondary) {
+                        // Remove from primary if it's there
+                        selectedMuscleGroups.value = selectedMuscleGroups.value - muscle
+                        // Toggle in secondary
+                        selectedSecondaryMuscleGroups.value = if (selectedSecondaryMuscleGroups.value.contains(muscle)) {
+                            selectedSecondaryMuscleGroups.value - muscle
+                        } else {
+                            selectedSecondaryMuscleGroups.value + muscle
+                        }
                     } else {
-                        selectedMuscleGroups.value + muscle
+                        // Remove from secondary if it's there
+                        selectedSecondaryMuscleGroups.value = selectedSecondaryMuscleGroups.value - muscle
+                        // Toggle in primary
+                        selectedMuscleGroups.value = if (selectedMuscleGroups.value.contains(muscle)) {
+                            selectedMuscleGroups.value - muscle
+                        } else {
+                            selectedMuscleGroups.value + muscle
+                        }
                     }
                 },
+                onSecondaryMuscleToggled = if (isSelectingSecondary) {
+                    { muscle ->
+                        // Remove from primary if it's there
+                        selectedMuscleGroups.value = selectedMuscleGroups.value - muscle
+                        // Toggle in secondary
+                        selectedSecondaryMuscleGroups.value = if (selectedSecondaryMuscleGroups.value.contains(muscle)) {
+                            selectedSecondaryMuscleGroups.value - muscle
+                        } else {
+                            selectedSecondaryMuscleGroups.value + muscle
+                        }
+                    }
+                } else null,
                 currentView = currentBodyView
             )
             
@@ -677,7 +741,8 @@ fun ExerciseForm(
                             loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble(),
                             loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble(),
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
-                            muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value
+                            muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value,
+                            secondaryMuscleGroups = if (selectedSecondaryMuscleGroups.value.isEmpty()) null else selectedSecondaryMuscleGroups.value
                         )
                         onExerciseUpsert(newExercise)
                     },

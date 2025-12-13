@@ -84,6 +84,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 if (src.muscleGroups != null && src.muscleGroups.isNotEmpty()) {
                     jsonObject.add("muscleGroups", context.serialize(src.muscleGroups))
                 }
+                if (src.secondaryMuscleGroups != null && src.secondaryMuscleGroups.isNotEmpty()) {
+                    jsonObject.add("secondaryMuscleGroups", context.serialize(src.secondaryMuscleGroups))
+                }
             }
 
             is Rest -> {
@@ -242,6 +245,13 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     null
                 }
 
+                val secondaryMuscleGroups = if (jsonObject.has("secondaryMuscleGroups")) {
+                    val muscleGroupsType = object : TypeToken<kotlin.collections.Set<MuscleGroup>>() {}.type
+                    context.deserialize<kotlin.collections.Set<MuscleGroup>>(jsonObject.get("secondaryMuscleGroups"), muscleGroupsType)
+                } else {
+                    null
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -266,7 +276,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     loadJumpDefaultPct,
                     loadJumpMaxPct,
                     loadJumpOvercapUntil,
-                    muscleGroups
+                    muscleGroups,
+                    secondaryMuscleGroups
                 )
             }
 

@@ -21,13 +21,17 @@ fun PageMuscles(
     exercise: Exercise
 ) {
     val muscleGroups = exercise.muscleGroups ?: emptySet()
+    val secondaryMuscleGroups = exercise.secondaryMuscleGroups ?: emptySet()
     
-    // Determine which view mode to use based on available muscles
-    val hasFrontMuscles = remember(muscleGroups) {
-        muscleGroups.any { it.name.startsWith("FRONT_") }
+    // Determine which view mode to use based on available muscles (including secondary)
+    val allMuscleGroups = remember(muscleGroups, secondaryMuscleGroups) {
+        muscleGroups + secondaryMuscleGroups
     }
-    val hasBackMuscles = remember(muscleGroups) {
-        muscleGroups.any { it.name.startsWith("BACK_") }
+    val hasFrontMuscles = remember(allMuscleGroups) {
+        allMuscleGroups.any { it.name.startsWith("FRONT_") }
+    }
+    val hasBackMuscles = remember(allMuscleGroups) {
+        allMuscleGroups.any { it.name.startsWith("BACK_") }
     }
     
     // Auto-select view mode based on available muscles
@@ -43,7 +47,7 @@ fun PageMuscles(
     Column(
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (muscleGroups.isEmpty()) {
+        if (muscleGroups.isEmpty() && secondaryMuscleGroups.isEmpty()) {
             Text(
                 text = "No muscle groups",
                 style = MaterialTheme.typography.bodySmall,
@@ -55,8 +59,10 @@ fun PageMuscles(
                     .fillMaxWidth()
                     .weight(1f),
                 activeMuscles = muscleGroups,
+                secondaryMuscles = secondaryMuscleGroups,
                 viewMode = effectiveViewMode,
                 highlightColor = Orange,
+                secondaryHighlightColor = Orange.copy(alpha = 0.6f),
                 baseColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 outlineColor = MaterialTheme.colorScheme.surfaceContainerHigh
             )
@@ -98,7 +104,8 @@ private fun PageMusclesPreview() {
                 MuscleGroup.FRONT_DELTOIDS,
                 MuscleGroup.BACK_LOWER_BACK,
                 MuscleGroup.BACK_TRAPEZIUS
-            )
+            ),
+            secondaryMuscleGroups = null
         )
         
         PageMuscles(exercise = sampleExercise)
