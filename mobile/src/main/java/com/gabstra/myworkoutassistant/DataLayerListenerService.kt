@@ -154,7 +154,8 @@ class DataLayerListenerService : WearableListenerService() {
                                         )
                                     )
                                     workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-                                    saveWorkoutStoreToDownloads(this@DataLayerListenerService, updatedWorkoutStore)
+                                    val db = AppDatabase.getDatabase(this@DataLayerListenerService)
+                                    saveWorkoutStoreToDownloads(this@DataLayerListenerService, updatedWorkoutStore, db)
                                 }
 
                                 // Save error logs if present

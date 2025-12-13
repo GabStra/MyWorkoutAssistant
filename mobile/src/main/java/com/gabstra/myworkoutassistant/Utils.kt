@@ -54,6 +54,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
+import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -234,12 +235,93 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
     }
 }
 
-suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore) {
+suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore, db: AppDatabase) {
     withContext(Dispatchers.IO) {
         try {
             val fileName = "workout_store.json"
-            val jsonString = fromWorkoutStoreToJSON(workoutStore)
             val resolver = context.contentResolver
+
+            // Get all DAOs
+            val workoutHistoryDao = db.workoutHistoryDao()
+            val setHistoryDao = db.setHistoryDao()
+            val exerciseInfoDao = db.exerciseInfoDao()
+            val workoutScheduleDao = db.workoutScheduleDao()
+            val workoutRecordDao = db.workoutRecordDao()
+            val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+
+            // Get all workout histories and workout records
+            val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+            val workoutRecords = workoutRecordDao.getAll()
+
+            // Filter workouts: only active ones or ones with histories
+            val allowedWorkouts = workoutStore.workouts.filter { workout ->
+                workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
+            }
+
+            // Filter workout histories by allowed workouts and done status
+            val filteredWorkoutHistories = workoutHistories
+                .filter { workoutHistory ->
+                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } &&
+                    (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id })
+                }
+
+            // Collect all exercises from allowed workouts (including exercises from Supersets)
+            val allExercises = allowedWorkouts.flatMap { workout ->
+                workout.workoutComponents.filterIsInstance<Exercise>() +
+                workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+            }.distinctBy { it.id }
+
+            // For each exercise, get set histories and extract workout history IDs
+            // Group by exercise and keep the most recent 15 workout histories per exercise
+            val workoutHistoryIdsByExercise = allExercises.mapNotNull { exercise ->
+                val setHistoriesForExercise = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
+                val workoutHistoryIds = setHistoriesForExercise
+                    .mapNotNull { it.workoutHistoryId }
+                    .distinct()
+
+                if (workoutHistoryIds.isEmpty()) null
+                else exercise.id to workoutHistoryIds
+            }.toMap()
+
+            // Get workout histories for each exercise and keep the most recent 15 per exercise
+            val workoutHistoriesByExerciseId = workoutHistoryIdsByExercise.mapValues { (_, workoutHistoryIds) ->
+                filteredWorkoutHistories
+                    .filter { it.id in workoutHistoryIds }
+                    .sortedByDescending { it.startTime }
+                    .take(15)
+                    .map { it.id }
+            }
+
+            // Union all workout history IDs across exercises
+            val requiredWorkoutHistoryIds = workoutHistoriesByExerciseId.values.flatten().toSet()
+
+            // Filter to only include required workout histories
+            val validWorkoutHistories = filteredWorkoutHistories
+                .filter { it.id in requiredWorkoutHistoryIds }
+
+            val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
+                validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
+            }
+
+            val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+            val workoutSchedules = workoutScheduleDao.getAllSchedules()
+
+            val exerciseSessionProgressions = exerciseSessionProgressionDao.getAllExerciseSessionProgressions().filter { progression ->
+                validWorkoutHistories.any { it.id == progression.workoutHistoryId }
+            }
+
+            // Create AppBackup with the same structure as manual backup
+            val appBackup = AppBackup(
+                workoutStore.copy(workouts = allowedWorkouts),
+                validWorkoutHistories,
+                setHistories,
+                exerciseInfos,
+                workoutSchedules,
+                workoutRecords,
+                exerciseSessionProgressions
+            )
+
+            val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
 
             // Query for existing file with the same name
             val projection = arrayOf(MediaStore.Downloads._ID)

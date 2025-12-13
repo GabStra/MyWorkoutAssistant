@@ -665,7 +665,7 @@ fun MyWorkoutAssistantNavHost(
                             appViewModel.updateWorkoutStore(newWorkoutStore)
                             workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
                             withContext(Dispatchers.IO) {
-                                saveWorkoutStoreToDownloads(context, newWorkoutStore)
+                                saveWorkoutStoreToDownloads(context, newWorkoutStore, db)
                             }
                             syncWithWatch()
                             Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
@@ -720,7 +720,7 @@ fun MyWorkoutAssistantNavHost(
                                 appViewModel.addNewWorkout(newWorkout)
                                 withContext(Dispatchers.IO) {
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
-                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore)
+                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore, db)
                                 }
                                 appViewModel.goBack()
                             }
@@ -767,7 +767,7 @@ fun MyWorkoutAssistantNavHost(
                                 withContext(Dispatchers.IO) {
                                     workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
-                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore)
+                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore, db)
                                 }
                                 appViewModel.goBack()
                             }
