@@ -134,6 +134,7 @@ fun TutorialOverlay(
                     ) {
                         val annotatedText = formatTutorialText(text)
                         Text(
+                            modifier = Modifier.padding(horizontal = 10.dp),
                             text = annotatedText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onBackground,

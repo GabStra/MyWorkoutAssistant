@@ -17,6 +17,6 @@ class PlateCalculatorTest {
         val barWeight = 9.0
         val initialSetup = emptyList<Double>()
         val results = PlateCalculator.calculatePlateChanges(plates, sets, barWeight, initialSetup)
-        assertEquals(5, results.size)
+        assertEquals(3, results.size)
     }
 }

@@ -186,6 +186,7 @@ class DataLayerListenerService : WearableListenerService() {
                         workoutStoreRepository.saveWorkoutStoreFromJson(workoutStoreJson)
                         val intent = Intent(INTENT_ID).apply {
                             putExtra(WORKOUT_STORE_JSON, workoutStoreJson)
+                            setPackage(packageName)
                         }
                         sendBroadcast(intent)
                     }

@@ -126,14 +126,21 @@ fun WorkoutScreen(
                 )
             }
         ) { it ->
-
+            val stateTypeKey = remember(workoutState) {
+                when (workoutState) {
+                    is WorkoutState.Preparing -> "Preparing"
+                    is WorkoutState.Set -> "Set"
+                    is WorkoutState.Rest -> "Rest"
+                    is WorkoutState.Completed -> "Completed"
+                }
+            }
 
             AnimatedContent(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(it)
                     .padding(10.dp),
-                targetState = workoutState,
+                targetState = stateTypeKey,
                 transitionSpec = {
                     fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
                         animationSpec = tween(
@@ -142,8 +149,8 @@ fun WorkoutScreen(
                     )
                 }, label = "",
                 contentAlignment = Alignment.Center
-            ) { updatedWorkoutState ->
-                when (updatedWorkoutState) {
+            ) { _ ->
+                when (workoutState) {
                     is WorkoutState.Preparing -> {
                         var currentMillis by remember { mutableIntStateOf(0) }
                         var hasTriggeredNextState by remember { mutableStateOf(false) }
@@ -155,13 +162,13 @@ fun WorkoutScreen(
                             }
                         }
 
-                        LaunchedEffect(updatedWorkoutState.dataLoaded, currentMillis) {
+                        LaunchedEffect(workoutState.dataLoaded, currentMillis) {
                             if (hasTriggeredNextState) {
                                 return@LaunchedEffect
                             }
 
                             val isReady =
-                                updatedWorkoutState.dataLoaded && currentMillis >= 3000
+                                workoutState.dataLoaded && currentMillis >= 3000
 
                             if (isReady) {
                                 hasTriggeredNextState = true
@@ -185,7 +192,7 @@ fun WorkoutScreen(
                         ExerciseScreen(
                             workoutViewModel,
                             hapticsViewModel,
-                            updatedWorkoutState,
+                            workoutState,
                             hearthRateChart = { }
                         )
                     }
@@ -194,7 +201,7 @@ fun WorkoutScreen(
                         RestScreen(
                             workoutViewModel,
                             hapticsViewModel,
-                            updatedWorkoutState,
+                            workoutState,
                             { },
                             onTimerEnd = {
                                 workoutViewModel.storeSetData()
@@ -210,7 +217,7 @@ fun WorkoutScreen(
                         WorkoutCompleteScreen(
                             appViewModel,
                             workoutViewModel,
-                            updatedWorkoutState,
+                            workoutState,
                             hapticsViewModel
                         )
                     }

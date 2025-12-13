@@ -12,7 +12,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
@@ -60,11 +59,7 @@ fun PageMuscles(
                     .weight(1f),
                 activeMuscles = muscleGroups,
                 secondaryMuscles = secondaryMuscleGroups,
-                viewMode = effectiveViewMode,
-                highlightColor = Orange,
-                secondaryHighlightColor = Orange.copy(alpha = 0.6f),
-                baseColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                outlineColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                viewMode = effectiveViewMode
             )
         }
     }

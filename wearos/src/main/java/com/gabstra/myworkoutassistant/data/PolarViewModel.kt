@@ -57,7 +57,7 @@ class StaleRetryingBpmStream(
             .timeout(
                 staleTimeoutSec, TimeUnit.SECONDS, 
                 scheduler,
-                Flowable.empty()  
+                Flowable.error<Int>(TimeoutException("Heart rate stream timed out after ${staleTimeoutSec}s"))
             )
             .retryWhen { errors ->
                 errors.flatMap { t ->

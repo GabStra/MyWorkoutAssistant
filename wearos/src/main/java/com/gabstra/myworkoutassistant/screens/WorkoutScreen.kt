@@ -219,25 +219,37 @@ fun WorkoutScreen(
                 onDismiss = onDismissHeartRateTutorial
             )
         } else {
+            val stateTypeKey = remember(workoutState) {
+                when (workoutState) {
+                    is WorkoutState.Preparing -> "Preparing"
+                    is WorkoutState.Set -> "Set"
+                    is WorkoutState.Rest -> "Rest"
+                    is WorkoutState.Completed -> "Completed"
+                }
+            }
+
+            @Suppress("UnusedContentLambdaTargetStateParameter")
             AnimatedContent(
-                targetState = workoutState,
+                targetState = stateTypeKey,
                 transitionSpec = {
                     fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
                 }, label = "",
                 contentAlignment = Alignment.TopCenter
-            ) { updatedWorkoutState ->
-                WorkoutStateHeader(updatedWorkoutState,viewModel,hapticsViewModel)
+            ) { _ ->
+                // Note: We use workoutState directly (which changes when stateTypeKey changes) instead of the lambda parameter
+                // The content correctly uses workoutState which changes when stateTypeKey changes
+                WorkoutStateHeader(workoutState,viewModel,hapticsViewModel)
 
-                when(updatedWorkoutState){
+                when(workoutState){
                     is WorkoutState.Preparing -> {
-                        val state = updatedWorkoutState
+                        val state = workoutState as WorkoutState.Preparing
                         if(!selectedWorkout.usePolarDevice)
                             PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
                         else
                             PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
                     }
                     is WorkoutState.Set -> {
-                        val state = updatedWorkoutState
+                        val state = workoutState as WorkoutState.Set
                         LaunchedEffect(state) {
                             try {
                                 heartRateChangeViewModel.reset()
@@ -265,7 +277,7 @@ fun WorkoutScreen(
                         }
                     }
                     is WorkoutState.Rest -> {
-                        val state = updatedWorkoutState
+                        val state = workoutState as WorkoutState.Rest
                         LaunchedEffect(state) {
                             try {
                                 heartRateChangeViewModel.reset()
@@ -306,7 +318,7 @@ fun WorkoutScreen(
                         }
                     }
                     is WorkoutState.Completed -> {
-                        val state = updatedWorkoutState
+                        val state = workoutState as WorkoutState.Completed
                         WorkoutCompleteScreen(
                             navController,
                             viewModel,

@@ -1,12 +1,12 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.Canvas
+import androidx.wear.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.withTransform
 import com.gabstra.myworkoutassistant.shared.MaleMusclePathProvider
@@ -24,10 +24,9 @@ fun MuscleHeatMap(
     activeMuscles: Set<MuscleGroup>,
     secondaryMuscles: Set<MuscleGroup> = emptySet(),
     viewMode: MuscleViewMode = MuscleViewMode.BOTH, // Default to showing both
-    highlightColor: Color = Color(0xFFFF8C00), // Orange
-    secondaryHighlightColor: Color = Color(0xFFFF8C00).copy(alpha = 0.6f), // Lighter orange
-    baseColor: Color = Color(0xFFF0E0D6),      // Flesh/Pale
-    outlineColor: Color = Color.Black
+    highlightColor: Color = MaterialTheme.colorScheme.primary,
+    secondaryHighlightColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+    baseColor: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     // 1. Load Data
     val frontPaths = remember { MaleMusclePathProvider.getFrontMusclePaths() }
@@ -81,14 +80,12 @@ fun MuscleHeatMap(
                 frontPaths.forEach { (muscle, path) ->
                     if (secondaryMuscles.contains(muscle) && !activeMuscles.contains(muscle)) {
                         drawPath(path = path, color = secondaryHighlightColor)
-                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
                     }
                 }
                 // Primary muscles
                 frontPaths.forEach { (muscle, path) ->
                     if (activeMuscles.contains(muscle)) {
                         drawPath(path = path, color = highlightColor)
-                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
                     }
                 }
             }
@@ -101,14 +98,12 @@ fun MuscleHeatMap(
                 backPaths.forEach { (muscle, path) ->
                     if (secondaryMuscles.contains(muscle) && !activeMuscles.contains(muscle)) {
                         drawPath(path = path, color = secondaryHighlightColor)
-                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
                     }
                 }
                 // Primary muscles
                 backPaths.forEach { (muscle, path) ->
                     if (activeMuscles.contains(muscle)) {
                         drawPath(path = path, color = highlightColor)
-                        drawPath(path = path, color = outlineColor, style = Stroke(width = 1f/scale))
                     }
                 }
             }

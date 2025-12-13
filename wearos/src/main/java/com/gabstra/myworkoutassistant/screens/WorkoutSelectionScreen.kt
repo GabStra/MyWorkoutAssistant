@@ -1,12 +1,14 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
+import android.app.Activity
 import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -169,13 +171,20 @@ fun WorkoutSelectionScreen(
     hapticsViewModel: HapticsViewModel,
     appHelper: WearDataLayerAppHelper,
 ) {
+    val context = LocalContext.current
+    
+    // Handle back button press to close the app
+    BackHandler {
+        hapticsViewModel.doGentleVibration()
+        (context as? Activity)?.finish()
+    }
+    
     val workouts by viewModel.workouts.collectAsState()
 
     val sortedWorkouts = workouts.sortedBy { it.order }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
     val userAge by viewModel.userAge
-    val context = LocalContext.current
     val versionName = getVersionName(context);
 
     val canScheduleExactAlarms by rememberCanScheduleExactAlarmsState(context)

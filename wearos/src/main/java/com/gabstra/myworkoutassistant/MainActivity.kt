@@ -41,9 +41,9 @@ import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.navigation.SwipeDismissableNavHost
-import androidx.wear.compose.navigation.composable
-import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
@@ -307,7 +307,7 @@ fun WearApp(
     onNavControllerAvailable: (NavHostController) -> Unit
 ) {
     MyWorkoutAssistantTheme {
-        val navController = rememberSwipeDismissableNavController()
+        val navController = rememberNavController()
         val localContext = LocalContext.current
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
@@ -489,9 +489,8 @@ fun WearApp(
         } else {
             val enableDimming by appViewModel.enableDimming
             KeepOn(appViewModel, enableDimming = enableDimming) {
-                SwipeDismissableNavHost(
+                NavHost(
                     modifier = Modifier.fillMaxSize(),
-                    userSwipeEnabled = false,
                     navController = navController,
                     startDestination = startDestination!!
                 ) {
