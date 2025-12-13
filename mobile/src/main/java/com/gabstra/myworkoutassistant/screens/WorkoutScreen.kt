@@ -135,6 +135,7 @@ fun WorkoutScreen(
                 }
             }
 
+            @Suppress("UnusedContentLambdaTargetStateParameter")
             AnimatedContent(
                 modifier = Modifier
                     .fillMaxSize()
@@ -150,7 +151,7 @@ fun WorkoutScreen(
                 }, label = "",
                 contentAlignment = Alignment.Center
             ) { _ ->
-                when (workoutState) {
+                when (val state = workoutState) {
                     is WorkoutState.Preparing -> {
                         var currentMillis by remember { mutableIntStateOf(0) }
                         var hasTriggeredNextState by remember { mutableStateOf(false) }
@@ -162,13 +163,13 @@ fun WorkoutScreen(
                             }
                         }
 
-                        LaunchedEffect(workoutState.dataLoaded, currentMillis) {
+                        LaunchedEffect(state.dataLoaded, currentMillis) {
                             if (hasTriggeredNextState) {
                                 return@LaunchedEffect
                             }
 
                             val isReady =
-                                workoutState.dataLoaded && currentMillis >= 3000
+                                state.dataLoaded && currentMillis >= 3000
 
                             if (isReady) {
                                 hasTriggeredNextState = true
@@ -192,7 +193,7 @@ fun WorkoutScreen(
                         ExerciseScreen(
                             workoutViewModel,
                             hapticsViewModel,
-                            workoutState,
+                            state,
                             hearthRateChart = { }
                         )
                     }
@@ -201,7 +202,7 @@ fun WorkoutScreen(
                         RestScreen(
                             workoutViewModel,
                             hapticsViewModel,
-                            workoutState,
+                            state,
                             { },
                             onTimerEnd = {
                                 workoutViewModel.storeSetData()
@@ -217,7 +218,7 @@ fun WorkoutScreen(
                         WorkoutCompleteScreen(
                             appViewModel,
                             workoutViewModel,
-                            workoutState,
+                            state,
                             hapticsViewModel
                         )
                     }
