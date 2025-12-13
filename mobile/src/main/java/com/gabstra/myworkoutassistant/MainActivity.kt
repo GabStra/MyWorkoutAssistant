@@ -512,44 +512,9 @@ fun MyWorkoutAssistantNavHost(
                     onBackupClick = {
                         scope.launch {
                             try{
-                                val sdf = SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.getDefault())
-                                val currentDate = sdf.format(Date())
-                                val filename = "my_workout_history_$currentDate.json"
-
-                                val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-
-                                val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
-                                    workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
+                                withContext(Dispatchers.IO) {
+                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore, db)
                                 }
-
-                                val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
-                                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
-                                }
-
-                                val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
-                                    validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
-                                }
-                                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-                                val workoutSchedules = workoutScheduleDao.getAllSchedules()
-
-                                val workoutRecords = workoutRecordDao.getAll()
-
-                                val exerciseSessionProgressions = db.exerciseSessionProgressionDao().getAllExerciseSessionProgressions().filter { progression ->
-                                    validWorkoutHistories.any { it.id == progression.workoutHistoryId }
-                                }
-
-                                val appBackup = AppBackup(
-                                    appViewModel.workoutStore.copy(workouts = allowedWorkouts),
-                                    validWorkoutHistories,
-                                    setHistories,
-                                    exerciseInfos,
-                                    workoutSchedules,
-                                    workoutRecords,
-                                    exerciseSessionProgressions
-                                )
-
-                                val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
-                                writeJsonToDownloadsFolder(context, filename, jsonString)
                                 Toast.makeText(
                                     context,
                                     "Backup saved to downloads folder",
