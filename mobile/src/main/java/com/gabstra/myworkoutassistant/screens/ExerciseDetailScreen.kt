@@ -87,6 +87,9 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
+    // Observe equipmentsFlow to fix race condition - recompose when equipments are loaded
+    val equipments by appViewModel.equipmentsFlow.collectAsState()
+    
     when (set) {
         is WeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
@@ -103,7 +106,11 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                     ) {
 
                         Text(
-                            text = "Weight (KG): ${equipment!!.formatWeight(set.weight)}",
+                            text = if (equipment != null) {
+                                "Weight (KG): ${equipment.formatWeight(set.weight)}"
+                            } else {
+                                "Weight (KG): ${set.weight}"
+                            },
                             color = MaterialTheme.colorScheme.onBackground,
                             style = MaterialTheme.typography.bodyMedium,)
                         Text(
