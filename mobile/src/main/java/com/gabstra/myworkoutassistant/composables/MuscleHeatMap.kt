@@ -5,8 +5,8 @@ import android.graphics.Region
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -14,10 +14,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.MaleMusclePathProvider
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.MuscleHeatMapBackground
@@ -93,11 +93,13 @@ fun InteractiveMuscleHeatMap(
 
     val targetCenterY = 765f // Middle of height
     
+    val aspectRatio = virtualWidth / virtualHeight
+
     Box(modifier = modifier) {
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(300.dp)
+                .aspectRatio(aspectRatio)
                 .pointerInput(currentView, frontPaths, backPaths) {
                     detectTapGestures { tapOffset ->
                         // Calculate the same transformation as in drawing
@@ -151,47 +153,49 @@ fun InteractiveMuscleHeatMap(
             val scaleY = size.height / virtualHeight
             val scale = scaleX // Use horizontal scale to fill width
 
-            withTransform({
-                // Center the canvas
-                translate(left = size.width / 2f, top = size.height / 2f)
-                // Apply Zoom
-                scale(scale, pivot = Offset.Zero)
-                // Move camera to specific target (Front or Back)
-                translate(left = -targetCenterX, top = -targetCenterY)
-            }) {
-                // Draw Front (If applicable)
-                if (currentView == BodyView.FRONT) {
-                    // Base
-                    drawPath(path = outlineFront, color = baseColor)
-                    // Muscles
-                    frontPaths.forEach { (muscle, path) ->
-                        val isPrimarySelected = selectedMuscles.contains(muscle)
-                        val isSecondarySelected = selectedSecondaryMuscles.contains(muscle) && !isPrimarySelected
-                        val fillColor = when {
-                            isPrimarySelected -> highlightColor
-                            isSecondarySelected -> secondaryHighlightColor
-                            else -> baseColor
-                        }
-                        
-                        drawPath(path = path, color = fillColor)
-                    }
-                }
+            clipRect {
+                withTransform({
+                    // Center the canvas
+                    translate(left = size.width / 2f, top = size.height / 2f)
+                    // Apply Zoom
+                    scale(scale, pivot = Offset.Zero)
+                    // Move camera to specific target (Front or Back)
+                    translate(left = -targetCenterX, top = -targetCenterY)
+                }) {
+                    // Draw Front (If applicable)
+                    if (currentView == BodyView.FRONT) {
+                        // Base
+                        drawPath(path = outlineFront, color = baseColor)
+                        // Muscles
+                        frontPaths.forEach { (muscle, path) ->
+                            val isPrimarySelected = selectedMuscles.contains(muscle)
+                            val isSecondarySelected = selectedSecondaryMuscles.contains(muscle) && !isPrimarySelected
+                            val fillColor = when {
+                                isPrimarySelected -> highlightColor
+                                isSecondarySelected -> secondaryHighlightColor
+                                else -> baseColor
+                            }
 
-                // Draw Back (If applicable)
-                if (currentView == BodyView.BACK) {
-                    // Base
-                    drawPath(path = outlineBack, color = baseColor)
-                    // Muscles
-                    backPaths.forEach { (muscle, path) ->
-                        val isPrimarySelected = selectedMuscles.contains(muscle)
-                        val isSecondarySelected = selectedSecondaryMuscles.contains(muscle) && !isPrimarySelected
-                        val fillColor = when {
-                            isPrimarySelected -> highlightColor
-                            isSecondarySelected -> secondaryHighlightColor
-                            else -> baseColor
+                            drawPath(path = path, color = fillColor)
                         }
-                        
-                        drawPath(path = path, color = fillColor)
+                    }
+
+                    // Draw Back (If applicable)
+                    if (currentView == BodyView.BACK) {
+                        // Base
+                        drawPath(path = outlineBack, color = baseColor)
+                        // Muscles
+                        backPaths.forEach { (muscle, path) ->
+                            val isPrimarySelected = selectedMuscles.contains(muscle)
+                            val isSecondarySelected = selectedSecondaryMuscles.contains(muscle) && !isPrimarySelected
+                            val fillColor = when {
+                                isPrimarySelected -> highlightColor
+                                isSecondarySelected -> secondaryHighlightColor
+                                else -> baseColor
+                            }
+
+                            drawPath(path = path, color = fillColor)
+                        }
                     }
                 }
             }
