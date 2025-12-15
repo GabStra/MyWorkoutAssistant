@@ -47,7 +47,7 @@ fun PageButtons(
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
     val exerciseSets = exercise.sets
 
-    val setIndex = exerciseSets.indexOfFirst { it === updatedState.set }
+    val setIndex = exerciseSets.indexOfFirst { it.id == updatedState.set.id }
     val isLastSet = setIndex == exerciseSets.size - 1
 
     val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet

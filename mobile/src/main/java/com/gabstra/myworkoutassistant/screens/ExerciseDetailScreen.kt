@@ -249,6 +249,17 @@ fun ExerciseDetailScreen(
         selectedSets = emptyList()
     }
 
+    LaunchedEffect(exercise.sets) {
+        // Sync sets state when exercise parameter changes
+        sets = ensureRestSeparatedBySets(exercise.sets)
+        
+        // Sync selectedSets with new set references when exercise updates
+        if (selectedSets.isNotEmpty()) {
+            val selectedIds = selectedSets.map { it.id }.toSet()
+            selectedSets = exercise.sets.filter { it.id in selectedIds }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -329,14 +340,14 @@ fun ExerciseDetailScreen(
                             ) {
                                 IconButton(
                                     enabled = selectedSets.size == 1 &&
-                                            exercise.sets.indexOfFirst { it === selectedSets.first() } != 0 &&
+                                            exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != 0 &&
                                             selectedSets.first() !is RestSet,
                                     onClick = {
                                         val currentSets = exercise.sets
                                         val selectedComponent = selectedSets.first()
 
                                         val selectedIndex =
-                                            currentSets.indexOfFirst { it === selectedComponent }
+                                            currentSets.indexOfFirst { it.id == selectedComponent.id }
 
                                         val previousComponent = currentSets.subList(0, selectedIndex)
                                             .lastOrNull { it !is RestSet }
@@ -345,7 +356,7 @@ fun ExerciseDetailScreen(
                                             return@IconButton
                                         }
 
-                                        val previous = currentSets.indexOfFirst { it === previousComponent }
+                                        val previous = currentSets.indexOfFirst { it.id == previousComponent.id }
 
                                         val newSets = currentSets.toMutableList().apply {
                                             val componentToMoveToOtherSlot = this[selectedIndex]
@@ -375,14 +386,14 @@ fun ExerciseDetailScreen(
 
                                 IconButton(
                                     enabled = selectedSets.size == 1 &&
-                                            exercise.sets.indexOfFirst { it === selectedSets.first() } != exercise.sets.size - 1 &&
+                                            exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != exercise.sets.size - 1 &&
                                             selectedSets.first() !is RestSet,
                                     onClick = {
                                         val currentSets = exercise.sets
                                         val selectedComponent = selectedSets.first()
 
                                         val selectedIndex =
-                                            currentSets.indexOfFirst { it === selectedComponent }
+                                            currentSets.indexOfFirst { it.id == selectedComponent.id }
 
                                         val nextComponent = if (selectedIndex + 1 < currentSets.size) {
                                             currentSets.subList(selectedIndex + 1, currentSets.size)
@@ -395,7 +406,7 @@ fun ExerciseDetailScreen(
                                             return@IconButton
                                         }
 
-                                        val nextIndex = currentSets.indexOfFirst { it === nextComponent }
+                                        val nextIndex = currentSets.indexOfFirst { it.id == nextComponent.id }
 
                                         val newSets = currentSets.toMutableList().apply {
                                             val componentToMoveToOtherSlot = this[selectedIndex]
@@ -425,7 +436,7 @@ fun ExerciseDetailScreen(
 
                                 IconButton(onClick = {
                                     val newSets = sets.filter { set ->
-                                        selectedSets.none { it === set }
+                                        selectedSets.none { it.id == set.id }
                                     }
 
                                     val adjustedComponents = ensureRestSeparatedBySets(newSets)

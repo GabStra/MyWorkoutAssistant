@@ -909,7 +909,7 @@ fun MyWorkoutAssistantNavHost(
                 SupersetForm(
                     onSupersetUpsert = { newSuperset ->
                         val newWorkoutComponents = selectedWorkout.workoutComponents.filter { item ->
-                            newSuperset.exercises.none { it === item }
+                            newSuperset.exercises.none { it.id == item.id }
                         } + newSuperset
 
                         val adjustedComponents =

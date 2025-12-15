@@ -283,6 +283,14 @@ fun WorkoutDetailScreen(
         selectedWorkoutComponents = emptyList()
     }
 
+    LaunchedEffect(workout.workoutComponents) {
+        // Sync selectedWorkoutComponents with new component references when workout updates
+        if (selectedWorkoutComponents.isNotEmpty()) {
+            val selectedIds = selectedWorkoutComponents.map { it.id }.toSet()
+            selectedWorkoutComponents = workout.workoutComponents.filter { it.id in selectedIds }
+        }
+    }
+
     val editModeBottomBar = @Composable {
         BottomAppBar(
             contentPadding = PaddingValues(0.dp),
@@ -295,14 +303,18 @@ fun WorkoutDetailScreen(
                 ) {
                     IconButton(
                         enabled = selectedWorkoutComponents.size == 1 &&
-                                workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != 0 &&
+                                workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != 0 &&
                                 selectedWorkoutComponents.first() !is Rest,
                         onClick = {
                             val currentWorkoutComponents = workout.workoutComponents
                             val selectedComponent = selectedWorkoutComponents.first()
 
                             val selectedIndex =
-                                currentWorkoutComponents.indexOfFirst { it === selectedComponent }
+                                currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
+
+                            if (selectedIndex <= 0) {
+                                return@IconButton
+                            }
 
                             val previousWorkoutComponent = currentWorkoutComponents.subList(0, selectedIndex)
                                 .lastOrNull { it !is Rest }
@@ -311,7 +323,7 @@ fun WorkoutDetailScreen(
                                 return@IconButton
                             }
 
-                            val previousIndex = currentWorkoutComponents.indexOfFirst { it === previousWorkoutComponent }
+                            val previousIndex = currentWorkoutComponents.indexOfFirst { it.id == previousWorkoutComponent.id }
 
                             val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
                                 val componentToMoveToPreviousSlot = this[selectedIndex]
@@ -336,7 +348,7 @@ fun WorkoutDetailScreen(
                     }
                     IconButton(
                         enabled = selectedWorkoutComponents.size == 1 &&
-                                workout.workoutComponents.indexOfFirst { it === selectedWorkoutComponents.first() } != workout.workoutComponents.size - 1 &&
+                                workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != workout.workoutComponents.size - 1 &&
                                 selectedWorkoutComponents.first() !is Rest
                         ,
                         onClick = {
@@ -344,20 +356,20 @@ fun WorkoutDetailScreen(
                             val selectedComponent = selectedWorkoutComponents.first()
 
                             val selectedIndex =
-                                currentWorkoutComponents.indexOfFirst { it === selectedComponent }
+                                currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
 
-                            val nextWorkoutComponent = if (selectedIndex + 1 < currentWorkoutComponents.size) {
-                                currentWorkoutComponents.subList(selectedIndex + 1, currentWorkoutComponents.size)
-                                    .firstOrNull { it !is Rest }
-                            } else {
-                                null
+                            if (selectedIndex < 0 || selectedIndex + 1 >= currentWorkoutComponents.size) {
+                                return@IconButton
                             }
+
+                            val nextWorkoutComponent = currentWorkoutComponents.subList(selectedIndex + 1, currentWorkoutComponents.size)
+                                .firstOrNull { it !is Rest }
 
                             if (nextWorkoutComponent == null) {
                                 return@IconButton
                             }
 
-                            val nextIndex = currentWorkoutComponents.indexOfFirst { it === nextWorkoutComponent }
+                            val nextIndex = currentWorkoutComponents.indexOfFirst { it.id == nextWorkoutComponent.id }
 
                             val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
                                 val componentToMoveToPreviousSlot = this[selectedIndex]
@@ -385,7 +397,7 @@ fun WorkoutDetailScreen(
                             onClick = {
                                 val updatedWorkoutComponents =
                                     workout.workoutComponents.map { workoutComponent ->
-                                        if (selectedWorkoutComponents.any { it === workoutComponent }) {
+                                        if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
                                             when (workoutComponent) {
                                                 is Exercise -> workoutComponent.copy(enabled = true)
                                                 is Rest -> workoutComponent.copy(enabled = true)
@@ -415,7 +427,7 @@ fun WorkoutDetailScreen(
                             onClick = {
                                 val updatedWorkoutComponents =
                                     workout.workoutComponents.map { workoutComponent ->
-                                        if (selectedWorkoutComponents.any { it === workoutComponent }) {
+                                        if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
                                             when (workoutComponent) {
                                                 is Exercise -> workoutComponent.copy(enabled = false)
                                                 is Rest -> workoutComponent.copy(enabled = false)
@@ -478,7 +490,7 @@ fun WorkoutDetailScreen(
                                 .flatMap { it.exercises }
 
                         val newWorkoutComponents = workout.workoutComponents.filter { item ->
-                            selectedWorkoutComponents.none { it === item }
+                            selectedWorkoutComponents.none { it.id == item.id }
                         } + superSetExercises
 
                         val adjustedComponents =

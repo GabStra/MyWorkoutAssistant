@@ -629,7 +629,14 @@ open class WorkoutViewModel(
             matchingIndices[occurrenceIndex]
         } else {
             // If target is not the current state, determine its position
-            val targetIndexInHistory = workoutStateHistory.indexOfFirst { it === target }
+            // Match by Set ID for WorkoutState.Set and WorkoutState.Rest, fallback to reference equality
+            val targetIndexInHistory = workoutStateHistory.indexOfFirst { state ->
+                when {
+                    state is WorkoutState.Set && target is WorkoutState.Set -> state.set.id == target.set.id
+                    state is WorkoutState.Rest && target is WorkoutState.Rest -> state.set.id == target.set.id
+                    else -> state === target
+                }
+            }
             if (targetIndexInHistory >= 0) {
                 // Target is in history, so it's been completed
                 // Count how many matching sets appear before target in history

@@ -528,7 +528,7 @@ fun WorkoutsScreen(
                                 onClick = {
                                     val newWorkouts =
                                         activeAndEnabledWorkouts.filter { workout ->
-                                            selectedWorkouts.none { it === workout }
+                                            selectedWorkouts.none { it.id == workout.id }
                                         }
 
                                     val newWorkoutsWithUpdatedOrder =
@@ -640,7 +640,7 @@ fun WorkoutsScreen(
                             }
                             IconButton(onClick = {
                                 val newEquipments = equipments.filter { item ->
-                                    selectedEquipments.none { it === item }
+                                    selectedEquipments.none { it.id == item.id }
                                 }
                                 appViewModel.updateEquipments(newEquipments)
                                 isEquipmentSelectionModeActive = false
