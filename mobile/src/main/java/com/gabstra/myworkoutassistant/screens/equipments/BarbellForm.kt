@@ -122,10 +122,10 @@ fun BarbellForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(top = Spacing.md)
+                .padding(top = 10.dp)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
-                .padding(horizontal = Spacing.lg),
+                .padding(horizontal = 15.dp),
             verticalArrangement = Arrangement.spacedBy(Spacing.lg)
         ) {
             // Name

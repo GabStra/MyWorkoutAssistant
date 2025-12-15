@@ -580,8 +580,7 @@ fun WorkoutDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(it),
+                    .background(MaterialTheme.colorScheme.background),
                 verticalArrangement = Arrangement.Center,
             ) {
                 TabRow(
@@ -650,6 +649,7 @@ fun WorkoutDetailScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .padding(it)
                         .padding(top = 10.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)

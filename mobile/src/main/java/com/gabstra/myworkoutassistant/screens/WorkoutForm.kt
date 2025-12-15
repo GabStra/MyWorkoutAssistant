@@ -157,10 +157,10 @@ fun WorkoutForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(top = Spacing.md)
+                .padding(top = 10.dp)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
-                .padding(horizontal = Spacing.lg),
+                .padding(horizontal = 15.dp),
         ) {
             // Name
             OutlinedTextField(

@@ -982,8 +982,7 @@ fun WorkoutHistoryScreen(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(it),
+                .fillMaxSize(),
             verticalArrangement = Arrangement.Top,
         ) {
             TabRow(
@@ -1084,7 +1083,8 @@ fun WorkoutHistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(top = 5.dp)
+                                .padding(it)
+                                .padding(top = 10.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
                                 .padding(horizontal = 15.dp),

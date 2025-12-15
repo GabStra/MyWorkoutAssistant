@@ -712,8 +712,7 @@ fun WorkoutsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .padding(it),
+                .background(MaterialTheme.colorScheme.background),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
@@ -784,11 +783,11 @@ fun WorkoutsScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 5.dp)
+                                        .padding(it)
+                                        .padding(top = 10.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
-                                        .padding(horizontal = 15.dp)
-                                        .padding(top = 10.dp),
+                                        .padding(horizontal = 15.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     StyledCard {
@@ -1087,11 +1086,11 @@ fun WorkoutsScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(horizontal = 5.dp)
+                                        .padding(it)
+                                        .padding(top = 10.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
-                                        .padding(horizontal = 15.dp)
-                                        .padding(top = 10.dp),
+                                        .padding(horizontal = 15.dp),
                                     verticalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     // Display all muscle groups
@@ -1220,7 +1219,8 @@ fun WorkoutsScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(horizontal = 5.dp)
+                                        .padding(it)
+                                        .padding(top = 10.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
                                         .padding(horizontal = 15.dp)
