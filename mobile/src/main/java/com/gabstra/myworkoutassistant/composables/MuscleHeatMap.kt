@@ -78,13 +78,17 @@ fun InteractiveMuscleHeatMap(
     val singleBodyWidth = 750f
 
     // Center X coordinates for specific targets (based on SVG data)
+    // These are the actual centers of each view in the SVG coordinate system
     val centerOfFront = 360f
     val centerOfBack = 1085f
 
     // Determine "Camera" Settings based on View
-    val (virtualWidth, targetCenterX) = when (currentView) {
-        BodyView.FRONT -> Pair(singleBodyWidth, centerOfFront)
-        BodyView.BACK -> Pair(singleBodyWidth, centerOfBack)
+    // Use the actual SVG center coordinates, but ensure both views use the same virtual width
+    // for consistent scaling and alignment
+    val virtualWidth = singleBodyWidth
+    val targetCenterX = when (currentView) {
+        BodyView.FRONT -> centerOfFront
+        BodyView.BACK -> centerOfBack
     }
 
     val targetCenterY = 765f // Middle of height
@@ -97,9 +101,10 @@ fun InteractiveMuscleHeatMap(
                 .pointerInput(currentView, frontPaths, backPaths) {
                     detectTapGestures { tapOffset ->
                         // Calculate the same transformation as in drawing
+                        // Use scaleX to fill full width horizontally
                         val scaleX = size.width / virtualWidth
                         val scaleY = size.height / virtualHeight
-                        val scale = minOf(scaleX, scaleY)
+                        val scale = scaleX // Use horizontal scale to fill width
                         
                         // Reverse the transformation pipeline
                         // 1. Start from screen coordinates
@@ -141,10 +146,10 @@ fun InteractiveMuscleHeatMap(
                 }
         ) {
             // Calculate Scale
-            // Fit the chosen virtual width into the available screen width
+            // Use scaleX to fill the full available width horizontally
             val scaleX = size.width / virtualWidth
             val scaleY = size.height / virtualHeight
-            val scale = minOf(scaleX, scaleY)
+            val scale = scaleX // Use horizontal scale to fill width
 
             withTransform({
                 // Center the canvas
