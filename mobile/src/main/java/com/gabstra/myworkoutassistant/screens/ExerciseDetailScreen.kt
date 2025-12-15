@@ -499,16 +499,19 @@ fun ExerciseDetailScreen(
                 }
             }
         },
-    ) { it ->
+    ) { paddingValues ->
 
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background),
-                verticalArrangement = Arrangement.Center,
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(paddingValues),
+                verticalArrangement = Arrangement.Top,
             ) {
                 TabRow(
-                    contentColor = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.background,
+                    contentColor = MaterialTheme.colorScheme.onBackground,
                     selectedTabIndex = 0,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
@@ -563,8 +566,9 @@ fun ExerciseDetailScreen(
                 val scrollState = rememberScrollState()
 
                 Column(
-                    modifier = Modifier.fillMaxSize()
-                        .padding(it)
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
                         .padding(top = 10.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)

@@ -707,12 +707,13 @@ fun WorkoutsScreen(
                 2 -> equipmentsBottomBar()
             }
         },
-    ) {
+    ) { paddingValues ->
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
+                .background(MaterialTheme.colorScheme.background)
+                .padding(paddingValues),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
@@ -783,7 +784,6 @@ fun WorkoutsScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(it)
                                         .padding(top = 10.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
@@ -1086,7 +1086,6 @@ fun WorkoutsScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(it)
                                         .padding(top = 10.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
@@ -1219,7 +1218,6 @@ fun WorkoutsScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(it)
                                         .padding(top = 10.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)

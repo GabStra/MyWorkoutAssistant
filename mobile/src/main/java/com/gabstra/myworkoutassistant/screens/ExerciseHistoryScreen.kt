@@ -434,11 +434,12 @@ fun ExerciseHistoryScreen(
                 }
             )
         },
-    ) {
+    ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
+                .background(MaterialTheme.colorScheme.background)
+                .padding(paddingValues),
             verticalArrangement = Arrangement.Top,
         ) {
             TabRow(
@@ -530,7 +531,6 @@ fun ExerciseHistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(it)
                                 .padding(top = 10.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
