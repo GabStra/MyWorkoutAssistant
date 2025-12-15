@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.Canvas
-import androidx.wear.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -11,6 +10,9 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.withTransform
 import com.gabstra.myworkoutassistant.shared.MaleMusclePathProvider
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.MuscleHeatMapBackground
+import com.gabstra.myworkoutassistant.shared.PrimaryMuscleGroupColor
+import com.gabstra.myworkoutassistant.shared.SecondaryMuscleGroupColor
 
 enum class MuscleViewMode {
     FRONT_ONLY,
@@ -24,9 +26,9 @@ fun MuscleHeatMap(
     activeMuscles: Set<MuscleGroup>,
     secondaryMuscles: Set<MuscleGroup> = emptySet(),
     viewMode: MuscleViewMode = MuscleViewMode.BOTH, // Default to showing both
-    highlightColor: Color = MaterialTheme.colorScheme.primary,
-    secondaryHighlightColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-    baseColor: Color = MaterialTheme.colorScheme.onBackground,
+    highlightColor: Color = PrimaryMuscleGroupColor,
+    secondaryHighlightColor: Color = SecondaryMuscleGroupColor,
+    baseColor: Color = MuscleHeatMapBackground,
 ) {
     // 1. Load Data
     val frontPaths = remember { MaleMusclePathProvider.getFrontMusclePaths() }

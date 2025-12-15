@@ -53,7 +53,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -65,6 +64,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -962,7 +962,7 @@ private fun createPreviewHapticsViewModel(context: Context): HapticsViewModel {
     return HapticsViewModel(HapticsHelper(context))
 }
 
-@Preview(device = Devices.WEAR_OS_SMALL_ROUND, showBackground = true)
+@Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
 @Composable
 private fun HeartRateCircularChartPreview() {
     val context = LocalContext.current

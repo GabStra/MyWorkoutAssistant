@@ -201,7 +201,7 @@ fun WorkoutComponentRenderer(
                         .padding(10.dp),
                     text = "Superset",
                     style = MaterialTheme.typography.bodyLarge,
-                    color =  if (superSet.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceVariant,
+                    color =  if (superSet.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Column(
                     modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp),

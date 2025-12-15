@@ -973,7 +973,7 @@ fun WorkoutsScreen(
                                                                             .weight(1f)
                                                                             .basicMarquee(iterations = Int.MAX_VALUE),
                                                                         text = if(workoutHistory.isDone) workout.name else workout.name + " (Incomplete)",
-                                                                        color = MaterialTheme.colorScheme.onBackground,
+                                                                        color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
                                                                         style = MaterialTheme.typography.bodyLarge,
                                                                     )
 
@@ -1021,7 +1021,7 @@ fun WorkoutsScreen(
                                                                                     .padding(start = 5.dp)
                                                                                     .basicMarquee(iterations = Int.MAX_VALUE),
                                                                                 text = workout.name,
-                                                                                color = MaterialTheme.colorScheme.onBackground,
+                                                                                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
                                                                                 style = MaterialTheme.typography.bodyLarge,
                                                                             )
                                                                         }

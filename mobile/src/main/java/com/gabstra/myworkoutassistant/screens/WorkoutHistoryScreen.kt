@@ -785,7 +785,7 @@ fun WorkoutHistoryScreen(
                                                         .basicMarquee(iterations = Int.MAX_VALUE),
                                                     text = exercise.name,
                                                     style = MaterialTheme.typography.bodyLarge,
-                                                    color = MaterialTheme.colorScheme.onBackground,
+                                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
                                             }
                                         },

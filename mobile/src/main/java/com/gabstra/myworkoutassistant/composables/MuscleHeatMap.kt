@@ -7,7 +7,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -21,6 +20,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.MaleMusclePathProvider
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.MuscleHeatMapBackground
+import com.gabstra.myworkoutassistant.shared.PrimaryMuscleGroupColor
+import com.gabstra.myworkoutassistant.shared.SecondaryMuscleGroupColor
 import kotlin.math.roundToInt
 
 enum class BodyView {
@@ -59,9 +61,9 @@ fun InteractiveMuscleHeatMap(
     onMuscleToggled: (MuscleGroup) -> Unit,
     onSecondaryMuscleToggled: ((MuscleGroup) -> Unit)? = null,
     currentView: BodyView,
-    highlightColor: Color = MaterialTheme.colorScheme.primary,
-    secondaryHighlightColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-    baseColor: Color = MaterialTheme.colorScheme.onBackground,
+    highlightColor: Color = PrimaryMuscleGroupColor,
+    secondaryHighlightColor: Color = SecondaryMuscleGroupColor,
+    baseColor: Color = MuscleHeatMapBackground,
 ) {
     // Load paths once
     val frontPaths = remember { MaleMusclePathProvider.getFrontMusclePaths() }

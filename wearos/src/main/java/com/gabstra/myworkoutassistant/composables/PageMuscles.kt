@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.presentation.theme.baseline
+import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -65,10 +67,13 @@ fun PageMuscles(
     }
 }
 
-@Preview(device = Devices.WEAR_OS_SMALL_ROUND, showBackground = true)
+@Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
 @Composable
 private fun PageMusclesPreview() {
-    MaterialTheme {
+    MaterialTheme(
+        colorScheme = darkScheme,
+        typography = baseline,
+    ) {
         // Create a sample exercise with muscle groups
         val sampleExercise = Exercise(
             id = UUID.randomUUID(),
@@ -100,7 +105,10 @@ private fun PageMusclesPreview() {
                 MuscleGroup.BACK_LOWER_BACK,
                 MuscleGroup.BACK_TRAPEZIUS
             ),
-            secondaryMuscleGroups = null
+            secondaryMuscleGroups = setOf(
+                MuscleGroup.FRONT_ABS,
+
+            )
         )
         
         PageMuscles(exercise = sampleExercise)
