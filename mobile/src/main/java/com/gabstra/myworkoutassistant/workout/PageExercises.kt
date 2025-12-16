@@ -213,7 +213,7 @@ fun PageExercises(
                         else -> null
                     },
                     customColor = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onSurfaceVariant
+                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
                         selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
                         else -> null
                     },

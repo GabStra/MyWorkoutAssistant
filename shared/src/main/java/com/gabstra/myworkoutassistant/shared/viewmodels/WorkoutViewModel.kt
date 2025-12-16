@@ -378,6 +378,9 @@ open class WorkoutViewModel(
     private val _hasWorkoutRecord = MutableStateFlow<Boolean>(false)
     val hasWorkoutRecord = _hasWorkoutRecord.asStateFlow()
 
+    private val _isCheckingWorkoutRecord = MutableStateFlow<Boolean>(false)
+    val isCheckingWorkoutRecord = _isCheckingWorkoutRecord.asStateFlow()
+
     private val _hasExercises = MutableStateFlow<Boolean>(false)
     val hasExercises = _hasExercises.asStateFlow()
 
@@ -430,6 +433,7 @@ open class WorkoutViewModel(
     }
 
     protected open fun getWorkoutRecord(workout: Workout) {
+        _isCheckingWorkoutRecord.value = true
         viewModelScope.launch(dispatchers.main) {
             withContext(dispatchers.io) {
                 _workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
@@ -447,6 +451,7 @@ open class WorkoutViewModel(
                     _hasWorkoutRecord.value = false
                 }
             }
+            _isCheckingWorkoutRecord.value = false
         }
     }
 

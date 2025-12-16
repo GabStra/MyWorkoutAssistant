@@ -11,7 +11,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -69,23 +68,23 @@ fun TimeViewer(
 
     val colonColor = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh
 
-    val annotatedText = remember(showDots, hours, minutes, remainingSeconds, color,colonColor) {
+    val annotatedText = remember(showDots, hours, minutes, remainingSeconds, color, colonColor, style) {
         buildAnnotatedString {
             if (hours > 0) {
-                withStyle(SpanStyle(color = color)) {
+                withStyle(style.toSpanStyle().copy(color = color)) {
                     append(String.format("%02d", hours))
                 }
-                withStyle(SpanStyle(color = colonColor)) {
+                withStyle(style.toSpanStyle().copy(color = colonColor)) {
                     append(":")
                 }
             }
-            withStyle(SpanStyle(color = color)) {
+            withStyle(style.toSpanStyle().copy(color = color)) {
                 append(String.format("%02d", minutes))
             }
-            withStyle(SpanStyle(color = colonColor)) {
+            withStyle(style.toSpanStyle().copy(color = colonColor)) {
                 append(":")
             }
-            withStyle(SpanStyle(color = color)) {
+            withStyle(style.toSpanStyle().copy(color = color)) {
                 append(String.format("%02d", remainingSeconds))
             }
         }

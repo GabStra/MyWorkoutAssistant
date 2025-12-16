@@ -21,12 +21,15 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScrollIndicator
+import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -56,7 +59,16 @@ fun ResumeWorkoutDialog(
                 val spec = rememberTransformationSpec()
 
                 ScreenScaffold(
-                    scrollState = state
+                    scrollState = state,
+                    scrollIndicator = {
+                        ScrollIndicator(
+                            state = state,
+                            colors = ScrollIndicatorDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.onBackground,
+                                trackColor = MediumDarkGray
+                            )
+                        )
+                    }
                 ) { contentPadding ->
                     TransformingLazyColumn(
                         contentPadding = contentPadding,

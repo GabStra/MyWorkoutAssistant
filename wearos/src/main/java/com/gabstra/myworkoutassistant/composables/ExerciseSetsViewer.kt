@@ -250,20 +250,20 @@ fun ExerciseSetsViewer(
             else -> false
         }
 
+        // When custom colors are provided, enforce them for ALL sets (previous, current, future)
+        // This is used when viewing previous or future exercises
+        // When null, use default logic that distinguishes between previous/current/future sets within the exercise
         val borderColor = customBorderColor ?: when{
             rowIndex == setIndex -> Orange // Current set: orange border
-            rowIndex < setIndex -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Previous set: subtle outline
+            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
             else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future set: subtle outline
         }
 
-        val backgroundColor = customBackgroundColor ?: when{
-            rowIndex == setIndex -> MaterialTheme.colorScheme.surfaceContainer // Current set: lifted background
-            else -> MaterialTheme.colorScheme.background // Previous/Future: black background
-        }
+        val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background // All sets: black background
 
         val textColor = customTextColor ?: when {
             rowIndex == setIndex -> Orange // Current set: orange text
-            rowIndex < setIndex -> MaterialTheme.colorScheme.outline // Previous set: outline color (MediumGray)
+            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground text
             else -> MaterialTheme.colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
         }
 

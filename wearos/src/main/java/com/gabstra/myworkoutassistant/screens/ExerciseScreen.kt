@@ -302,10 +302,11 @@ fun ExerciseScreen(
                                             verticalArrangement = Arrangement.spacedBy(5.dp)
                                         ) {
 
+                                            val baseStyle = MaterialTheme.typography.bodySmall
                                             val topLine = buildAnnotatedString {
                                                 fun pipe() {
                                                     withStyle(
-                                                        SpanStyle(
+                                                        baseStyle.toSpanStyle().copy(
                                                             color = LabelGray,
                                                             fontWeight = FontWeight.Thin
                                                         )
@@ -316,7 +317,7 @@ fun ExerciseScreen(
 
                                                 fun separator() {
                                                     withStyle(
-                                                        SpanStyle(
+                                                        baseStyle.toSpanStyle().copy(
                                                             color = LabelGray,
                                                             baselineShift = BaselineShift(0.18f)
                                                         )
@@ -325,14 +326,14 @@ fun ExerciseScreen(
                                                     }
                                                 }
 
-                                                withStyle(SpanStyle(color = LabelGray)) {
+                                                withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                                                     append("Ex: ")
                                                 }
                                                 append("${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
 
                                                 if (exerciseSetIds.size > 1) {
                                                     pipe()
-                                                    withStyle(SpanStyle(color = LabelGray)) {
+                                                    withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                                                         append("Set: ")
                                                     }
                                                     append("${setIndex.value + 1}/${exerciseSetIds.size}")
@@ -390,7 +391,7 @@ fun ExerciseScreen(
 
                                             Text(
                                                 text = topLine,
-                                                style = MaterialTheme.typography.bodySmall,
+                                                style = baseStyle,
                                                 textAlign = TextAlign.Center,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
@@ -406,6 +407,7 @@ fun ExerciseScreen(
                                                     )
                                             )
 
+                                            val bottomLineBaseStyle = MaterialTheme.typography.bodySmall
                                             val bottomLine = buildAnnotatedString {
                                                 var first = true
 
@@ -413,7 +415,7 @@ fun ExerciseScreen(
                                                 fun sep() {
                                                     if (!first) {
                                                         withStyle(
-                                                            SpanStyle(
+                                                            bottomLineBaseStyle.toSpanStyle().copy(
                                                                 color = LabelGray,
                                                                 fontWeight = FontWeight.Thin
                                                             )
@@ -426,7 +428,7 @@ fun ExerciseScreen(
 
                                                 if (equipment != null) {
                                                     sep()
-                                                    withStyle(SpanStyle(color = LabelGray)) {
+                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = LabelGray)) {
                                                         append("Eq: ")
                                                     }
                                                     append(equipment.name)
@@ -453,7 +455,7 @@ fun ExerciseScreen(
                                             if (bottomLine.text.isNotEmpty()) {
                                                 Text(
                                                     text = bottomLine,
-                                                    style = MaterialTheme.typography.bodySmall,
+                                                    style = bottomLineBaseStyle,
                                                     textAlign = TextAlign.Center,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
@@ -549,7 +551,6 @@ fun ExerciseScreen(
             handleOnAutomaticClose = {
                 viewModel.closeCustomDialog()
             },
-            holdTimeInMillis = 1000,
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)

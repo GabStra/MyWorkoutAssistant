@@ -35,6 +35,7 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -118,10 +119,11 @@ fun PageExercises(
                 overflow = TextOverflow.Ellipsis
             )
 
+            val baseStyle = MaterialTheme.typography.bodySmall
             val topLine = buildAnnotatedString {
                 fun pipe() {
                     withStyle(
-                        SpanStyle(
+                        baseStyle.toSpanStyle().copy(
                             color = LabelGray,
                             fontWeight = FontWeight.Thin
                         )
@@ -130,7 +132,7 @@ fun PageExercises(
                     }
                 }
                 fun separator() {
-                    withStyle(SpanStyle(
+                    withStyle(baseStyle.toSpanStyle().copy(
                         color = LabelGray,
                         baselineShift = BaselineShift(0.18f)
                     )) { // tweak 0.12–0.25f as needed
@@ -138,7 +140,7 @@ fun PageExercises(
                     }
                 }
 
-                withStyle(SpanStyle(color = LabelGray)) {
+                withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                     append("Ex: ")
                 }
                 append("${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
@@ -147,7 +149,7 @@ fun PageExercises(
                     if (currentExerciseSetIds.size > 1) {
                         pipe()
                         val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
-                        withStyle(SpanStyle(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                             append("Set: ")
                         }
                         append("${setIndex + 1}/${currentExerciseSetIds.size}")
@@ -204,7 +206,7 @@ fun PageExercises(
 
             Text(
                 text = topLine,
-                style = MaterialTheme.typography.bodySmall,
+                style = baseStyle,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -226,18 +228,19 @@ fun PageExercises(
                     else -> null
                 },
                 customBorderColor = when {
-                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.primary
-                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
-                    else -> null
-                },
-                customBackgroundColor = when {
-                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.background
-                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerLow
+                    // Previous exercise: enforce previous set colors for ALL sets
+                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
+                    // Future exercise: enforce future set colors for ALL sets
+                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    // Current exercise: use default logic (null = distinguish between previous/current/future sets)
                     else -> null
                 },
                 customTextColor = when {
-                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.primary //background.copy(0.75f)
+                    // Previous exercise: enforce previous set colors for ALL sets
+                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
+                    // Future exercise: enforce future set colors for ALL sets
                     selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    // Current exercise: use default logic (null = distinguish between previous/current/future sets)
                     else -> null
                 },
                 overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {

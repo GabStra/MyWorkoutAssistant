@@ -33,10 +33,10 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -181,10 +181,16 @@ fun ExerciseIndicator(
             val endA = startA + segmentArcAngle
 
             key(eid,indicatorProgress) {
+                val indicatorColor = when {
+                    isCurrent -> MaterialTheme.colorScheme.primary // Current exercise: bright gray/white
+                    indicatorProgress >= 1.0f -> MaterialTheme.colorScheme.onBackground // Previous exercise (completed): green
+                    indicatorProgress == 0.0f -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future exercise (not started): subtle gray
+                    else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
+                }
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
-                        indicatorColor = if(isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary,
-                        trackColor = MediumGray
+                        indicatorColor = indicatorColor,
+                        trackColor = MediumDarkGray
                     ),
                     progress = { indicatorProgress },
                     modifier = Modifier.fillMaxSize(),
@@ -197,28 +203,31 @@ fun ExerciseIndicator(
 
         // Edge dots (global)
         val minVisibleIndex = visibleIndices.first()
+        val maxVisibleIndex = visibleIndices.last()
         EdgeOverflowDots(
             angleDeg = startingAngle + (dotsReserve / 2),
             show = showLeftDots,
             dotAngleGapDeg = dotAngleGapDeg,
             color = when {
-                minVisibleIndex > currentGlobalIdx -> MaterialTheme.colorScheme.onBackground
-                minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary
-                else -> MediumGray
+                minVisibleIndex > currentGlobalIdx -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future exercises: subtle gray
+                minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: orange
+                else -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): green
             }
         )
         EdgeOverflowDots(
             angleDeg = startingAngle + totalArcAngle - (dotSpan + dotAngleGapDeg + paddingAngle) / 2f,
             show = showRightDots,
             dotAngleGapDeg = dotAngleGapDeg,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh
+            color = when {
+                maxVisibleIndex < currentGlobalIdx -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): green
+                else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future exercises: subtle gray
+            }
         )
     }
 
     Box(modifier = Modifier.fillMaxSize().padding(18.dp)) {
         if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && set.exerciseId != selectedExerciseId) {
             ShowRotatingIndicator(selectedExerciseId)
-            //ShowRotatingIndicator(set.exerciseId,MaterialTheme.colorScheme.surfaceContainerHigh)
         } else {
             ShowRotatingIndicator(set.exerciseId)
         }

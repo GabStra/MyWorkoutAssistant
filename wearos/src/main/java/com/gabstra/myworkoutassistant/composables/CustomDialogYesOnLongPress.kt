@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -36,6 +37,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -55,6 +57,11 @@ fun CustomDialogYesOnLongPress(
     holdTimeInMillis: Long = 0,
     onVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    val systemLongPressTimeout = LocalViewConfiguration.current.longPressTimeoutMillis
+    
+    // Use system default when holdTimeInMillis is 0, otherwise use provided value
+    val effectiveHoldTime = if (holdTimeInMillis > 0) holdTimeInMillis else systemLongPressTimeout
+
     var hasBeenShownOnce by remember { mutableStateOf(false) }
 
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
@@ -65,7 +72,11 @@ fun CustomDialogYesOnLongPress(
 
     var hasBeenPressedLongEnough by remember { mutableStateOf(false) }
 
-    val progress = (currentMillis.toFloat() / holdTimeInMillis.toFloat()).coerceAtMost(1f)
+    val progress = if (effectiveHoldTime > 0) {
+        (currentMillis.toFloat() / effectiveHoldTime.toFloat()).coerceAtMost(1f)
+    } else {
+        0f
+    }
 
     var startTime by remember { mutableLongStateOf(0) }
 
@@ -95,7 +106,7 @@ fun CustomDialogYesOnLongPress(
     }
 
     LaunchedEffect(currentMillis){
-        if (currentMillis >= holdTimeInMillis && !hasBeenPressedLongEnough) {
+        if (currentMillis >= effectiveHoldTime && !hasBeenPressedLongEnough) {
             hasBeenPressedLongEnough = true
             longPressCoroutineScope.coroutineContext.cancelChildren()
             coroutineScope.launch {
@@ -224,7 +235,7 @@ fun CustomDialogYesOnLongPress(
                     .fillMaxSize(),
                 strokeWidth = 4.dp,
                 indicatorColor = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                trackColor = MediumDarkGray
             )
         }
     }

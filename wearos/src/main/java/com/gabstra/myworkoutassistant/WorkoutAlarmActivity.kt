@@ -111,7 +111,6 @@ class WorkoutAlarmActivity : ComponentActivity() {
                 handleYesClick = onStart,
                 handleNoClick = onDismiss,
                 handleOnAutomaticClose = {},
-                holdTimeInMillis = 1000,
                 onVisibilityChange = {}
             )
         }

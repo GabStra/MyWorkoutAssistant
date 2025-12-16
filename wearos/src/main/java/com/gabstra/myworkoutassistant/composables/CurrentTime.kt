@@ -7,7 +7,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -44,15 +43,16 @@ fun CurrentTime() {
     val colonColor = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh
     val textColor = MaterialTheme.colorScheme.onBackground
 
-    val annotatedText = remember(showDots, currentTime.hour, currentTime.minute, colonColor, textColor) {
+    val baseStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
+    val annotatedText = remember(showDots, currentTime.hour, currentTime.minute, colonColor, textColor, baseStyle) {
         buildAnnotatedString {
-            withStyle(SpanStyle(color = textColor)) {
+            withStyle(baseStyle.toSpanStyle().copy(color = textColor)) {
                 append(String.format("%02d", currentTime.hour))
             }
-            withStyle(SpanStyle(color = colonColor)) {
+            withStyle(baseStyle.toSpanStyle().copy(color = colonColor)) {
                 append(":")
             }
-            withStyle(SpanStyle(color = textColor)) {
+            withStyle(baseStyle.toSpanStyle().copy(color = textColor)) {
                 append(String.format("%02d", currentTime.minute))
             }
         }

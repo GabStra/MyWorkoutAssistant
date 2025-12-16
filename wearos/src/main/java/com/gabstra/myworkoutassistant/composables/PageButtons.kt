@@ -13,12 +13,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.core.content.edit
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.CheckboxButton
+import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScrollIndicator
+import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
@@ -26,7 +30,9 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.presentation.theme.checkboxButtonColors
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -67,6 +73,15 @@ fun PageButtons(
     ScreenScaffold(
         modifier = Modifier.fillMaxSize(),
         scrollState = state,
+        scrollIndicator = {
+            ScrollIndicator(
+                state = state,
+                colors = ScrollIndicatorDefaults.colors(
+                    indicatorColor = MaterialTheme.colorScheme.onBackground,
+                    trackColor = MediumDarkGray
+                )
+            )
+        }
     ) { contentPadding ->
         TransformingLazyColumn(
             contentPadding = contentPadding,
@@ -161,9 +176,20 @@ fun PageButtons(
                         .fillMaxWidth()
                         .transformedHeight(this, spec).animateItem(),
                     transformation = SurfaceTransformation(spec),
-                    text = "Home",
+                    text = "Go Home",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
+                        
+                        // Save workout record (updatedState is already WorkoutState.Set)
+                        viewModel.upsertWorkoutRecord(updatedState.exerciseId, updatedState.setIndex)
+                        
+                        // Clear ongoing workout notification/icon
+                        cancelWorkoutInProgressNotification(context)
+                        
+                        // Clear workout in progress flag
+                        val prefs = context.getSharedPreferences("workout_state", android.content.Context.MODE_PRIVATE)
+                        prefs.edit { putBoolean("isWorkoutInProgress", false) }
+                        
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
@@ -191,7 +217,6 @@ fun PageButtons(
         handleOnAutomaticClose = {
             showGoBackDialog = false
         },
-        holdTimeInMillis = 1000,
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 viewModel.setDimming(false)

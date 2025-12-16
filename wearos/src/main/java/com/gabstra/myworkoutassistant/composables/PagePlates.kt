@@ -28,7 +28,6 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
@@ -108,16 +107,25 @@ fun PagePlates(
                 ) { (equipment.barWeight + (currentSideWeightTotal * 2)).round(2) }
 
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
+                    val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(SpanStyle(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                             append("Tot: ")
+                        }
+                        append(formatWeight(equipment.barWeight))
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                            append(" + ")
+                        }
+                        append(formatWeight(currentSideWeightTotal))
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                            append(" × 2 = ")
                         }
                         append(formatWeight(currentWeightTotal))
                     }
 
                     Text(
                         text = topLine,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = baseStyle,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier
@@ -133,20 +141,33 @@ fun PagePlates(
                             )
                     )
                 } else {
+                    val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(SpanStyle(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                             append("Tot: ")
                         }
-                        append(formatWeight(previousWeightTotal))
-                        withStyle(SpanStyle(color = LabelGray)) {
-                            append(" → ")
+                        append(formatWeight(equipment.barWeight))
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                            append(" + ")
+                        }
+                        append(formatWeight(previousSideWeightTotal))
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                            append(" × 2 → ")
+                        }
+                        append(formatWeight(equipment.barWeight))
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                            append(" + ")
+                        }
+                        append(formatWeight(currentSideWeightTotal))
+                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                            append(" × 2 = ")
                         }
                         append(formatWeight(currentWeightTotal))
                     }
 
                     Text(
                         text = topLine,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = baseStyle,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier
@@ -715,7 +736,7 @@ private fun BarbellVisualization(
             topLeft = Offset(0f, shaftY),
             size = Size(breakWidth, shaftDiameter),
             cornerRadiusPx = 0f, // Slight roundness
-            fillColor = barbellColor.copy(alpha = 0.7f) // Slightly dimmer to imply distance
+            fillColor = barbellColor.copy(alpha = 0.5f) // Slightly dimmer to imply distance
         )
 
         // Piece 2: The main shaft connecting to the collar

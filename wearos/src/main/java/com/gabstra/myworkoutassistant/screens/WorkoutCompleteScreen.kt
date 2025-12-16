@@ -178,7 +178,6 @@ fun WorkoutCompleteScreen(
             viewModel.closeCustomDialog()
             startCloseJob()
         },
-        holdTimeInMillis = 1000,
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 closeJob?.cancel()

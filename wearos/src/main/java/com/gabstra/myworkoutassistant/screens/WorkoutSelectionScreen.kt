@@ -51,6 +51,8 @@ import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OpenOnPhoneDialog
 import androidx.wear.compose.material3.OpenOnPhoneDialogDefaults
+import androidx.wear.compose.material3.ScrollIndicator
+import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
@@ -58,6 +60,7 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.openOnPhoneDialogCurvedText
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -198,6 +201,15 @@ fun WorkoutSelectionScreen(
 
     ScreenScaffold(
         scrollState = state,
+        scrollIndicator = {
+            ScrollIndicator(
+                state = state,
+                colors = ScrollIndicatorDefaults.colors(
+                    indicatorColor = MaterialTheme.colorScheme.onBackground,
+                    trackColor = MediumDarkGray
+                )
+            )
+        }
     ) { contentPadding ->
         Box {
             TransformingLazyColumn(
@@ -423,7 +435,6 @@ fun WorkoutSelectionScreen(
             handleOnAutomaticClose = {
                 showClearData = false
             },
-            holdTimeInMillis = 1000,
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)

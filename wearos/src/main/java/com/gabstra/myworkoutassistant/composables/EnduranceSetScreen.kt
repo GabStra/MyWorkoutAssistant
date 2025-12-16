@@ -415,7 +415,6 @@ fun EnduranceSetScreen (
                 startTimerJob()
             },
             handleOnAutomaticClose = {},
-            holdTimeInMillis = 1000,
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)

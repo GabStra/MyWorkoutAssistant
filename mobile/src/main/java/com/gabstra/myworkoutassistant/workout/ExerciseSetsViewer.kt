@@ -285,7 +285,7 @@ fun ExerciseSetsViewer(
                 markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
                 color = customColor
                     ?: when {
-                        rowIndex < setIndex -> MaterialTheme.colorScheme.onSurfaceVariant
+                        rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
                         rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
                         else -> MaterialTheme.colorScheme.onBackground
                     }

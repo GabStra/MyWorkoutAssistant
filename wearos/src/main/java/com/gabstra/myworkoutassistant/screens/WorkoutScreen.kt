@@ -144,7 +144,6 @@ fun WorkoutScreen(
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
         },
-        holdTimeInMillis = 1000,
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 viewModel.setDimming(false)

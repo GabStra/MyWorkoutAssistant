@@ -17,7 +17,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -25,9 +24,12 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScrollIndicator
+import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 /**
  * Converts tutorial text string to AnnotatedString with proper styling.
@@ -45,6 +47,7 @@ private fun formatTutorialText(
     titleFontSize: androidx.compose.ui.unit.TextUnit = MaterialTheme.typography.titleSmall.fontSize,
     bodyFontSize: androidx.compose.ui.unit.TextUnit = MaterialTheme.typography.bodySmall.fontSize
 ): AnnotatedString {
+    val baseStyle = MaterialTheme.typography.bodySmall
     return buildAnnotatedString {
         val sections = text.split("\n\n")
         
@@ -62,7 +65,7 @@ private fun formatTutorialText(
                 
                 // Add title with bold titleSmall style
                 withStyle(
-                    style = SpanStyle(
+                    style = baseStyle.toSpanStyle().copy(
                         fontWeight = FontWeight.Bold,
                         fontSize = titleFontSize
                     )
@@ -74,7 +77,7 @@ private fun formatTutorialText(
                 if (description.isNotEmpty()) {
                     append("\n")
                     withStyle(
-                        style = SpanStyle(
+                        style = baseStyle.toSpanStyle().copy(
                             fontSize = bodyFontSize
                         )
                     ) {
@@ -111,8 +114,19 @@ fun TutorialOverlay(
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center
         ) {
+            val scrollState = rememberScrollState()
             ScreenScaffold(
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                scrollState = scrollState,
+                scrollIndicator = {
+                    ScrollIndicator(
+                        state = scrollState,
+                        colors = ScrollIndicatorDefaults.colors(
+                            indicatorColor = MaterialTheme.colorScheme.onBackground,
+                            trackColor = MediumDarkGray
+                        )
+                    )
+                }
             ) {
                 Column(
                     modifier = Modifier
@@ -120,7 +134,6 @@ fun TutorialOverlay(
                         .padding(25.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    val scrollState = rememberScrollState()
                     Box(
                         modifier = Modifier
                             .weight(1f)

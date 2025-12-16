@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -443,7 +444,7 @@ fun RestScreen(
                 .padding(10.dp),
             colors = ProgressIndicatorDefaults.colors(
                 indicatorColor = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                trackColor = MediumDarkGray
             ),
             strokeWidth = 4.dp,
             startAngle = 125f,
@@ -480,7 +481,6 @@ fun RestScreen(
             viewModel.closeCustomDialog()
             startTimerJob()
         },
-        holdTimeInMillis = 1000,
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 viewModel.setDimming(false)

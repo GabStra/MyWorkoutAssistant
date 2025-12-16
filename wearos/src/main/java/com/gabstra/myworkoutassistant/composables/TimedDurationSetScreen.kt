@@ -387,7 +387,6 @@ fun TimedDurationSetScreen(
             },
             closeTimerInMillis = 5000,
             handleOnAutomaticClose = {},
-            holdTimeInMillis = 1000,
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)

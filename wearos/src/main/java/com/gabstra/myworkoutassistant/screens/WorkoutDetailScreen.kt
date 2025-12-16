@@ -29,6 +29,8 @@ import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScrollIndicator
+import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
@@ -39,6 +41,8 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import kotlinx.coroutines.delay
 
 @Composable
 fun WorkoutDetailScreen(
@@ -58,9 +62,30 @@ fun WorkoutDetailScreen(
     }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showStartConfirmationDialog by remember { mutableStateOf(false) }
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val hasExercises by viewModel.hasExercises.collectAsState()
+    val isCheckingWorkoutRecord by viewModel.isCheckingWorkoutRecord.collectAsState()
+    
+    // Track when checking started and ensure minimum display time to prevent flashing
+    var showLoading by remember(selectedWorkoutId) { mutableStateOf(true) }
+    var checkStartTime by remember(selectedWorkoutId) { mutableStateOf(System.currentTimeMillis()) }
+    
+    LaunchedEffect(selectedWorkoutId) {
+        showLoading = true
+        checkStartTime = System.currentTimeMillis()
+    }
+    
+    LaunchedEffect(isCheckingWorkoutRecord) {
+        if (!isCheckingWorkoutRecord) {
+            // Check completed, but ensure minimum display time (300ms) to prevent flashing
+            val elapsed = System.currentTimeMillis() - checkStartTime
+            val remainingTime = maxOf(0, 300 - elapsed)
+            delay(remainingTime)
+            showLoading = false
+        }
+    }
 
     val basePermissions = listOf(
         Manifest.permission.BODY_SENSORS,
@@ -103,6 +128,12 @@ fun WorkoutDetailScreen(
         }
     }
 
+    // Show loading screen while checking workout record (with minimum display time to prevent flashing)
+    if (showLoading || isCheckingWorkoutRecord) {
+        LoadingScreen(viewModel, text = "Loading")
+        return
+    }
+
     if(viewModel.executeStartWorkout.value == null){
         var marqueeEnabled by remember { mutableStateOf(false) }
         val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
@@ -110,6 +141,15 @@ fun WorkoutDetailScreen(
 
         ScreenScaffold(
             scrollState = state,
+            scrollIndicator = {
+                ScrollIndicator(
+                    state = state,
+                    colors = ScrollIndicatorDefaults.colors(
+                        indicatorColor = MaterialTheme.colorScheme.onBackground,
+                        trackColor = MediumDarkGray
+                    )
+                )
+            }
         ){ contentPadding ->
             TransformingLazyColumn(
                 contentPadding = contentPadding,
@@ -146,7 +186,11 @@ fun WorkoutDetailScreen(
                         transformation = SurfaceTransformation(spec),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
-                            permissionLauncherStart.launch(basePermissions.toTypedArray())
+                            if (hasWorkoutRecord) {
+                                showStartConfirmationDialog = true
+                            } else {
+                                permissionLauncherStart.launch(basePermissions.toTypedArray())
+                            }
                         },
                     ) {
                         Text(
@@ -185,7 +229,7 @@ fun WorkoutDetailScreen(
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec).animateItem(),
                             transformation = SurfaceTransformation(spec),
-                            text = "Delete record",
+                            text = "Delete paused workout",
                             onClick = {
                                 showDeleteDialog = true
                             }
@@ -235,8 +279,8 @@ fun WorkoutDetailScreen(
 
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,
-        title = "Resume Workout",
-        message = "Do you want to proceed?",
+        title = "Delete Paused Workout",
+        message = "Are you sure you want to delete this paused workout?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.deleteWorkoutRecord()
@@ -250,7 +294,32 @@ fun WorkoutDetailScreen(
         handleOnAutomaticClose = {
             showDeleteDialog = false
         },
-        holdTimeInMillis = 1000,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showStartConfirmationDialog,
+        title = "Start New Workout",
+        message = "An existing paused workout will be deleted. Continue?",
+        handleYesClick = {
+            hapticsViewModel.doGentleVibration()
+            showStartConfirmationDialog = false
+            permissionLauncherStart.launch(basePermissions.toTypedArray())
+        },
+        handleNoClick = {
+            showStartConfirmationDialog = false
+            hapticsViewModel.doGentleVibration()
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showStartConfirmationDialog = false
+        },
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 viewModel.setDimming(false)

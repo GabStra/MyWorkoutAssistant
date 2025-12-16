@@ -65,6 +65,7 @@ import com.gabstra.myworkoutassistant.screens.LoadingScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.google.android.gms.wearable.DataClient
@@ -584,7 +585,7 @@ fun WearApp(
                                 .fillMaxSize(),
                             strokeWidth = 4.dp,
                             indicatorColor = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            trackColor = MediumDarkGray,
                         )
 
                         LoadingScreen(appViewModel, "Syncing with phone")

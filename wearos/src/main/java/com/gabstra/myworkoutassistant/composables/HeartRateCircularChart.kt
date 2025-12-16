@@ -48,7 +48,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -62,7 +61,6 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
@@ -75,7 +73,7 @@ import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
-import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -166,7 +164,7 @@ fun HrStatusDialog(
                         PulsingHeartWithBpm(
                             modifier = Modifier.padding(bottom = 7.5.dp),
                             bpm = hr,
-                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MaterialTheme.colorScheme.surfaceContainerLow else colorsByZone[currentZone],
+                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumDarkGray else colorsByZone[currentZone],
                             size = 25.dp
                         )
                         Spacer(modifier = Modifier.width(5.dp))
@@ -174,14 +172,14 @@ fun HrStatusDialog(
                             modifier = Modifier.alignByBaseline(),
                             text = "$hr",
                             style = MaterialTheme.typography.numeralSmall,
-                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.onBackground
+                            color = if (hr == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             modifier = Modifier.alignByBaseline(),
                             text = "bpm",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (hr == 0) MaterialTheme.colorScheme.surfaceContainerLow else LabelGray
+                            color = if (hr == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
                         )
                     }
                 }
@@ -353,7 +351,7 @@ private fun HeartRateDisplay(
         PulsingHeartWithBpm(
             bpm = bpm,
             tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size)
-                MediumGray
+                MediumDarkGray
             else
                 colorsByZone[currentZone]
         )
@@ -363,7 +361,7 @@ private fun HeartRateDisplay(
                 modifier = Modifier.alignByBaseline(),
                 text = textToDisplay,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (bpm == 0) MediumGray else MaterialTheme.colorScheme.onBackground
+                color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
             )
             if (bpm != 0 && displayMode == 0) {
                 Spacer(modifier = Modifier.width(2.5.dp))
@@ -379,24 +377,25 @@ private fun HeartRateDisplay(
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Thin),
                     color = MaterialTheme.colorScheme.onBackground
                 )
+                val baseStyle = MaterialTheme.typography.labelMedium
                 Text(
                     modifier = Modifier.alignByBaseline(),
                     text = buildAnnotatedString {
                         val prefix = "Z: "
                         val rest = zoneLabel.removePrefix(prefix)
                         val restColor = if (currentZone < 0 || currentZone >= colorsByZone.size)
-                            MediumGray
+                            MediumDarkGray
                         else
                             MaterialTheme.colorScheme.onBackground
                         
-                        withStyle(SpanStyle(color = MaterialTheme.colorScheme.onBackground)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = MaterialTheme.colorScheme.onBackground)) {
                             append(prefix)
                         }
-                        withStyle(SpanStyle(color = restColor)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = restColor)) {
                             append(rest)
                         }
                     },
-                    style = MaterialTheme.typography.labelMedium
+                    style = baseStyle
                 )
             }
         }
@@ -631,7 +630,7 @@ private fun ZoneSegment(
         modifier = modifier,
         colors = ProgressIndicatorDefaults.colors(
             indicatorColor = colorsByZone[index],
-            trackColor = MediumGray
+            trackColor = MediumDarkGray
         ),
         strokeWidth = 4.dp,
         startAngle = startAngle,
@@ -855,7 +854,7 @@ private fun HeartRateView(
                     .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow,//if (inBounds) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh,
+                color = if (inBounds) MaterialTheme.colorScheme.primary else MediumDarkGray,
                 strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp

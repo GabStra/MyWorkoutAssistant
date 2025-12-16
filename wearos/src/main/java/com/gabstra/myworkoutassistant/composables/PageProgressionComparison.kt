@@ -35,7 +35,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -400,11 +399,12 @@ fun PageProgressionComparison(
 
         // Set number indicator (combined with Repeat and Plateau Detected if applicable)
         if (maxSets > 0) {
-            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, colorScheme.primary, colorScheme.tertiary) {
+            val baseStyle = MaterialTheme.typography.bodySmall
+            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, colorScheme.primary, colorScheme.tertiary, baseStyle) {
                 buildAnnotatedString {
                     fun pipe() {
                         withStyle(
-                            SpanStyle(
+                            baseStyle.toSpanStyle().copy(
                                 color = LabelGray,
                                 fontWeight = FontWeight.Thin
                             )
@@ -414,7 +414,7 @@ fun PageProgressionComparison(
                     }
                     if (isRetry) {
                         withStyle(
-                            style = SpanStyle(
+                            style = baseStyle.toSpanStyle().copy(
                                 fontWeight = FontWeight.Bold,
                                 color = colorScheme.primary
                             )
@@ -429,7 +429,7 @@ fun PageProgressionComparison(
 
             Text(
                 text = setIndicatorText,
-                style = MaterialTheme.typography.bodySmall,
+                style = baseStyle,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -493,27 +493,25 @@ fun PageProgressionComparison(
         }
 
         val rowIndex = currentSetIndex
-        val borderColor by remember(currentSetIndex, setIndex, colorScheme.outline) {
+        val borderColor by remember(currentSetIndex, setIndex, colorScheme.outline, colorScheme.onBackground) {
             derivedStateOf {
                 when {
                     rowIndex == setIndex -> Orange // Current set: orange border
-                    else -> colorScheme.outline.copy(alpha = 0.5f) // Previous/Future: subtle outline
+                    rowIndex < setIndex -> colorScheme.onBackground // Previous set: onBackground border
+                    else -> colorScheme.outline.copy(alpha = 0.5f) // Future set: subtle outline
                 }
             }
         }
-        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.background, colorScheme.surfaceContainer) {
+        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.background) {
             derivedStateOf {
-                when {
-                    rowIndex == setIndex -> colorScheme.surfaceContainer // Current set: lifted background
-                    else -> colorScheme.background // Previous/Future: black background
-                }
+                colorScheme.background // All sets: black background
             }
         }
-        val textColor by remember(currentSetIndex, setIndex, colorScheme.outline, colorScheme.surfaceContainerHigh) {
+        val textColor by remember(currentSetIndex, setIndex, colorScheme.surfaceContainerHigh) {
             derivedStateOf {
                 when {
                     rowIndex == setIndex -> Orange // Current set: orange text
-                    rowIndex < setIndex -> colorScheme.outline // Previous set: outline color (MediumGray)
+                    rowIndex < setIndex -> colorScheme.onBackground // Previous set: onBackground text
                     else -> colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
                 }
             }
