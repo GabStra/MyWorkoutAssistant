@@ -106,7 +106,7 @@ fun CustomDialogYesOnLongPress(
     }
 
     LaunchedEffect(currentMillis){
-        if (currentMillis >= effectiveHoldTime && !hasBeenPressedLongEnough) {
+        if (show && currentMillis >= effectiveHoldTime && !hasBeenPressedLongEnough) {
             hasBeenPressedLongEnough = true
             longPressCoroutineScope.coroutineContext.cancelChildren()
             coroutineScope.launch {

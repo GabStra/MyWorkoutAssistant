@@ -803,7 +803,9 @@ open class WorkoutViewModel(
 
         val exercisesWithEquipments = exercises.filter { it.enabled && it.equipmentId != null }
 
-        exercisesWithEquipments.map { exercise ->
+        // Fix: Ensure weightsByEquipment is populated BEFORE calling processExercise
+        // Use forEach instead of map to ensure eager evaluation
+        exercisesWithEquipments.forEach { exercise ->
             val equipment =
                 exercise.equipmentId?.let { equipmentId -> getEquipmentById(equipmentId) }
 
@@ -868,8 +870,16 @@ open class WorkoutViewModel(
             )
 
         val baseAvailableWeights = when (exercise.exerciseType) {
-            ExerciseType.WEIGHT -> exercise.equipmentId?.let { getWeightByEquipment(getEquipmentById(it)) }
-                ?: emptySet()
+            ExerciseType.WEIGHT -> {
+                // Fix: Ensure equipment weights are populated if missing
+                val equipment = exercise.equipmentId?.let { getEquipmentById(it) }
+                if (equipment != null && equipment is WeightLoadedEquipment && !weightsByEquipment.containsKey(equipment)) {
+                    val possibleCombinations = equipment.getWeightsCombinations()
+                    weightsByEquipment[equipment] = possibleCombinations
+                }
+                exercise.equipmentId?.let { getWeightByEquipment(getEquipmentById(it)) }
+                    ?: emptySet()
+            }
 
             ExerciseType.BODY_WEIGHT -> {
                 val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)

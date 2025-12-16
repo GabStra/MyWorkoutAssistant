@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -58,6 +59,11 @@ fun CustomDialogYesOnLongPress(
     holdTimeInMillis: Long = 0,
     onVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    val systemLongPressTimeout = LocalViewConfiguration.current.longPressTimeoutMillis
+
+    // Use system default when holdTimeInMillis is 0, otherwise use provided value
+    val effectiveHoldTime = if (holdTimeInMillis > 0) holdTimeInMillis else systemLongPressTimeout
+
     var hasBeenShownOnce by remember { mutableStateOf(false) }
 
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
@@ -70,7 +76,11 @@ fun CustomDialogYesOnLongPress(
 
     var hasBeenPressedLongEnough by remember { mutableStateOf(false) }
 
-    val progress = 1 - (currentMillis.toFloat() / holdTimeInMillis.toFloat()).coerceAtMost(1f)
+    val progress = if (effectiveHoldTime > 0) {
+        (currentMillis.toFloat() / effectiveHoldTime.toFloat()).coerceAtMost(1f)
+    } else {
+        0f
+    }
 
     var startTime by remember { mutableLongStateOf(0) }
 
@@ -100,7 +110,8 @@ fun CustomDialogYesOnLongPress(
     }
 
     LaunchedEffect(currentMillis){
-        if (currentMillis >= holdTimeInMillis && !hasBeenPressedLongEnough) {
+        // Only auto-trigger if dialog is shown, hold time is set, and threshold is reached
+        if (show && currentMillis >= effectiveHoldTime && !hasBeenPressedLongEnough) {
             hasBeenPressedLongEnough = true
             longPressCoroutineScope.coroutineContext.cancelChildren()
             coroutineScope.launch {

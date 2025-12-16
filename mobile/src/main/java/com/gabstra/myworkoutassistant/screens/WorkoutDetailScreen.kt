@@ -247,75 +247,62 @@ fun WorkoutDetailScreen(
     onGoBack: () -> Unit
 ) {
     val context = LocalContext.current
-
-    val basePermissions = emptyList<String>() /*listOf(
-        Manifest.permission.BODY_SENSORS,
-        Manifest.permission.BLUETOOTH_SCAN,
-        Manifest.permission.BLUETOOTH_CONNECT,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.POST_NOTIFICATIONS
-    )*/
-
-    val hasWorkoutRecord by workoutViewModel.hasWorkoutRecord.collectAsState()
+    
     val isCheckingWorkoutRecord by workoutViewModel.isCheckingWorkoutRecord.collectAsState()
+    val currentSelectedWorkoutId by workoutViewModel.selectedWorkoutId
+    val hasWorkoutRecordFlow by workoutViewModel.hasWorkoutRecord.collectAsState()
+    
+    // Stabilize hasWorkoutRecord to prevent blink - only update when check completes
+    // Use remember with workout.id as key to reset when workout changes
+    var hasWorkoutRecord by remember(workout.id) { mutableStateOf(false) }
     
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showStartConfirmationDialog by remember { mutableStateOf(false) }
     
-    // Track when checking started and ensure minimum display time to prevent flashing
-    var showLoading by remember(workout.id) { mutableStateOf(true) }
-    var checkStartTime by remember(workout.id) { mutableStateOf(System.currentTimeMillis()) }
+    // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
+    val startWorkoutDirectly = {
+        if(hasWorkoutRecord) workoutViewModel.deleteWorkoutRecord()
+        workoutViewModel.startWorkout()
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", true) }
+        appViewModel.setScreenData(ScreenData.Workout(workout.id))
+    }
+    
+    // Helper function to resume workout directly
+    val resumeWorkoutDirectly = {
+        workoutViewModel.resumeWorkoutFromRecord()
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", true) }
+        appViewModel.setScreenData(ScreenData.Workout(workout.id))
+    }
     
     LaunchedEffect(workout.id) {
-        showLoading = true
-        checkStartTime = System.currentTimeMillis()
-        workoutViewModel.setSelectedWorkoutId(workout.id)
+        // Only set if different to avoid unnecessary state updates and recompositions
+        if (currentSelectedWorkoutId != workout.id) {
+            workoutViewModel.setSelectedWorkoutId(workout.id)
+        }
     }
     
-    LaunchedEffect(isCheckingWorkoutRecord) {
-        if (!isCheckingWorkoutRecord) {
-            // Fix: Clear stale isWorkoutInProgress flag if there's no workout record
-            // This prevents auto-starting workouts when the flag persisted from a previous session
+    // Update hasWorkoutRecord only when check completes and workout ID matches
+    // This prevents UI from updating during the async check, eliminating the blink
+    LaunchedEffect(hasWorkoutRecordFlow, isCheckingWorkoutRecord, workout.id, currentSelectedWorkoutId) {
+        if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id) {
+            hasWorkoutRecord = hasWorkoutRecordFlow
+        }
+    }
+    
+    LaunchedEffect(hasWorkoutRecord) {
+        // Fix: Clear stale isWorkoutInProgress flag if there's no workout record
+        // This prevents auto-starting workouts when the flag persisted from a previous session
+        if (!hasWorkoutRecord) {
             val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
             val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-            if (isWorkoutInProgress && !hasWorkoutRecord) {
+            if (isWorkoutInProgress) {
                 prefs.edit { putBoolean("isWorkoutInProgress", false) }
             }
-            
-            // Check completed, but ensure minimum display time (300ms) to prevent flashing
-            val elapsed = System.currentTimeMillis() - checkStartTime
-            val remainingTime = maxOf(0, 300 - elapsed)
-            delay(remainingTime)
-            showLoading = false
         }
     }
 
-    val permissionLauncherStart = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        if (result.all { it.value }) {
-            if(hasWorkoutRecord) workoutViewModel.deleteWorkoutRecord()
-            workoutViewModel.setSelectedWorkoutId(workout.id)
-            workoutViewModel.startWorkout()
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            prefs.edit { putBoolean("isWorkoutInProgress", true) }
-
-            appViewModel.setScreenData(ScreenData.Workout(workout.id));
-        }
-    }
-
-    val permissionLauncherResume = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        if (result.all { it.value }) {
-            workoutViewModel.resumeWorkoutFromRecord()
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            prefs.edit { putBoolean("isWorkoutInProgress", true) }
-
-            appViewModel.setScreenData(ScreenData.Workout(workout.id))
-        }
-    }
 
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
@@ -581,23 +568,6 @@ fun WorkoutDetailScreen(
         )
     }
 
-    // Show loading screen while checking workout record (with minimum display time to prevent flashing)
-    if (showLoading || isCheckingWorkoutRecord) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                LoadingText(baseText = "Loading")
-            }
-        }
-        return
-    }
 
     Scaffold(
         topBar = {
@@ -774,7 +744,7 @@ fun WorkoutDetailScreen(
                                         if (hasWorkoutRecord) {
                                             showStartConfirmationDialog = true
                                         } else {
-                                            permissionLauncherStart.launch(basePermissions.toTypedArray())
+                                            startWorkoutDirectly()
                                         }
                                     },
                                 ) {
@@ -787,7 +757,8 @@ fun WorkoutDetailScreen(
                                 }
                             }
 
-                            if (hasWorkoutRecord) {
+                            // Only show resume/delete buttons after check completes and if there's a workout record
+                            if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id && hasWorkoutRecord) {
                                 Spacer(Modifier.height(Spacing.sm))
                                 Row(
                                     modifier = Modifier
@@ -797,7 +768,7 @@ fun WorkoutDetailScreen(
                                 ){
                                     Button(
                                         onClick = {
-                                            permissionLauncherResume.launch(basePermissions.toTypedArray())
+                                            resumeWorkoutDirectly()
                                         },
                                     ) {
                                         Text(
@@ -829,7 +800,7 @@ fun WorkoutDetailScreen(
                                     }
                                 }
                             }
-
+                                
                             Spacer(Modifier.height(Spacing.md))
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
@@ -1002,7 +973,7 @@ fun WorkoutDetailScreen(
         message = "An existing paused workout will be deleted. Continue?",
         handleYesClick = {
             showStartConfirmationDialog = false
-            permissionLauncherStart.launch(basePermissions.toTypedArray())
+            startWorkoutDirectly()
         },
         handleNoClick = {
             showStartConfirmationDialog = false

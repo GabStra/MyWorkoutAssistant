@@ -15,9 +15,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,7 +27,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -65,10 +66,8 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
-import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.saveWorkoutStoreToDownloads
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -232,14 +231,16 @@ fun MyWorkoutAssistantNavHost(
 ) {
     val context = LocalContext.current
 
-    val localContext = LocalContext.current
-    workoutViewModel.initExerciseHistoryDao(localContext)
-    workoutViewModel.initWorkoutHistoryDao(localContext)
-    workoutViewModel.initWorkoutScheduleDao(localContext)
-    workoutViewModel.initWorkoutRecordDao(localContext)
-    workoutViewModel.initExerciseInfoDao(localContext)
-    workoutViewModel.initExerciseSessionProgressionDao(localContext)
-    workoutViewModel.initWorkoutStoreRepository(workoutStoreRepository)
+    // Initialize DAOs only once, not on every recomposition
+    LaunchedEffect(Unit) {
+        workoutViewModel.initExerciseHistoryDao(context)
+        workoutViewModel.initWorkoutHistoryDao(context)
+        workoutViewModel.initWorkoutScheduleDao(context)
+        workoutViewModel.initWorkoutRecordDao(context)
+        workoutViewModel.initExerciseInfoDao(context)
+        workoutViewModel.initExerciseSessionProgressionDao(context)
+        workoutViewModel.initWorkoutStoreRepository(workoutStoreRepository)
+    }
 
     val systemUiController = rememberSystemUiController()
     val backgroundColor = MaterialTheme.colorScheme.background
@@ -503,13 +504,17 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
+    // Collect workouts once at the parent level to avoid recomposition cascades inside AnimatedContent
+    val workoutsForNavigation by appViewModel.workoutsFlow.collectAsState()
+
     AnimatedContent(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
         targetState = appViewModel.currentScreenData,
         transitionSpec = {
-            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+            // Use instant transition to eliminate black screen during fade
+            EnterTransition.None togetherWith ExitTransition.None
         }, label = ""
     ) { currentScreen ->
         when (currentScreen) {
@@ -764,43 +769,49 @@ fun MyWorkoutAssistantNavHost(
 
             is ScreenData.WorkoutDetail -> {
                 val screenData = currentScreen as ScreenData.WorkoutDetail
-                val workouts by appViewModel.workoutsFlow.collectAsState()
+                // Use pre-collected workouts from parent scope to avoid recomposition
+                val workouts = workoutsForNavigation
 
-                var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+                val selectedWorkout = remember(screenData.workoutId, workouts) {
+                    var currentWorkout = workouts.find { it.id == screenData.workoutId }!!
+                    
+                    while(!currentWorkout.isActive){
+                        if(currentWorkout.nextVersionId == null){
+                            // Active workout not found - will navigate back via LaunchedEffect
+                            break
+                        }
 
-                var currentWorkout = selectedWorkout
+                        val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }
+                        if(nextWorkout == null){
+                            // Active workout not found - will navigate back via LaunchedEffect
+                            break
+                        }
 
-
-                while(!currentWorkout.isActive){
-                    if(currentWorkout.nextVersionId == null){
-                        //Toast.makeText(context, "Active workout not found", Toast.LENGTH_SHORT).show()
-                        appViewModel.goBack()
-                        break
+                        currentWorkout = nextWorkout
                     }
-
-                    val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }
-
-                    if(nextWorkout == null){
-                        //Toast.makeText(context, "Active workout not found", Toast.LENGTH_SHORT).show()
-                        appViewModel.goBack()
-                        break
-                    }
-
-                    currentWorkout = nextWorkout
+                    
+                    currentWorkout
                 }
 
-                selectedWorkout = currentWorkout
+                LaunchedEffect(selectedWorkout.isActive, selectedWorkout.nextVersionId) {
+                    if (!selectedWorkout.isActive && selectedWorkout.nextVersionId == null) {
+                        appViewModel.goBack()
+                    }
+                }
 
-                WorkoutDetailScreen(
-                    appViewModel,
-                    workoutViewModel,
-                    workoutHistoryDao,
-                    workoutRecordDao,
-                    setHistoryDao,
-                    exerciseInfoDao,
-                    selectedWorkout,
-                ) {
-                    appViewModel.goBack()
+                // Use key() to stabilize the composable and prevent recreation on parent recomposition
+                key(screenData.workoutId) {
+                    WorkoutDetailScreen(
+                        appViewModel,
+                        workoutViewModel,
+                        workoutHistoryDao,
+                        workoutRecordDao,
+                        setHistoryDao,
+                        exerciseInfoDao,
+                        selectedWorkout,
+                    ) {
+                        appViewModel.goBack()
+                    }
                 }
 
             }
