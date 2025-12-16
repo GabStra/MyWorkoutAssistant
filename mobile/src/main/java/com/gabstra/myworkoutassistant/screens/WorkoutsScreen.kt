@@ -96,6 +96,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.workout.MuscleHeatMap
 import com.gabstra.myworkoutassistant.workout.MuscleViewMode
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -129,6 +130,7 @@ fun Menu(
     onViewErrorLogs: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var showClearIncompleteDialog by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier.wrapContentSize(Alignment.TopEnd)
@@ -191,7 +193,7 @@ fun Menu(
                 DropdownMenuItem(
                     text = { Text("Clear all incomplete workouts") },
                     onClick = {
-                        onClearUnfinishedWorkouts()
+                        showClearIncompleteDialog = true
                         expanded = false
                     }
                 )
@@ -220,6 +222,22 @@ fun Menu(
         }
     }
 
+    CustomDialogYesOnLongPress(
+        show = showClearIncompleteDialog,
+        title = "Clear All Incomplete Workouts",
+        message = "Are you sure you want to clear all incomplete workouts? This action cannot be undone.",
+        handleYesClick = {
+            onClearUnfinishedWorkouts()
+            showClearIncompleteDialog = false
+        },
+        handleNoClick = {
+            showClearIncompleteDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showClearIncompleteDialog = false
+        }
+    )
 }
 
 /**

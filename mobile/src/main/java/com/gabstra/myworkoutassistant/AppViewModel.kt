@@ -127,6 +127,7 @@ class AppViewModel() : ViewModel() {
     }
 
     fun setScreenData(screenData: ScreenData,skipStack: Boolean = false) {
+        // Note: Cannot log here without context - logging moved to composables
         currentScreenData = screenData
         if(!skipStack){
             screenDataStack.add(screenData)

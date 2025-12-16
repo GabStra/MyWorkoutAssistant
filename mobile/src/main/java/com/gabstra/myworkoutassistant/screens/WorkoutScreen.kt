@@ -64,6 +64,18 @@ fun WorkoutScreen(
     val context = LocalContext.current
     val workoutState by workoutViewModel.workoutState.collectAsState()
     val selectedWorkout by workoutViewModel.selectedWorkout
+    val isPaused by workoutViewModel.isPaused
+    val hasWorkoutRecord by workoutViewModel.hasWorkoutRecord.collectAsState()
+    
+    // Fix: If WorkoutScreen is shown but there's no workout record and flag is stale, navigate back
+    LaunchedEffect(hasWorkoutRecord) {
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+        if (isWorkoutInProgress && !hasWorkoutRecord) {
+            prefs.edit { putBoolean("isWorkoutInProgress", false) }
+            appViewModel.goBack()
+        }
+    }
 
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val isCustomDialogOpen by workoutViewModel.isCustomDialogOpen.collectAsState()
@@ -163,7 +175,7 @@ fun WorkoutScreen(
                             }
                         }
 
-                        LaunchedEffect(state.dataLoaded, currentMillis) {
+                        LaunchedEffect(state.dataLoaded, currentMillis, isPaused, showWorkoutInProgressDialog) {
                             if (hasTriggeredNextState) {
                                 return@LaunchedEffect
                             }
@@ -171,7 +183,14 @@ fun WorkoutScreen(
                             val isReady =
                                 state.dataLoaded && currentMillis >= 3000
 
-                            if (isReady) {
+                            // Check if workout was explicitly started before auto-progressing
+                            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+
+                            // Only auto-start if workout was explicitly started (isWorkoutInProgress is true)
+                            // AND there's a workout record (to prevent auto-start from stale flags)
+                            // and workout is not paused and exit dialog is not shown
+                            if (isReady && isWorkoutInProgress && hasWorkoutRecord && !isPaused && !showWorkoutInProgressDialog) {
                                 hasTriggeredNextState = true
 
                                 workoutViewModel.lightScreenUp()

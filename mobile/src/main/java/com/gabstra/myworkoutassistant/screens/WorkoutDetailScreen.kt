@@ -97,7 +97,10 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.workout.LoadingText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -254,17 +257,63 @@ fun WorkoutDetailScreen(
         Manifest.permission.POST_NOTIFICATIONS
     )*/
 
+    val hasWorkoutRecord by workoutViewModel.hasWorkoutRecord.collectAsState()
+    val isCheckingWorkoutRecord by workoutViewModel.isCheckingWorkoutRecord.collectAsState()
+    
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showStartConfirmationDialog by remember { mutableStateOf(false) }
+    
+    // Track when checking started and ensure minimum display time to prevent flashing
+    var showLoading by remember(workout.id) { mutableStateOf(true) }
+    var checkStartTime by remember(workout.id) { mutableStateOf(System.currentTimeMillis()) }
+    
+    LaunchedEffect(workout.id) {
+        showLoading = true
+        checkStartTime = System.currentTimeMillis()
+        workoutViewModel.setSelectedWorkoutId(workout.id)
+    }
+    
+    LaunchedEffect(isCheckingWorkoutRecord) {
+        if (!isCheckingWorkoutRecord) {
+            // Fix: Clear stale isWorkoutInProgress flag if there's no workout record
+            // This prevents auto-starting workouts when the flag persisted from a previous session
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+            if (isWorkoutInProgress && !hasWorkoutRecord) {
+                prefs.edit { putBoolean("isWorkoutInProgress", false) }
+            }
+            
+            // Check completed, but ensure minimum display time (300ms) to prevent flashing
+            val elapsed = System.currentTimeMillis() - checkStartTime
+            val remainingTime = maxOf(0, 300 - elapsed)
+            delay(remainingTime)
+            showLoading = false
+        }
+    }
+
     val permissionLauncherStart = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         if (result.all { it.value }) {
-            //if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
+            if(hasWorkoutRecord) workoutViewModel.deleteWorkoutRecord()
             workoutViewModel.setSelectedWorkoutId(workout.id)
             workoutViewModel.startWorkout()
             val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
             prefs.edit { putBoolean("isWorkoutInProgress", true) }
 
             appViewModel.setScreenData(ScreenData.Workout(workout.id));
+        }
+    }
+
+    val permissionLauncherResume = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.all { it.value }) {
+            workoutViewModel.resumeWorkoutFromRecord()
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+
+            appViewModel.setScreenData(ScreenData.Workout(workout.id))
         }
     }
 
@@ -532,6 +581,24 @@ fun WorkoutDetailScreen(
         )
     }
 
+    // Show loading screen while checking workout record (with minimum display time to prevent flashing)
+    if (showLoading || isCheckingWorkoutRecord) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                LoadingText(baseText = "Loading")
+            }
+        }
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -704,7 +771,11 @@ fun WorkoutDetailScreen(
                             ){
                                 Button(
                                     onClick = {
-                                        permissionLauncherStart.launch(basePermissions.toTypedArray())
+                                        if (hasWorkoutRecord) {
+                                            showStartConfirmationDialog = true
+                                        } else {
+                                            permissionLauncherStart.launch(basePermissions.toTypedArray())
+                                        }
                                     },
                                 ) {
                                     Text(
@@ -713,6 +784,49 @@ fun WorkoutDetailScreen(
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.background
                                     )
+                                }
+                            }
+
+                            if (hasWorkoutRecord) {
+                                Spacer(Modifier.height(Spacing.sm))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ){
+                                    Button(
+                                        onClick = {
+                                            permissionLauncherResume.launch(basePermissions.toTypedArray())
+                                        },
+                                    ) {
+                                        Text(
+                                            text = "Resume",
+                                            textAlign = TextAlign.Center,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.background
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(Spacing.sm))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ){
+                                    Button(
+                                        onClick = {
+                                            showDeleteDialog = true
+                                        },
+                                    ) {
+                                        Text(
+                                            text = "Delete paused workout",
+                                            textAlign = TextAlign.Center,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.background
+                                        )
+                                    }
                                 }
                             }
 
@@ -865,6 +979,39 @@ fun WorkoutDetailScreen(
                 )
             }
 
+    CustomDialogYesOnLongPress(
+        show = showDeleteDialog,
+        title = "Delete Paused Workout",
+        message = "Are you sure you want to delete this paused workout?",
+        handleYesClick = {
+            workoutViewModel.deleteWorkoutRecord()
+            showDeleteDialog = false
+        },
+        handleNoClick = {
+            showDeleteDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showDeleteDialog = false
+        }
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showStartConfirmationDialog,
+        title = "Start New Workout",
+        message = "An existing paused workout will be deleted. Continue?",
+        handleYesClick = {
+            showStartConfirmationDialog = false
+            permissionLauncherStart.launch(basePermissions.toTypedArray())
+        },
+        handleNoClick = {
+            showStartConfirmationDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showStartConfirmationDialog = false
+        }
+    )
     }
 }
 
