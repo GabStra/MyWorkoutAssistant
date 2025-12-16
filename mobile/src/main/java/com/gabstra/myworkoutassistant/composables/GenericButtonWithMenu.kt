@@ -66,7 +66,8 @@ fun GenericButtonWithMenu(
 
             Button(
                 colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background
+                    contentColor = MaterialTheme.colorScheme.background,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 ),
                 onClick = { expanded = !expanded },
                 enabled = enabled

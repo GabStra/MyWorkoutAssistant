@@ -7,11 +7,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.wear.compose.material3.CheckboxButtonColors
 import androidx.wear.compose.material3.ColorScheme
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LabelGray
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
@@ -42,7 +42,7 @@ val darkScheme = ColorScheme(
 
     surfaceContainerLow = MediumDarkerGray,
     surfaceContainer = MediumDarkGray,
-    surfaceContainerHigh = MediumGray,
+    surfaceContainerHigh = MediumLightGray,
     onSurface =  LighterGray, //Color(210, 210, 210),
     onSurfaceVariant = MediumLightGray,
     outline = MediumGray,
@@ -69,6 +69,42 @@ data class ColorFamily(
 val unspecified_scheme = ColorFamily(
     Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified
 )
+
+@Composable
+fun checkboxButtonColors(): CheckboxButtonColors {
+    val colorScheme = MaterialTheme.colorScheme
+    return CheckboxButtonColors(
+        // Checked state colors
+        checkedBoxColor = colorScheme.primary, // Orange - visible
+        checkedCheckmarkColor = colorScheme.primaryContainer, // Light gray for visibility on orange background
+        checkedContainerColor = colorScheme.primaryContainer, // MediumDarkerGray
+        checkedContentColor = colorScheme.onPrimaryContainer, // LighterGray
+        checkedIconColor = colorScheme.primary, // Orange
+        checkedSecondaryContentColor = colorScheme.onPrimaryContainer, // LighterGray
+
+        // Unchecked state colors
+        uncheckedBoxColor = MediumLightGray, // Lighter than container for visibility
+        uncheckedContainerColor = colorScheme.surfaceContainer, // MediumGray
+        uncheckedContentColor = colorScheme.onSurface, // LighterGray
+        uncheckedIconColor = colorScheme.primary, // Orange
+        uncheckedSecondaryContentColor = colorScheme.onSurfaceVariant, // MediumLightGray
+
+        // Disabled checked state colors
+        disabledCheckedBoxColor = colorScheme.onSurface.copy(alpha = 0.12f),
+        disabledCheckedCheckmarkColor = colorScheme.background.copy(alpha = 0.38f),
+        disabledCheckedContainerColor = colorScheme.onSurface.copy(alpha = 0.12f),
+        disabledCheckedContentColor = colorScheme.onSurface,
+        disabledCheckedIconColor = colorScheme.onSurface,
+        disabledCheckedSecondaryContentColor = colorScheme.onSurface,
+
+        // Disabled unchecked state colors
+        disabledUncheckedBoxColor = colorScheme.onSurface.copy(alpha = 0.12f),
+        disabledUncheckedContainerColor = colorScheme.onSurface.copy(alpha = 0.12f),
+        disabledUncheckedContentColor = colorScheme.onSurface,
+        disabledUncheckedIconColor = colorScheme.onSurface,
+        disabledUncheckedSecondaryContentColor = colorScheme.onSurface
+    )
+}
 
 @Composable
 fun MyWorkoutAssistantTheme(

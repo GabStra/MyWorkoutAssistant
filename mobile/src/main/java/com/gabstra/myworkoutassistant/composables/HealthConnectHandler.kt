@@ -75,7 +75,10 @@ fun HealthConnectHandler(
         ) {
             Button(
                 modifier = Modifier.padding(10.dp),
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                colors = ButtonDefaults.buttonColors(
+                    contentColor = MaterialTheme.colorScheme.background,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                ),
                 onClick = {
                     try {
                         permissionLauncher.launch(requiredPermissions.toTypedArray())

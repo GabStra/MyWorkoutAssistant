@@ -568,7 +568,10 @@ fun WorkoutsScreen(
                             }
                             Button(
                                 modifier = Modifier.padding(5.dp),
-                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                colors = ButtonDefaults.buttonColors(
+                                    contentColor = MaterialTheme.colorScheme.background,
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                ),
                                 onClick = {
                                     for (workout in selectedWorkouts) {
                                         appViewModel.updateWorkoutOld(
@@ -582,7 +585,10 @@ fun WorkoutsScreen(
                                 Text("Enable")
                             }
                             Button(
-                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                colors = ButtonDefaults.buttonColors(
+                                    contentColor = MaterialTheme.colorScheme.background,
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                ),
                                 modifier = Modifier.padding(5.dp),
                                 onClick = {
                                     for (workout in selectedWorkouts) {
@@ -1139,7 +1145,10 @@ fun WorkoutsScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Button(
-                                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                                colors = ButtonDefaults.buttonColors(
+                                    contentColor = MaterialTheme.colorScheme.background,
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                ),
                                                 onClick = {
                                                     appViewModel.setScreenData(ScreenData.NewWorkout());
                                                 },
@@ -1195,7 +1204,10 @@ fun WorkoutsScreen(
                                             verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
                                         ) {
                                             Button(
-                                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                                colors = ButtonDefaults.buttonColors(
+                                    contentColor = MaterialTheme.colorScheme.background,
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                ),
                                                 onClick = {
                                                     appViewModel.setScreenData(ScreenData.NewWorkout());
                                                 },

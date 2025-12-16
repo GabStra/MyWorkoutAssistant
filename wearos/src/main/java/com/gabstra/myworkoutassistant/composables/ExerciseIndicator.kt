@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
+import com.gabstra.myworkoutassistant.shared.MediumGray
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -183,7 +184,7 @@ fun ExerciseIndicator(
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
                         indicatorColor = if(isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        trackColor = MediumGray
                     ),
                     progress = { indicatorProgress },
                     modifier = Modifier.fillMaxSize(),
@@ -203,20 +204,21 @@ fun ExerciseIndicator(
             color = when {
                 minVisibleIndex > currentGlobalIdx -> MaterialTheme.colorScheme.onBackground
                 minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                else -> MediumGray
             }
         )
         EdgeOverflowDots(
             angleDeg = startingAngle + totalArcAngle - (dotSpan + dotAngleGapDeg + paddingAngle) / 2f,
             show = showRightDots,
-            dotAngleGapDeg = dotAngleGapDeg
+            dotAngleGapDeg = dotAngleGapDeg,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh
         )
     }
 
     Box(modifier = Modifier.fillMaxSize().padding(18.dp)) {
         if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && set.exerciseId != selectedExerciseId) {
             ShowRotatingIndicator(selectedExerciseId)
-            ShowRotatingIndicator(set.exerciseId,MaterialTheme.colorScheme.surfaceContainerHigh)
+            //ShowRotatingIndicator(set.exerciseId,MaterialTheme.colorScheme.surfaceContainerHigh)
         } else {
             ShowRotatingIndicator(set.exerciseId)
         }
@@ -404,7 +406,7 @@ private fun EdgeOverflowDots(
     radialGap: Dp = 0.dp,      // extra distance outside the ring
     dotSize: Dp = 3.dp,        // dot diameter
     dotAngleGapDeg: Float = 6f,
-    color: Color = MaterialTheme.colorScheme.surfaceContainerHigh
+    color: Color
 ) {
     if (!show) return
     Canvas(Modifier.fillMaxSize()) {

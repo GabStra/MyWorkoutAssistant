@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -291,11 +292,27 @@ fun PageProgressionComparison(
         mutableStateOf<List<WorkoutState.Set>>(emptyList())
     }
     val scope = rememberCoroutineScope()
+    
+    // Track loading state - initialize to true when page becomes visible
+    // Will be set to false immediately if data already exists
+    var isLoading by remember(exercise.id, isPageVisible) {
+        mutableStateOf(isPageVisible)
+    }
 
-    // Get previous sets from lastSessionWorkout - only when page is visible
+    // Get previous sets from lastSessionWorkout - only when page is visible and data is not already loaded
     LaunchedEffect(exercise.id, isPageVisible) {
-        if (!isPageVisible) return@LaunchedEffect
+        if (!isPageVisible) {
+            isLoading = false
+            return@LaunchedEffect
+        }
         
+        // If data is already loaded for this exercise, no need to reload
+        if (previousSetStates.value.isNotEmpty()) {
+            isLoading = false
+            return@LaunchedEffect
+        }
+        
+        isLoading = true
         scope.launch {
             withContext(Dispatchers.IO) {
                 val lastSessionWorkout = viewModel.lastSessionWorkout
@@ -314,6 +331,7 @@ fun PageProgressionComparison(
                     }
                 }
             }
+            isLoading = false
         }
     }
 
@@ -346,6 +364,18 @@ fun PageProgressionComparison(
     }
 
     val colorScheme = MaterialTheme.colorScheme
+
+    // Show loading screen until data is ready or when page is not visible
+    if (isLoading || !isPageVisible) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            LoadingText(baseText = "Loading")
+        }
+        return
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -459,12 +489,20 @@ fun PageProgressionComparison(
         }
 
         val rowIndex = currentSetIndex
-        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.onBackground, colorScheme.surfaceContainerHigh) {
+        val borderColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.onBackground, colorScheme.surfaceContainerHigh) {
             derivedStateOf {
                 when {
                     rowIndex < setIndex -> colorScheme.primary
                     rowIndex == setIndex -> colorScheme.onBackground
                     else -> colorScheme.surfaceContainerHigh
+                }
+            }
+        }
+        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.background, colorScheme.surfaceContainerLow) {
+            derivedStateOf {
+                when {
+                    rowIndex <= setIndex -> colorScheme.background
+                    else -> colorScheme.surfaceContainerLow
                 }
             }
         }
@@ -493,7 +531,8 @@ fun PageProgressionComparison(
                         .fillMaxSize()
                         .height(25.dp)
                         .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .border(BorderStroke(1.dp, borderColor), shape)
+                        .background(backgroundColor, shape)
                         .clip(shape),
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
@@ -509,7 +548,8 @@ fun PageProgressionComparison(
                         .fillMaxSize()
                         .height(25.dp)
                         .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .border(BorderStroke(1.dp, borderColor), shape)
+                        .background(backgroundColor, shape)
                         .clip(shape)
                 ) {
                     PlaceholderSetRow(
@@ -610,7 +650,8 @@ fun PageProgressionComparison(
                         .fillMaxSize()
                         .height(25.dp)
                         .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .border(BorderStroke(1.dp, borderColor), shape)
+                        .background(backgroundColor, shape)
                         .clip(shape),
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
@@ -626,7 +667,8 @@ fun PageProgressionComparison(
                         .fillMaxSize()
                         .height(25.dp)
                         .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, backgroundColor), shape)
+                        .border(BorderStroke(1.dp, borderColor), shape)
+                        .background(backgroundColor, shape)
                         .clip(shape)
                 ) {
                     PlaceholderSetRow(

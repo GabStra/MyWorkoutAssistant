@@ -240,12 +240,7 @@ fun ProgressionSection(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalColumnScrollbar(
-                            scrollState = scrollState,
-                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
-                            enableTopFade = false,
-                            enableBottomFade = false
-                        )
+                        .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState),
                 ) {
                     progressionData?.forEachIndexed { index, info ->

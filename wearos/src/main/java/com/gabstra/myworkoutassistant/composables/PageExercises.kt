@@ -225,9 +225,14 @@ fun PageExercises(
                     selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> false
                     else -> null
                 },
-                customBackgroundColor = when {
+                customBorderColor = when {
                     selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.primary
                     selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    else -> null
+                },
+                customBackgroundColor = when {
+                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.background
+                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerLow
                     else -> null
                 },
                 customTextColor = when {

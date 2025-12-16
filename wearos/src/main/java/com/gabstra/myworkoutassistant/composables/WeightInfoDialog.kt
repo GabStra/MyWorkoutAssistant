@@ -62,10 +62,7 @@ fun WeightInfoDialog(
             ) {
                 Column(
                     modifier = Modifier
-                        .verticalColumnScrollbar(
-                            scrollState = scrollState,
-                            scrollBarColor = MaterialTheme.colorScheme.onBackground
-                        )
+                        .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp),

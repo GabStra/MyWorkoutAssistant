@@ -217,6 +217,7 @@ fun ExerciseSetsViewer(
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
     customMarkAsDone: Boolean? = null,
+    customBorderColor: Color? = null,
     customBackgroundColor: Color? = null,
     customTextColor: Color? = null,
     overrideSetIndex: Int? = null
@@ -257,10 +258,15 @@ fun ExerciseSetsViewer(
         setStateForThisRow:  WorkoutState.Set,
         rowIndex: Int,
     ) {
-        val backgroundColor = customBackgroundColor ?: when{
+        val borderColor = customBorderColor ?: when{
             rowIndex < setIndex -> MaterialTheme.colorScheme.primary
             rowIndex == setIndex ->  MaterialTheme.colorScheme.onBackground
             else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+
+        val backgroundColor = customBackgroundColor ?: when{
+            rowIndex <= setIndex -> MaterialTheme.colorScheme.background
+            else -> MaterialTheme.colorScheme.surfaceContainerLow
         }
 
         Row(
@@ -276,8 +282,9 @@ fun ExerciseSetsViewer(
                 modifier = Modifier
                     .height(25.dp)
                     .padding(bottom = 2.5.dp)
-                    .border(BorderStroke(1.dp, backgroundColor), shape)
-                    .clip(shape),
+                    .border(BorderStroke(1.dp, borderColor), shape)
+                    .background(backgroundColor,shape),
+                    //.clip(),
                 hapticsViewModel = hapticsViewModel,
                 viewModel = viewModel,
                 setState = setStateForThisRow,
@@ -333,10 +340,7 @@ fun ExerciseSetsViewer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalColumnScrollbar(
-                            scrollState = scrollState,
-                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
-                        )
+                        .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState)
                 ) {
                     exerciseSetStates.forEachIndexed { index, setState ->
@@ -371,10 +375,7 @@ fun ExerciseSetsViewer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalColumnScrollbar(
-                            scrollState = scrollState,
-                            scrollBarColor = MaterialTheme.colorScheme.onBackground,
-                        )
+                        .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState)
                 ) {
                     exerciseSetStates.forEachIndexed { index, setState ->

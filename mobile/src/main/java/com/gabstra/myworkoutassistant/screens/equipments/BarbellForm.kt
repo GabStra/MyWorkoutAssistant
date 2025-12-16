@@ -219,7 +219,10 @@ fun BarbellForm(
 
             // Submit
             Button(
-                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                colors = ButtonDefaults.buttonColors(
+                    contentColor = MaterialTheme.colorScheme.background,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                ),
                 onClick = {
                     val newBarbell = Barbell(
                         id = barbell?.id ?: UUID.randomUUID(),

@@ -393,7 +393,10 @@ fun WorkoutDetailScreen(
                     if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
                         Button(
                             modifier = Modifier.padding(5.dp),
-                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                            colors = ButtonDefaults.buttonColors(
+                                contentColor = MaterialTheme.colorScheme.background,
+                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            ),
                             onClick = {
                                 val updatedWorkoutComponents =
                                     workout.workoutComponents.map { workoutComponent ->
@@ -423,7 +426,10 @@ fun WorkoutDetailScreen(
                     } else {
                         Button(
                             modifier = Modifier.padding(5.dp),
-                            colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                            colors = ButtonDefaults.buttonColors(
+                                contentColor = MaterialTheme.colorScheme.background,
+                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            ),
                             onClick = {
                                 val updatedWorkoutComponents =
                                     workout.workoutComponents.map { workoutComponent ->

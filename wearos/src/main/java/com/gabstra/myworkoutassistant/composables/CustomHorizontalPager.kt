@@ -31,6 +31,8 @@ import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerState
 import androidx.wear.compose.material3.HorizontalPageIndicator
 import androidx.wear.compose.material3.HorizontalPagerScaffold
+import androidx.wear.compose.material3.MaterialTheme
+import com.gabstra.myworkoutassistant.shared.MediumGray
 import kotlin.math.absoluteValue
 
 
@@ -172,7 +174,8 @@ fun CustomHorizontalPager(
         pagerState = pagerState,
         pageIndicator = {
             HorizontalPageIndicator(
-                pagerState = pagerState
+                pagerState = pagerState,
+                unselectedColor = MediumGray
             )
         }
     ) {

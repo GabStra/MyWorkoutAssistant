@@ -123,9 +123,9 @@ fun ExerciseScreen(
     val pageTypes = remember(showPlatesPage, showNotesPage, showProgressionComparisonPage, hasMuscleInfo) {
         mutableListOf<PageType>().apply {
             add(PageType.EXERCISE_DETAIL)
-            if (hasMuscleInfo) add(PageType.MUSCLES)
             if (showPlatesPage) add(PageType.PLATES)
             if (showProgressionComparisonPage) add(PageType.PROGRESSION_COMPARISON)
+            if (hasMuscleInfo) add(PageType.MUSCLES)
             if (showNotesPage) add(PageType.NOTES)
             add(PageType.EXERCISES)
             add(PageType.BUTTONS)

@@ -125,10 +125,7 @@ fun TutorialOverlay(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
-                            .verticalColumnScrollbar(
-                                scrollState = scrollState,
-                                scrollBarColor = MaterialTheme.colorScheme.onBackground
-                            )
+                            .verticalColumnScrollbar(scrollState = scrollState)
                             .verticalScroll(scrollState),
                         contentAlignment = Alignment.Center
                     ) {

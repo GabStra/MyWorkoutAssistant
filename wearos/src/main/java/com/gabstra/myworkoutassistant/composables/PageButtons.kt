@@ -26,6 +26,7 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.presentation.theme.checkboxButtonColors
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -91,6 +92,7 @@ fun PageButtons(
                         .fillMaxWidth()
                         .transformedHeight(this, spec).animateItem(),
                     transformation = SurfaceTransformation(spec),
+                    colors = checkboxButtonColors(),
                     label = { Text(
                         text = "Keep on",
                         textAlign = TextAlign.Center

@@ -167,32 +167,32 @@ fun PagePlates(
             // Visual barbell representation with animation
             val plateChangeResult = updatedState.plateChangeResult!!
             val allSteps = plateChangeResult.change.steps
-            
+
             // Filter out no-op steps that don't result in any visual change
             val effectiveSteps = remember(allSteps, plateChangeResult.previousPlates) {
                 val filtered = mutableListOf<PlateCalculator.Companion.PlateStep>()
                 val workingPlates = plateChangeResult.previousPlates.toMutableList()
-                
+
                 allSteps.forEach { step ->
                     val platesBefore = workingPlates.sortedDescending().toList()
-                    
+
                     // Apply the step
                     when (step.action) {
                         PlateCalculator.Companion.Action.ADD -> workingPlates.add(step.weight)
                         PlateCalculator.Companion.Action.REMOVE -> workingPlates.remove(step.weight)
                     }
-                    
+
                     val platesAfter = workingPlates.sortedDescending().toList()
-                    
+
                     // Only include the step if it actually changed the plate configuration
                     if (platesBefore != platesAfter) {
                         filtered.add(step)
                     }
                 }
-                
+
                 filtered
             }
-            
+
             val steps = effectiveSteps
 
             // Index of the current step being animated (or -1 when idle, or steps.size for final state)
@@ -208,7 +208,7 @@ fun PagePlates(
             // Compute the maximum total plate thickness encountered across all configurations
             // in this transition (previous → all intermediate steps → current). This value
             // is used to determine the logical sleeve length, so scaling remains stable for
-            // the \"widest\" configuration seen in the animation.
+            // the "widest" configuration seen in the animation.
             val maxLogicalThickness = remember(plateChangeResult, equipment.availablePlates) {
                 // Helper to compute total thickness for a given per-side plate configuration.
                 fun totalThicknessFor(plates: List<Double>): Double {
@@ -239,41 +239,41 @@ fun PagePlates(
 
                 maxThickness.toFloat()
             }
-            
+
             // Track which plate instances were added during the entire transition sequence
             // This allows us to keep them green throughout the animation
             val addedPlateInstances = remember(steps, plateChangeResult.previousPlates) {
                 val addedInstances = mutableSetOf<Pair<Double, Int>>() // (weight, instanceIndex)
                 val workingPlates = plateChangeResult.previousPlates.toMutableList()
-                
+
                 steps.forEach { step ->
                     if (step.action == PlateCalculator.Companion.Action.ADD) {
                         // Calculate plates state before this ADD step
                         val platesBefore = workingPlates.sortedDescending()
-                        
+
                         // Count how many plates of this weight exist before adding
                         val countBefore = platesBefore.count { it == step.weight }
-                        
+
                         // The new plate will be at instance index countBefore (0-indexed)
                         addedInstances.add(Pair(step.weight, countBefore))
                     }
-                    
+
                     // Apply the step to working plates for next iteration
                     when (step.action) {
                         PlateCalculator.Companion.Action.ADD -> workingPlates.add(step.weight)
                         PlateCalculator.Companion.Action.REMOVE -> workingPlates.remove(step.weight)
                     }
                 }
-                
+
                 addedInstances
             }
-            
+
             // Track which specific plate instance is currently being added or removed
             // We need to identify which instance among multiple plates of the same weight
             val activePlateInfo = remember(currentStepIndex, steps, animatedPlates) {
                 if (currentStepIndex >= 0 && currentStepIndex < steps.size) {
                     val step = steps[currentStepIndex]
-                    
+
                     // Calculate plates state before current step
                     val platesBeforeStep = if (currentStepIndex > 0) {
                         val before = plateChangeResult.previousPlates.toMutableList()
@@ -288,28 +288,28 @@ fun PagePlates(
                     } else {
                         plateChangeResult.previousPlates.sortedDescending()
                     }
-                    
+
                     // Count how many plates of this weight exist before the current step
                     val countBefore = platesBeforeStep.count { it == step.weight }
-                    
+
                     // For ADD: the new plate will be at position countBefore in the sorted list of same-weight plates
                     // For REMOVE: we remove the plate from the end (outermost), which is the last instance
+                    // If countBefore is 2 (instances 0 and 1), we remove instance 1 (the last one)
                     val instanceIndex = when (step.action) {
                         PlateCalculator.Companion.Action.ADD -> countBefore // New plate will be at this index (0-indexed)
                         PlateCalculator.Companion.Action.REMOVE -> {
                             // For REMOVE, the algorithm removes from the end (outermost)
                             // In sorted descending order, this is the last instance of that weight
-                            // If countBefore is 2 (instances 0 and 1), we remove instance 1 (the last one)
                             countBefore - 1
                         }
                     }
-                    
+
                     Triple(step.weight, step.action, instanceIndex)
                 } else {
                     null
                 }
             }
-            
+
             // Calculate plates state before current step for highlighting purposes
             // This is needed for REMOVE actions where the plate is already removed from animatedPlates
             // For final state (currentStepIndex == steps.size), use null since we don't need before state
@@ -332,7 +332,7 @@ fun PagePlates(
                     null
                 }
             }
-            
+
             // Animate the plate changes
             LaunchedEffect(plateChangeResult) {
                 // If there are no steps we just show the current configuration and do not animate.
@@ -387,7 +387,7 @@ fun PagePlates(
                     delay(1000)
                 }
             }
-            
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -432,7 +432,7 @@ private fun BarbellVisualization(
             plates.sortedDescending()
         }
     }
-    
+
     // plateData matches the order of platesForDrawing, so indices align
     val plateData = remember(platesForDrawing, barbell.availablePlates) {
         platesForDrawing.map { weight ->
@@ -472,12 +472,12 @@ private fun BarbellVisualization(
     } else {
         defaultColor
     }
-    
+
     // Determine color and alpha for each plate based on animation state
     // Only highlight the specific instance being modified, not all plates of the same weight
     // Use platesForDrawing which includes the removed plate for REMOVE actions
     val sortedPlatesForHighlighting = platesForDrawing
-    
+
     // Calculate which plate indices should be highlighted (based on instance position among same-weight plates)
     // In final state, no plates should be highlighted
     val highlightedPlateIndices = remember(sortedPlatesForHighlighting, activePlateInfo, isFinalState) {
@@ -496,7 +496,7 @@ private fun BarbellVisualization(
             }.toSet()
         }
     }
-    
+
     // Calculate which plate indices were previously added (for persistent green coloring)
     // In final state, no plates should be marked as previously added (they all use primary)
     val previouslyAddedPlateIndices = remember(platesForDrawing, addedPlateInstances, isFinalState) {
@@ -514,7 +514,7 @@ private fun BarbellVisualization(
             }.toSet()
         }
     }
-    
+
     val labelTextSize = MaterialTheme.typography.bodySmall.fontSize
 
     Canvas(modifier = modifier) {
@@ -672,9 +672,16 @@ private fun BarbellVisualization(
         } else {
             maxOf(maxStackUsedTop, maxStackUsedBottom).coerceAtLeast(1)
         }
-        val totalTextReserve = textToPlatePadding +
-                (stacksNeeded * textHeight) +
-                ((stacksNeeded - 1) * rowSpacing)
+
+        // MODIFICATION START: Strictly reserve 0 space if no stacks are needed
+        val totalTextReserve = if (stacksNeeded > 0) {
+            textToPlatePadding +
+                    (stacksNeeded * textHeight) +
+                    ((stacksNeeded - 1).coerceAtLeast(0) * rowSpacing)
+        } else {
+            0f
+        }
+        // MODIFICATION END
 
         val maxAvailablePlateHeight = (canvasHeight - (totalTextReserve * 2)).coerceAtLeast(10f)
 
@@ -682,27 +689,60 @@ private fun BarbellVisualization(
         val globalPlateBottomY = centerY + (maxAvailablePlateHeight / 2f)
 
         // --- 4. PASS 2: DRAWING ---
-        val sleeveHeight = maxAvailablePlateHeight * 0.15f
-        val sleeveY = centerY - (sleeveHeight / 2f)
-        val stopperHeight = sleeveHeight * 3f
-        val stopperY = centerY - (stopperHeight / 2f)
-        val barbellCornerRadius = 3.dp.toPx()
 
-        // Draw Barbell parts
+        // 1. Proportions (Key to fixing the "Sword" look)
+        // Shaft = Thinner (60%), Sleeve = Standard (100%), Collar = Stopper (150%)
+        val sleeveDiameter = maxAvailablePlateHeight * 0.15f
+        val shaftDiameter = sleeveDiameter * 0.6f
+        val collarDiameter = sleeveDiameter * 1.5f
+
+        val sleeveY = centerY - (sleeveDiameter / 2f)
+        val shaftY = centerY - (shaftDiameter / 2f)
+        val collarY = centerY - (collarDiameter / 2f)
+
+        val barbellCornerRadius = 2.dp.toPx()
+
+        // 2. Draw Barbell Anatomy
+
+        // A. SHAFT: The "Vertical Break" Effect
+        // We draw two pieces: a small starting block, a gap, then the rest.
+        val breakWidth = 3.dp.toPx()  // Width of the first "dash"
+        val breakGap = 2.dp.toPx()    // Width of the empty space
+        val mainShaftStart = breakWidth + breakGap
+
+        // Piece 1: The small detached start
         drawRoundedBlock(
-            topLeft = Offset(0f, sleeveY),
-            size = Size(shaftLength+stopperWidth+sleeveWidth, sleeveHeight),
+            topLeft = Offset(0f, shaftY),
+            size = Size(breakWidth, shaftDiameter),
+            cornerRadiusPx = 0f, // Slight roundness
+            fillColor = barbellColor.copy(alpha = 0.7f) // Slightly dimmer to imply distance
+        )
+
+        // Piece 2: The main shaft connecting to the collar
+        drawRoundedBlock(
+            topLeft = Offset(mainShaftStart, shaftY),
+            size = Size(shaftLength - mainShaftStart, shaftDiameter),
+            cornerRadiusPx = 0f, // Flat left edge facing the gap
+            fillColor = barbellColor
+        )
+
+        // B. COLLAR (The Stopper)
+        drawRoundedBlock(
+            topLeft = Offset(shaftLength, collarY),
+            size = Size(stopperWidth, collarDiameter),
             cornerRadiusPx = barbellCornerRadius,
             fillColor = barbellColor
         )
+
+        // C. SLEEVE (No end cap, flat right edge)
         drawRoundedBlock(
-            topLeft = Offset(shaftLength + spacing, stopperY),
-            size = Size(stopperWidth, stopperHeight),
-            cornerRadiusPx = barbellCornerRadius,
+            topLeft = Offset(sleeveX, sleeveY),
+            size = Size(sleeveWidth, sleeveDiameter),
+            cornerRadiusPx = 0f,
             fillColor = barbellColor
         )
 
-        // Reset for drawing pass
+        // Reset for drawing plates
         topStackRightX.fill(-1f)
         bottomStackRightX.fill(-1f)
         var currentX = sleeveX
@@ -727,7 +767,7 @@ private fun BarbellVisualization(
             // Get color and alpha for this specific plate instance
             val isHighlighted = highlightedPlateIndices.contains(plateIndex)
             val wasPreviouslyAdded = previouslyAddedPlateIndices.contains(plateIndex)
-            
+
             val plateColor = when {
                 // Final state: all plates use primary color (this should be the only case in final state)
                 isFinalState -> finalStatePlateColor
@@ -740,7 +780,7 @@ private fun BarbellVisualization(
                 // Default color for plates that weren't added (onBackground)
                 else -> defaultPlateColor
             }
-            
+
             // All plates use full opacity (no fade animation)
             val plateAlpha = 1f
 

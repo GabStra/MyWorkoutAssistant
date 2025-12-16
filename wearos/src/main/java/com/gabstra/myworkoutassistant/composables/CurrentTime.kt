@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
@@ -59,7 +60,7 @@ fun CurrentTime() {
 
     Text(
         text = annotatedText,
-        style = MaterialTheme.typography.bodyMedium,
+        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
         textAlign = TextAlign.Center
     )
 }

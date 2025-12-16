@@ -581,7 +581,10 @@ fun ExerciseDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Button(
-                                colors = ButtonDefaults.buttonColors(contentColor = MaterialTheme.colorScheme.background),
+                                colors = ButtonDefaults.buttonColors(
+                                    contentColor = MaterialTheme.colorScheme.background,
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                ),
                                 onClick = {
                                     appViewModel.setScreenData(
                                         ScreenData.NewSet(workout.id, exercise.id)
