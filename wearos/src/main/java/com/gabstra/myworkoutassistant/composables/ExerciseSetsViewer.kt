@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +35,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -61,20 +61,14 @@ fun SetTableRow(
     markAsDone: Boolean,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
 ){
-    val captionStyle = MaterialTheme.typography.bodySmall
     val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipment
 
-    val warmupIndicatorComposable = @Composable{
-        Box(modifier= Modifier.width(18.dp), contentAlignment = Alignment.Center){
-            ScalableText(
-                text = "W",
-                style = captionStyle,
-                textAlign = TextAlign.Center,
-                color = textColor
-            )
-        }
+    val isWarmupSet = when(val set = setState.set) {
+        is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+        is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+        else -> false
     }
 
     Box(
@@ -84,16 +78,6 @@ fun SetTableRow(
             modifier = Modifier.fillMaxSize().padding(1.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val isWarmupSet = when(val set = setState.set) {
-                is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                else -> false
-            }
-            if(isWarmupSet){
-                warmupIndicatorComposable()
-            }else{
-                Spacer(modifier = Modifier.width(18.dp))
-            }
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
@@ -171,11 +155,12 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
-                        style = itemStyle.copy(fontFamily = FontFamily.Monospace),
+                        style = itemStyle.copy(
+                            fontFamily = FontFamily.Monospace,
+                        ),
                         textAlign = TextAlign.Center,
                         color = textColor
                     )
-                    Spacer(modifier = Modifier.width(18.dp))
                 }
 
                 is EnduranceSetData -> {
@@ -184,11 +169,12 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(enduranceSetData.startTimer / 1000),
-                        style = itemStyle.copy(fontFamily = FontFamily.Monospace),
+                        style = itemStyle.copy(
+                            fontFamily = FontFamily.Monospace,
+                        ),
                         textAlign = TextAlign.Center,
                         color = textColor
                     )
-                    Spacer(modifier = Modifier.width(18.dp))
                 }
 
                 else -> throw RuntimeException("Unsupported set type")
@@ -258,15 +244,27 @@ fun ExerciseSetsViewer(
         setStateForThisRow:  WorkoutState.Set,
         rowIndex: Int,
     ) {
+        val isWarmupSetRow = when(val set = setStateForThisRow.set) {
+            is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+            is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+            else -> false
+        }
+
         val borderColor = customBorderColor ?: when{
-            rowIndex < setIndex -> MaterialTheme.colorScheme.primary
-            rowIndex == setIndex ->  MaterialTheme.colorScheme.onBackground
-            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+            rowIndex == setIndex -> Orange // Current set: orange border
+            rowIndex < setIndex -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Previous set: subtle outline
+            else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future set: subtle outline
         }
 
         val backgroundColor = customBackgroundColor ?: when{
-            rowIndex <= setIndex -> MaterialTheme.colorScheme.background
-            else -> MaterialTheme.colorScheme.surfaceContainerLow
+            rowIndex == setIndex -> MaterialTheme.colorScheme.surfaceContainer // Current set: lifted background
+            else -> MaterialTheme.colorScheme.background // Previous/Future: black background
+        }
+
+        val textColor = customTextColor ?: when {
+            rowIndex == setIndex -> Orange // Current set: orange text
+            rowIndex < setIndex -> MaterialTheme.colorScheme.outline // Previous set: outline color (MediumGray)
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
         }
 
         Row(
@@ -278,25 +276,35 @@ fun ExerciseSetsViewer(
         ) {
             val shape = RoundedCornerShape(25)
 
+            val rowModifier = Modifier
+                .height(25.dp)
+                .padding(bottom = 2.5.dp)
+                .then(
+                    if (isWarmupSetRow) {
+                        // Warmup sets: use dashed border
+                        Modifier.dashedBorder(
+                            strokeWidth = 1.dp,
+                            color = borderColor,
+                            shape = shape,
+                            onInterval = 4.dp,
+                            offInterval = 4.dp
+                        )
+                    } else {
+                        // Normal sets: use solid border
+                        Modifier.border(BorderStroke(1.dp, borderColor), shape)
+                    }
+                )
+                .background(backgroundColor, shape)
+
             SetTableRow(
-                modifier = Modifier
-                    .height(25.dp)
-                    .padding(bottom = 2.5.dp)
-                    .border(BorderStroke(1.dp, borderColor), shape)
-                    .background(backgroundColor,shape),
-                    //.clip(),
+                modifier = rowModifier,
                 hapticsViewModel = hapticsViewModel,
                 viewModel = viewModel,
                 setState = setStateForThisRow,
                 index = rowIndex,
-                isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
-                markAsDone = false, // customMarkAsDone ?: (rowIndex < setIndex),
-                textColor = customTextColor
-                    ?: when {
-                        rowIndex < setIndex -> MaterialTheme.colorScheme.primary //.background.copy(0.75f)// MaterialTheme.colorScheme.primary, LightGray, MediumLightGray from outer scope
-                        rowIndex == setIndex -> MaterialTheme.colorScheme.onBackground
-                        else -> MaterialTheme.colorScheme.surfaceContainerHigh
-                    }
+                isCurrentSet = rowIndex == setIndex,
+                markAsDone = false,
+                textColor = textColor
             )
         }
     }
@@ -316,7 +324,6 @@ fun ExerciseSetsViewer(
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier= Modifier.width(18.dp))
                 Text(
                     modifier = Modifier.weight(2f),
                     text = "WEIGHT (KG)",
@@ -357,14 +364,12 @@ fun ExerciseSetsViewer(
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier= Modifier.width(18.dp))
                 Text(
                     modifier = Modifier.weight(1f),
                     text = "TIME (HH:MM:SS)",
                     style = headerStyle,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.width(18.dp))
             }
             DynamicHeightColumn(
                 modifier = Modifier

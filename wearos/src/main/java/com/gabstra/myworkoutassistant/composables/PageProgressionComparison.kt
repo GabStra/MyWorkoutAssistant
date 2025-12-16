@@ -50,15 +50,19 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -489,29 +493,28 @@ fun PageProgressionComparison(
         }
 
         val rowIndex = currentSetIndex
-        val borderColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.onBackground, colorScheme.surfaceContainerHigh) {
+        val borderColor by remember(currentSetIndex, setIndex, colorScheme.outline) {
             derivedStateOf {
                 when {
-                    rowIndex < setIndex -> colorScheme.primary
-                    rowIndex == setIndex -> colorScheme.onBackground
-                    else -> colorScheme.surfaceContainerHigh
+                    rowIndex == setIndex -> Orange // Current set: orange border
+                    else -> colorScheme.outline.copy(alpha = 0.5f) // Previous/Future: subtle outline
                 }
             }
         }
-        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.background, colorScheme.surfaceContainerLow) {
+        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.background, colorScheme.surfaceContainer) {
             derivedStateOf {
                 when {
-                    rowIndex <= setIndex -> colorScheme.background
-                    else -> colorScheme.surfaceContainerLow
+                    rowIndex == setIndex -> colorScheme.surfaceContainer // Current set: lifted background
+                    else -> colorScheme.background // Previous/Future: black background
                 }
             }
         }
-        val textColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.onBackground, colorScheme.surfaceContainerHigh) {
+        val textColor by remember(currentSetIndex, setIndex, colorScheme.outline, colorScheme.surfaceContainerHigh) {
             derivedStateOf {
                 when {
-                    rowIndex < setIndex -> colorScheme.primary
-                    rowIndex == setIndex -> colorScheme.onBackground
-                    else -> colorScheme.surfaceContainerHigh
+                    rowIndex == setIndex -> Orange // Current set: orange text
+                    rowIndex < setIndex -> colorScheme.outline // Previous set: outline color (MediumGray)
+                    else -> colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
                 }
             }
         }
@@ -525,15 +528,37 @@ fun PageProgressionComparison(
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val isPreviousWarmupSet = if (currentSetIndex < previousSetStates.value.size) {
+                when(val set = previousSetStates.value[currentSetIndex].set) {
+                    is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                    is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                    else -> false
+                }
+            } else false
+
+            val previousRowModifier = Modifier
+                .fillMaxSize()
+                .height(25.dp)
+                .padding(bottom = 2.5.dp)
+                .then(
+                    if (isPreviousWarmupSet) {
+                        Modifier.dashedBorder(
+                            strokeWidth = 1.dp,
+                            color = borderColor,
+                            shape = shape,
+                            onInterval = 4.dp,
+                            offInterval = 4.dp
+                        )
+                    } else {
+                        Modifier.border(BorderStroke(1.dp, borderColor), shape)
+                    }
+                )
+                .background(backgroundColor, shape)
+                .clip(shape)
+
             if (currentSetIndex < previousSetStates.value.size) {
                 SetTableRow(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .height(25.dp)
-                        .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, borderColor), shape)
-                        .background(backgroundColor, shape)
-                        .clip(shape),
+                    modifier = previousRowModifier,
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = previousSetStates.value[currentSetIndex],
@@ -543,15 +568,7 @@ fun PageProgressionComparison(
                     textColor = textColor
                 )
             } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .height(25.dp)
-                        .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, borderColor), shape)
-                        .background(backgroundColor, shape)
-                        .clip(shape)
-                ) {
+                Box(modifier = previousRowModifier) {
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
@@ -644,15 +661,37 @@ fun PageProgressionComparison(
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val isCurrentWarmupSet = if (currentSetIndex < progressionSetStates.size) {
+                when(val set = progressionSetStates[currentSetIndex].set) {
+                    is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                    is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                    else -> false
+                }
+            } else false
+
+            val currentRowModifier = Modifier
+                .fillMaxSize()
+                .height(25.dp)
+                .padding(bottom = 2.5.dp)
+                .then(
+                    if (isCurrentWarmupSet) {
+                        Modifier.dashedBorder(
+                            strokeWidth = 1.dp,
+                            color = borderColor,
+                            shape = shape,
+                            onInterval = 4.dp,
+                            offInterval = 4.dp
+                        )
+                    } else {
+                        Modifier.border(BorderStroke(1.dp, borderColor), shape)
+                    }
+                )
+                .background(backgroundColor, shape)
+                .clip(shape)
+
             if (currentSetIndex < progressionSetStates.size) {
                 SetTableRow(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .height(25.dp)
-                        .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, borderColor), shape)
-                        .background(backgroundColor, shape)
-                        .clip(shape),
+                    modifier = currentRowModifier,
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = progressionSetStates[currentSetIndex],
@@ -662,15 +701,7 @@ fun PageProgressionComparison(
                     textColor = textColor
                 )
             } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .height(25.dp)
-                        .padding(bottom = 2.5.dp)
-                        .border(BorderStroke(1.dp, borderColor), shape)
-                        .background(backgroundColor, shape)
-                        .clip(shape)
-                ) {
+                Box(modifier = currentRowModifier) {
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
