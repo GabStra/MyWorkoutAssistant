@@ -82,6 +82,7 @@ import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -321,60 +322,68 @@ fun MyWorkoutAssistantNavHost(
 
                             val newWorkoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
 
-                            val deleteAndInsertJob = launch {
-                                var allWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-
+                            val deleteAndInsertJob = async {
                                 try {
-                                    deleteWorkoutHistoriesFromHealthConnect(allWorkoutHistories,healthConnectClient)
-                                }catch (e: Exception) {
-                                    Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
-                                    Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
-                                }
+                                    var allWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
 
-                                workoutHistoryDao.deleteAll()
-                                setHistoryDao.deleteAll()
-                                exerciseInfoDao.deleteAll()
-                                workoutScheduleDao.deleteAll()
-                                workoutRecordDao.deleteAll()
-                                db.exerciseSessionProgressionDao().deleteAll()
+                                    try {
+                                        deleteWorkoutHistoriesFromHealthConnect(allWorkoutHistories,healthConnectClient)
+                                    }catch (e: Exception) {
+                                        Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
+                                        Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
+                                    }
 
-                                val validWorkoutHistories = (appBackup.WorkoutHistories ?: emptyList()).filter { workoutHistory ->
-                                    allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
-                                }
+                                    workoutHistoryDao.deleteAll()
+                                    setHistoryDao.deleteAll()
+                                    exerciseInfoDao.deleteAll()
+                                    workoutScheduleDao.deleteAll()
+                                    workoutRecordDao.deleteAll()
+                                    db.exerciseSessionProgressionDao().deleteAll()
 
-                                workoutHistoryDao.insertAll(*validWorkoutHistories.toTypedArray())
+                                    val validWorkoutHistories = (appBackup.WorkoutHistories ?: emptyList()).filter { workoutHistory ->
+                                        allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
+                                    }
 
-                                val validSetHistories = (appBackup.SetHistories ?: emptyList()).filter { setHistory ->
-                                    validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
-                                }
+                                    workoutHistoryDao.insertAll(*validWorkoutHistories.toTypedArray())
 
-                                setHistoryDao.insertAll(*validSetHistories.toTypedArray())
+                                    val validSetHistories = (appBackup.SetHistories ?: emptyList()).filter { setHistory ->
+                                        validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
+                                    }
 
-                                val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises } }
+                                    setHistoryDao.insertAll(*validSetHistories.toTypedArray())
 
-                                val validExerciseInfos = (appBackup.ExerciseInfos ?: emptyList()).filter { allExercises.any { exercise -> exercise.id == it.id } }
-                                exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
+                                    val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises } }
 
-                                val validWorkoutSchedules = (appBackup.WorkoutSchedules ?: emptyList()).filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
-                                workoutScheduleDao.insertAll(*validWorkoutSchedules.toTypedArray())
+                                    val validExerciseInfos = (appBackup.ExerciseInfos ?: emptyList()).filter { allExercises.any { exercise -> exercise.id == it.id } }
+                                    exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
 
-                                if(appBackup.WorkoutRecords != null){
-                                    val validWorkoutRecords = appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
-                                    workoutRecordDao.insertAll(*validWorkoutRecords.toTypedArray())
-                                }
+                                    val validWorkoutSchedules = (appBackup.WorkoutSchedules ?: emptyList()).filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
+                                    workoutScheduleDao.insertAll(*validWorkoutSchedules.toTypedArray())
 
-                                val validExerciseSessionProgressions = (appBackup.ExerciseSessionProgressions ?: emptyList()).filter { progression ->
-                                    validWorkoutHistories.any { it.id == progression.workoutHistoryId }
-                                }
-                                if (validExerciseSessionProgressions.isNotEmpty()) {
-                                    db.exerciseSessionProgressionDao().insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                    if(appBackup.WorkoutRecords != null){
+                                        val validWorkoutRecords = appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
+                                        workoutRecordDao.insertAll(*validWorkoutRecords.toTypedArray())
+                                    }
+
+                                    val validExerciseSessionProgressions = (appBackup.ExerciseSessionProgressions ?: emptyList()).filter { progression ->
+                                        validWorkoutHistories.any { it.id == progression.workoutHistoryId }
+                                    }
+                                    if (validExerciseSessionProgressions.isNotEmpty()) {
+                                        db.exerciseSessionProgressionDao().insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                    }
+
+                                    true
+                                } catch (e: Exception) {
+                                    Log.e("MainActivity", "Error restoring data from backup", e)
+                                    false
                                 }
                             }
 
                             // Wait for the delete and insert operations to complete
-                            deleteAndInsertJob.join()
+                            val restoreSuccess = deleteAndInsertJob.await()
 
-                            // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
+                            if (restoreSuccess) {
+                                // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
 /*                            backfillExerciseSessionProgressions(
                                 workoutStore = newWorkoutStore,
                                 workoutHistoryDao = workoutHistoryDao,
@@ -384,18 +393,25 @@ fun MyWorkoutAssistantNavHost(
                                 db = db
                             )*/
 
-                            appViewModel.updateWorkoutStore(newWorkoutStore)
-                            workoutViewModel.updateWorkoutStore(newWorkoutStore)
+                                appViewModel.updateWorkoutStore(newWorkoutStore)
+                                workoutViewModel.updateWorkoutStore(newWorkoutStore)
 
-                            workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
-                            appViewModel.triggerUpdate()
+                                workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
+                                appViewModel.triggerUpdate()
 
-                            // Show the success toast after all operations are complete
-                            Toast.makeText(
-                                context,
-                                "Data restored from backup",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                                // Show the success toast after all operations are complete
+                                Toast.makeText(
+                                    context,
+                                    "Data restored from backup",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "Failed to restore workout history from backup",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                     }
                 } catch (e: Exception) {
