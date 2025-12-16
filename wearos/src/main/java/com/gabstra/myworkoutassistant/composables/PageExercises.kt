@@ -35,7 +35,6 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.LabelGray
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -104,13 +103,13 @@ fun PageExercises(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(20.dp)
-                    .padding(horizontal = 25.dp)
+                    .padding(horizontal = 20.dp)
                     .clickable {
                         marqueeEnabled = !marqueeEnabled
                         hapticsViewModel.doGentleVibration()
-                    }
-                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                    },
                 text = selectedExercise.name,
+                textModifier = if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                 textAlign = TextAlign.Center,
                 contentAlignment = Alignment.BottomCenter,
                 style = MaterialTheme.typography.titleMedium.copy(

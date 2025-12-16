@@ -150,14 +150,6 @@ fun PagePlates(
                         withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                             append(" + ")
                         }
-                        append(formatWeight(previousSideWeightTotal))
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
-                            append(" × 2 → ")
-                        }
-                        append(formatWeight(equipment.barWeight))
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
-                            append(" + ")
-                        }
                         append(formatWeight(currentSideWeightTotal))
                         withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
                             append(" × 2 = ")

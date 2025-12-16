@@ -35,7 +35,6 @@ fun ExerciseDetail(
     onTimerEnabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit,
-
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current

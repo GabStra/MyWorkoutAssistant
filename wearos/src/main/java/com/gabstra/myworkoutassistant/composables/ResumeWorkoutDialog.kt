@@ -21,9 +21,9 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
-import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
@@ -126,7 +126,7 @@ fun ResumeWorkoutDialog(
 
                                     Text(
                                         text = incompleteWorkout.workoutHistory.startTime.format(
-                                            DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm")
+                                            DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
                                         ),
                                         textAlign = TextAlign.Center,
                                         style = MaterialTheme.typography.bodySmall,
@@ -135,11 +135,6 @@ fun ResumeWorkoutDialog(
                                 }
                             }
                         }
-
-                        item {
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-
                         item {
                             ButtonWithText(
                                 modifier = Modifier
