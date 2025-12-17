@@ -116,6 +116,7 @@ fun TutorialOverlay(
             ScreenScaffold(
                 modifier = Modifier.fillMaxSize(),
                 scrollState = scrollState,
+                overscrollEffect = null,
                 scrollIndicator = {
                     ScrollIndicator(
                         state = scrollState,

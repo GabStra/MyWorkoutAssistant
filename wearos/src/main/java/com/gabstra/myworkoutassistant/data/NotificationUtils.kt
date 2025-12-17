@@ -8,13 +8,14 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.gabstra.myworkoutassistant.R
 
 @SuppressLint("MissingPermission")
 fun showWorkoutInProgressNotification(context: Context) {
-    val channelId = "workout_progress_channel"
+    val channelId = "workout_progress_channel_v2" // Changed to force channel recreation with new settings
     val notificationId = 1
 
     // Create an intent that will open the app when the notification is tapped
@@ -45,6 +46,9 @@ fun showWorkoutInProgressNotification(context: Context) {
         .setContentIntent(pendingIntent)
         .setCategory(NotificationCompat.CATEGORY_WORKOUT)
         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        .setColor(ContextCompat.getColor(context, R.color.ic_launcher_background))
+        .setColorized(true)
+        .setPriority(NotificationCompat.PRIORITY_LOW) // Match channel importance for animated icon display
         .setOngoing(true)
 
     // *** 1. Create and apply the Ongoing Activity ***
@@ -52,21 +56,19 @@ fun showWorkoutInProgressNotification(context: Context) {
         .addTemplate("Workout in progress")
         .build()
 
-    val ongoingActivity =
-        OngoingActivity.Builder(context, notificationId, notificationBuilder)
-            .setAnimatedIcon(R.drawable.avd_anim)
-            .setStaticIcon(R.drawable.ic_workout_icon)
-            .setTouchIntent(pendingIntent)       // The intent to fire on tap
-            .setStatus(ongoingActivityStatus)    // Optional: Add status text
-            .build()
+    OngoingActivity.Builder(context, notificationId, notificationBuilder)
+        .setAnimatedIcon(R.drawable.avd_anim)
+        .setTouchIntent(pendingIntent)
+        .setStatus(ongoingActivityStatus)
+        .build()
+        .apply(context)
 
-    // This tells the system to use the ongoing activity
-    ongoingActivity.apply(context)
+    val notification = notificationBuilder.build()
 
     // *** 2. Build and show the notification ***
     // Show the notification using the same ID
     with(NotificationManagerCompat.from(context)) {
-        notify(notificationId, notificationBuilder.build())
+        notify(notificationId, notification)
     }
 }
 
