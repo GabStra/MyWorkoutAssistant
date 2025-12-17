@@ -655,6 +655,7 @@ fun Modifier.verticalColumnScrollbar(
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
     trackHeight: Dp? = null,
+    maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect parameters
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
@@ -676,6 +677,7 @@ fun Modifier.verticalColumnScrollbar(
     val rememberedEnableBottomFade by rememberUpdatedState(enableBottomFade)
     val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
     val rememberedContentFadeColor by rememberUpdatedState(defaultFadeColor)
+    val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
     return this.drawWithContent {
         // --- Draw the actual content first ---
@@ -801,6 +803,7 @@ fun Modifier.verticalLazyColumnScrollbar(
     scrollBarCornerRadius: Float = 4f,
     endPadding: Float = 12f,
     trackHeight: Dp? = null,
+    maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect parameters
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
@@ -821,6 +824,7 @@ fun Modifier.verticalLazyColumnScrollbar(
     val rememberedEnableBottomFade by rememberUpdatedState(enableBottomFade)
     val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
     val rememberedContentFadeColor by rememberUpdatedState(defaultFadeColor)
+    val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
     val layoutInfo = lazyListState.layoutInfo
     val visibleItemsInfo = layoutInfo.visibleItemsInfo
@@ -922,9 +926,11 @@ fun Modifier.verticalLazyColumnScrollbar(
         }
 
         val minThumbHeight = rememberedWidth.toPx() * 2
-        val scrollBarHeight = (visibleRatio * actualTrackHeight)
+        val maxThumbHeight = actualTrackHeight * rememberedMaxThumbHeightFraction.coerceIn(0f, 1f)
+        val computedThumbHeight = visibleRatio * actualTrackHeight
+        val scrollBarHeight = computedThumbHeight
             .coerceAtLeast(minThumbHeight)
-            .coerceAtMost(actualTrackHeight)
+            .coerceAtMost(maxThumbHeight)
         val availableScrollSpace = maxScrollValue
         val availableTrackSpace = (actualTrackHeight - scrollBarHeight).coerceAtLeast(0f)
         val scrollProgress = if (availableScrollSpace > 0) scrollValue / availableScrollSpace else 0f

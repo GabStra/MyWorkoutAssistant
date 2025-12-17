@@ -104,6 +104,7 @@ fun Modifier.verticalColumnScrollbar(
     trackHeight: Dp? = null,
     // Gap between track segments and the thumb (vertical gap above and below the thumb)
     thumbGap: Dp = 2.dp,
+    maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
@@ -122,6 +123,7 @@ fun Modifier.verticalColumnScrollbar(
     val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
     val rememberedContentFadeColor by rememberUpdatedState(contentFadeColor)
     val rememberedThumbGap by rememberUpdatedState(thumbGap)
+    val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
     return this.drawWithContent {
         // Draw content first
@@ -192,13 +194,18 @@ fun Modifier.verticalColumnScrollbar(
         val corner = CornerRadius(radiusPx, radiusPx)
 
         val minThumbHeight = barWidthPx * 2
-        val thumbHeight = (visibleRatio * actualTrackHeight)
+        val maxThumbHeight = actualTrackHeight * rememberedMaxThumbHeightFraction.coerceIn(0f, 1f)
+        val computedThumbHeight = visibleRatio * actualTrackHeight
+        val thumbHeight = computedThumbHeight
             .coerceAtLeast(minThumbHeight)
-            .coerceAtMost(actualTrackHeight)
+            .coerceAtMost(maxThumbHeight)
 
+        val availableScrollSpace = maxScrollValue
+        val availableTrackSpace = (actualTrackHeight - thumbHeight).coerceAtLeast(0f)
         val scrollProgress =
-            if (maxScrollValue > 0f) (currentScrollValue / maxScrollValue).coerceIn(0f, 1f) else 0f
-        val thumbTop = trackTop + scrollProgress * (actualTrackHeight - thumbHeight)
+            if (availableScrollSpace > 0f) currentScrollValue / availableScrollSpace else 0f
+        val clampedScrollProgress = scrollProgress.coerceIn(0f, 1f)
+        val thumbTop = trackTop + clampedScrollProgress * availableTrackSpace
         val thumbBottom = thumbTop + thumbHeight
 
         val x = componentWidth - paddingPx - barWidthPx
@@ -256,6 +263,7 @@ fun Modifier.verticalLazyColumnScrollbar(
     endPadding: Float = 0f,
     trackHeight: Dp? = null,
     thumbGap: Dp = 2.dp,
+    maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect
     enableTopFade: Boolean = false,
     enableBottomFade: Boolean = false,
@@ -274,6 +282,7 @@ fun Modifier.verticalLazyColumnScrollbar(
     val rememberedContentFadeHeight by rememberUpdatedState(contentFadeHeight)
     val rememberedContentFadeColor by rememberUpdatedState(contentFadeColor)
     val rememberedThumbGap by rememberUpdatedState(thumbGap)
+    val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
     val layoutInfo = lazyListState.layoutInfo
     val visibleItemsInfo = layoutInfo.visibleItemsInfo
@@ -375,13 +384,18 @@ fun Modifier.verticalLazyColumnScrollbar(
         val corner = CornerRadius(radiusPx, radiusPx)
 
         val minThumbHeight = barWidthPx * 2
-        val thumbHeight = (visibleRatio * actualTrackHeight)
+        val maxThumbHeight = actualTrackHeight * rememberedMaxThumbHeightFraction.coerceIn(0f, 1f)
+        val computedThumbHeight = visibleRatio * actualTrackHeight
+        val thumbHeight = computedThumbHeight
             .coerceAtLeast(minThumbHeight)
-            .coerceAtMost(actualTrackHeight)
+            .coerceAtMost(maxThumbHeight)
 
+        val availableScrollSpace = maxScrollValue
+        val availableTrackSpace = (actualTrackHeight - thumbHeight).coerceAtLeast(0f)
         val scrollProgress =
-            if (maxScrollValue > 0f) (currentScrollValue / maxScrollValue).coerceIn(0f, 1f) else 0f
-        val thumbTop = trackTop + scrollProgress * (actualTrackHeight - thumbHeight)
+            if (availableScrollSpace > 0f) currentScrollValue / availableScrollSpace else 0f
+        val clampedScrollProgress = scrollProgress.coerceIn(0f, 1f)
+        val thumbTop = trackTop + clampedScrollProgress * availableTrackSpace
         val thumbBottom = thumbTop + thumbHeight
 
         val x = componentWidth - paddingPx - barWidthPx
