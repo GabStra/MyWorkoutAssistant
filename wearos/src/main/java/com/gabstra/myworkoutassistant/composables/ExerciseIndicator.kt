@@ -155,6 +155,7 @@ fun ExerciseIndicator(
             startAngleEffective = startAngleEffective,
             segmentArcAngle = segmentArcAngle,
             paddingAngle = paddingAngle,
+            currentGlobalIdx = currentGlobalIdx,
             ringInset = 0.dp, //ringInset = 12.dp,
             strokeWidth = 1.dp,
             tickWidth = 1.dp,
@@ -181,12 +182,8 @@ fun ExerciseIndicator(
             val endA = startA + segmentArcAngle
 
             key(eid,indicatorProgress) {
-                val indicatorColor = when {
-                    isCurrent -> MaterialTheme.colorScheme.primary // Current exercise: bright gray/white
-                    indicatorProgress >= 1.0f -> MaterialTheme.colorScheme.onBackground // Previous exercise (completed): green
-                    indicatorProgress == 0.0f -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future exercise (not started): subtle gray
-                    else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
-                }
+                val indicatorColor = MaterialTheme.colorScheme.primary
+                
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
                         indicatorColor = indicatorColor,
@@ -209,9 +206,9 @@ fun ExerciseIndicator(
             show = showLeftDots,
             dotAngleGapDeg = dotAngleGapDeg,
             color = when {
-                minVisibleIndex > currentGlobalIdx -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future exercises: subtle gray
-                minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: orange
-                else -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): green
+                minVisibleIndex > currentGlobalIdx -> MediumDarkGray // Future exercises: MediumDarkGray
+                minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: primary
+                else -> MaterialTheme.colorScheme.primary // Previous exercises (completed): primary
             }
         )
         EdgeOverflowDots(
@@ -219,8 +216,8 @@ fun ExerciseIndicator(
             show = showRightDots,
             dotAngleGapDeg = dotAngleGapDeg,
             color = when {
-                maxVisibleIndex < currentGlobalIdx -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): green
-                else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future exercises: subtle gray
+                maxVisibleIndex < currentGlobalIdx -> MaterialTheme.colorScheme.primary // Previous exercises (completed): primary
+                else -> MediumDarkGray // Future exercises: MediumDarkGray
             }
         )
     }
@@ -441,6 +438,7 @@ private fun OuterSupersetOverlay(
     startAngleEffective: Float,
     segmentArcAngle: Float,
     paddingAngle: Float,
+    currentGlobalIdx: Int,
     ringInset: Dp,
     strokeWidth: Dp,
     tickWidth: Dp,
@@ -571,13 +569,20 @@ private fun OuterSupersetOverlay(
                 segCount * segmentArcAngle + (segCount - 1) * paddingAngle
 
 
+            // Determine color based on position relative to current exercise
+            val dotsColor = when {
+                globalStart > currentGlobalIdx -> MediumDarkGray // Future exercises: MediumDarkGray
+                globalStart <= currentGlobalIdx && globalEnd >= currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: primary
+                else ->  MaterialTheme.colorScheme.primary // Previous exercises (completed): primary
+            }
+
             // Left overlay dots (centered within its reserve)
             EdgeOverflowDots(
                 angleDeg = groupStartRaw + dotsReserve / 2f,
                 show = startsBeforeWindow,
                 ringInset = dotsRingInsetForOverlay,
                 dotAngleGapDeg = dotAngleGapDeg,
-                color = arcColor,
+                color = dotsColor,
             )
 
             // Right overlay dots (mirrors global formula)
@@ -586,7 +591,7 @@ private fun OuterSupersetOverlay(
                 show = endsAfterWindow,
                 ringInset = dotsRingInsetForOverlay,
                 dotAngleGapDeg = dotAngleGapDeg,
-                color = arcColor,
+                color = dotsColor,
             )
         }
 
