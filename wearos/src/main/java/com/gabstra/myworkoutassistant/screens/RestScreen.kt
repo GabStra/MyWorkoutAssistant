@@ -172,7 +172,7 @@ fun RestScreen(
         }
     )
 
-    var selectedExercise by remember { mutableStateOf(exercise) }
+    var selectedExercise by remember(exercise.id) { mutableStateOf(exercise) }
 
     val updateInteractionTime = {
         lastInteractionTime = System.currentTimeMillis()

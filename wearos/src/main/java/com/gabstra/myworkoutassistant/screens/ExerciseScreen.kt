@@ -195,7 +195,7 @@ fun ExerciseScreen(
         viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId)
     }
 
-    var selectedExercise by remember { mutableStateOf(exercise) }
+    var selectedExercise by remember(exercise.id) { mutableStateOf(exercise) }
 
     val context = LocalContext.current
 
