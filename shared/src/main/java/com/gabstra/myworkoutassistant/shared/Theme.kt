@@ -10,7 +10,6 @@ val MediumDarkGray = Color(60, 60, 60)
 val MediumGray = Color(90, 90, 90)
 val MediumLightGray = Color(120, 120, 120)
 val LighterGray = Color(224, 224, 224)
-val LabelGray = Color(224, 224, 224) //Color(240, 240, 240) //Color(180, 180, 180)
 val LightGray = Color(224, 224, 224) //Color(240, 240, 240)
 val White = Color(255, 255, 255)
 
@@ -18,9 +17,6 @@ val Green  = Color(0xff138643)
 val Yellow = Color(0xFF8B7713)
 val Red    = Color(0xFFEB0000)
 
-val PreviousSetTextColor = Color(0xFFCCCCCC)
-
-
-val MuscleHeatMapBackground = MediumGray
+val MuscleHeatMapBackground = MediumDarkGray
 val PrimaryMuscleGroupColor = Color(0xFFFF6700)
-val SecondaryMuscleGroupColor = Color(0xFFD97C2A)
+val SecondaryMuscleGroupColor = Color(0xFFFCB483)

@@ -48,7 +48,7 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -405,7 +405,7 @@ fun PageProgressionComparison(
                     fun pipe() {
                         withStyle(
                             baseStyle.toSpanStyle().copy(
-                                color = LabelGray,
+                                color = LighterGray,
                                 fontWeight = FontWeight.Thin
                             )
                         ) {

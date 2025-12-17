@@ -23,7 +23,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
-import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
@@ -94,7 +94,7 @@ fun WeightInfoDialog(
                             Text(
                                 text = "WEIGHT (KG)",
                                 style = headerStyle,
-                                color = LabelGray,
+                                color = LighterGray,
                                 textAlign = TextAlign.Center
                             )
                             ScalableText(
@@ -132,7 +132,7 @@ fun WeightInfoDialog(
                             Text(
                                 text = "WEIGHT (KG)",
                                 style = headerStyle,
-                                color = LabelGray,
+                                color = LighterGray,
                                 textAlign = TextAlign.Center
                             )
                             ScalableText(

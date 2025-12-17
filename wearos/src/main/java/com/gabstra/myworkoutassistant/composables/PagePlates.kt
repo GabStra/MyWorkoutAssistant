@@ -36,7 +36,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -109,15 +109,15 @@ fun PagePlates(
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                             append("Tot: ")
                         }
                         append(formatWeight(equipment.barWeight))
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                             append(" + ")
                         }
                         append(formatWeight(currentSideWeightTotal))
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                             append(" × 2 = ")
                         }
                         append(formatWeight(currentWeightTotal))
@@ -143,15 +143,15 @@ fun PagePlates(
                 } else {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                             append("Tot: ")
                         }
                         append(formatWeight(equipment.barWeight))
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                             append(" + ")
                         }
                         append(formatWeight(currentSideWeightTotal))
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                             append(" × 2 = ")
                         }
                         append(formatWeight(currentWeightTotal))

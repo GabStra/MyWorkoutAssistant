@@ -34,7 +34,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -123,7 +123,7 @@ fun PageExercises(
                 fun pipe() {
                     withStyle(
                         baseStyle.toSpanStyle().copy(
-                            color = LabelGray,
+                            color = LighterGray,
                             fontWeight = FontWeight.Thin
                         )
                     ) {
@@ -132,14 +132,14 @@ fun PageExercises(
                 }
                 fun separator() {
                     withStyle(baseStyle.toSpanStyle().copy(
-                        color = LabelGray,
+                        color = LighterGray,
                         baselineShift = BaselineShift(0.18f)
                     )) { // tweak 0.12–0.25f as needed
                         append( "↔")
                     }
                 }
 
-                withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                     append("Ex: ")
                 }
                 append("${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
@@ -148,7 +148,7 @@ fun PageExercises(
                     if (currentExerciseSetIds.size > 1) {
                         pipe()
                         val setIndex = remember (currentStateSet.set.id){ currentExerciseSetIds.indexOf(currentStateSet.set.id) }
-                        withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                             append("Set: ")
                         }
                         append("${setIndex + 1}/${currentExerciseSetIds.size}")

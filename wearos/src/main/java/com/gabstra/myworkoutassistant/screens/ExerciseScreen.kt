@@ -60,7 +60,7 @@ import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.LabelGray
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -307,7 +307,7 @@ fun ExerciseScreen(
                                                 fun pipe() {
                                                     withStyle(
                                                         baseStyle.toSpanStyle().copy(
-                                                            color = LabelGray,
+                                                            color = LighterGray,
                                                             fontWeight = FontWeight.Thin
                                                         )
                                                     ) {
@@ -318,7 +318,7 @@ fun ExerciseScreen(
                                                 fun separator() {
                                                     withStyle(
                                                         baseStyle.toSpanStyle().copy(
-                                                            color = LabelGray,
+                                                            color = LighterGray,
                                                             baselineShift = BaselineShift(0.18f)
                                                         )
                                                     ) { // tweak 0.12–0.25f as needed
@@ -326,14 +326,14 @@ fun ExerciseScreen(
                                                     }
                                                 }
 
-                                                withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                                                withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                                                     append("Ex: ")
                                                 }
                                                 append("${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
 
                                                 if (exerciseSetIds.size > 1) {
                                                     pipe()
-                                                    withStyle(baseStyle.toSpanStyle().copy(color = LabelGray)) {
+                                                    withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
                                                         append("Set: ")
                                                     }
                                                     append("${setIndex.value + 1}/${exerciseSetIds.size}")
@@ -416,7 +416,7 @@ fun ExerciseScreen(
                                                     if (!first) {
                                                         withStyle(
                                                             bottomLineBaseStyle.toSpanStyle().copy(
-                                                                color = LabelGray,
+                                                                color = LighterGray,
                                                                 fontWeight = FontWeight.Thin
                                                             )
                                                         ) {
@@ -428,7 +428,7 @@ fun ExerciseScreen(
 
                                                 if (equipment != null) {
                                                     sep()
-                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = LabelGray)) {
+                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = LighterGray)) {
                                                         append("Eq: ")
                                                     }
                                                     append(equipment.name)
