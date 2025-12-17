@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -24,11 +23,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
-import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 /**
@@ -131,8 +129,8 @@ fun TutorialOverlay(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(25.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                        .padding(15.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp,Alignment.Bottom)
                 ) {
                     Box(
                         modifier = Modifier
@@ -143,7 +141,9 @@ fun TutorialOverlay(
                     ) {
                         val annotatedText = formatTutorialText(text)
                         Text(
-                            modifier = Modifier.padding(horizontal = 10.dp),
+                            modifier = Modifier
+                                .padding(top = 10.dp)
+                                .padding(horizontal = 25.dp),
                             text = annotatedText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -158,8 +158,7 @@ fun TutorialOverlay(
                         contentAlignment = Alignment.Center
                     ) {
                         Button(
-                            onClick = onDismiss,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)
+                            onClick = onDismiss
                         ) {
                             Text(
                                 text = buttonText,
