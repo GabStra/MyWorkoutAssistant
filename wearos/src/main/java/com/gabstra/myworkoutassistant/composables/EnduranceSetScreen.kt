@@ -104,7 +104,7 @@ fun EnduranceSetScreen (
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace) }
+    val itemStyle =  MaterialTheme.typography.numeralSmall
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
