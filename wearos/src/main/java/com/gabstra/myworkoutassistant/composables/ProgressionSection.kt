@@ -44,15 +44,10 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -167,33 +162,16 @@ fun ProgressionSection(
 
                 if(progressionState == ProgressionState.DELOAD || progressionState == ProgressionState.FAILED) return@mapNotNull null
 
-                val lastSessionExercise = (viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
-                        viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises })
-                    .find { it.id == exerciseId }
-
-                val lastSessionSets = lastSessionExercise!!.sets
-                    .filter { it !is RestSet &&
-                            (it is WeightSet && it.subCategory == SetSubCategory.WorkSet) ||
-                            (it is BodyWeightSet && it.subCategory == SetSubCategory.WorkSet)
-                    }
-                    .mapNotNull { set ->
-                        when (set) {
-                            is WeightSet -> {
-                                SimpleSet( set.weight, set.reps)
-                            }
-                            is BodyWeightSet -> {
-                                val bodyWeight = viewModel.bodyWeight.value
-                                val bodyWeightPercentage = lastSessionExercise.bodyWeightPercentage ?: 100.0
-                                val relativeBodyWeight = bodyWeight * (bodyWeightPercentage / 100.0)
-                                set.getWeight(relativeBodyWeight) * set.reps
-                                SimpleSet(  set.getWeight(relativeBodyWeight),set.reps)
-                            }
-                            else -> null
-                        }
-                    }
+                // Get actual executed sets from the last completed workout
+                val lastSessionSets = viewModel.getLastCompletedWorkoutExecutedSets(exerciseId)
 
                 val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
-                val vsLast     = compareSetListsUnordered(executedSets, lastSessionSets)
+                // If no previous completed workout exists, use EQUAL as neutral state
+                val vsLast = if (lastSessionSets != null) {
+                    compareSetListsUnordered(executedSets, lastSessionSets)
+                } else {
+                    Ternary.EQUAL
+                }
 
                 ProgressionInfo(exercise.name, vsExpected, vsLast)
             }

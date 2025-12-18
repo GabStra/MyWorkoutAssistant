@@ -776,6 +776,75 @@ open class WorkoutViewModel(
         return latestSetHistoriesByExerciseId[exerciseId] ?: emptyList()
     }
 
+    /**
+     * Gets the actual executed sets from the last completed workout for a given exercise.
+     * Returns null if no completed workout exists.
+     */
+    suspend fun getLastCompletedWorkoutExecutedSets(exerciseId: UUID): List<SimpleSet>? {
+        return withContext(dispatchers.io) {
+            // Get all completed workouts for this workout template, sorted by most recent first
+            val workoutHistories = workoutHistoryDao
+                .getAllWorkoutHistories()
+                .filter { 
+                    it.globalId == selectedWorkout.value.globalId && 
+                    it.isDone &&
+                    // Exclude current workout if resuming
+                    it.id != currentWorkoutHistory?.id
+                }
+                .sortedWith(compareByDescending<WorkoutHistory> { it.date }.thenByDescending { it.time })
+
+            if (workoutHistories.isEmpty()) {
+                return@withContext null
+            }
+
+            // Get the most recent completed workout
+            val lastCompletedWorkoutHistory = workoutHistories.first()
+
+            // Get SetHistories for this exercise from the last completed workout
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+                lastCompletedWorkoutHistory.id,
+                exerciseId
+            )
+
+            if (setHistories.isEmpty()) {
+                return@withContext null
+            }
+
+            // Convert SetHistories to SimpleSet objects, matching ProgressionSection logic
+            val executedSets = setHistories
+                .filter { setHistory ->
+                    // Filter out RestPauseSet sets
+                    when(val setData = setHistory.setData){
+                        is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                        is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                        is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                        else -> true
+                    }
+                }
+                .mapNotNull { setHistory ->
+                    when(val setData = setHistory.setData){
+                        is WeightSetData -> {
+                            val weight = setData.getWeight()
+                            val reps = setData.actualReps
+                            SimpleSet(weight, reps)
+                        }
+                        is BodyWeightSetData -> {
+                            val weight = setData.getWeight()
+                            val reps = setData.actualReps
+                            SimpleSet(weight, reps)
+                        }
+                        else -> null
+                    }
+                }
+
+            if (executedSets.isEmpty()) {
+                return@withContext null
+            }
+
+            return@withContext executedSets
+        }
+    }
+
     private suspend fun preProcessExercises(){
         val exercises =
             selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
