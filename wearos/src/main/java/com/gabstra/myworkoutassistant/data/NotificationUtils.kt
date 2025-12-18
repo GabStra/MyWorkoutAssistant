@@ -15,7 +15,7 @@ import com.gabstra.myworkoutassistant.R
 
 @SuppressLint("MissingPermission")
 fun showWorkoutInProgressNotification(context: Context) {
-    val channelId = "workout_progress_channel_v2" // Changed to force channel recreation with new settings
+    val channelId = "workout_progress_channel"
     val notificationId = 1
 
     // Create an intent that will open the app when the notification is tapped
@@ -29,9 +29,11 @@ fun showWorkoutInProgressNotification(context: Context) {
     // Create a notification channel for Android O and above
     val name = "Workout Progress"
     val descriptionText = "A workout is in progress"
-    val importance = NotificationManager.IMPORTANCE_LOW
+    val importance = NotificationManager.IMPORTANCE_HIGH
     val channel = NotificationChannel(channelId, name, importance).apply {
         description = descriptionText
+        enableVibration(false)
+        setSound(null, null)
     }
     // Register the channel with the system
     val notificationManager: NotificationManager =
@@ -48,7 +50,7 @@ fun showWorkoutInProgressNotification(context: Context) {
         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         .setColor(ContextCompat.getColor(context, R.color.ic_launcher_background))
         .setColorized(true)
-        .setPriority(NotificationCompat.PRIORITY_LOW) // Match channel importance for animated icon display
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
         .setOngoing(true)
 
     // *** 1. Create and apply the Ongoing Activity ***
@@ -58,6 +60,7 @@ fun showWorkoutInProgressNotification(context: Context) {
 
     OngoingActivity.Builder(context, notificationId, notificationBuilder)
         .setAnimatedIcon(R.drawable.avd_anim)
+        .setStaticIcon(R.drawable.ic_workout_icon)
         .setTouchIntent(pendingIntent)
         .setStatus(ongoingActivityStatus)
         .build()

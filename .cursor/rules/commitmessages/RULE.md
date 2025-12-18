@@ -1,8 +1,6 @@
 ---
-description: Output a single Conventional Commit message after the Summarization section
-alwaysApply: false
+alwaysApply: true
 ---
-
 ## Commit message after summary
 
 After the **Summarization** section (and only then), output exactly **one** Git commit message.

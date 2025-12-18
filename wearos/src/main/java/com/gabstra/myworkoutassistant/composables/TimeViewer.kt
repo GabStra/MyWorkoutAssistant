@@ -94,7 +94,7 @@ fun TimeViewer(
         modifier = modifier.width(fullWidthDp),
         text = annotatedText,
         style = style,
-        textAlign = TextAlign.Start,
+        textAlign = TextAlign.Center,
         maxLines = 1
     )
 }

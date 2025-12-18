@@ -64,6 +64,8 @@ import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
+import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedSetStore
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -101,7 +103,8 @@ private class ResettableLazy<T>(private val initializer: () -> T) {
 }
 
 open class WorkoutViewModel(
-    protected val dispatchers: DispatcherProvider = DefaultDispatcherProvider
+    protected val dispatchers: DispatcherProvider = DefaultDispatcherProvider,
+    private val executedSetStore: ExecutedSetStore = DefaultExecutedSetStore()
 ) : ViewModel() {
     private val _keepScreenOn = mutableStateOf(false)
     val keepScreenOn: State<Boolean> = _keepScreenOn
@@ -285,10 +288,23 @@ open class WorkoutViewModel(
         MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val nextWorkoutState = _nextWorkoutState.asStateFlow()
 
-    val executedSetsHistory: MutableList<SetHistory> = mutableListOf()
+    /**
+     * Read-only access to executed sets history for external consumers.
+     * Returns an immutable snapshot of the current state.
+     */
+    val executedSetsHistory: List<SetHistory>
+        get() = executedSetStore.executedSets.value
+
+    /**
+     * StateFlow for observing executed sets history changes.
+     * Use this in composables that need to react to changes.
+     */
+    val executedSetsHistoryFlow = executedSetStore.executedSets
 
     protected val heartBeatHistory: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
 
+    // Note: workoutStateQueue and workoutStateHistory are primarily accessed from the main/UI thread.
+    // If they are ever accessed from background coroutines, they may need similar synchronization.
     protected val workoutStateQueue: LinkedList<WorkoutState> = LinkedList()
 
     protected val workoutStateHistory: MutableList<WorkoutState> = mutableListOf()
@@ -565,20 +581,23 @@ open class WorkoutViewModel(
                 applyProgressions()
                 val workoutStates = generateWorkoutStates()
 
+                // Take a snapshot of executedSetsHistory (immutable from StateFlow)
+                val executedSetsHistorySnapshot = executedSetStore.executedSets.value
+
                 workoutStates.forEachIndexed { index, it ->
                     if (index == workoutStates.lastIndex && it is WorkoutState.Rest) {
                         return@forEachIndexed
                     }
 
                     if(it is WorkoutState.Set){
-                        val setHistory = executedSetsHistory.firstOrNull { setHistory -> setHistory.setId == it.set.id }
+                        val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> setHistory.setId == it.set.id }
                         if(setHistory != null){
                             it.currentSetData = setHistory.setData
                         }
                     }
 
                     if(it is WorkoutState.Rest){
-                        val setHistory = executedSetsHistory.firstOrNull { setHistory -> setHistory.setId == it.set.id }
+                        val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> setHistory.setId == it.set.id }
                         if(setHistory != null){
                             it.currentSetData = setHistory.setData
                         }
@@ -670,7 +689,8 @@ open class WorkoutViewModel(
 
 
     fun getAllExecutedSetsByExerciseId(exerciseId: UUID): List<SetHistory> {
-        return executedSetsHistory.filter { it.exerciseId == exerciseId }
+        // Use store's convenience method which returns an immutable snapshot
+        return executedSetStore.getAllByExerciseId(exerciseId)
     }
 
     fun getAllSetHistoriesByExerciseId(exerciseId: UUID): List<SetHistory> {
@@ -1080,8 +1100,8 @@ open class WorkoutViewModel(
             val isTimeSet = set is TimedDurationSet || set is EnduranceSet
             if (!isTimeSet) return
             
-            // Find the set history from executedSetsHistory
-            val setHistory = executedSetsHistory.firstOrNull { 
+            // Find the set history from executedSetsHistory (immutable snapshot from StateFlow)
+            val setHistory = executedSetStore.executedSets.value.firstOrNull { 
                 it.setId == set.id && it.order == state.setIndex 
             }
             
@@ -1158,7 +1178,7 @@ open class WorkoutViewModel(
                     setStates.clear()
                     allWorkoutStates.clear()
                     weightsByEquipment.clear()
-                    executedSetsHistory.clear()
+                    executedSetStore.clear()
                     heartBeatHistory.clear()
                     startWorkoutTime = null
                     currentWorkoutHistory = null
@@ -1211,15 +1231,18 @@ open class WorkoutViewModel(
         if (_workoutRecord == null) return;
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
-        executedSetsHistory.clear()
+        // Collect all set histories first
+        val allSetHistories = mutableListOf<SetHistory>()
         exercises.filter { !it.doNotStoreHistory }.forEach { exercise ->
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
                 _workoutRecord!!.workoutHistoryId,
                 exercise.id
             )
-
-            executedSetsHistory.addAll(setHistories);
+            allSetHistories.addAll(setHistories)
         }
+
+        // Replace all executed sets atomically via store
+        executedSetStore.replaceAll(allSetHistories)
     }
 
     protected suspend fun loadWorkoutHistory() {
@@ -1494,17 +1517,22 @@ open class WorkoutViewModel(
                 )
             }
 
-            val newExecutedSetsHistory = executedSetsHistory.map {
+            // Take a snapshot of executedSetsHistory (immutable from StateFlow)
+            val executedSetsHistorySnapshot = executedSetStore.executedSets.value
+
+            val newExecutedSetsHistory = executedSetsHistorySnapshot.map {
                 it.copy(workoutHistoryId = currentWorkoutHistory!!.id)
             }
-            executedSetsHistory.clear()
-            executedSetsHistory.addAll(newExecutedSetsHistory)
+            
+            // Replace all executed sets atomically via store
+            executedSetStore.replaceAll(newExecutedSetsHistory)
 
             workoutHistoryDao.insertWithVersionCheck(currentWorkoutHistory!!)
-            setHistoryDao.insertAllWithVersionCheck(*executedSetsHistory.toTypedArray())
+            setHistoryDao.insertAllWithVersionCheck(*newExecutedSetsHistory.toTypedArray())
 
             if (isDone) {
-                val executedSetsHistoryByExerciseId = executedSetsHistory.groupBy { it.exerciseId }
+                // Use the snapshot for grouping to avoid concurrent modification
+                val executedSetsHistoryByExerciseId = newExecutedSetsHistory.groupBy { it.exerciseId }
                 val exercises = _selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + _selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
                 executedSetsHistoryByExerciseId.forEach { it ->
@@ -1784,7 +1812,8 @@ open class WorkoutViewModel(
                     }
                 }
 
-                val setHistoriesByExerciseId = executedSetsHistory
+                // Use newExecutedSetsHistory (already updated in executedSetsHistory) to avoid concurrent modification
+                val setHistoriesByExerciseId = newExecutedSetsHistory
                     .filter { it.exerciseId != null }
                     .groupBy { it.exerciseId }
 
@@ -1833,6 +1862,12 @@ open class WorkoutViewModel(
     }
 
     fun storeSetData() {
+        viewModelScope.launch(dispatchers.io) {
+            storeSetDataInternal()
+        }
+    }
+
+    private suspend fun storeSetDataInternal() {
         val currentState = _workoutState.value
         if (!(currentState is WorkoutState.Set || currentState is WorkoutState.Rest)) return
 
@@ -1874,28 +1909,22 @@ open class WorkoutViewModel(
             else -> return
         }
 
-        // Search for an existing entry in the history
-        val existingIndex = when (currentState) {
-            is WorkoutState.Set -> executedSetsHistory.indexOfFirst { it.setId == currentState.set.id && it.order == currentState.setIndex }
-            is WorkoutState.Rest -> executedSetsHistory.indexOfFirst { it.setId == currentState.set.id && it.order == currentState.order }
+        // Upsert the set history entry atomically via store
+        val key: (SetHistory) -> Boolean = when (currentState) {
+            is WorkoutState.Set -> { it.setId == currentState.set.id && it.order == currentState.setIndex }
+            is WorkoutState.Rest -> { it.setId == currentState.set.id && it.order == currentState.order }
             else -> return
         }
-        if (existingIndex != -1) {
-            executedSetsHistory[existingIndex] = newSetHistory.copy(
-                id = executedSetsHistory[existingIndex].id,
-                version = executedSetsHistory[existingIndex].version.inc()
-            )
-        } else {
-            // If not found, add the new entry
-            executedSetsHistory.add(newSetHistory)
-        }
+        executedSetStore.upsert(newSetHistory, key)
     }
 
     inline fun <reified T : SetData> getExecutedSetsDataByExerciseIdAndTakePriorToSetId(
         exerciseId: UUID,
         setId: UUID
     ): List<T> {
-        return executedSetsHistory
+        // Take a snapshot (immutable from StateFlow)
+        val snapshot = executedSetStore.executedSets.value
+        return snapshot
             .filter { it.exerciseId == exerciseId }
             .takeWhile { it.setId != setId }
             .mapNotNull { it.setData as? T }
@@ -2359,8 +2388,8 @@ open class WorkoutViewModel(
         _isHistoryEmpty.value = workoutStateHistory.isEmpty()
 
         //remove last element from executedSetsHistory
-        if (executedSetsHistory.isNotEmpty()) {
-            executedSetsHistory.removeAt(executedSetsHistory.size - 1)
+        viewModelScope.launch(dispatchers.io) {
+            executedSetStore.removeLastIfAny()
         }
     }
 
