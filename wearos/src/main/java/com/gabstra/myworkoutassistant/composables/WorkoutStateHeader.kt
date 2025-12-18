@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTimeFilled
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,15 +45,17 @@ fun WorkoutStateHeader(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel
 ){
-    val displayMode by viewModel.headerDisplayMode
+    val screenState by viewModel.screenState.collectAsState()
+    val displayMode = screenState.headerDisplayMode
+    val startWorkoutTime = screenState.startWorkoutTime
     var duration by remember { mutableStateOf(Duration.ZERO) }
     val context = LocalContext.current
 
-    if(displayMode == 1 && viewModel.startWorkoutTime != null){
+    if(displayMode == 1 && startWorkoutTime != null){
         LaunchedEffect(Unit) {
             while (true) {
                 val now = LocalDateTime.now()
-                duration = Duration.between(viewModel.startWorkoutTime,now)
+                duration = Duration.between(startWorkoutTime,now)
                 val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
                 delay(Duration.between(now, nextSecond).toMillis())
             }

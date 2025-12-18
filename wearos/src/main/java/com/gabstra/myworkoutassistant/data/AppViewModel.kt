@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -88,10 +89,33 @@ open class AppViewModel : WorkoutViewModel() {
 
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
+        rebuildScreenState()
     }
 
     fun switchHeaderDisplayMode() {
         _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
+        rebuildScreenState()
+    }
+
+    override fun rebuildScreenState() {
+        _screenState.value = WorkoutScreenState(
+            workoutState = workoutState.value,
+            nextWorkoutState = nextWorkoutState.value,
+            selectedWorkout = selectedWorkout.value,
+            isPaused = isPaused.value,
+            hasWorkoutRecord = hasWorkoutRecord.value,
+            isResuming = isResuming.value,
+            isRefreshing = isRefreshing.value,
+            isCustomDialogOpen = isCustomDialogOpen.value,
+            enableWorkoutNotificationFlow = enableWorkoutNotificationFlow.value,
+            userAge = userAge.value,
+            startWorkoutTime = startWorkoutTime,
+            enableDimming = enableDimming.value,
+            keepScreenOn = keepScreenOn.value,
+            currentScreenDimmingState = currentScreenDimmingState.value,
+            headerDisplayMode = headerDisplayMode.value,
+            hrDisplayMode = hrDisplayMode.value,
+        )
     }
 
     fun sendAll(context: Context) {

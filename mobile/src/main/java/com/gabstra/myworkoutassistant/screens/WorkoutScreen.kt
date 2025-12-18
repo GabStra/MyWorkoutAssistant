@@ -62,10 +62,11 @@ fun WorkoutScreen(
 )
 {
     val context = LocalContext.current
-    val workoutState by workoutViewModel.workoutState.collectAsState()
-    val selectedWorkout by workoutViewModel.selectedWorkout
-    val isPaused by workoutViewModel.isPaused
-    val hasWorkoutRecord by workoutViewModel.hasWorkoutRecord.collectAsState()
+    val screenState by workoutViewModel.screenState.collectAsState()
+    val workoutState = screenState.workoutState
+    val selectedWorkout = screenState.selectedWorkout
+    val isPaused = screenState.isPaused
+    val hasWorkoutRecord = screenState.hasWorkoutRecord
     
     // Fix: If WorkoutScreen is shown but there's no workout record and flag is stale, navigate back
     LaunchedEffect(hasWorkoutRecord) {
@@ -78,7 +79,7 @@ fun WorkoutScreen(
     }
 
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
-    val isCustomDialogOpen by workoutViewModel.isCustomDialogOpen.collectAsState()
+    val isCustomDialogOpen = screenState.isCustomDialogOpen
 
     BackHandler(true) {
         if (isCustomDialogOpen || showWorkoutInProgressDialog) return@BackHandler
@@ -88,7 +89,7 @@ fun WorkoutScreen(
         workoutViewModel.lightScreenUp()
     }
 
-    val enableDimming by workoutViewModel.enableDimming
+    val enableDimming = screenState.enableDimming
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     KeepOn(workoutViewModel,enableDimming = enableDimming) {
         Scaffold(

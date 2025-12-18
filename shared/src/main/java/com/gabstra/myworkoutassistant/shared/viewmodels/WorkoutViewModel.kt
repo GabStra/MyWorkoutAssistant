@@ -121,10 +121,12 @@ open class WorkoutViewModel(
 
     fun toggleKeepScreenOn() {
         _keepScreenOn.value = !_keepScreenOn.value
+        rebuildScreenState()
     }
 
     fun setDimming(shouldDim: Boolean) {
         _currentScreenDimmingState.value = shouldDim
+        rebuildScreenState()
     }
 
     fun lightScreenUp() {
@@ -141,6 +143,7 @@ open class WorkoutViewModel(
         } else if (currentState is WorkoutState.Rest) {
             _currentScreenDimmingState.value = true
         }
+        rebuildScreenState()
     }
 
     var workoutStore by mutableStateOf(
@@ -165,10 +168,12 @@ open class WorkoutViewModel(
 
     fun pauseWorkout() {
         _isPaused.value = true
+        rebuildScreenState()
     }
 
     fun resumeWorkout() {
         _isPaused.value = false
+        rebuildScreenState()
     }
 
     private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
@@ -215,6 +220,7 @@ open class WorkoutViewModel(
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue = currentYear - workoutStore.birthDateYear
         _bodyWeight.value = workoutStore.weightKg.toDouble()
+        rebuildScreenState()
     }
 
     fun initExerciseHistoryDao(context: Context) {
@@ -353,6 +359,32 @@ open class WorkoutViewModel(
             _nextWorkoutState.value = machine.upcomingNext
             _isHistoryEmpty.value = machine.isHistoryEmpty
         }
+        rebuildScreenState()
+    }
+
+    /**
+     * Rebuilds the WorkoutScreenState from current ViewModel fields.
+     * Call this whenever any UI-observable field changes.
+     */
+    protected open fun rebuildScreenState() {
+        _screenState.value = WorkoutScreenState(
+            workoutState = _workoutState.value,
+            nextWorkoutState = _nextWorkoutState.value,
+            selectedWorkout = _selectedWorkout.value,
+            isPaused = _isPaused.value,
+            hasWorkoutRecord = _hasWorkoutRecord.value,
+            isResuming = _isResuming.value,
+            isRefreshing = _isRefreshing.value,
+            isCustomDialogOpen = _isCustomDialogOpen.value,
+            enableWorkoutNotificationFlow = _enableWorkoutNotificationFlow.value,
+            userAge = _userAge.intValue,
+            startWorkoutTime = startWorkoutTime,
+            enableDimming = enableDimming.value,
+            keepScreenOn = _keepScreenOn.value,
+            currentScreenDimmingState = _currentScreenDimmingState.value,
+            headerDisplayMode = 0, // Default for base WorkoutViewModel, overridden in AppViewModel
+            hrDisplayMode = 0, // Default for base WorkoutViewModel, overridden in AppViewModel
+        )
     }
 
     val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
@@ -446,18 +478,24 @@ open class WorkoutViewModel(
     private val _enableWorkoutNotificationFlow = MutableStateFlow<String?>(null)
     val enableWorkoutNotificationFlow = _enableWorkoutNotificationFlow.asStateFlow()
 
+    protected val _screenState = MutableStateFlow<WorkoutScreenState>(WorkoutScreenState.initial())
+    val screenState = _screenState.asStateFlow()
+
     fun triggerWorkoutNotification() {
         _enableWorkoutNotificationFlow.value = System.currentTimeMillis().toString()
+        rebuildScreenState()
     }
 
     // Setter method to open dialog
     fun openCustomDialog() {
         _isCustomDialogOpen.value = true
+        rebuildScreenState()
     }
 
     // Setter method to close dialog
     fun closeCustomDialog() {
         _isCustomDialogOpen.value = false
+        rebuildScreenState()
     }
 
 
@@ -507,6 +545,7 @@ open class WorkoutViewModel(
                 }
             }
             _isCheckingWorkoutRecord.value = false
+            rebuildScreenState()
         }
     }
 
@@ -530,6 +569,7 @@ open class WorkoutViewModel(
             workoutRecordDao.insert(_workoutRecord!!)
 
             _hasWorkoutRecord.value = true
+            rebuildScreenState()
         }
     }
 
@@ -593,6 +633,7 @@ open class WorkoutViewModel(
                 weightsByEquipment.clear()
                 _isPaused.value = false
                 _selectedWorkout.value = _workouts.value.find { it.id == _selectedWorkoutId.value }!!
+                rebuildScreenState()
 
                 currentWorkoutHistory =
                     workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
@@ -1197,6 +1238,7 @@ open class WorkoutViewModel(
 
             delay(2000)
             _isResuming.value = false
+            rebuildScreenState()
         }
     }
 
@@ -1230,6 +1272,7 @@ open class WorkoutViewModel(
                     }
                     
                     _selectedWorkout.value = foundWorkout
+                    rebuildScreenState()
 
                     loadWorkoutHistory()
 
@@ -1345,6 +1388,7 @@ open class WorkoutViewModel(
             updatedExercise
         )
         _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
+        rebuildScreenState()
     }
 
     fun addNewSetStandard() {
@@ -1487,6 +1531,7 @@ open class WorkoutViewModel(
             updateStateFlowsFromMachine()
 
             _isRefreshing.value = false
+            rebuildScreenState()
         }
     }
 
@@ -2410,6 +2455,7 @@ open class WorkoutViewModel(
             stateMachine = initializeStateMachine(allWorkoutStates)
             updateStateFlowsFromMachine()
         }
+        rebuildScreenState()
     }
 
     open fun goToNextState() {

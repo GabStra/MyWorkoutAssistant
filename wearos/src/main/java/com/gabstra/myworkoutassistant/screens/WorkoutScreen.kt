@@ -57,14 +57,15 @@ fun WorkoutScreen(
 ){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val workoutState by viewModel.workoutState.collectAsState()
-    val selectedWorkout by viewModel.selectedWorkout
-    val userAge by viewModel.userAge
+    val screenState by viewModel.screenState.collectAsState()
+    val workoutState = screenState.workoutState
+    val selectedWorkout = screenState.selectedWorkout
+    val userAge = screenState.userAge
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
-    val isResuming by viewModel.isResuming.collectAsState()
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val isResuming = screenState.isResuming
+    val isRefreshing = screenState.isRefreshing
 
-    val triggerMobileNotification by viewModel.enableWorkoutNotificationFlow.collectAsState()
+    val triggerMobileNotification = screenState.enableWorkoutNotificationFlow
 
     LaunchedEffect(triggerMobileNotification){
         if(triggerMobileNotification==null) return@LaunchedEffect
@@ -153,7 +154,7 @@ fun WorkoutScreen(
         }
     )
 
-    val isCustomDialogOpen by viewModel.isCustomDialogOpen.collectAsState()
+    val isCustomDialogOpen = screenState.isCustomDialogOpen
 
     CustomBackHandler(
         onPress = {

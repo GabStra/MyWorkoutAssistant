@@ -732,9 +732,10 @@ private fun HeartRateView(
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
 ) {
-    val displayMode by appViewModel.hrDisplayMode
+    val screenState by appViewModel.screenState.collectAsState()
+    val displayMode = screenState.hrDisplayMode
 
-    val textToDisplay by remember(hr, mhrPercentage) {
+    val textToDisplay by remember(hr, mhrPercentage, displayMode) {
         derivedStateOf {
             if (hr == 0) {
                 "-"
