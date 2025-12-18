@@ -1789,63 +1789,87 @@ open class WorkoutViewModel(
                             }
 
                             if (progressionState != null) {
-                                if (progressionState == ProgressionState.PROGRESS) {
-                                    // Success if executed sets are ABOVE or EQUAL to expected sets
-                                    // Failure if exerciseProgression is null, expectedSets is empty, or vsExpected is BELOW/MIXED
-                                    val isSuccess = exerciseProgression != null && 
-                                        expectedSets.isNotEmpty() &&
-                                        (vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL)
+                                when (progressionState) {
+                                    ProgressionState.PROGRESS -> {
+                                        // Success if executed sets are ABOVE or EQUAL to expected sets
+                                        // Failure if exerciseProgression is null, expectedSets is empty, or vsExpected is BELOW/MIXED
+                                        val isSuccess = exerciseProgression != null && 
+                                            expectedSets.isNotEmpty() &&
+                                            (vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL)
 
-                                    updatedInfo = if (isSuccess) {
-                                        updatedInfo.copy(
-                                            lastSuccessfulSession = currentSession,
-                                            successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
-                                            sessionFailedCounter = 0u
-                                        )
-                                    } else {
-                                        // PROGRESS failure: reset successfulSessionCounter to 0
-                                        updatedInfo.copy(
-                                            successfulSessionCounter = 0u,
-                                            sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
-                                        )
-                                    }
-                                } else {
-                                    // ProgressionState.RETRY as DELOAD was already handled
-                                    when (vsExpected) {
-                                        Ternary.ABOVE -> {
-                                            // Exceeded retry target - success
-                                            updatedInfo = updatedInfo.copy(
+                                        updatedInfo = if (isSuccess) {
+                                            updatedInfo.copy(
                                                 lastSuccessfulSession = currentSession,
                                                 successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
                                                 sessionFailedCounter = 0u
                                             )
-                                        }
-                                        Ternary.EQUAL -> {
-                                            // Met retry target exactly - complete retry, reset counters
-                                            updatedInfo = updatedInfo.copy(
-                                                lastSuccessfulSession = currentSession,
+                                        } else {
+                                            // PROGRESS failure: reset successfulSessionCounter to 0
+                                            updatedInfo.copy(
                                                 successfulSessionCounter = 0u,
-                                                sessionFailedCounter = 0u
+                                                sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
                                             )
                                         }
-                                        Ternary.BELOW, Ternary.MIXED -> {
-                                            // Below retry target - session failed, don't update counters
-                                            // Counters remain unchanged (will be incremented elsewhere if needed)
+                                    }
+                                    ProgressionState.RETRY -> {
+                                        // ProgressionState.RETRY (DELOAD was already handled above)
+                                        when (vsExpected) {
+                                            Ternary.ABOVE -> {
+                                                // Exceeded retry target - success
+                                                updatedInfo = updatedInfo.copy(
+                                                    lastSuccessfulSession = currentSession,
+                                                    successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
+                                                    sessionFailedCounter = 0u
+                                                )
+                                            }
+                                            Ternary.EQUAL -> {
+                                                // Met retry target exactly - complete retry, reset counters
+                                                updatedInfo = updatedInfo.copy(
+                                                    lastSuccessfulSession = currentSession,
+                                                    successfulSessionCounter = 0u,
+                                                    sessionFailedCounter = 0u
+                                                )
+                                            }
+                                            Ternary.BELOW, Ternary.MIXED -> {
+                                                // Below retry target - session failed, don't update counters
+                                                // Counters remain unchanged (will be incremented elsewhere if needed)
+                                            }
                                         }
+                                    }
+                                    ProgressionState.FAILED -> {
+                                        // FAILED state: progression could not be calculated (e.g., same volume)
+                                        // Treat as failure
+                                        updatedInfo = updatedInfo.copy(
+                                            successfulSessionCounter = 0u,
+                                            sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
+                                        )
+                                    }
+                                    ProgressionState.DELOAD -> {
+                                        // DELOAD is handled earlier, but this case should not happen here
+                                        // Leave counters as-is (already handled above)
                                     }
                                 }
                             } else {
                                 // No progression state - compare against last successful session
                                 // However, if we have exerciseProgression but progressionState is null,
-                                // we should still check vsExpected to handle PROGRESS failures correctly
-                                if (exerciseProgression != null && expectedSets.isNotEmpty() && 
-                                    (vsExpected == Ternary.BELOW || vsExpected == Ternary.MIXED)) {
-                                    // This is a PROGRESS failure even though progressionState is null
-                                    // Reset successfulSessionCounter to 0
-                                    updatedInfo = updatedInfo.copy(
-                                        successfulSessionCounter = 0u,
-                                        sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
-                                    )
+                                // we should still check vsExpected to handle PROGRESS successes/failures correctly
+                                if (exerciseProgression != null && expectedSets.isNotEmpty()) {
+                                    if (vsExpected == Ternary.BELOW || vsExpected == Ternary.MIXED) {
+                                        // This is a PROGRESS failure even though progressionState is null
+                                        // Reset successfulSessionCounter to 0
+                                        updatedInfo = updatedInfo.copy(
+                                            successfulSessionCounter = 0u,
+                                            sessionFailedCounter = updatedInfo.sessionFailedCounter.inc()
+                                        )
+                                    } else if (vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL) {
+                                        // This is a PROGRESS success even though progressionState is null
+                                        // Increment successfulSessionCounter
+                                        updatedInfo = updatedInfo.copy(
+                                            lastSuccessfulSession = currentSession,
+                                            successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
+                                            sessionFailedCounter = 0u
+                                        )
+                                    }
                                 } else {
                                     val lastSessionSets = updatedInfo.lastSuccessfulSession.mapNotNull { setHistory ->
                                         when (val setData = setHistory.setData) {

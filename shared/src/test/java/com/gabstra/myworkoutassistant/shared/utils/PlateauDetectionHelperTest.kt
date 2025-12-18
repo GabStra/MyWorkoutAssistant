@@ -118,7 +118,7 @@ class PlateauDetectionHelperTest {
         )
 
         assertFalse("Should not detect plateau with less than 4 sessions", isPlateau)
-        assertTrue("sessionImproved should be empty when not enough sessions", sessionImproved.isEmpty())
+        assertTrue("sessionImproved should all be false when not enough sessions", sessionImproved.all { !it })
     }
 
     @Test

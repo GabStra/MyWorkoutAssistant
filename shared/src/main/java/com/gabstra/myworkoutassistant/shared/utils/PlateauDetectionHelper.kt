@@ -20,7 +20,7 @@ object PlateauDetectionHelper {
     private const val REP_TOL_PERCENT = 0.15      // percentage of reps for flexible tolerance (15%)
     private const val MIN_VOLUME_DELTA = 2        // extra total reps to count as progress
     private const val WINDOW_SESS = 3             // how many recent sessions to inspect for plateau
-    private const val MIN_SESS_FOR_PLAT = 3       // minimal sessions before calling plateau
+    private const val MIN_SESS_FOR_PLAT = 4       // minimal sessions before calling plateau
     private const val RECENT_BASELINE_WINDOW = 10 // how many recent sessions to use for baseline comparison
     
     // Cache for BIN_SIZE per equipment
@@ -354,8 +354,9 @@ object PlateauDetectionHelper {
                             improved = true
                         }
                     } else {
-                        // First time seeing this weight in recent baseline window = improvement
-                        improved = true
+                        // Weight not in baseline - check if it's a new heavier weight (handled by Condition B)
+                        // or if it's lighter/same weight but outside baseline window
+                        // For now, don't mark as improved here - let Condition B handle it
                     }
 
                     // Condition C: at same weight bin, total volume increases by ≥ MIN_VOLUME_DELTA
@@ -370,6 +371,7 @@ object PlateauDetectionHelper {
 
                 // 2) CONDITION B: weight increase with acceptable rep drop
                 //    Compare to recent baseline, and handle weight increases to previously-seen weights
+                //    Only check this if Condition A and C didn't already mark as improved
                 if (!improved) {
                     val maxWeightInBaseline = recentBestRepsAtBin.keys.maxOrNull() ?: Double.NEGATIVE_INFINITY
                     
@@ -377,8 +379,9 @@ object PlateauDetectionHelper {
                         val currentBin = b
                         val currentReps = stats.first
 
-                        // Check if this weight is higher than any weight in recent baseline
-                        if (currentBin > maxWeightInBaseline) {
+                        // Condition B only applies to NEW weights (heavier than baseline)
+                        // Skip if this weight was already handled by Condition A
+                        if (currentBin > maxWeightInBaseline && currentBin !in recentBestRepsAtBin) {
                             // New heaviest weight: compare to best reps at lower weights in recent baseline
                             var bestRepsLower = Int.MIN_VALUE
                             for ((bHist, repsHist) in recentBestRepsAtBin) {
@@ -394,21 +397,15 @@ object PlateauDetectionHelper {
                                     improved = true
                                     break
                                 }
+                                // If conditionBMet is false, rep drop is too large - don't mark as improved
                             } else {
                                 // No lower weight in baseline, but this is new max = improvement
                                 improved = true
                                 break
                             }
-                        } else if (currentBin in recentBestRepsAtBin) {
-                            // Weight was seen in recent baseline
-                            // Check if current reps are higher than recent baseline for this weight
-                            // (This supplements Condition A for cases where we're revisiting a weight)
-                            val recentRepsAtBin = recentBestRepsAtBin[currentBin]!!
-                            if (currentReps > recentRepsAtBin) {
-                                improved = true
-                                break
-                            }
                         }
+                        // Note: We don't check else if currentBin in recentBestRepsAtBin here
+                        // because Condition A should have already handled same-weight cases
                     }
                 }
             }
@@ -425,8 +422,8 @@ object PlateauDetectionHelper {
         val start = maxOf(0, n - WINDOW_SESS)
         val end = n - 1
 
-        // Require enough sessions before calling plateau
-        if ((end - start + 1) < MIN_SESS_FOR_PLAT) {
+        // Require enough total sessions before calling plateau (not just window size)
+        if (n < MIN_SESS_FOR_PLAT) {
             return Pair(false, sessionImproved)
         }
 
