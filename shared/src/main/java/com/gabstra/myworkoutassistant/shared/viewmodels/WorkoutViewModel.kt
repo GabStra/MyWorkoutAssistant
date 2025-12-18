@@ -285,7 +285,7 @@ open class WorkoutViewModel(
     val workoutState = _workoutState.asStateFlow()
 
     private val _nextWorkoutState =
-        MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
+        MutableStateFlow<WorkoutState?>(null)
     val nextWorkoutState = _nextWorkoutState.asStateFlow()
 
     /**
@@ -303,11 +303,18 @@ open class WorkoutViewModel(
 
     protected val heartBeatHistory: ConcurrentLinkedQueue<Int> = ConcurrentLinkedQueue()
 
-    // Note: workoutStateQueue and workoutStateHistory are primarily accessed from the main/UI thread.
-    // If they are ever accessed from background coroutines, they may need similar synchronization.
-    protected val workoutStateQueue: LinkedList<WorkoutState> = LinkedList()
+    /**
+     * State machine managing workout state progression.
+     * Replaces manual queue/history management.
+     */
+    private var stateMachine: WorkoutStateMachine? = null
 
-    protected val workoutStateHistory: MutableList<WorkoutState> = mutableListOf()
+    /**
+     * Read-only access to workout state history for external consumers.
+     * Returns an immutable snapshot of the current history.
+     */
+    val workoutStateHistory: List<WorkoutState>
+        get() = stateMachine?.history ?: emptyList()
 
     private val _isHistoryEmpty = MutableStateFlow<Boolean>(true)
     val isHistoryEmpty = _isHistoryEmpty.asStateFlow()
@@ -315,6 +322,38 @@ open class WorkoutViewModel(
     protected val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
     val latestSetHistoriesByExerciseId: MutableMap<UUID, List<SetHistory>> = mutableMapOf()
+
+    /**
+     * Initializes the state machine from a list of workout states.
+     * Filters out trailing Rest states and adds Completed state.
+     */
+    private fun initializeStateMachine(workoutStates: List<WorkoutState>): WorkoutStateMachine {
+        val filteredStates = workoutStates.toMutableList()
+        
+        // Remove trailing Rest state if present
+        if (filteredStates.isNotEmpty() && filteredStates.last() is WorkoutState.Rest) {
+            filteredStates.removeAt(filteredStates.size - 1)
+        }
+        
+        // Add Completed state if startWorkoutTime is set
+        if (startWorkoutTime != null) {
+            filteredStates.add(WorkoutState.Completed(startWorkoutTime!!))
+        }
+        
+        return WorkoutStateMachine.fromStates(filteredStates) { LocalDateTime.now() }
+    }
+
+    /**
+     * Updates the state flows from the current state machine.
+     */
+    private fun updateStateFlowsFromMachine() {
+        val machine = stateMachine
+        if (machine != null) {
+            _workoutState.value = machine.currentState
+            _nextWorkoutState.value = machine.upcomingNext
+            _isHistoryEmpty.value = machine.isHistoryEmpty
+        }
+    }
 
     val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
 
@@ -548,9 +587,7 @@ open class WorkoutViewModel(
                 val preparingState = WorkoutState.Preparing(dataLoaded = false)
 
                 _workoutState.value = preparingState
-                workoutStateQueue.clear()
-                workoutStateHistory.clear()
-                _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+                stateMachine = null
                 setStates.clear()
                 allWorkoutStates.clear()
                 weightsByEquipment.clear()
@@ -603,14 +640,15 @@ open class WorkoutViewModel(
                         }
                     }
 
-                    workoutStateQueue.addLast(it)
                     allWorkoutStates.add(it)
                     if(it is WorkoutState.Set){
                         setStates.addLast(it)
                     }
                 }
 
-                workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
+                // Initialize state machine with all states
+                stateMachine = initializeStateMachine(allWorkoutStates)
+                updateStateFlowsFromMachine()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                 triggerWorkoutNotification()
                 onEnd()
@@ -1172,9 +1210,7 @@ open class WorkoutViewModel(
                     val preparingState = WorkoutState.Preparing(dataLoaded = false)
                     _workoutState.value = preparingState
 
-                    workoutStateQueue.clear()
-                    workoutStateHistory.clear()
-                    _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+                    stateMachine = null
                     setStates.clear()
                     allWorkoutStates.clear()
                     weightsByEquipment.clear()
@@ -1202,17 +1238,20 @@ open class WorkoutViewModel(
                     applyProgressions()
                     val workoutStates = generateWorkoutStates()
 
+                    // Populate allWorkoutStates and setStates for other APIs
                     workoutStates.forEachIndexed { index, it ->
                         if (index == workoutStates.lastIndex && it is WorkoutState.Rest) {
                             return@forEachIndexed
                         }
-                        workoutStateQueue.addLast(it)
                         allWorkoutStates.add(it)
                         if(it is WorkoutState.Set){
                             setStates.addLast(it)
                         }
                     }
 
+                    // Initialize state machine (without Completed state - will be added in setWorkoutStart())
+                    stateMachine = initializeStateMachine(allWorkoutStates)
+                    updateStateFlowsFromMachine()
                     _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                     triggerWorkoutNotification()
                 } catch (e: Exception) {
@@ -1378,9 +1417,23 @@ open class WorkoutViewModel(
 
             _isRefreshing.value = true
 
-            workoutStateQueue.clear()
-            workoutStateHistory.clear()
-            _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+            val targetSetId = when (_workoutState.value) {
+                is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
+                is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
+                else -> throw RuntimeException("Invalid state")
+            }
+
+            // Count how many states with this setId were in history before refresh
+            val oldHistory = stateMachine?.history ?: emptyList()
+            val completedMatchingCount = oldHistory.count { state ->
+                val setId = when (state) {
+                    is WorkoutState.Set -> state.set.id
+                    is WorkoutState.Rest -> state.set.id
+                    else -> null
+                }
+                setId == targetSetId
+            }
+
             setStates.clear()
             allWorkoutStates.clear()
 
@@ -1390,40 +1443,48 @@ open class WorkoutViewModel(
                 if (index == workoutStates.lastIndex && it is WorkoutState.Rest) {
                     return@forEachIndexed
                 }
-                workoutStateQueue.addLast(it)
                 allWorkoutStates.add(it)
                 if(it is WorkoutState.Set){
                     setStates.addLast(it)
                 }
             }
 
-            workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
-
-            val targetSetId = when (_workoutState.value) {
-                is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
-                is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
-                else -> throw RuntimeException("Invalid state")
-            }
-
-            _workoutState.value = workoutStateQueue.pollFirst()!!
-
-            while (_workoutState.value !is WorkoutState.Completed) {
-                val currentSetId = when (_workoutState.value) {
-                    is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).set.id
-                    is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
-                    else -> throw RuntimeException("Invalid state")
+            // Initialize new state machine starting at the beginning
+            var newMachine = initializeStateMachine(allWorkoutStates)
+            
+            // Find the (completedMatchingCount + 1)th occurrence of targetSetId
+            // This corresponds to the state we were at before refresh
+            var occurrenceCount = 0
+            var targetIndex = -1
+            
+            for (i in 0 until newMachine.allStates.size) {
+                val state = newMachine.allStates[i]
+                val setId = when (state) {
+                    is WorkoutState.Set -> state.set.id
+                    is WorkoutState.Rest -> state.set.id
+                    else -> null
                 }
-
-                if (currentSetId == targetSetId) {
-                    break
+                if (setId == targetSetId) {
+                    occurrenceCount++
+                    if (occurrenceCount == completedMatchingCount + 1) {
+                        targetIndex = i
+                        break
+                    }
                 }
-
-                goToNextState()
             }
-
-            if (_workoutState.value !is WorkoutState.Completed) {
-                goToNextState()
+            
+            // If we found the target, reposition and advance one step
+            if (targetIndex >= 0) {
+                // Create a machine positioned at the target index
+                newMachine = WorkoutStateMachine(newMachine.allStates, targetIndex) { LocalDateTime.now() }
+                // Advance one step to get to the next state after the target
+                if (!newMachine.isCompleted) {
+                    newMachine = newMachine.next()
+                }
             }
+            
+            stateMachine = newMachine
+            updateStateFlowsFromMachine()
 
             _isRefreshing.value = false
         }
@@ -1911,8 +1972,8 @@ open class WorkoutViewModel(
 
         // Upsert the set history entry atomically via store
         val key: (SetHistory) -> Boolean = when (currentState) {
-            is WorkoutState.Set -> { it.setId == currentState.set.id && it.order == currentState.setIndex }
-            is WorkoutState.Rest -> { it.setId == currentState.set.id && it.order == currentState.order }
+            is WorkoutState.Set -> { history -> history.setId == currentState.set.id && history.order == currentState.setIndex }
+            is WorkoutState.Rest -> { history -> history.setId == currentState.set.id && history.order == currentState.order }
             else -> return
         }
         executedSetStore.upsert(newSetHistory, key)
@@ -1923,7 +1984,7 @@ open class WorkoutViewModel(
         setId: UUID
     ): List<T> {
         // Take a snapshot (immutable from StateFlow)
-        val snapshot = executedSetStore.executedSets.value
+        val snapshot = executedSetsHistory
         return snapshot
             .filter { it.exerciseId == exerciseId }
             .takeWhile { it.setId != setId }
@@ -2335,85 +2396,73 @@ open class WorkoutViewModel(
     fun setWorkoutStart() {
         val startTime = LocalDateTime.now()
         startWorkoutTime = startTime
-        workoutStateQueue.addLast(WorkoutState.Completed(startWorkoutTime!!))
+        
+        // Add Completed state to state machine if it exists
+        val machine = stateMachine
+        if (machine != null && !machine.isCompleted) {
+            // Create new state machine with Completed state added
+            val statesWithCompleted = machine.allStates.toMutableList()
+            statesWithCompleted.add(WorkoutState.Completed(startWorkoutTime!!))
+            stateMachine = WorkoutStateMachine(statesWithCompleted, machine.currentIndex) { LocalDateTime.now() }
+            updateStateFlowsFromMachine()
+        } else if (machine == null && allWorkoutStates.isNotEmpty()) {
+            // Fallback: initialize state machine if it wasn't initialized yet
+            stateMachine = initializeStateMachine(allWorkoutStates)
+            updateStateFlowsFromMachine()
+        }
     }
 
     open fun goToNextState() {
-        if (workoutStateQueue.isEmpty()) return
+        val machine = stateMachine ?: return
+        if (machine.isCompleted) return
 
-        if (_workoutState.value !is WorkoutState.Preparing) {
-            workoutStateHistory.add(_workoutState.value)
-            _isHistoryEmpty.value = workoutStateHistory.isEmpty()
-        }
-
-        val newState = workoutStateQueue.pollFirst()!!
-
-        if(newState is WorkoutState.Completed){
-            newState.endWorkoutTime = LocalDateTime.now()
-        }
-
-        _workoutState.value = newState
-
-        val nextWorkoutState =
-            if (workoutStateQueue.isNotEmpty()) workoutStateQueue.peek()!! else null
-        if (nextWorkoutState != null) {
-            _nextWorkoutState.value = nextWorkoutState
-        }
+        stateMachine = machine.next()
+        updateStateFlowsFromMachine()
     }
 
     fun goToPreviousSet() {
-        if (workoutStateHistory.isEmpty() || (workoutStateHistory.size == 1 && workoutStateHistory[0] === _workoutState.value)) return
+        val machine = stateMachine ?: return
+        if (machine.isAtStart) return
 
-        // Remove the current state from the queue and re-add it at the beginning to revisit later
-        val currentState = _workoutState.value
-        workoutStateQueue.addFirst(currentState)
+        // Find the last Set state in history
+        val history = machine.history
+        val lastSetIndex = history.indexOfLast { it is WorkoutState.Set }
+        
+        if (lastSetIndex < 0) return // No Set state in history
 
-        // Any state in the workoutStateQueue that was skipped (beyond the current state)
-        // should now be placed back at the front of the queue to ensure they are the next targets.
-        // This step may vary based on how you want to handle the reordering.
-        // Assuming you want to reverse the order of "future" states so they are encountered in the original order:
-        while (workoutStateHistory.isNotEmpty()) {
-            val skippedState = workoutStateHistory.removeAt(workoutStateHistory.size - 1)
-
-            if (skippedState is WorkoutState.Set) {
-                _workoutState.value = skippedState
-                break
-            }
-
-            workoutStateQueue.addFirst(skippedState)
+        // Undo until we reach the last Set state
+        var currentMachine = machine
+        val targetState = history[lastSetIndex]
+        while (currentMachine.currentState != targetState && !currentMachine.isAtStart) {
+            currentMachine = currentMachine.undo()
+        }
+        
+        // If we didn't reach the target, undo one more time to get to it
+        if (currentMachine.currentState != targetState && !currentMachine.isAtStart) {
+            currentMachine = currentMachine.undo()
         }
 
-        // Update the next workout state based on the new queue
-        _nextWorkoutState.value = workoutStateQueue.peek()!!
-        _isHistoryEmpty.value = workoutStateHistory.isEmpty()
+        stateMachine = currentMachine
+        updateStateFlowsFromMachine()
 
-        //remove last element from executedSetsHistory
+        // Remove last element from executedSetsHistory
         viewModelScope.launch(dispatchers.io) {
             executedSetStore.removeLastIfAny()
         }
     }
 
     fun goToNextExercise() {
-        val currentState = _workoutState.value as WorkoutState.Set
+        val machine = stateMachine ?: return
+        val currentState = _workoutState.value as? WorkoutState.Set ?: return
         val currentExerciseId = currentState.exerciseId
 
-        while (workoutStateQueue.isNotEmpty()) {
-            val state = _workoutState.value
-
-            if (state is WorkoutState.Set) {
-                val stateExerciseId = state.exerciseId
-                if (stateExerciseId != currentExerciseId) {
-                    _workoutState.value = state
-                    break
-                }
-            }
-
-            if (state is WorkoutState.Completed) {
-                _workoutState.value = state
-                break
-            }
-
-            goToNextState()
+        // Skip until we find a Set with different exerciseId or Completed state
+        val newMachine = machine.skipUntil { state ->
+            (state is WorkoutState.Set && state.exerciseId != currentExerciseId) ||
+            state is WorkoutState.Completed
         }
+
+        stateMachine = newMachine
+        updateStateFlowsFromMachine()
     }
 }

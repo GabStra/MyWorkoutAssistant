@@ -54,7 +54,7 @@ class WorkoutViewModelDatabaseTest {
     private lateinit var viewModel: WorkoutViewModel
     private lateinit var context: Context
     private lateinit var mockWorkoutStoreRepository: WorkoutStoreRepository
-    private lateinit var workoutStateQueueField: java.lang.reflect.Field
+    private lateinit var stateMachineField: java.lang.reflect.Field
     private lateinit var workoutStateField: java.lang.reflect.Field
     private lateinit var testDispatcher: TestDispatcher
 
@@ -118,9 +118,9 @@ class WorkoutViewModelDatabaseTest {
         exerciseSessionProgressionDaoField.isAccessible = true
         exerciseSessionProgressionDaoField.set(viewModel, database.exerciseSessionProgressionDao())
         
-        // Get reflection access to workoutStateQueue for verification
-        workoutStateQueueField = WorkoutViewModel::class.java.getDeclaredField("workoutStateQueue")
-        workoutStateQueueField.isAccessible = true
+        // Get reflection access to stateMachine for verification
+        stateMachineField = WorkoutViewModel::class.java.getDeclaredField("stateMachine")
+        stateMachineField.isAccessible = true
         
         // Get reflection access to _workoutState for test updates
         workoutStateField = WorkoutViewModel::class.java.getDeclaredField("_workoutState")
@@ -327,10 +327,10 @@ class WorkoutViewModelDatabaseTest {
             // Check if queue is populated - if it is, the coroutine might have completed
             // but dataLoaded wasn't set (unlikely but possible)
             @Suppress("UNCHECKED_CAST")
-            val queueCheck = workoutStateQueueField.get(viewModel) as java.util.LinkedList<WorkoutState>
-            val queueSize = queueCheck.size
+            val stateMachine = stateMachineField.get(viewModel) as? WorkoutStateMachine
+            val queueSize = stateMachine?.nextStates?.size ?: 0
             
-            // If queue is populated, the coroutine completed but dataLoaded wasn't set
+            // If state machine is populated, the coroutine completed but dataLoaded wasn't set
             // This would be a bug in startWorkout(), but let's handle it
             if (queueSize > 0) {
                 // Manually set dataLoaded to true if queue is populated
@@ -366,24 +366,24 @@ class WorkoutViewModelDatabaseTest {
             advanceUntilIdle()
             Thread.sleep(5)
             @Suppress("UNCHECKED_CAST")
-            val workoutStateQueue = workoutStateQueueField.get(viewModel) as java.util.LinkedList<WorkoutState>
-            queuePopulated = workoutStateQueue.isNotEmpty()
+            val stateMachine = stateMachineField.get(viewModel) as? WorkoutStateMachine
+            queuePopulated = stateMachine != null && stateMachine.nextStates.isNotEmpty()
             queueAttempts++
         }
         
         @Suppress("UNCHECKED_CAST")
-        val workoutStateQueue = workoutStateQueueField.get(viewModel) as java.util.LinkedList<WorkoutState>
-        assertTrue("WorkoutStateQueue should be populated after dataLoaded is true. Queue size: ${workoutStateQueue.size}", 
-            workoutStateQueue.isNotEmpty())
+        val stateMachine = stateMachineField.get(viewModel) as? WorkoutStateMachine
+        assertTrue("StateMachine should be populated after dataLoaded is true. Next states size: ${stateMachine?.nextStates?.size ?: 0}", 
+            stateMachine != null && stateMachine.nextStates.isNotEmpty())
         
         // Now transition from Preparing state - ensure queue is still populated when we call goToNextState()
         workoutState = viewModel.workoutState.value
         if (workoutState is WorkoutState.Preparing && workoutState.dataLoaded) {
-            // Verify queue is still populated right before calling goToNextState()
+            // Verify state machine is still populated right before calling goToNextState()
             @Suppress("UNCHECKED_CAST")
-            val queueBeforeTransition = workoutStateQueueField.get(viewModel) as java.util.LinkedList<WorkoutState>
-            assertTrue("Queue must be populated before calling goToNextState(). Queue size: ${queueBeforeTransition.size}", 
-                queueBeforeTransition.isNotEmpty())
+            val stateMachineBeforeTransition = stateMachineField.get(viewModel) as? WorkoutStateMachine
+            assertTrue("StateMachine must be populated before calling goToNextState(). Next states size: ${stateMachineBeforeTransition?.nextStates?.size ?: 0}", 
+                stateMachineBeforeTransition != null && stateMachineBeforeTransition.nextStates.isNotEmpty())
             
             // Call goToNextState() - it should transition since queue is populated
             viewModel.goToNextState()
