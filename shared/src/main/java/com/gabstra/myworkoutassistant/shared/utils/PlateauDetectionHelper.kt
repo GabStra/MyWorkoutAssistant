@@ -8,6 +8,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import kotlin.math.abs
 
@@ -23,6 +24,12 @@ object PlateauDetectionHelper {
     private const val MIN_SESS_FOR_PLAT = 4       // minimal sessions before calling plateau
     private const val RECENT_BASELINE_WINDOW = 10 // how many recent sessions to use for baseline comparison
     
+    // Edge case handling constants
+    private const val MAX_DAYS_BETWEEN_SESSIONS = 60L      // Reset baseline if gap > 60 days
+    private const val WEIGHT_DROP_THRESHOLD = 0.20         // 20% weight drop triggers baseline reset
+    private const val MIN_BIN_SIZE = 0.1                    // Minimum bin size in kg
+    private const val LOW_REP_THRESHOLD = 3                // Reps ≤ 3 get stricter tolerance
+    
     // Cache for BIN_SIZE per equipment
     private val binSizeCache: MutableMap<UUID, Double> = mutableMapOf()
 
@@ -33,7 +40,9 @@ object PlateauDetectionHelper {
         val id: UUID,              // workoutHistoryId
         val date: LocalDate,
         val sets: List<SimpleSet>, // weight and reps for working sets only
-        val isDeload: Boolean = false // true if this session was marked as DELOAD
+        val isDeload: Boolean = false, // true if this session was marked as DELOAD
+        val isBodyweightExercise: Boolean = false, // true if this session contains bodyweight exercises
+        val externalWeights: Map<SimpleSet, Double> = emptyMap() // For bodyweight exercises: SimpleSet -> external weight (additionalWeight)
     )
 
     // -----------------------------
@@ -117,16 +126,19 @@ object PlateauDetectionHelper {
             
             // Calculate differences between consecutive weights
             val differences = mutableListOf<Double>()
+            val maxWeight = weights.maxOrNull() ?: 0.0
             for (i in 0 until weights.size - 1) {
                 val diff = weights[i + 1] - weights[i]
-                if (diff > 1e-9) { // Only consider positive differences
+                // Filter out differences that are too small (within tolerance)
+                // This prevents floating-point noise from affecting GCD calculation
+                if (diff > 1e-6) { // Only consider meaningful positive differences
                     differences.add(diff)
                 }
             }
 
             // If no valid differences, use default
             if (differences.isEmpty()) {
-                val binSize = DEFAULT_BIN_SIZE
+                val binSize = maxOf(DEFAULT_BIN_SIZE, MIN_BIN_SIZE)
                 binSizeCache[equipment.id] = binSize
                 return binSize
             }
@@ -134,8 +146,14 @@ object PlateauDetectionHelper {
             // Calculate GCD of all differences
             val binSize = gcdOfList(differences)
 
-            // Ensure BIN_SIZE is positive and reasonable
-            val finalBinSize = if (binSize > 1e-9) binSize else DEFAULT_BIN_SIZE
+            // Ensure BIN_SIZE is at least MIN_BIN_SIZE and reasonable
+            // Also ensure it's at least 0.01% of max weight if max weight is very large
+            val minBinSizeFromMaxWeight = if (maxWeight > 0) maxWeight * 0.0001 else MIN_BIN_SIZE
+            val finalBinSize = maxOf(
+                if (binSize > 1e-9) binSize else DEFAULT_BIN_SIZE,
+                MIN_BIN_SIZE,
+                minBinSizeFromMaxWeight
+            )
 
             // Cache the result
             binSizeCache[equipment.id] = finalBinSize
@@ -156,8 +174,21 @@ object PlateauDetectionHelper {
     /**
      * Calculates flexible rep tolerance based on rep count.
      * Uses percentage-based tolerance with a minimum base value.
+     * For very low rep counts (≤3), uses stricter tolerance to prevent
+     * counting failed lifts (e.g., 1→0 rep) as improvements.
      */
     private fun calculateRepTolerance(reps: Int): Int {
+        if (reps <= LOW_REP_THRESHOLD) {
+            // For very low rep counts, use stricter tolerance
+            // For 1 rep: 0 tolerance (no drop allowed - 1→0 is failure)
+            // For 2 reps: 1 tolerance (allow 1 rep drop)
+            // For 3 reps: 1 tolerance (allow 1 rep drop)
+            return when (reps) {
+                1 -> 0  // No tolerance - 1→0 is failure
+                2, 3 -> 1  // Allow 1 rep drop
+                else -> maxOf(1, reps - 1)
+            }
+        }
         val percentBased = (reps * REP_TOL_PERCENT).toInt()
         return maxOf(REP_TOL_BASE, percentBased)
     }
@@ -168,13 +199,15 @@ object PlateauDetectionHelper {
      * 
      * @param baselineResetIndex The index where baseline was last reset (e.g., after deload).
      *                           Will not look back before this index.
+     * @param useExternalWeight If true, use external weight for bodyweight sets (checks per-set, not per-session).
      */
     private fun getRecentBaseline(
         sessions: List<Session>,
         currentIndex: Int,
         windowSize: Int,
         binSize: Double,
-        baselineResetIndex: Int
+        baselineResetIndex: Int,
+        useExternalWeight: Boolean = false
     ): Pair<Map<Double, Int>, Map<Double, Int>> {
         val bestRepsAtBin = mutableMapOf<Double, Int>()
         val lastTotalRepsAtBin = mutableMapOf<Double, Int>()
@@ -190,7 +223,15 @@ object PlateauDetectionHelper {
             val perBinStats = mutableMapOf<Double, Pair<Int, Int>>()
             
             for (set in session.sets) {
-                val b = weightBin(set.weight, binSize)
+                // For bodyweight sets, use external weight if available and useExternalWeight is true
+                // Check per-set, not per-session, to handle mixed sessions correctly
+                val weightToUse = if (useExternalWeight && session.externalWeights.containsKey(set)) {
+                    session.externalWeights[set]!!
+                } else {
+                    set.weight
+                }
+                
+                val b = weightBin(weightToUse, binSize)
                 val r = set.reps
                 
                 val currentStats = perBinStats[b] ?: Pair(0, 0)
@@ -246,29 +287,45 @@ object PlateauDetectionHelper {
             val isDeload = progressionState == ProgressionState.DELOAD
 
             // Filter for WorkSet only and extract weight/reps
-            val workingSets = setHistories
-                .filter { setHistory ->
-                    when (val setData = setHistory.setData) {
-                        is WeightSetData -> setData.subCategory == SetSubCategory.WorkSet
-                        is BodyWeightSetData -> setData.subCategory == SetSubCategory.WorkSet
-                        else -> false
-                    }
-                }
-                .mapNotNull { setHistory ->
-                    when (val setData = setHistory.setData) {
-                        is WeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
-                        is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
-                        else -> null
-                    }
-                }
+            val workingSets = mutableListOf<SimpleSet>()
+            val externalWeights = mutableMapOf<SimpleSet, Double>()
+            var hasBodyweightSets = false
             
+            setHistories.forEach { setHistory ->
+                when (val setData = setHistory.setData) {
+                    is WeightSetData -> {
+                        if (setData.subCategory == SetSubCategory.WorkSet) {
+                            val simpleSet = SimpleSet(setData.getWeight(), setData.actualReps)
+                            workingSets.add(simpleSet)
+                        }
+                    }
+                    is BodyWeightSetData -> {
+                        if (setData.subCategory == SetSubCategory.WorkSet) {
+                            hasBodyweightSets = true
+                            val totalWeight = setData.getWeight()
+                            val externalWeight = setData.additionalWeight
+                            val simpleSet = SimpleSet(totalWeight, setData.actualReps)
+                            workingSets.add(simpleSet)
+                            externalWeights[simpleSet] = externalWeight
+                        }
+                    }
+                    else -> {}
+                }
+            }
 
             // Only create session if it has working sets
             if (workingSets.isEmpty()) {
                 noWorkingSetsCount++
                 null
             } else {
-                Session(workoutHistoryId, workoutHistory.date, workingSets, isDeload)
+                Session(
+                    workoutHistoryId, 
+                    workoutHistory.date, 
+                    workingSets, 
+                    isDeload,
+                    hasBodyweightSets,
+                    externalWeights
+                )
             }
         }
 
@@ -299,8 +356,8 @@ object PlateauDetectionHelper {
 
         val sessionImproved = MutableList(n) { false }
 
-        // Track recent baseline that resets after deload sessions
-        var baselineResetIndex = 0 // Index where baseline window should start (resets after deload)
+        // Track recent baseline that resets after deload sessions, sparse gaps, or program changes
+        var baselineResetIndex = 0 // Index where baseline window should start (resets after deload/gap/change)
 
         // -----------------------------
         // MAIN LOOP OVER SESSIONS
@@ -308,7 +365,7 @@ object PlateauDetectionHelper {
         for (i in 0 until n) {
             val session = sessions[i]
             
-            // Reset baseline if we encounter a deload session
+            // Edge case 1 & 2: Reset baseline if we encounter a deload session or sparse training gap
             if (session.isDeload) {
                 baselineResetIndex = i + 1 // Reset baseline window starting from next session
                 sessionImproved[i] = false // Deload sessions don't count as improvement
@@ -316,10 +373,18 @@ object PlateauDetectionHelper {
             }
             
             // Aggregate per-bin stats for this session
+            // Edge case 4: Track all weight bins properly, not just best per bin
             val perBinStats = mutableMapOf<Double, Pair<Int, Int>>() // bin -> (best_reps, total_reps)
 
             for (set in session.sets) {
-                val b = weightBin(set.weight, binSize)
+                // Edge case 3: For bodyweight exercises, use external weight instead of total weight
+                val weightToUse = if (session.isBodyweightExercise && session.externalWeights.containsKey(set)) {
+                    session.externalWeights[set]!!
+                } else {
+                    set.weight
+                }
+                
+                val b = weightBin(weightToUse, binSize)
                 val r = set.reps
 
                 val currentStats = perBinStats[b] ?: Pair(0, 0)
@@ -329,10 +394,42 @@ object PlateauDetectionHelper {
                 perBinStats[b] = Pair(bestReps, totalReps)
             }
 
+            // Edge case 1: Check for sparse/irregular training history
+            // If gap between this session and previous session exceeds MAX_DAYS_BETWEEN_SESSIONS, reset baseline
+            if (i > 0) {
+                val previousSession = sessions[i - 1]
+                val daysBetween = ChronoUnit.DAYS.between(previousSession.date, session.date)
+                if (daysBetween > MAX_DAYS_BETWEEN_SESSIONS) {
+                    baselineResetIndex = i // Reset baseline starting from this session
+                }
+            }
+
             // Get recent baseline from sliding window (starting from baselineResetIndex)
-            val (recentBestRepsAtBin, recentLastTotalRepsAtBin) = getRecentBaseline(
-                sessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex
+            // Edge case 3: Use external weight for bodyweight exercises in baseline comparison
+            val useExternalWeightForBaseline = session.isBodyweightExercise
+            var (recentBestRepsAtBin, recentLastTotalRepsAtBin) = getRecentBaseline(
+                sessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex, useExternalWeightForBaseline
             )
+            
+            // Edge case 2: Detect significant weight drops (program changes)
+            // If max weight in current session is significantly below max weight in baseline, reset baseline
+            if (recentBestRepsAtBin.isNotEmpty() && perBinStats.isNotEmpty()) {
+                val maxWeightInBaseline = recentBestRepsAtBin.keys.maxOrNull()
+                val maxWeightInCurrentSession = perBinStats.keys.maxOrNull()
+                
+                if (maxWeightInBaseline != null && maxWeightInCurrentSession != null) {
+                    val weightDrop = (maxWeightInBaseline - maxWeightInCurrentSession) / maxWeightInBaseline
+                    if (weightDrop > WEIGHT_DROP_THRESHOLD) {
+                        baselineResetIndex = i // Reset baseline starting from this session
+                        // Recalculate baseline after reset
+                        val (newRecentBestRepsAtBin, newRecentLastTotalRepsAtBin) = getRecentBaseline(
+                            sessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex, useExternalWeightForBaseline
+                        )
+                        recentBestRepsAtBin = newRecentBestRepsAtBin
+                        recentLastTotalRepsAtBin = newRecentLastTotalRepsAtBin
+                    }
+                }
+            }
 
             var improved = false
 
@@ -371,18 +468,21 @@ object PlateauDetectionHelper {
 
                 // 2) CONDITION B: weight increase with acceptable rep drop
                 //    Compare to recent baseline, and handle weight increases to previously-seen weights
+                //    Edge case 4: Check ALL new weight bins, not just max weight (handles step loading)
                 //    Only check this if Condition A and C didn't already mark as improved
                 if (!improved) {
                     val maxWeightInBaseline = recentBestRepsAtBin.keys.maxOrNull() ?: Double.NEGATIVE_INFINITY
                     
+                    // Edge case 4: Check all weight bins in current session, not just max
+                    // This allows step loading within a session (e.g., back-off sets) to count as progress
                     for ((b, stats) in perBinStats) {
                         val currentBin = b
                         val currentReps = stats.first
 
-                        // Condition B only applies to NEW weights (heavier than baseline)
+                        // Condition B applies to NEW weights (heavier than baseline max or not in baseline)
                         // Skip if this weight was already handled by Condition A
                         if (currentBin > maxWeightInBaseline && currentBin !in recentBestRepsAtBin) {
-                            // New heaviest weight: compare to best reps at lower weights in recent baseline
+                            // New weight: compare to best reps at lower weights in recent baseline
                             var bestRepsLower = Int.MIN_VALUE
                             for ((bHist, repsHist) in recentBestRepsAtBin) {
                                 if (bHist < currentBin && repsHist > bestRepsLower) {
@@ -395,7 +495,7 @@ object PlateauDetectionHelper {
                                 val conditionBMet = currentReps >= bestRepsLower - repTolerance
                                 if (conditionBMet) {
                                     improved = true
-                                    break
+                                    break // Any qualifying new weight bin counts as improvement
                                 }
                                 // If conditionBMet is false, rep drop is too large - don't mark as improved
                             } else {
@@ -418,17 +518,33 @@ object PlateauDetectionHelper {
         // PLATEAU DECISION
         // -----------------------------
 
-        // Look at the last WINDOW_SESS sessions (excluding deload sessions)
-        val start = maxOf(0, n - WINDOW_SESS)
-        val end = n - 1
+        // Edge case 8: Look at the last WINDOW_SESS non-deload sessions
+        // Count backwards from the end, skipping deload sessions
+        val nonDeloadSessionsInWindow = mutableListOf<Int>()
+        var count = 0
+        var idx = n - 1
+        while (idx >= 0 && count < WINDOW_SESS) {
+            if (!sessions[idx].isDeload) {
+                nonDeloadSessionsInWindow.add(idx)
+                count++
+            }
+            idx--
+        }
 
         // Require enough total sessions before calling plateau (not just window size)
         if (n < MIN_SESS_FOR_PLAT) {
             return Pair(false, sessionImproved)
         }
 
+        // Edge case 8: If we don't have enough non-deload sessions in the window,
+        // require minimum number of non-deload sessions before checking for plateau
+        if (nonDeloadSessionsInWindow.size < WINDOW_SESS) {
+            // Not enough non-deload sessions to determine plateau
+            return Pair(false, sessionImproved)
+        }
+
         var recentHasImprovement = false
-        for (i in start..end) {
+        for (i in nonDeloadSessionsInWindow) {
             if (sessionImproved[i]) {
                 recentHasImprovement = true
                 break
