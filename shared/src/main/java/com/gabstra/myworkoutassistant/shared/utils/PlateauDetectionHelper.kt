@@ -23,6 +23,7 @@ object PlateauDetectionHelper {
     private const val WINDOW_SESS = 3             // how many recent sessions to inspect for plateau
     private const val MIN_SESS_FOR_PLAT = 4       // minimal sessions before calling plateau
     private const val RECENT_BASELINE_WINDOW = 10 // how many recent sessions to use for baseline comparison
+    private const val MAX_DAYS_FOR_PLATEAU_DETECTION = 30L // only consider data from at most 30 days earlier
     
     // Edge case handling constants
     private const val MAX_DAYS_BETWEEN_SESSIONS = 60L      // Reset baseline if gap > 60 days
@@ -200,6 +201,7 @@ object PlateauDetectionHelper {
      * @param baselineResetIndex The index where baseline was last reset (e.g., after deload).
      *                           Will not look back before this index.
      * @param useExternalWeight If true, use external weight for bodyweight sets (checks per-set, not per-session).
+     * @param cutoffDate Only consider sessions on or after this date (for 30-day limit).
      */
     private fun getRecentBaseline(
         sessions: List<Session>,
@@ -207,7 +209,8 @@ object PlateauDetectionHelper {
         windowSize: Int,
         binSize: Double,
         baselineResetIndex: Int,
-        useExternalWeight: Boolean = false
+        useExternalWeight: Boolean = false,
+        cutoffDate: LocalDate? = null
     ): Pair<Map<Double, Int>, Map<Double, Int>> {
         val bestRepsAtBin = mutableMapOf<Double, Int>()
         val lastTotalRepsAtBin = mutableMapOf<Double, Int>()
@@ -219,6 +222,8 @@ object PlateauDetectionHelper {
             val session = sessions[i]
             // Skip deload sessions in baseline calculation
             if (session.isDeload) continue
+            // Skip sessions before cutoff date (30-day limit)
+            if (cutoffDate != null && session.date.isBefore(cutoffDate)) continue
             
             val perBinStats = mutableMapOf<Double, Pair<Int, Int>>()
             
@@ -348,13 +353,28 @@ object PlateauDetectionHelper {
      *   session_improved: array[bool] same length as sessions
      */
     fun detectPlateau(sessions: List<Session>, binSize: Double): Pair<Boolean, List<Boolean>> {
-        val n = sessions.size
-
-        if (n < MIN_SESS_FOR_PLAT) {
-            return false to List(n) { false }
+        if (sessions.isEmpty()) {
+            return false to emptyList()
         }
 
-        val sessionImproved = MutableList(n) { false }
+        // Filter sessions to only include those within MAX_DAYS_FOR_PLATEAU_DETECTION of the most recent session
+        val mostRecentDate = sessions.maxOf { it.date }
+        val cutoffDate = mostRecentDate.minusDays(MAX_DAYS_FOR_PLATEAU_DETECTION)
+        val filteredSessions = sessions.filter { it.date.isAfter(cutoffDate) || it.date == cutoffDate }
+        
+        val n = filteredSessions.size
+
+        if (n < MIN_SESS_FOR_PLAT) {
+            return false to List(sessions.size) { false }
+        }
+
+        val sessionImproved = MutableList(sessions.size) { false }
+        // Map from filtered session index to original session index
+        val filteredToOriginalIndex = sessions.mapIndexedNotNull { originalIdx, session ->
+            if (session.date.isAfter(cutoffDate) || session.date == cutoffDate) {
+                originalIdx
+            } else null
+        }
 
         // Track recent baseline that resets after deload sessions, sparse gaps, or program changes
         var baselineResetIndex = 0 // Index where baseline window should start (resets after deload/gap/change)
@@ -363,12 +383,13 @@ object PlateauDetectionHelper {
         // MAIN LOOP OVER SESSIONS
         // -----------------------------
         for (i in 0 until n) {
-            val session = sessions[i]
+            val session = filteredSessions[i]
+            val originalIndex = filteredToOriginalIndex[i]
             
             // Edge case 1 & 2: Reset baseline if we encounter a deload session or sparse training gap
             if (session.isDeload) {
                 baselineResetIndex = i + 1 // Reset baseline window starting from next session
-                sessionImproved[i] = false // Deload sessions don't count as improvement
+                sessionImproved[originalIndex] = false // Deload sessions don't count as improvement
                 continue
             }
             
@@ -397,7 +418,7 @@ object PlateauDetectionHelper {
             // Edge case 1: Check for sparse/irregular training history
             // If gap between this session and previous session exceeds MAX_DAYS_BETWEEN_SESSIONS, reset baseline
             if (i > 0) {
-                val previousSession = sessions[i - 1]
+                val previousSession = filteredSessions[i - 1]
                 val daysBetween = ChronoUnit.DAYS.between(previousSession.date, session.date)
                 if (daysBetween > MAX_DAYS_BETWEEN_SESSIONS) {
                     baselineResetIndex = i // Reset baseline starting from this session
@@ -406,9 +427,10 @@ object PlateauDetectionHelper {
 
             // Get recent baseline from sliding window (starting from baselineResetIndex)
             // Edge case 3: Use external weight for bodyweight exercises in baseline comparison
+            // Also respect the 30-day limit when looking back
             val useExternalWeightForBaseline = session.isBodyweightExercise
             var (recentBestRepsAtBin, recentLastTotalRepsAtBin) = getRecentBaseline(
-                sessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex, useExternalWeightForBaseline
+                filteredSessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex, useExternalWeightForBaseline, cutoffDate
             )
             
             // Edge case 2: Detect significant weight drops (program changes)
@@ -423,7 +445,7 @@ object PlateauDetectionHelper {
                         baselineResetIndex = i // Reset baseline starting from this session
                         // Recalculate baseline after reset
                         val (newRecentBestRepsAtBin, newRecentLastTotalRepsAtBin) = getRecentBaseline(
-                            sessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex, useExternalWeightForBaseline
+                            filteredSessions, i, RECENT_BASELINE_WINDOW, binSize, baselineResetIndex, useExternalWeightForBaseline, cutoffDate
                         )
                         recentBestRepsAtBin = newRecentBestRepsAtBin
                         recentLastTotalRepsAtBin = newRecentLastTotalRepsAtBin
@@ -510,8 +532,8 @@ object PlateauDetectionHelper {
                 }
             }
 
-            // Mark this session
-            sessionImproved[i] = improved
+            // Mark this session (use original index)
+            sessionImproved[originalIndex] = improved
         }
 
         // -----------------------------
@@ -524,7 +546,7 @@ object PlateauDetectionHelper {
         var count = 0
         var idx = n - 1
         while (idx >= 0 && count < WINDOW_SESS) {
-            if (!sessions[idx].isDeload) {
+            if (!filteredSessions[idx].isDeload) {
                 nonDeloadSessionsInWindow.add(idx)
                 count++
             }
@@ -545,7 +567,8 @@ object PlateauDetectionHelper {
 
         var recentHasImprovement = false
         for (i in nonDeloadSessionsInWindow) {
-            if (sessionImproved[i]) {
+            val originalIndex = filteredToOriginalIndex[i]
+            if (sessionImproved[originalIndex]) {
                 recentHasImprovement = true
                 break
             }
