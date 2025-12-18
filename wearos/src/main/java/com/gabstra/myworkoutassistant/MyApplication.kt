@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant
 
 import android.app.Application
+import android.content.Intent
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -99,9 +100,23 @@ class MyApplication : Application() {
             }
             
             Log.d("MyApplication", "Error logged to file: ${errorLogFile.absolutePath}")
+            
+            // Send broadcast to trigger sync
+            try {
+                val intent = Intent(ERROR_LOGGED_ACTION).apply {
+                    putExtra("error_count", updatedLogs.size)
+                }
+                sendBroadcast(intent)
+            } catch (e: Exception) {
+                Log.e("MyApplication", "Failed to send error logged broadcast", e)
+            }
         } catch (e: Exception) {
             Log.e("MyApplication", "Failed to log error to file", e)
         }
+    }
+    
+    companion object {
+        const val ERROR_LOGGED_ACTION = "com.gabstra.myworkoutassistant.ERROR_LOGGED"
     }
     
     private fun readErrorLogs(): List<ErrorLog> {

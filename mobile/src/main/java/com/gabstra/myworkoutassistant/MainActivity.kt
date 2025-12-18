@@ -82,6 +82,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -130,6 +131,18 @@ class MyReceiver(
                         }catch (exception: Exception){
                             Log.e("MyWorkoutAssistant", "Error sending workouts to HealthConnect", exception)
                         }
+                    }
+                }
+
+                val errorLogsSynced = intent.getStringExtra(DataLayerListenerService.ERROR_LOGS_SYNCED)
+                if (errorLogsSynced != null) {
+                    val count = errorLogsSynced.toIntOrNull() ?: 0
+                    if (count > 0) {
+                        Toast.makeText(
+                            context,
+                            "Received $count error log(s) from watch",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }catch (e: Exception) {
@@ -340,6 +353,7 @@ fun MyWorkoutAssistantNavHost(
                                     workoutScheduleDao.deleteAll()
                                     workoutRecordDao.deleteAll()
                                     db.exerciseSessionProgressionDao().deleteAll()
+                                    db.errorLogDao().deleteAll()
 
                                     val validWorkoutHistories = (appBackup.WorkoutHistories ?: emptyList()).filter { workoutHistory ->
                                         allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
@@ -371,6 +385,11 @@ fun MyWorkoutAssistantNavHost(
                                     }
                                     if (validExerciseSessionProgressions.isNotEmpty()) {
                                         db.exerciseSessionProgressionDao().insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                    }
+
+                                    // Restore error logs if present in backup
+                                    if (appBackup.ErrorLogs != null && appBackup.ErrorLogs.isNotEmpty()) {
+                                        db.errorLogDao().insertAll(*appBackup.ErrorLogs.toTypedArray())
                                     }
 
                                     true
@@ -497,7 +516,10 @@ fun MyWorkoutAssistantNavHost(
                     validWorkoutHistories.any { it.id == progression.workoutHistoryId }
                 }
 
-                val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions)
+                val errorLogDao = db.errorLogDao()
+                val errorLogs = errorLogDao.getAllErrorLogs().first()
+
+                val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions, errorLogs.takeIf { it.isNotEmpty() })
                 sendAppBackup(dataClient, appBackup)
             }
             Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()

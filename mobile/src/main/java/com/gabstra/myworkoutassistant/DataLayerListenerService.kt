@@ -2,6 +2,9 @@ package com.gabstra.myworkoutassistant
 
 import android.content.Intent
 import android.util.Log
+import android.widget.Toast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ErrorLogDao
@@ -226,6 +229,13 @@ class DataLayerListenerService : WearableListenerService() {
                                 if (errorLogs.isNotEmpty()) {
                                     errorLogDao.insertAll(*errorLogs.toTypedArray())
                                     Log.d("DataLayerListenerService", "Synced ${errorLogs.size} error logs from watch")
+                                    
+                                    // Send broadcast to show toast notification
+                                    val intent = Intent(INTENT_ID).apply {
+                                        putExtra(ERROR_LOGS_SYNCED, errorLogs.size.toString())
+                                    }
+                                    intent.apply { setPackage(packageName) }
+                                    sendBroadcast(intent)
                                 }
                             } catch (exception: Exception) {
                                 Log.e("DataLayerListenerService", "Error processing error logs sync", exception)
@@ -253,6 +263,7 @@ class DataLayerListenerService : WearableListenerService() {
         const val ERROR_LOGS_SYNC_PATH = "/errorLogsSync"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.WORKOUT_STORE"
         const val UPDATE_WORKOUTS = "update_workouts"
+        const val ERROR_LOGS_SYNCED = "error_logs_synced"
         const val PAGE = "page"
     }
 }

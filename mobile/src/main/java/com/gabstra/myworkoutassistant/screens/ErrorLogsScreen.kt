@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
@@ -8,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -133,7 +137,25 @@ fun ErrorLogsScreen(
 
 @Composable
 fun ErrorLogCard(errorLog: ErrorLog) {
+    val context = LocalContext.current
     val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    var expanded by remember { mutableStateOf(false) }
+    
+    val copyToClipboard = {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val fullStackTrace = buildString {
+            appendLine("Exception: ${errorLog.exceptionType}")
+            appendLine("Message: ${errorLog.message}")
+            appendLine("Thread: ${errorLog.threadName}")
+            appendLine("Timestamp: ${errorLog.timestamp.format(dateFormatter)}")
+            appendLine()
+            appendLine("Stack Trace:")
+            append(errorLog.stackTrace)
+        }
+        val clip = ClipData.newPlainText("Stack Trace", fullStackTrace)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(context, "Stack trace copied to clipboard", Toast.LENGTH_SHORT).show()
+    }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -176,10 +198,26 @@ fun ErrorLogCard(errorLog: ErrorLog) {
             
             Spacer(modifier = Modifier.height(8.dp))
             
-            var expanded by remember { mutableStateOf(false) }
-            
-            TextButton(onClick = { expanded = !expanded }) {
-                Text(if (expanded) "Hide Stack Trace" else "Show Stack Trace")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (expanded) "Hide Stack Trace" else "Show Stack Trace")
+                }
+                
+                IconButton(
+                    onClick = copyToClipboard,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "Copy Stack Trace"
+                    )
+                }
             }
             
             if (expanded) {

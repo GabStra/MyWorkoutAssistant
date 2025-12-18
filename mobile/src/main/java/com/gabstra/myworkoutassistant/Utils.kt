@@ -38,6 +38,7 @@ import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import androidx.compose.material3.MaterialTheme
+import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
@@ -76,6 +77,7 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -248,6 +250,7 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
             val workoutScheduleDao = db.workoutScheduleDao()
             val workoutRecordDao = db.workoutRecordDao()
             val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+            val errorLogDao = db.errorLogDao()
 
             // Get all workout histories
             val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
@@ -277,6 +280,9 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                 validWorkoutHistories.any { it.id == progression.workoutHistoryId }
             }
 
+            // Get all error logs
+            val errorLogs = errorLogDao.getAllErrorLogs().first()
+
             // Create AppBackup with the same structure as original manual backup
             val appBackup = AppBackup(
                 workoutStore.copy(workouts = allowedWorkouts),
@@ -285,7 +291,8 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                 exerciseInfos,
                 workoutSchedules,
                 workoutRecords,
-                exerciseSessionProgressions
+                exerciseSessionProgressions,
+                errorLogs.takeIf { it.isNotEmpty() }
             )
 
             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)

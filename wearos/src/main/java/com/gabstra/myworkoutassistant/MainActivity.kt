@@ -175,6 +175,7 @@ class MainActivity : ComponentActivity() {
     private val heartRateChangeViewModel: HeartRateChangeViewModel by viewModels()
 
     private lateinit var myReceiver: BroadcastReceiver
+    private lateinit var errorLogReceiver: BroadcastReceiver
 
     @OptIn(ExperimentalHorologistApi::class)
     private lateinit var appHelper: WearDataLayerAppHelper
@@ -191,6 +192,9 @@ class MainActivity : ComponentActivity() {
 
         if (::myReceiver.isInitialized) {
             unregisterReceiver(myReceiver)
+        }
+        if (::errorLogReceiver.isInitialized) {
+            unregisterReceiver(errorLogReceiver)
         }
     }
 
@@ -252,6 +256,36 @@ class MainActivity : ComponentActivity() {
                 myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository, this)
                 val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
                 registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
+                
+                // Register receiver for error log sync
+                errorLogReceiver = object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        if (intent.action == MyApplication.ERROR_LOGGED_ACTION) {
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                try {
+                                    val errorLogs = (applicationContext as? MyApplication)?.getErrorLogs() ?: emptyList()
+                                    if (errorLogs.isNotEmpty()) {
+                                        val success = sendErrorLogsToMobile(dataClient, errorLogs)
+                                        if (success) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    "Synced ${errorLogs.size} error log(s) to mobile",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                            (applicationContext as? MyApplication)?.clearErrorLogs()
+                                        }
+                                    }
+                                } catch (exception: Exception) {
+                                    Log.e("MainActivity", "Error syncing error logs on error", exception)
+                                }
+                            }
+                        }
+                    }
+                }
+                val errorLogFilter = IntentFilter(MyApplication.ERROR_LOGGED_ACTION)
+                registerReceiver(errorLogReceiver, errorLogFilter, RECEIVER_NOT_EXPORTED)
             }
         }
     }
