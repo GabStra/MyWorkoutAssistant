@@ -109,7 +109,6 @@ fun PreparingPolarScreen(
             if (hasWorkoutRecord) {
                 viewModel.resumeLastState()
             } else {
-                viewModel.goToNextState()
                 viewModel.setWorkoutStart()
             }
 
@@ -155,7 +154,6 @@ fun PreparingPolarScreen(
                                 if (hasWorkoutRecord) {
                                     viewModel.resumeLastState()
                                 } else {
-                                    viewModel.goToNextState()
                                     viewModel.setWorkoutStart()
                                 }
 

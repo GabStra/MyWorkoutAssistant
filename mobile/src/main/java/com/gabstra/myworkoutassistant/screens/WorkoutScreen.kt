@@ -195,7 +195,6 @@ fun WorkoutScreen(
                                 hasTriggeredNextState = true
 
                                 workoutViewModel.lightScreenUp()
-                                workoutViewModel.goToNextState()
                                 workoutViewModel.setWorkoutStart()
                             }
                         }

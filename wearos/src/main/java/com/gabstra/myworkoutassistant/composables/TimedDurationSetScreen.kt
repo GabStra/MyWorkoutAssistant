@@ -87,6 +87,7 @@ fun TimedDurationSetScreen(
 
     var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
     var countdownValue by remember(set) { mutableIntStateOf(3) }
+    var countdownInitiated by remember(set.id) { mutableStateOf(false) }
 
     val previousSet = state.previousSetData as TimedDurationSetData
     var currentSet by remember(set.id) { mutableStateOf(state.currentSetData as TimedDurationSetData) }
@@ -127,6 +128,10 @@ fun TimedDurationSetScreen(
 
     suspend fun showCountDownIfEnabled() {
         if (exercise.showCountDownTimer) {
+            // Prevent multiple simultaneous countdowns
+            if (displayStartingDialog || countdownInitiated) return
+            
+            countdownInitiated = true
             displayStartingDialog = true
             delay(500)
             hapticsViewModel.doHardVibration()
@@ -209,7 +214,7 @@ fun TimedDurationSetScreen(
             return@LaunchedEffect
         }
 
-        if (set.autoStart && !isPaused) {
+        if (set.autoStart && !isPaused && !countdownInitiated) {
             delay(500)
             showCountDownIfEnabled()
 

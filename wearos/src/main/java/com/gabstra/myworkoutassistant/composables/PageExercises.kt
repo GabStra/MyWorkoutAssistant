@@ -230,7 +230,7 @@ fun PageExercises(
                     // Previous exercise: enforce previous set colors for ALL sets
                     selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
                     // Future exercise: enforce future set colors for ALL sets
-                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
                     // Current exercise: use default logic (null = distinguish between previous/current/future sets)
                     else -> null
                 },

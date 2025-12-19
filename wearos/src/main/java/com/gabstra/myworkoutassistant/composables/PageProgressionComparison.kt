@@ -498,7 +498,7 @@ fun PageProgressionComparison(
                 when {
                     rowIndex == setIndex -> Orange // Current set: orange border
                     rowIndex < setIndex -> colorScheme.onBackground // Previous set: onBackground border
-                    else -> colorScheme.outline.copy(alpha = 0.5f) // Future set: subtle outline
+                    else -> colorScheme.surfaceContainerHigh // Future set: subtle outline
                 }
             }
         }

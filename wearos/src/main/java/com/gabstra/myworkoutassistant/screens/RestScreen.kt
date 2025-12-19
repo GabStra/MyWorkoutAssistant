@@ -291,8 +291,7 @@ fun RestScreen(
     val typography = MaterialTheme.typography
     val timerTextStyle = remember(typography) {
         typography.numeralSmall.copy(
-            fontWeight = W700,
-            fontFamily = FontFamily.Monospace
+            fontWeight = W700
         )
     }
 

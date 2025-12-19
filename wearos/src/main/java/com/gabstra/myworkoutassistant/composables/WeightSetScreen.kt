@@ -37,6 +37,7 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -451,7 +452,7 @@ fun WeightSetScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Warning,
                                     contentDescription = "Warning",
-                                    tint = if (showRed) Red else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    tint = if (showRed) Red else MediumDarkGray,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))

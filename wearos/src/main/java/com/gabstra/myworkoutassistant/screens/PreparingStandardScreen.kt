@@ -76,7 +76,6 @@ fun PreparingStandardScreen(
             if(hasWorkoutRecord){
                 viewModel.resumeLastState()
             }else{
-                viewModel.goToNextState()
                 viewModel.setWorkoutStart()
             }
 

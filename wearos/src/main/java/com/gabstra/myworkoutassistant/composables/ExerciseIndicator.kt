@@ -182,7 +182,12 @@ fun ExerciseIndicator(
             val endA = startA + segmentArcAngle
 
             key(eid,indicatorProgress) {
-                val indicatorColor = MaterialTheme.colorScheme.primary
+                val indicatorColor = when {
+                    isCurrent -> MaterialTheme.colorScheme.primary // Current exercise: bright gray/white
+                    indicatorProgress >= 1.0f -> MaterialTheme.colorScheme.onBackground // Previous exercise (completed): green
+                    indicatorProgress == 0.0f -> MediumDarkGray // Future exercise (not started): subtle gray
+                    else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
+                }
                 
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
@@ -208,7 +213,7 @@ fun ExerciseIndicator(
             color = when {
                 minVisibleIndex > currentGlobalIdx -> MediumDarkGray // Future exercises: MediumDarkGray
                 minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: primary
-                else -> MaterialTheme.colorScheme.primary // Previous exercises (completed): primary
+                else -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): primary
             }
         )
         EdgeOverflowDots(
@@ -216,7 +221,7 @@ fun ExerciseIndicator(
             show = showRightDots,
             dotAngleGapDeg = dotAngleGapDeg,
             color = when {
-                maxVisibleIndex < currentGlobalIdx -> MaterialTheme.colorScheme.primary // Previous exercises (completed): primary
+                maxVisibleIndex < currentGlobalIdx -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): primary
                 else -> MediumDarkGray // Future exercises: MediumDarkGray
             }
         )
@@ -573,7 +578,7 @@ private fun OuterSupersetOverlay(
             val dotsColor = when {
                 globalStart > currentGlobalIdx -> MediumDarkGray // Future exercises: MediumDarkGray
                 globalStart <= currentGlobalIdx && globalEnd >= currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: primary
-                else ->  MaterialTheme.colorScheme.primary // Previous exercises (completed): primary
+                else ->  MaterialTheme.colorScheme.onBackground // Previous exercises (completed): primary
             }
 
             // Left overlay dots (centered within its reserve)

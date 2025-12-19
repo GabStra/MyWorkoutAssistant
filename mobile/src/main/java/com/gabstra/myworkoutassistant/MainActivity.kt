@@ -388,8 +388,9 @@ fun MyWorkoutAssistantNavHost(
                                     }
 
                                     // Restore error logs if present in backup
-                                    if (appBackup.ErrorLogs != null && appBackup.ErrorLogs.isNotEmpty()) {
-                                        db.errorLogDao().insertAll(*appBackup.ErrorLogs.toTypedArray())
+                                    val errorLogs = appBackup.ErrorLogs
+                                    if (errorLogs != null && errorLogs.isNotEmpty()) {
+                                        db.errorLogDao().insertAll(*errorLogs.toTypedArray())
                                     }
 
                                     true

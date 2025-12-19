@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -155,9 +154,7 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
-                        style = itemStyle.copy(
-                            fontFamily = FontFamily.Monospace,
-                        ),
+                        style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = textColor
                     )
@@ -169,9 +166,7 @@ fun SetTableRow(
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(enduranceSetData.startTimer / 1000),
-                        style = itemStyle.copy(
-                            fontFamily = FontFamily.Monospace,
-                        ),
+                        style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = textColor
                     )
@@ -256,7 +251,7 @@ fun ExerciseSetsViewer(
         val borderColor = customBorderColor ?: when{
             rowIndex == setIndex -> Orange // Current set: orange border
             rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
-            else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f) // Future set: subtle outline
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
         val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background // All sets: black background

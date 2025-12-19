@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.presentation.theme
 
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.googlefonts.Font
 import androidx.compose.ui.text.googlefonts.GoogleFont
@@ -19,15 +20,37 @@ val bodyFontFamily = FontFamily(
     )
 )
 
-val displayFontFamily = FontFamily(
-    Font(
-        googleFont = GoogleFont("Roboto"),
-        fontProvider = provider,
-    )
-)
+private fun TextStyle.withTabularNumbers(): TextStyle =
+    copy(fontFeatureSettings = "tnum")
 
-// Default Material 3 typography values
-val baseline = Typography()
+
+
+// Material 3 Wear typography with tabular numbers applied to all roles
+val baseline = Typography().let { base ->
+    Typography(
+        arcLarge = base.arcLarge,
+        arcMedium = base.arcMedium,
+        arcSmall = base.arcSmall,
+        displayLarge = base.displayLarge.withTabularNumbers(),
+        displayMedium = base.displayMedium.withTabularNumbers(),
+        displaySmall = base.displaySmall.withTabularNumbers(),
+        titleLarge = base.titleLarge.withTabularNumbers(),
+        titleMedium = base.titleMedium.withTabularNumbers(),
+        titleSmall = base.titleSmall.withTabularNumbers(),
+        bodyLarge = base.bodyLarge.withTabularNumbers(),
+        bodyMedium = base.bodyMedium.withTabularNumbers(),
+        bodySmall = base.bodySmall.withTabularNumbers(),
+        bodyExtraSmall = base.bodyExtraSmall.withTabularNumbers(),
+        labelLarge = base.labelLarge.withTabularNumbers(),
+        labelMedium = base.labelMedium.withTabularNumbers(),
+        labelSmall = base.labelSmall.withTabularNumbers(),
+        numeralExtraLarge = base.numeralExtraLarge.withTabularNumbers(),
+        numeralLarge = base.numeralLarge.withTabularNumbers(),
+        numeralMedium = base.numeralMedium.withTabularNumbers(),
+        numeralSmall = base.numeralSmall.withTabularNumbers(),
+        numeralExtraSmall = base.numeralExtraSmall.withTabularNumbers(),
+    )
+}
 
 /*
 val AppTypography = Typography(
@@ -46,4 +69,5 @@ val AppTypography = Typography(
     labelLarge = baseline.labelLarge.copy(fontFamily = bodyFontFamily),
     labelMedium = baseline.labelMedium.copy(fontFamily = bodyFontFamily),
     labelSmall = baseline.labelSmall.copy(fontFamily = bodyFontFamily),
-)*/
+)
+*/

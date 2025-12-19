@@ -90,6 +90,7 @@ fun EnduranceSetScreen (
 
     var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
     var countdownValue by remember(set) { mutableIntStateOf(3) }
+    var countdownInitiated by remember(set.id) { mutableStateOf(false) }
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
@@ -134,6 +135,10 @@ fun EnduranceSetScreen (
 
     suspend fun showCountDownIfEnabled(){
         if(exercise.showCountDownTimer){
+            // Prevent multiple simultaneous countdowns
+            if (displayStartingDialog || countdownInitiated) return
+            
+            countdownInitiated = true
             displayStartingDialog = true
             delay(500)
             hapticsViewModel.doHardVibration()
@@ -273,7 +278,7 @@ fun EnduranceSetScreen (
             return@LaunchedEffect
         }
 
-        if (set.autoStart && !isPaused) {
+        if (set.autoStart && !isPaused && !countdownInitiated) {
             delay(500)
             showCountDownIfEnabled()
 

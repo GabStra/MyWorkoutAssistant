@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -9,12 +8,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -27,26 +22,9 @@ fun TimeViewer(
     color: Color,
     style: TextStyle,
 ) {
-    val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
-
-    val baseText = when{
-        hours > 0 -> "00:00:00"
-        else -> "00:00"
-    }
-
-    val fullWidthDp = remember(measurer, baseText, style, density) {
-        with(density) {
-            measurer
-                .measure(text = AnnotatedString(baseText), style = style, maxLines = 1)
-                .size.width
-                .toDp()
-        }
-    }
 
     var showDots by remember { mutableStateOf(true) }
 
@@ -91,10 +69,9 @@ fun TimeViewer(
     }
 
     Text(
-        modifier = modifier.width(fullWidthDp),
+        modifier = modifier,
         text = annotatedText,
         style = style,
-        textAlign = TextAlign.Center,
         maxLines = 1
     )
 }
