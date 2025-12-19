@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import com.gabstra.myworkoutassistant.shared.OneRM
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -192,6 +193,74 @@ object PlateauDetectionHelper {
         }
         val percentBased = (reps * REP_TOL_PERCENT).toInt()
         return maxOf(REP_TOL_BASE, percentBased)
+    }
+
+    /**
+     * Calculates expected rep drop when weight increases using 1RM estimation.
+     * Predicts how many reps should be achievable at the new weight based on
+     * the old weight/reps combination, using the same approach as DoubleProgressionHelper.
+     *
+     * @param oldWeight The previous weight used
+     * @param oldReps The best reps achieved at the old weight
+     * @param newWeight The new (higher) weight
+     * @param targetRIR Reps in reserve (default 2.0, matching DoubleProgressionHelper)
+     * @return Expected number of reps at the new weight
+     */
+    private fun calculateExpectedRepDrop(
+        oldWeight: Double,
+        oldReps: Int,
+        newWeight: Double,
+        targetRIR: Double = 2.0  // Reps in reserve (like DoubleProgressionHelper uses)
+    ): Int {
+        // Estimate 1RM from old weight/reps
+        val estimated1RM = OneRM.estimate1RM(oldWeight, oldReps)
+        
+        // Predict reps at new weight with target RIR
+        val predictedReps = OneRM.repsForTargetRIR(newWeight, estimated1RM, targetRIR)
+        
+        return predictedReps.toInt().coerceAtLeast(1)
+    }
+
+    /**
+     * Calculates dynamic rep tolerance for weight increases based on:
+     * - Expected rep drop (from 1RM prediction)
+     * - Weight increase percentage
+     * - Starting rep count
+     *
+     * This provides more accurate tolerance than fixed values, accounting for
+     * the physiological relationship between weight and reps.
+     *
+     * @param oldWeight The previous weight
+     * @param newWeight The new (higher) weight
+     * @param oldReps The best reps at the old weight
+     * @param expectedNewReps The expected reps at new weight (from 1RM prediction)
+     * @return Dynamic tolerance in reps
+     */
+    private fun calculateRepToleranceForWeightIncrease(
+        oldWeight: Double,
+        newWeight: Double,
+        oldReps: Int,
+        expectedNewReps: Int
+    ): Int {
+        val weightIncreasePct = (newWeight - oldWeight) / oldWeight
+        
+        // Base tolerance: ±2 reps or ±20% of expected reps, whichever is larger
+        val absoluteTolerance = maxOf(2, (expectedNewReps * 0.20).toInt())
+        
+        // Scale tolerance based on weight increase percentage
+        // Larger weight increases allow more variance
+        val scaledTolerance = when {
+            weightIncreasePct > 0.10 -> absoluteTolerance + 1  // >10% increase: +1 rep tolerance
+            weightIncreasePct > 0.05 -> absoluteTolerance      // 5-10%: base tolerance
+            else -> maxOf(absoluteTolerance - 1, 1)            // <5%: slightly stricter
+        }
+        
+        // For very low rep counts, be more strict
+        if (oldReps <= 3) {
+            return scaledTolerance.coerceAtMost(1)
+        }
+        
+        return scaledTolerance
     }
 
     /**
@@ -513,13 +582,43 @@ object PlateauDetectionHelper {
                             }
                             
                             if (bestRepsLower != Int.MIN_VALUE) {
-                                val repTolerance = calculateRepTolerance(bestRepsLower)
-                                val conditionBMet = currentReps >= bestRepsLower - repTolerance
-                                if (conditionBMet) {
+                                // Find the weight that corresponds to bestRepsLower
+                                var bestLowerWeight = Double.NEGATIVE_INFINITY
+                                for ((bHist, repsHist) in recentBestRepsAtBin) {
+                                    if (bHist < currentBin && repsHist == bestRepsLower) {
+                                        bestLowerWeight = bHist
+                                        break
+                                    }
+                                }
+                                
+                                // Calculate expected rep drop using 1RM
+                                val expectedNewReps = calculateExpectedRepDrop(
+                                    oldWeight = bestLowerWeight,  // Use the best lower weight from baseline
+                                    oldReps = bestRepsLower,
+                                    newWeight = currentBin
+                                )
+                                
+                                // Calculate dynamic tolerance
+                                val dynamicTolerance = calculateRepToleranceForWeightIncrease(
+                                    oldWeight = bestLowerWeight,
+                                    newWeight = currentBin,
+                                    oldReps = bestRepsLower,
+                                    expectedNewReps = expectedNewReps
+                                )
+                                
+                                // Check if actual reps are within tolerance of expected
+                                val minAcceptableReps = maxOf(1, expectedNewReps - dynamicTolerance)
+                                val conditionBMet = currentReps >= minAcceptableReps
+                                
+                                // Also check for extreme cases: if rep drop is >50% of old reps, be more strict
+                                val repDropPct = (bestRepsLower - currentReps).toDouble() / bestRepsLower
+                                val isExtremeDrop = repDropPct > 0.50 && currentReps < 3
+                                
+                                if (conditionBMet && !isExtremeDrop) {
                                     improved = true
                                     break // Any qualifying new weight bin counts as improvement
                                 }
-                                // If conditionBMet is false, rep drop is too large - don't mark as improved
+                                // If conditionBMet is false or isExtremeDrop is true, don't mark as improved
                             } else {
                                 // No lower weight in baseline, but this is new max = improvement
                                 improved = true
