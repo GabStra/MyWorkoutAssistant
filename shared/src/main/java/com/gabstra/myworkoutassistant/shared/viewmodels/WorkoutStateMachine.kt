@@ -24,10 +24,13 @@ data class WorkoutStateMachine(
     companion object {
         fun fromStates(
             states: List<WorkoutState>,
-            timeProvider: () -> LocalDateTime = { LocalDateTime.now() }
+            timeProvider: () -> LocalDateTime = { LocalDateTime.now() },
+            startIndex: Int = 0
         ): WorkoutStateMachine {
             require(states.isNotEmpty()) { "States list cannot be empty" }
-            return WorkoutStateMachine(states, currentIndex = 0, timeProvider)
+            require(startIndex >= 0) { "startIndex must be >= 0" }
+            require(startIndex < states.size) { "startIndex must be < states.size" }
+            return WorkoutStateMachine(states, currentIndex = startIndex, timeProvider)
         }
     }
 

@@ -71,10 +71,12 @@ fun EnduranceSetScreen (
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
+    var autoStartJob by remember(set.id) { mutableStateOf<Job?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
             timerJob?.cancel()
+            autoStartJob?.cancel()
         }
     }
 
@@ -134,12 +136,14 @@ fun EnduranceSetScreen (
 
 
     suspend fun showCountDownIfEnabled(){
-        if(exercise.showCountDownTimer){
-            // Prevent multiple simultaneous countdowns
-            if (displayStartingDialog || countdownInitiated) return
-            
-            countdownInitiated = true
-            displayStartingDialog = true
+        if(!exercise.showCountDownTimer) return
+        // Prevent multiple simultaneous countdowns
+        if (displayStartingDialog || countdownInitiated) return
+
+        countdownInitiated = true
+        countdownValue = 3
+        displayStartingDialog = true
+        try {
             delay(500)
             hapticsViewModel.doHardVibration()
             delay(1000)
@@ -149,8 +153,11 @@ fun EnduranceSetScreen (
             countdownValue = 1
             hapticsViewModel.doHardVibration()
             delay(1000)
-            displayStartingDialog = false
             hapticsViewModel.doHardVibrationTwice()
+        } finally {
+            displayStartingDialog = false
+            countdownInitiated = false
+            countdownValue = 3
         }
     }
 
@@ -275,20 +282,36 @@ fun EnduranceSetScreen (
             if (!isPaused && timerJob?.isActive != true) {
                 startTimerJob()
             }
+            if (isPaused) {
+                timerJob?.cancel()
+            }
+            autoStartJob?.cancel()
             return@LaunchedEffect
         }
 
-        if (set.autoStart && !isPaused && !countdownInitiated) {
-            delay(500)
-            showCountDownIfEnabled()
+        if (!set.autoStart) {
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
 
-            if (state.startTime == null) {
-                state.startTime = LocalDateTime.now()
-            }
+        if (isPaused) {
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
 
-            hapticsViewModel.doHardVibrationTwice()
-            if (timerJob?.isActive != true) {
-                startTimerJob()
+        if (autoStartJob?.isActive != true) {
+            autoStartJob = scope.launch {
+                delay(500)
+                showCountDownIfEnabled()
+
+                if (state.startTime == null) {
+                    state.startTime = LocalDateTime.now()
+                }
+
+                hapticsViewModel.doHardVibrationTwice()
+                if (timerJob?.isActive != true) {
+                    startTimerJob()
+                }
             }
         }
     }
@@ -311,6 +334,7 @@ fun EnduranceSetScreen (
                 IconButton(
                     modifier = Modifier.size(50.dp),
                     onClick = {
+                        autoStartJob?.cancel()
                         scope.launch {
                             showCountDownIfEnabled()
 
@@ -322,6 +346,7 @@ fun EnduranceSetScreen (
                             startTimerJob()
 
                             showStartButton = false
+                            autoStartJob?.cancel()
                         }
                     },
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Green),

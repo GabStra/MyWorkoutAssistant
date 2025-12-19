@@ -352,9 +352,9 @@ object PlateauDetectionHelper {
      *   plateau: boolean (true = in plateau)
      *   session_improved: array[bool] same length as sessions
      */
-    fun detectPlateau(sessions: List<Session>, binSize: Double): Pair<Boolean, List<Boolean>> {
+    fun detectPlateau(sessions: List<Session>, binSize: Double): Triple<Boolean, List<Boolean>, String> {
         if (sessions.isEmpty()) {
-            return false to emptyList()
+            return Triple(false, emptyList(), "")
         }
 
         // Filter sessions to only include those within MAX_DAYS_FOR_PLATEAU_DETECTION of the most recent session
@@ -365,7 +365,7 @@ object PlateauDetectionHelper {
         val n = filteredSessions.size
 
         if (n < MIN_SESS_FOR_PLAT) {
-            return false to List(sessions.size) { false }
+            return Triple(false, List(sessions.size) { false }, "")
         }
 
         val sessionImproved = MutableList(sessions.size) { false }
@@ -555,14 +555,14 @@ object PlateauDetectionHelper {
 
         // Require enough total sessions before calling plateau (not just window size)
         if (n < MIN_SESS_FOR_PLAT) {
-            return Pair(false, sessionImproved)
+            return Triple(false, sessionImproved, "")
         }
 
         // Edge case 8: If we don't have enough non-deload sessions in the window,
         // require minimum number of non-deload sessions before checking for plateau
         if (nonDeloadSessionsInWindow.size < WINDOW_SESS) {
             // Not enough non-deload sessions to determine plateau
-            return Pair(false, sessionImproved)
+            return Triple(false, sessionImproved, "")
         }
 
         var recentHasImprovement = false
@@ -576,7 +576,71 @@ object PlateauDetectionHelper {
 
         val plateau = !recentHasImprovement
 
-        return Pair(plateau, sessionImproved)
+        // Build reason message if plateau detected
+        val reason = if (plateau) {
+            buildPlateauReasonMessage(filteredSessions, nonDeloadSessionsInWindow, binSize)
+        } else {
+            ""
+        }
+
+        return Triple(plateau, sessionImproved, reason)
+    }
+
+    /**
+     * Builds a detailed reason message explaining why a plateau was detected.
+     */
+    private fun buildPlateauReasonMessage(
+        filteredSessions: List<Session>,
+        nonDeloadSessionsInWindow: List<Int>,
+        binSize: Double
+    ): String {
+        val sessionDetails = mutableListOf<String>()
+        var sessionNumber = 1
+        
+        // Get sessions in reverse order (most recent first) for display
+        val sessionsToShow = nonDeloadSessionsInWindow.reversed()
+        
+        for (sessionIdx in sessionsToShow) {
+            val session = filteredSessions[sessionIdx]
+            
+            // Find best weight/reps combination for this session
+            var bestWeight = 0.0
+            var bestReps = 0
+            
+            for (set in session.sets) {
+                // For bodyweight exercises, use external weight if available
+                val weightToUse = if (session.isBodyweightExercise && session.externalWeights.containsKey(set)) {
+                    session.externalWeights[set]!!
+                } else {
+                    set.weight
+                }
+                
+                // Track best weight/reps (prioritize higher weight, then higher reps)
+                if (weightToUse > bestWeight || (weightToUse == bestWeight && set.reps > bestReps)) {
+                    bestWeight = weightToUse
+                    bestReps = set.reps
+                }
+            }
+            
+            // Format weight
+            val weightStr = if (bestWeight == 0.0) {
+                "BW"
+            } else if (bestWeight % 1.0 == 0.0) {
+                "${bestWeight.toInt()}kg"
+            } else {
+                String.format("%.2f", bestWeight).trimEnd('0').trimEnd('.') + "kg"
+            }
+            
+            sessionDetails.add("• Session $sessionNumber: $weightStr × $bestReps reps")
+            sessionNumber++
+        }
+        
+        return buildString {
+            append("No improvement detected in the last ${WINDOW_SESS} sessions.\n\n")
+            append("Recent sessions:\n")
+            sessionDetails.forEach { append("$it\n") }
+            append("\nTo break the plateau, try increasing weight, reps, or total volume.")
+        }
     }
 
     /**
@@ -592,7 +656,7 @@ object PlateauDetectionHelper {
         workoutHistories: Map<UUID, WorkoutHistory>,
         progressionStatesByWorkoutHistoryId: Map<UUID, ProgressionState> = emptyMap(),
         equipment: WeightLoadedEquipment? = null
-    ): Pair<Boolean, List<Boolean>> {
+    ): Triple<Boolean, List<Boolean>, String> {
         val sessions = convertToSessions(setHistories, workoutHistories, progressionStatesByWorkoutHistoryId)
         val binSize = calculateBinSize(equipment)
         val result = detectPlateau(sessions, binSize)

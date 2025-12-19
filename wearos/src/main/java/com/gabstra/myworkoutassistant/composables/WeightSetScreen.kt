@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -73,9 +74,12 @@ fun WeightSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val isPlateauDetected = remember(state.exerciseId) {
-        viewModel.plateauDetectedByExerciseId[state.exerciseId] == true
+    val plateauReason = remember(state.exerciseId) {
+        viewModel.plateauReasonByExerciseId[state.exerciseId]
     }
+    val isPlateauDetected = plateauReason != null
+
+    var showPlateauDialog by remember { mutableStateOf(false) }
 
     var showRed by remember { mutableStateOf(true) }
 
@@ -445,7 +449,12 @@ fun WeightSetScreen(
                         }
                         if (isPlateauDetected) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showPlateauDialog = true
+                                        hapticsViewModel.doGentleVibration()
+                                    },
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -464,6 +473,13 @@ fun WeightSetScreen(
                                     color = MaterialTheme.colorScheme.onBackground,
                                     textAlign = TextAlign.Center
                                 )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Icon(
+                                    imageVector = Icons.Filled.Info,
+                                    contentDescription = "Info",
+                                    tint = MaterialTheme.colorScheme.onBackground,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
                     }
@@ -475,4 +491,11 @@ fun WeightSetScreen(
             }
         }
     }
+
+    PlateauInfoDialog(
+        show = showPlateauDialog,
+        reason = plateauReason ?: "",
+        onDismiss = { showPlateauDialog = false },
+        hapticsViewModel = hapticsViewModel
+    )
 }

@@ -112,7 +112,7 @@ class PlateauDetectionHelperTest {
             workoutHistory3.id to workoutHistory3
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -148,7 +148,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -186,7 +186,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -234,7 +234,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -283,7 +283,7 @@ class PlateauDetectionHelperTest {
             workoutHistory9.id to workoutHistory9
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -327,7 +327,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -376,7 +376,7 @@ class PlateauDetectionHelperTest {
             workoutHistory9.id to workoutHistory9
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -392,7 +392,7 @@ class PlateauDetectionHelperTest {
 
     @Test
     fun testEdgeCase_EmptySessionsList() {
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateau(emptyList(), 0.25)
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateau(emptyList(), 0.25)
 
         assertFalse("Should not detect plateau with empty sessions", isPlateau)
         assertTrue("sessionImproved should be empty", sessionImproved.isEmpty())
@@ -460,7 +460,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -497,7 +497,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -575,7 +575,7 @@ class PlateauDetectionHelperTest {
             workoutHistory7.id to workoutHistory7
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -628,7 +628,7 @@ class PlateauDetectionHelperTest {
             workoutHistory8.id to workoutHistory8
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -671,7 +671,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -723,7 +723,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -763,7 +763,7 @@ class PlateauDetectionHelperTest {
             workoutHistory5.id to workoutHistory5
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -812,7 +812,7 @@ class PlateauDetectionHelperTest {
             workoutHistory8.id to workoutHistory8
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )
@@ -866,7 +866,7 @@ class PlateauDetectionHelperTest {
             workoutHistory8.id to workoutHistory8
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories,
             progressionStates
@@ -922,7 +922,7 @@ class PlateauDetectionHelperTest {
             workoutHistory9.id to workoutHistory9
         )
 
-        val (isPlateau, sessionImproved) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories
         )

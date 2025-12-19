@@ -68,10 +68,12 @@ fun TimedDurationSetScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
+    var autoStartJob by remember(set.id) { mutableStateOf<Job?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
             timerJob?.cancel()
+            autoStartJob?.cancel()
         }
     }
 
@@ -127,12 +129,14 @@ fun TimedDurationSetScreen(
 
 
     suspend fun showCountDownIfEnabled() {
-        if (exercise.showCountDownTimer) {
-            // Prevent multiple simultaneous countdowns
-            if (displayStartingDialog || countdownInitiated) return
-            
-            countdownInitiated = true
-            displayStartingDialog = true
+        if (!exercise.showCountDownTimer) return
+        // Prevent multiple simultaneous countdowns
+        if (displayStartingDialog || countdownInitiated) return
+
+        countdownInitiated = true
+        countdownValue = 3
+        displayStartingDialog = true
+        try {
             delay(500)
             hapticsViewModel.doHardVibration()
             delay(1000)
@@ -142,8 +146,11 @@ fun TimedDurationSetScreen(
             countdownValue = 1
             hapticsViewModel.doHardVibration()
             delay(1000)
-            displayStartingDialog = false
             hapticsViewModel.doHardVibrationTwice()
+        } finally {
+            displayStartingDialog = false
+            countdownInitiated = false
+            countdownValue = 3
         }
     }
 
@@ -203,25 +210,40 @@ fun TimedDurationSetScreen(
             val now = LocalDateTime.now()
             val elapsedMillis = java.time.Duration.between(state.startTime, now).toMillis()
             currentMillis = maxOf(currentSet.startTimer - elapsedMillis.toInt(), 0)
-            if (currentMillis > 0 && !isPaused)
+            if (currentMillis > 0 && !isPaused) {
                 startTimerJob()
-            else if (currentMillis <= 0) {
+            } else if (currentMillis <= 0) {
                 state.currentSetData = currentSet.copy(endTimer = 0)
                 hapticsViewModel.doHardVibrationTwice()
                 onTimerDisabled()
                 onTimerEnd()
             }
+            if (isPaused) {
+                timerJob?.cancel()
+            }
+            autoStartJob?.cancel()
             return@LaunchedEffect
         }
 
-        if (set.autoStart && !isPaused && !countdownInitiated) {
-            delay(500)
-            showCountDownIfEnabled()
+        if (!set.autoStart) {
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
 
+        if (isPaused) {
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
 
-            state.startTime = LocalDateTime.now()
-            hapticsViewModel.doHardVibrationTwice()
-            startTimerJob()
+        if (autoStartJob?.isActive != true) {
+            autoStartJob = scope.launch {
+                delay(500)
+                showCountDownIfEnabled()
+
+                state.startTime = LocalDateTime.now()
+                hapticsViewModel.doHardVibrationTwice()
+                startTimerJob()
+            }
         }
     }
 
@@ -279,6 +301,7 @@ fun TimedDurationSetScreen(
                 IconButton(
                     modifier = Modifier.size(50.dp),
                     onClick = {
+                        autoStartJob?.cancel()
                         scope.launch {
                             showCountDownIfEnabled()
 
@@ -290,6 +313,7 @@ fun TimedDurationSetScreen(
                             startTimerJob()
 
                             showStartButton = false
+                            autoStartJob?.cancel()
                         }
                     },
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Green),

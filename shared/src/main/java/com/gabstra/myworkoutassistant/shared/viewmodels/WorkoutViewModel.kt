@@ -332,8 +332,11 @@ open class WorkoutViewModel(
     /**
      * Initializes the state machine from a list of workout states.
      * Filters out trailing Rest states and adds Completed state.
+     * 
+     * @param workoutStates The list of workout states to initialize from
+     * @param startIndex The index to start at (defaults to 0)
      */
-    private fun initializeStateMachine(workoutStates: List<WorkoutState>): WorkoutStateMachine {
+    private fun initializeStateMachine(workoutStates: List<WorkoutState>, startIndex: Int = 0): WorkoutStateMachine {
         val filteredStates = workoutStates.toMutableList()
         
         // Remove trailing Rest state if present
@@ -346,7 +349,15 @@ open class WorkoutViewModel(
             filteredStates.add(WorkoutState.Completed(startWorkoutTime!!))
         }
         
-        return WorkoutStateMachine.fromStates(filteredStates) { LocalDateTime.now() }
+        // Adjust startIndex if Completed state was added
+        val adjustedStartIndex = if (startWorkoutTime != null && startIndex >= filteredStates.size - 1) {
+            // If startIndex points to the last state before Completed was added, adjust it
+            filteredStates.size - 1
+        } else {
+            startIndex.coerceIn(0, filteredStates.size - 1)
+        }
+        
+        return WorkoutStateMachine.fromStates(filteredStates, { LocalDateTime.now() }, adjustedStartIndex)
     }
 
     /**
@@ -410,7 +421,7 @@ open class WorkoutViewModel(
     val exerciseProgressionByExerciseId: MutableMap<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>> =
         mutableMapOf()
 
-    val plateauDetectedByExerciseId: MutableMap<UUID, Boolean> =
+    val plateauReasonByExerciseId: MutableMap<UUID, String?> =
         mutableMapOf()
 
     protected var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
@@ -618,6 +629,109 @@ open class WorkoutViewModel(
         }
     }
 
+    /**
+     * Finds the resumption index for a workout.
+     * 
+     * Primary approach: Uses WorkoutRecord to find the exact state matching exerciseId and setIndex.
+     * Fallback approach: If WorkoutRecord doesn't match, uses SetHistory to find the first incomplete set.
+     * 
+     * @param allWorkoutStates The list of all workout states
+     * @param executedSetsHistorySnapshot The snapshot of executed set histories
+     * @return The index to resume at, or 0 if no match found
+     */
+    private fun findResumptionIndex(
+        allWorkoutStates: List<WorkoutState>,
+        executedSetsHistorySnapshot: List<SetHistory>
+    ): Int {
+        // Primary approach: Use WorkoutRecord (always available when resuming)
+        if (_workoutRecord != null) {
+            val workoutRecord = _workoutRecord!!
+            
+            // Find the state matching the WorkoutRecord's exerciseId and setIndex
+            allWorkoutStates.forEachIndexed { index, state ->
+                when (state) {
+                    is WorkoutState.Set -> {
+                        if (state.exerciseId == workoutRecord.exerciseId && 
+                            state.setIndex == workoutRecord.setIndex) {
+                            return index
+                        }
+                    }
+                    is WorkoutState.Rest -> {
+                        // For Rest states, check if the previous Set state matches
+                        if (index > 0) {
+                            val previousState = allWorkoutStates[index - 1]
+                            if (previousState is WorkoutState.Set &&
+                                previousState.exerciseId == workoutRecord.exerciseId &&
+                                previousState.setIndex == workoutRecord.setIndex) {
+                                return index
+                            }
+                        }
+                    }
+                    else -> { /* Skip other states */ }
+                }
+            }
+            
+            // WorkoutRecord exists but doesn't match any state - fall back to SetHistory approach
+            // This can happen if: workout structure changed, exercise removed, setIndex out of bounds, data inconsistency
+        }
+        
+        // Fallback approach: Use SetHistory to find first incomplete set
+        // Only used if WorkoutRecord doesn't match any state (rare edge cases)
+        var firstSetWithHistoryIndex: Int? = null
+        
+        allWorkoutStates.forEachIndexed { index, state ->
+            when (state) {
+                is WorkoutState.Set -> {
+                    val exercise = exercisesById[state.exerciseId]
+                    // Only check exercises that store history (doNotStoreHistory = false)
+                    if (exercise != null && !exercise.doNotStoreHistory) {
+                        // Track the first set that stores history
+                        if (firstSetWithHistoryIndex == null) {
+                            firstSetWithHistoryIndex = index
+                        }
+                        
+                        // Match by both setId AND order (not just setId)
+                        val matchingSetHistory = executedSetsHistorySnapshot.firstOrNull { setHistory ->
+                            setHistory.setId == state.set.id && setHistory.order == state.setIndex
+                        }
+                        // If no matching SetHistory entry exists, this is the first incomplete set
+                        if (matchingSetHistory == null) {
+                            return index
+                        }
+                    }
+                }
+                is WorkoutState.Rest -> {
+                    val exercise = state.exerciseId?.let { exercisesById[it] }
+                    // Only check exercises that store history (doNotStoreHistory = false)
+                    if (exercise != null && !exercise.doNotStoreHistory) {
+                        // Match by both setId AND order (not just setId)
+                        val matchingSetHistory = executedSetsHistorySnapshot.firstOrNull { setHistory ->
+                            setHistory.setId == state.set.id && setHistory.order == state.order
+                        }
+                        // If no matching SetHistory entry exists, this is the first incomplete set
+                        if (matchingSetHistory == null) {
+                            return index
+                        }
+                    }
+                }
+                else -> { /* Skip other states */ }
+            }
+        }
+        
+        // If all sets that store history have matching SetHistory entries, check what to return
+        return if (executedSetsHistorySnapshot.isEmpty()) {
+            // No executed sets exist - start from beginning
+            0
+        } else if (firstSetWithHistoryIndex != null) {
+            // All sets with history are complete - return the last index (should be Completed state)
+            (allWorkoutStates.size - 1).coerceAtLeast(0)
+        } else {
+            // All exercises have doNotStoreHistory = true - can't determine from SetHistory
+            // This shouldn't happen if WorkoutRecord exists, but as a safety fallback, start from beginning
+            0
+        }
+    }
+
     open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
         viewModelScope.launch(dispatchers.main) {
             withContext(dispatchers.io) {
@@ -668,14 +782,20 @@ open class WorkoutViewModel(
                     }
 
                     if(it is WorkoutState.Set){
-                        val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> setHistory.setId == it.set.id }
+                        // Match by both setId AND order (not just setId) to handle unilateral exercises correctly
+                        val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> 
+                            setHistory.setId == it.set.id && setHistory.order == it.setIndex 
+                        }
                         if(setHistory != null){
                             it.currentSetData = setHistory.setData
                         }
                     }
 
                     if(it is WorkoutState.Rest){
-                        val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> setHistory.setId == it.set.id }
+                        // Match by both setId AND order (not just setId) to handle unilateral exercises correctly
+                        val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> 
+                            setHistory.setId == it.set.id && setHistory.order == it.order 
+                        }
                         if(setHistory != null){
                             it.currentSetData = setHistory.setData
                         }
@@ -687,8 +807,11 @@ open class WorkoutViewModel(
                     }
                 }
 
-                // Initialize state machine with all states
-                stateMachine = initializeStateMachine(allWorkoutStates)
+                // Find the resumption index using WorkoutRecord (primary) or SetHistory (fallback)
+                val resumptionIndex = findResumptionIndex(allWorkoutStates, executedSetsHistorySnapshot)
+                
+                // Initialize state machine with all states at the correct resumption index
+                stateMachine = initializeStateMachine(allWorkoutStates, resumptionIndex)
                 updateStateFlowsFromMachine()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                 triggerWorkoutNotification()
@@ -965,7 +1088,7 @@ open class WorkoutViewModel(
 
     protected suspend fun generateProgressions() {
         exerciseProgressionByExerciseId.clear()
-        plateauDetectedByExerciseId.clear()
+        plateauReasonByExerciseId.clear()
 
         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
@@ -1086,7 +1209,7 @@ open class WorkoutViewModel(
         // Get equipment for BIN_SIZE calculation
         val equipment = exercise.equipmentId?.let { getEquipmentById(it) }
         
-        val (isPlateau, _) = PlateauDetectionHelper.detectPlateauFromHistories(
+        val (isPlateau, _, reason) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories,
             workoutHistories,
             progressionStatesByWorkoutHistoryId,
@@ -1097,8 +1220,8 @@ open class WorkoutViewModel(
             Log.d("WorkoutViewModel", "${exercise.name}: Plateau detected")
         }
 
-        // Store plateau detection result for UI display
-        plateauDetectedByExerciseId[exercise.id] = isPlateau
+        // Store plateau detection result and reason for UI display
+        plateauReasonByExerciseId[exercise.id] = if (isPlateau) reason else null
 
         val validSets = removeRestAndRestPause(
             sets = exercise.sets,
@@ -1233,17 +1356,15 @@ open class WorkoutViewModel(
     fun resumeLastState() {
         if (_workoutRecord == null) return
 
-        fun isCurrentStateTheTargetResumeSet(): Boolean {
-            val currentWorkoutState = _workoutState.value
-
-            return currentWorkoutState is WorkoutState.Set &&
-                    currentWorkoutState.exerciseId == _workoutRecord!!.exerciseId &&
-                    currentWorkoutState.setIndex == _workoutRecord!!.setIndex
+        fun isTargetResumeState(state: WorkoutState?): Boolean {
+            return state is WorkoutState.Set &&
+                    state.exerciseId == _workoutRecord!!.exerciseId &&
+                    state.setIndex == _workoutRecord!!.setIndex
         }
 
         fun restoreTimerForTimeSet(state: WorkoutState.Set) {
             val set = state.set
-            
+
             // Check if this is a time set
             val isTimeSet = set is TimedDurationSet || set is EnduranceSet
             if (!isTimeSet) return
@@ -1279,30 +1400,36 @@ open class WorkoutViewModel(
             }
         }
 
-        if (isCurrentStateTheTargetResumeSet()) {
-            val currentState = _workoutState.value
-            if (currentState is WorkoutState.Set) {
-                restoreTimerForTimeSet(currentState)
-            }
+        // When we land on Preparing before resuming, the state machine already knows the real state.
+        // Sync the UI-facing state so comparisons run against the latest value.
+        if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
+            updateStateFlowsFromMachine()
+        }
+
+        val currentState = _workoutState.value
+        if (isTargetResumeState(currentState) && currentState is WorkoutState.Set) {
+            restoreTimerForTimeSet(currentState)
             return
         }
 
         viewModelScope.launch(dispatchers.io) {
             _isResuming.value = true
-            while (_workoutState.value !is WorkoutState.Completed) {
-                goToNextState()
+            while (true) {
+                val machineState = stateMachine?.currentState ?: break
+                if (machineState is WorkoutState.Completed) {
+                    break
+                }
 
-                if (isCurrentStateTheTargetResumeSet()){
-                    val currentState = _workoutState.value
-                    if (currentState is WorkoutState.Set) {
-                        restoreTimerForTimeSet(currentState)
-                    }
+                if (isTargetResumeState(machineState) && machineState is WorkoutState.Set) {
+                    restoreTimerForTimeSet(machineState)
                     //go to the next set after the target set which is not rest
                     do{
                         goToNextState()
                     } while (_workoutState.value is WorkoutState.Rest)
                     break
                 }
+
+                goToNextState()
             }
 
             delay(2000)

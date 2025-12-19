@@ -117,7 +117,7 @@ fun SetTableRow(
                     val weightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
                     }else {
-                        "-"
+                        "BW"
                     }
 
                     val weightTextColor = when {
