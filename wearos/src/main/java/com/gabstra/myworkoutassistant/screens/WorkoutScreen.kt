@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -215,8 +216,9 @@ fun WorkoutScreen(
         if (showHeartRateTutorial) {
             TutorialOverlay(
                 visible = true,
-                text = "Heart rate (left)\nTap the number to change how it’s shown.\n\nWorkout progress (right)\nShows where you are in the workout.\n\nBack button\nUse presses to pause or end.",
-                onDismiss = onDismissHeartRateTutorial
+                text = "Heart rate (left)\nTap the number to change how it's shown.\n\nWorkout progress (right)\nShows where you are in the workout.\n\nBack button\nUse presses to pause or end.",
+                onDismiss = onDismissHeartRateTutorial,
+                hapticsViewModel = hapticsViewModel
             )
         } else {
             val stateTypeKey = remember(workoutState) {
@@ -262,18 +264,21 @@ fun WorkoutScreen(
                             TutorialOverlay(
                                 visible = true,
                                 text = "Move between pages\nSwipe left or right.\n\nScroll long text\nTap the exercise title or header.\n\nReturn to details\nScreen goes back after 10 seconds.\n\nFinish the set\nUse Complete Set or back button.",
-                                onDismiss = onDismissSetScreenTutorial
+                                onDismiss = onDismissSetScreenTutorial,
+                                hapticsViewModel = hapticsViewModel
                             )
                         } else {
-                            ExerciseScreen(
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                state = state,
-                                hearthRateChart = {
-                                    heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
-                                },
-                                navController = navController,
-                            )
+                            key(state.exerciseId) {
+                                ExerciseScreen(
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    state = state,
+                                    hearthRateChart = {
+                                        heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
+                                    },
+                                    navController = navController,
+                                )
+                            }
                         }
                     }
                     is WorkoutState.Rest -> {
@@ -290,7 +295,8 @@ fun WorkoutScreen(
                             TutorialOverlay(
                                 visible = true,
                                 text = "Rest timer\nStarts on its own.\nLong-press the time to edit, then use +/−.\n\nExercises\nCurrent and upcoming exercises are shown.\nTap the left or right side to see previous or next.\n\nHeads-up\nScreen lights up with 5 seconds left.\n\nSkip rest\nDouble-press the back button to continue early.",
-                                onDismiss = onDismissRestScreenTutorial
+                                onDismiss = onDismissRestScreenTutorial,
+                                hapticsViewModel = hapticsViewModel
                             )
                         } else {
                             RestScreen(

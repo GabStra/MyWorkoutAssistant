@@ -542,7 +542,8 @@ fun WearApp(
                                     ) {
                                         it.copy(hasSeenWorkoutSelectionTutorial = true)
                                     }
-                                }
+                                },
+                                hapticsViewModel = hapticsViewModel
                             )
                         } else {
                             WorkoutSelectionScreen(

@@ -27,6 +27,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 /**
@@ -99,7 +100,8 @@ fun TutorialOverlay(
     text: String,
     modifier: Modifier = Modifier,
     onDismiss: () -> Unit,
-    buttonText: String = "Got it"
+    buttonText: String = "Got it",
+    hapticsViewModel: HapticsViewModel? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -126,47 +128,36 @@ fun TutorialOverlay(
                         )
                     )
                 }
-            ) {
+            ) { contentPadding ->
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(15.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp,Alignment.Bottom)
+                        .padding(contentPadding)
+                        .verticalScroll(scrollState),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .verticalScroll(scrollState),
-                        contentAlignment = Alignment.Center
+                    val annotatedText = formatTutorialText(text)
+                    Text(
+                        text = annotatedText,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center
+                    )
+
+                    // Button now scrolls with the text
+                    Button(
+                        onClick = {
+                            hapticsViewModel?.doGentleVibration()
+                            onDismiss()
+                        },
                     ) {
-                        val annotatedText = formatTutorialText(text)
                         Text(
-                            modifier = Modifier
-                                .padding(top = 10.dp)
-                                .padding(horizontal = 25.dp),
-                            text = annotatedText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onBackground,
+                            text = buttonText,
+                            style = MaterialTheme.typography.bodyLarge,
                             textAlign = TextAlign.Center
                         )
-                    }
-
-                    // Fixed button at the bottom
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Button(
-                            onClick = onDismiss
-                        ) {
-                            Text(
-                                text = buttonText,
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center
-                            )
-                        }
                     }
                 }
             }

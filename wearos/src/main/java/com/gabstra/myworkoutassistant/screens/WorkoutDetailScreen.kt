@@ -197,7 +197,7 @@ fun WorkoutDetailScreen(
                             modifier = Modifier.fillMaxWidth(),
                             text = "Start",
                             textAlign = TextAlign.Center,
-                            style =  MaterialTheme.typography.bodyLarge,
+                            style = MaterialTheme.typography.bodyLarge,
                         )
                     }
                 }
