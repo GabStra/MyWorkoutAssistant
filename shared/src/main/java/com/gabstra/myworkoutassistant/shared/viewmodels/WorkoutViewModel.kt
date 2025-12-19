@@ -66,6 +66,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedSetStore
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,6 +107,8 @@ open class WorkoutViewModel(
     protected val dispatchers: DispatcherProvider = DefaultDispatcherProvider,
     private val executedSetStore: ExecutedSetStore = DefaultExecutedSetStore()
 ) : ViewModel() {
+    private var storeSetDataJob: Job? = null
+
     private val _keepScreenOn = mutableStateOf(false)
     val keepScreenOn: State<Boolean> = _keepScreenOn
 
@@ -1822,6 +1825,7 @@ open class WorkoutViewModel(
         onEnd: suspend () -> Unit = {}
     ) {
         viewModelScope.launch(dispatchers.io) {
+            storeSetDataJob?.join()
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 
             if (currentWorkoutHistory == null) {
@@ -2217,8 +2221,16 @@ open class WorkoutViewModel(
     }
 
     fun storeSetData() {
-        viewModelScope.launch(dispatchers.io) {
+        val previousJob = storeSetDataJob
+        val newJob = viewModelScope.launch(dispatchers.io) {
+            previousJob?.join()
             storeSetDataInternal()
+        }
+        storeSetDataJob = newJob
+        newJob.invokeOnCompletion {
+            if (storeSetDataJob === newJob) {
+                storeSetDataJob = null
+            }
         }
     }
 
