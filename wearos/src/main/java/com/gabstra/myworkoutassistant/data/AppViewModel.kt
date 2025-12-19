@@ -73,6 +73,10 @@ open class AppViewModel : WorkoutViewModel() {
     val incompleteWorkouts: State<List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>> = _incompleteWorkouts
 
     fun showResumeWorkoutDialog(incompleteWorkouts: List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>) {
+        if (incompleteWorkouts.isEmpty()) {
+            hideResumeWorkoutDialog()
+            return
+        }
         _incompleteWorkouts.value = incompleteWorkouts
         _showResumeWorkoutDialog.value = true
     }
@@ -80,6 +84,11 @@ open class AppViewModel : WorkoutViewModel() {
     fun hideResumeWorkoutDialog() {
         _showResumeWorkoutDialog.value = false
         _incompleteWorkouts.value = emptyList()
+    }
+
+    fun prepareResumeWorkout(incompleteWorkout: WorkoutViewModel.IncompleteWorkout) {
+        setSelectedWorkoutId(incompleteWorkout.workoutId)
+        pendingResumeWorkoutHistoryId = incompleteWorkout.workoutHistory.id
     }
 
     private val _hrDisplayMode = mutableStateOf(0)

@@ -543,7 +543,14 @@ fun WearApp(
                                         it.copy(hasSeenWorkoutSelectionTutorial = true)
                                     }
                                 },
-                                hapticsViewModel = hapticsViewModel
+                                hapticsViewModel = hapticsViewModel,
+                                onVisibilityChange = { isVisible ->
+                                    if (isVisible) {
+                                        appViewModel.setDimming(false)
+                                    } else {
+                                        appViewModel.reEvaluateDimmingForCurrentState()
+                                    }
+                                }
                             )
                         } else {
                             WorkoutSelectionScreen(
@@ -668,14 +675,10 @@ fun WearApp(
                 onDismiss = {
                     appViewModel.hideResumeWorkoutDialog()
                 },
-                onResumeWorkout = { workoutId ->
+                onResumeWorkout = { incompleteWorkout ->
                     appViewModel.hideResumeWorkoutDialog()
-                    val workoutStore = workoutStoreRepository.getWorkoutStore()
-                    val workout = workoutStore.workouts.find { it.id == workoutId }
-                    if (workout != null) {
-                        appViewModel.setSelectedWorkoutId(workout.id)
-                        permissionLauncherResume.launch(basePermissions.toTypedArray())
-                    }
+                    appViewModel.prepareResumeWorkout(incompleteWorkout)
+                    permissionLauncherResume.launch(basePermissions.toTypedArray())
                 }
             )
         }

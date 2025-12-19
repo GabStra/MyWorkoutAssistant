@@ -103,7 +103,7 @@ fun PageExercises(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(20.dp)
-                    .padding(horizontal = 20.dp)
+                    .padding(horizontal = 22.5.dp)
                     .clickable {
                         marqueeEnabled = !marqueeEnabled
                         hapticsViewModel.doGentleVibration()

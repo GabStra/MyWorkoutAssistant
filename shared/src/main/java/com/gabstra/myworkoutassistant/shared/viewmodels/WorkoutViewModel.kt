@@ -466,6 +466,7 @@ open class WorkoutViewModel(
             }
 
     protected var _workoutRecord by mutableStateOf<WorkoutRecord?>(null)
+    protected var pendingResumeWorkoutHistoryId: UUID? = null
 
     private val _isResuming = MutableStateFlow<Boolean>(false)
     val isResuming = _isResuming.asStateFlow()
@@ -513,6 +514,7 @@ open class WorkoutViewModel(
     fun setSelectedWorkoutId(workoutId: UUID) {
         val workout = workouts.value.find { it.id == workoutId }!!
 
+        pendingResumeWorkoutHistoryId = null
         _selectedWorkoutId.value = workoutId
 
         _hasExercises.value = workout.workoutComponents.filter { it.enabled }.isNotEmpty()
@@ -615,16 +617,21 @@ open class WorkoutViewModel(
             groupedByWorkoutId.values.mapNotNull { workoutHistory ->
                 val workout = workoutStore.workouts.find { it.id == workoutHistory.workoutId }
                     ?: workoutStore.workouts.find { it.globalId == workoutHistory.globalId }
-                
-                if (workout != null) {
-                    IncompleteWorkout(
-                        workoutHistory = workoutHistory,
-                        workoutName = workout.name,
-                        workoutId = workout.id
-                    )
-                } else {
-                    null
+
+                if (workout == null) {
+                    return@mapNotNull null
                 }
+
+                val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
+                if (workoutRecord == null || workoutRecord.workoutHistoryId != workoutHistory.id) {
+                    return@mapNotNull null
+                }
+
+                IncompleteWorkout(
+                    workoutHistory = workoutHistory,
+                    workoutName = workout.name,
+                    workoutId = workout.id
+                )
             }
         }
     }
@@ -749,9 +756,31 @@ open class WorkoutViewModel(
                 _selectedWorkout.value = _workouts.value.find { it.id == _selectedWorkoutId.value }!!
                 rebuildScreenState()
 
-                currentWorkoutHistory =
-                    workoutHistoryDao.getWorkoutHistoryById(_workoutRecord!!.workoutHistoryId)
-                
+                val resumeHistoryId = pendingResumeWorkoutHistoryId ?: _workoutRecord?.workoutHistoryId
+                if (resumeHistoryId == null) {
+                    pendingResumeWorkoutHistoryId = null
+                    withContext(dispatchers.main) {
+                        _hasWorkoutRecord.value = false
+                        rebuildScreenState()
+                    }
+                    return@withContext
+                }
+
+                val resumeWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(resumeHistoryId)
+                if (resumeWorkoutHistory == null) {
+                    Log.e("WorkoutViewModel", "Workout history $resumeHistoryId not found when resuming")
+                    pendingResumeWorkoutHistoryId = null
+                    _workoutRecord = null
+                    withContext(dispatchers.main) {
+                        _hasWorkoutRecord.value = false
+                        rebuildScreenState()
+                    }
+                    return@withContext
+                }
+
+                currentWorkoutHistory = resumeWorkoutHistory
+                pendingResumeWorkoutHistoryId = null
+
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
                 
                 // Calculate actual elapsed workout time from completed set histories

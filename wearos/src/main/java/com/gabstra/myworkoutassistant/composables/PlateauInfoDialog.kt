@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,12 +33,21 @@ fun PlateauInfoDialog(
     reason: String,
     onDismiss: () -> Unit,
     hapticsViewModel: HapticsViewModel? = null,
-    buttonText: String = "Got it"
+    buttonText: String = "Got it",
+    onVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    LaunchedEffect(show) {
+        onVisibilityChange(show)
+    }
+
     if (show) {
         Dialog(
             onDismissRequest = onDismiss,
-            properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = false)
+            properties = DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false
+            )
         ) {
             Box(
                 modifier = Modifier
@@ -64,6 +74,7 @@ fun PlateauInfoDialog(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(contentPadding)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                             .verticalScroll(scrollState),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally

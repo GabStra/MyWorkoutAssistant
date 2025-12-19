@@ -68,7 +68,7 @@ fun TimedDurationSetScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
-    var autoStartJob by remember(set.id) { mutableStateOf<Job?>(null) }
+    var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -422,6 +422,16 @@ fun TimedDurationSetScreen(
             }
         )
 
-        CountDownDialog(displayStartingDialog, countdownValue)
+        CountDownDialog(
+            show = displayStartingDialog,
+            time = countdownValue,
+            onVisibilityChange = { isVisible ->
+                if (isVisible) {
+                    viewModel.setDimming(false)
+                } else {
+                    viewModel.reEvaluateDimmingForCurrentState()
+                }
+            }
+        )
     }
 }

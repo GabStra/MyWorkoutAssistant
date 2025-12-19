@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.AnnotatedString
@@ -101,8 +102,13 @@ fun TutorialOverlay(
     modifier: Modifier = Modifier,
     onDismiss: () -> Unit,
     buttonText: String = "Got it",
-    hapticsViewModel: HapticsViewModel? = null
+    hapticsViewModel: HapticsViewModel? = null,
+    onVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    LaunchedEffect(visible) {
+        onVisibilityChange(visible)
+    }
+
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(),
@@ -133,6 +139,7 @@ fun TutorialOverlay(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(contentPadding)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally

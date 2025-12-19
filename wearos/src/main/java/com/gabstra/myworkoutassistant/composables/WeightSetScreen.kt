@@ -496,6 +496,13 @@ fun WeightSetScreen(
         show = showPlateauDialog,
         reason = plateauReason ?: "",
         onDismiss = { showPlateauDialog = false },
-        hapticsViewModel = hapticsViewModel
+        hapticsViewModel = hapticsViewModel,
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
     )
 }

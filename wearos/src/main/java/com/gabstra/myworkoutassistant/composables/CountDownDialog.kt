@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,9 +21,14 @@ import androidx.wear.compose.material3.Text
 fun CountDownDialog(
     show: Boolean,
     time: Int,
+    onVisibilityChange: (Boolean) -> Unit = {},
 ) {
     val typography = MaterialTheme.typography
     val itemStyle = remember(typography) { typography.numeralLarge.copy(fontWeight = W700) }
+
+    LaunchedEffect(show) {
+        onVisibilityChange(show)
+    }
 
     if(show) {
         Dialog(

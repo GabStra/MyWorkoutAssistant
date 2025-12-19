@@ -32,7 +32,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import java.time.format.DateTimeFormatter
-import java.util.UUID
 
 @Composable
 fun ResumeWorkoutDialog(
@@ -40,7 +39,7 @@ fun ResumeWorkoutDialog(
     hapticsViewModel: HapticsViewModel,
     incompleteWorkouts: List<WorkoutViewModel.IncompleteWorkout>,
     onDismiss: () -> Unit,
-    onResumeWorkout: (UUID) -> Unit
+    onResumeWorkout: (WorkoutViewModel.IncompleteWorkout) -> Unit
 ) {
     if (show && incompleteWorkouts.isNotEmpty()) {
         Dialog(
@@ -109,7 +108,7 @@ fun ResumeWorkoutDialog(
                                     .transformedHeight(this, spec).animateItem(),
                                 transformation = SurfaceTransformation(spec),
                                 onClick = {
-                                    onResumeWorkout(incompleteWorkout.workoutId)
+                                    onResumeWorkout(incompleteWorkout)
                                 }
                             ) {
                                 Column(

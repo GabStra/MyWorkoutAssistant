@@ -218,7 +218,14 @@ fun WorkoutScreen(
                 visible = true,
                 text = "Heart rate (left)\nTap the number to change how it's shown.\n\nWorkout progress (right)\nShows where you are in the workout.\n\nBack button\nUse presses to pause or end.",
                 onDismiss = onDismissHeartRateTutorial,
-                hapticsViewModel = hapticsViewModel
+                hapticsViewModel = hapticsViewModel,
+                onVisibilityChange = { isVisible ->
+                    if (isVisible) {
+                        viewModel.setDimming(false)
+                    } else {
+                        viewModel.reEvaluateDimmingForCurrentState()
+                    }
+                }
             )
         } else {
             val stateTypeKey = remember(workoutState) {
@@ -265,7 +272,14 @@ fun WorkoutScreen(
                                 visible = true,
                                 text = "Move between pages\nSwipe left or right.\n\nScroll long text\nTap the exercise title or header.\n\nReturn to details\nScreen goes back after 10 seconds.\n\nFinish the set\nUse Complete Set or back button.",
                                 onDismiss = onDismissSetScreenTutorial,
-                                hapticsViewModel = hapticsViewModel
+                                hapticsViewModel = hapticsViewModel,
+                                onVisibilityChange = { isVisible ->
+                                    if (isVisible) {
+                                        viewModel.setDimming(false)
+                                    } else {
+                                        viewModel.reEvaluateDimmingForCurrentState()
+                                    }
+                                }
                             )
                         } else {
                             key(state.exerciseId) {
@@ -294,9 +308,16 @@ fun WorkoutScreen(
                         if (showRestScreenTutorial) {
                             TutorialOverlay(
                                 visible = true,
-                                text = "Rest timer\nStarts on its own.\nLong-press the time to edit, then use +/−.\n\nExercises\nCurrent and upcoming exercises are shown.\nTap the left or right side to see previous or next.\n\nHeads-up\nScreen lights up with 5 seconds left.\n\nSkip rest\nDouble-press the back button to continue early.",
+                                text = "Rest timer\nStarts on its own.\nLong-press the time to edit, then use +/-.\n\nExercises\nCurrent and upcoming exercises are shown.\nTap the left or right side to see previous or next.\n\nHeads-up\nScreen lights up with 5 seconds left.\n\nSkip rest\nDouble-press the back button to continue early.",
                                 onDismiss = onDismissRestScreenTutorial,
-                                hapticsViewModel = hapticsViewModel
+                                hapticsViewModel = hapticsViewModel,
+                                onVisibilityChange = { isVisible ->
+                                    if (isVisible) {
+                                        viewModel.setDimming(false)
+                                    } else {
+                                        viewModel.reEvaluateDimmingForCurrentState()
+                                    }
+                                }
                             )
                         } else {
                             RestScreen(

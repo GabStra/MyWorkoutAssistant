@@ -29,8 +29,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
@@ -71,7 +69,7 @@ fun EnduranceSetScreen (
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
-    var autoStartJob by remember(set.id) { mutableStateOf<Job?>(null) }
+    var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -454,6 +452,16 @@ fun EnduranceSetScreen (
             }
         )
 
-        CountDownDialog(displayStartingDialog,countdownValue)
+        CountDownDialog(
+            show = displayStartingDialog,
+            time = countdownValue,
+            onVisibilityChange = { isVisible ->
+                if (isVisible) {
+                    viewModel.setDimming(false)
+                } else {
+                    viewModel.reEvaluateDimmingForCurrentState()
+                }
+            }
+        )
     }
 }
