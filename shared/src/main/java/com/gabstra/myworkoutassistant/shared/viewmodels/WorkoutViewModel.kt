@@ -2563,30 +2563,66 @@ open class WorkoutViewModel(
         val machine = stateMachine ?: return
         if (machine.isAtStart) return
 
-        // Find the last Set state in history
-        val history = machine.history
-        val lastSetIndex = history.indexOfLast { it is WorkoutState.Set }
+        val currentState = machine.currentState
         
-        if (lastSetIndex < 0) return // No Set state in history
-
-        // Undo until we reach the last Set state
-        var currentMachine = machine
-        val targetState = history[lastSetIndex]
-        while (currentMachine.currentState != targetState && !currentMachine.isAtStart) {
-            currentMachine = currentMachine.undo()
-        }
-        
-        // If we didn't reach the target, undo one more time to get to it
-        if (currentMachine.currentState != targetState && !currentMachine.isAtStart) {
-            currentMachine = currentMachine.undo()
+        // Return early if current state is Preparing or Completed
+        if (currentState is WorkoutState.Preparing || currentState is WorkoutState.Completed) {
+            return
         }
 
-        stateMachine = currentMachine
+        // Get current set.id (works for both Set and Rest states)
+        val currentSetId = when (currentState) {
+            is WorkoutState.Set -> currentState.set.id
+            is WorkoutState.Rest -> currentState.set.id
+            else -> return
+        }
+
+        // Search backwards through allStates to find the previous Set state with different set.id
+        // Start from currentIndex - 1 (the state before current) and go backwards to 0
+        var targetIndex = -1
+        for (i in machine.currentIndex - 1 downTo 0) {
+            val state = machine.allStates[i]
+            if (state is WorkoutState.Set) {
+                // Found a Set state - check if it has a different set.id
+                if (state.set.id != currentSetId) {
+                    targetIndex = i
+                    break
+                }
+            }
+            // Skip Rest states and continue searching
+        }
+
+        // If no previous Set state found, return early
+        if (targetIndex < 0) {
+            return
+        }
+
+        // Navigate directly to the target Set state
+        stateMachine = WorkoutStateMachine(machine.allStates, targetIndex) { LocalDateTime.now() }
         updateStateFlowsFromMachine()
 
-        // Remove last element from executedSetsHistory
+        // Clean up executedSetsHistory: remove all entries that correspond to sets after the target Set
         viewModelScope.launch(dispatchers.io) {
-            executedSetStore.removeLastIfAny()
+            // Get all setIds that come after the target Set in allStates
+            val setIdsToRemove = mutableSetOf<UUID>()
+            for (i in targetIndex + 1 until machine.allStates.size) {
+                val state = machine.allStates[i]
+                when (state) {
+                    is WorkoutState.Set -> setIdsToRemove.add(state.set.id)
+                    is WorkoutState.Rest -> setIdsToRemove.add(state.set.id)
+                    else -> { /* Skip Preparing and Completed */ }
+                }
+            }
+
+            // Remove all SetHistory entries that match any of the setIds to remove
+            val currentList = executedSetStore.executedSets.value.toMutableList()
+            val filteredList = currentList.filterNot { setHistory ->
+                setHistory.setId in setIdsToRemove
+            }
+            
+            if (filteredList.size < currentList.size) {
+                executedSetStore.replaceAll(filteredList)
+            }
         }
     }
 
