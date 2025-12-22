@@ -28,7 +28,11 @@ Write-Host "Capturing device logs to: $logFile" -ForegroundColor Cyan
 # Clear logcat buffer and start capturing logs in background
 Write-Host "Starting logcat capture..." -ForegroundColor Cyan
 & $adb logcat -c | Out-Null
-$logcatProcess = Start-Process -FilePath $adb -ArgumentList "logcat", "-v", "time", "*:V" -NoNewWindow -PassThru -RedirectStandardOutput $logFile -RedirectStandardError $logFile
+# Use a job to capture both stdout and stderr to the same file
+$logcatJob = Start-Job -ScriptBlock {
+    param($adbPath, $logFilePath)
+    & $adbPath logcat -v time *:V *>&1 | Out-File -FilePath $logFilePath -Encoding utf8
+} -ArgumentList $adb, $logFile
 
 # Wait a moment for logcat to start
 Start-Sleep -Milliseconds 500
@@ -38,8 +42,9 @@ $gradleArgs = @(":wearos:connectedDebugAndroidTest")
 if ($TestMethod) {
     if (-not $TestClass) {
         Write-Error "TestMethod requires TestClass to be specified. Use: -TestClass <ClassName> -TestMethod <MethodName>"
-        if ($logcatProcess -and -not $logcatProcess.HasExited) {
-            Stop-Process -Id $logcatProcess.Id -Force -ErrorAction SilentlyContinue
+        if ($logcatJob) {
+            Stop-Job -Job $logcatJob -ErrorAction SilentlyContinue
+            Remove-Job -Job $logcatJob -Force -ErrorAction SilentlyContinue
         }
         exit 1
     }
@@ -66,8 +71,9 @@ try {
 } finally {
     # Stop logcat capture (always run, even on error)
     Write-Host "Stopping logcat capture..." -ForegroundColor Cyan
-    if ($logcatProcess -and -not $logcatProcess.HasExited) {
-        Stop-Process -Id $logcatProcess.Id -Force -ErrorAction SilentlyContinue
+    if ($logcatJob) {
+        Stop-Job -Job $logcatJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $logcatJob -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 200
     }
 }

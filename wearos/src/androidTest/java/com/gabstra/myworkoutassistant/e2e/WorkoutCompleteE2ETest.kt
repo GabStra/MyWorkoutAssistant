@@ -25,16 +25,12 @@ class WorkoutCompleteE2ETest : BaseWearE2ETest() {
 
         clickText("Start")
 
-        // Wait for permission dialogs to be cleared and/or "Preparing" to appear
-        val preparingVisible = waitForDialogsClearedOrContentAppears(
-            expectedContentSelector = By.text("Preparing"),
-            timeoutMs = 10_000
-        )
-        
-        // Dismiss tutorial if it appears (may appear after permission dialogs)
+        // Dismiss tutorial if it appears
         dismissTutorialIfPresent()
         
-        // Final check for "Preparing" - it should be visible now
+        // Wait for "Preparing HR Sensor" or "Preparing Polar Sensor" text to appear
+        // The screen shows "Preparing HR Sensor" not just "Preparing"
+        val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
         require(preparingVisible) { "WorkoutScreen 'Preparing' state not visible" }
 
         device.pressBack()
@@ -45,12 +41,8 @@ class WorkoutCompleteE2ETest : BaseWearE2ETest() {
         )
         require(dialogTitleVisible) { "Workout in progress dialog not visible" }
 
-        val yesButton = device.wait(
-            Until.findObject(By.desc("Done")),
-            5_000
-        )
-        require(yesButton != null) { "Done (yes) icon not found in dialog" }
-        yesButton.click()
+        // The "Done" button requires a long press to confirm, not a regular click
+        longPressByDesc("Done", 5_000)
     }
 
     @Test
@@ -93,12 +85,8 @@ class WorkoutCompleteE2ETest : BaseWearE2ETest() {
         )
         require(dialogTitleVisible) { "'Workout completed' dialog not visible" }
 
-        val yesButton = device.wait(
-            Until.findObject(By.desc("Done")),
-            5_000
-        )
-        require(yesButton != null) { "Done (yes) icon not found in completion dialog" }
-        yesButton.click()
+        // The "Done" button requires a long press to confirm, not a regular click
+        longPressByDesc("Done", 5_000)
 
         val headerVisible = device.wait(
             Until.hasObject(By.text("My Workout Assistant")),

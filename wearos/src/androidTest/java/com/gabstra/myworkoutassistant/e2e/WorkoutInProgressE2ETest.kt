@@ -25,21 +25,19 @@ class WorkoutInProgressE2ETest : BaseWearE2ETest() {
 
         clickText("Start")
 
-        // Wait for permission dialogs to be cleared and/or "Preparing" to appear
-        waitForDialogsClearedOrContentAppears(
-            expectedContentSelector = By.text("Preparing"),
-            timeoutMs = 10_000
-        )
-        
-        // Dismiss tutorial if it appears (may appear after permission dialogs)
+        // Dismiss tutorial if it appears
         dismissTutorialIfPresent()
+        
+        // Wait for "Preparing HR Sensor" or "Preparing Polar Sensor" text to appear
+        // The screen shows "Preparing HR Sensor" not just "Preparing"
+        device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
     }
 
     @Test
     fun enterWorkoutScreen_fromDetail() {
         startWorkoutFromDetail()
 
-        val preparingVisible = device.wait(Until.hasObject(By.text("Preparing")), 10_000)
+        val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
         require(preparingVisible) { "WorkoutScreen 'Preparing' state not visible after Start" }
     }
 
@@ -47,7 +45,7 @@ class WorkoutInProgressE2ETest : BaseWearE2ETest() {
     fun pauseAndResume_viaBackDialog() {
         startWorkoutFromDetail()
 
-        device.wait(Until.hasObject(By.text("Preparing")), 10_000)
+        device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
 
         device.pressBack()
 
@@ -66,7 +64,7 @@ class WorkoutInProgressE2ETest : BaseWearE2ETest() {
         require(noButton != null) { "Close (no) icon not found in dialog" }
         noButton.click()
 
-        val stillOnWorkout = device.wait(Until.hasObject(By.text("Preparing")), 5_000)
+        val stillOnWorkout = device.wait(Until.hasObject(By.textContains("Preparing")), 5_000)
         require(stillOnWorkout) { "Workout screen not visible after choosing No (resume)" }
     }
 
@@ -74,7 +72,7 @@ class WorkoutInProgressE2ETest : BaseWearE2ETest() {
     fun endWorkout_viaDialog_navigatesOutOfWorkout() {
         startWorkoutFromDetail()
 
-        device.wait(Until.hasObject(By.text("Preparing")), 10_000)
+        device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
 
         device.pressBack()
 
@@ -84,12 +82,8 @@ class WorkoutInProgressE2ETest : BaseWearE2ETest() {
         )
         require(dialogTitleVisible) { "Workout in progress dialog not visible" }
 
-        val yesButton = device.wait(
-            Until.findObject(By.desc("Done")),
-            5_000
-        )
-        require(yesButton != null) { "Done (yes) icon not found in dialog" }
-        yesButton.click()
+        // The "Done" button requires a long press to confirm, not a regular click
+        longPressByDesc("Done", 5_000)
 
         val selectionHeaderVisible = device.wait(
             Until.hasObject(By.text("My Workout Assistant")),
@@ -104,14 +98,14 @@ class WorkoutInProgressE2ETest : BaseWearE2ETest() {
     fun backgroundAndForeground_keepsWorkoutStable() {
         startWorkoutFromDetail()
 
-        val preparingVisible = device.wait(Until.hasObject(By.text("Preparing")), 10_000)
+        val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
         require(preparingVisible) { "WorkoutScreen not visible before backgrounding" }
 
         device.pressHome()
 
         launchAppFromHome()
 
-        val stillVisible = device.wait(Until.hasObject(By.text("Preparing")), 10_000)
+        val stillVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
         require(stillVisible) { "WorkoutScreen not visible after background/foreground cycle" }
     }
 }
