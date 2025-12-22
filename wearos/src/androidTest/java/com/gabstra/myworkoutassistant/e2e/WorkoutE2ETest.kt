@@ -641,6 +641,8 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         )
         require(exerciseNameVisible) { "Exercise screen not visible" }
 
+        device.waitForIdle(5_000)
+
         // Complete the timed duration set (tutorial dismissal for rest/completion is handled in completeSet())
         device.pressBack()
         confirmLongPressDialog()

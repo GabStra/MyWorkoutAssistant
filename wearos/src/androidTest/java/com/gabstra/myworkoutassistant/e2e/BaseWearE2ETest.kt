@@ -43,7 +43,7 @@ abstract class BaseWearE2ETest {
     }
 
     /**
-     * Grants runtime permissions to the target app package via shell command.
+     * Grants runtime permissions to the target app package using UiAutomation API.
      * This is the most reliable way to grant permissions in E2E tests, avoiding
      * brittle UI-based permission dialog interactions.
      */
@@ -52,7 +52,7 @@ abstract class BaseWearE2ETest {
         val pkg = inst.targetContext.packageName
         val ua = inst.uiAutomation
         perms.forEach { perm ->
-            ua.executeShellCommand("pm grant $pkg $perm").close()
+            ua.grantRuntimePermission(pkg, perm)
         }
     }
 
