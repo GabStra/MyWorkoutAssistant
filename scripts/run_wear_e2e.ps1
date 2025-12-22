@@ -67,9 +67,44 @@ if ($TestMethod) {
 
 $cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
 Write-Host "Executing: $cmdDisplay" -ForegroundColor Yellow
+Write-Host "Press Ctrl+C to cancel the test execution" -ForegroundColor Gray
 
 $exitCode = 0
+
+# Function to clean up resources
+function Stop-TestExecution {
+    param([string]$reason = "interrupted")
+    Write-Host "`n$reason - Stopping test execution..." -ForegroundColor Yellow
+    
+    # Try to stop any gradle processes (the main process should already be stopped by Ctrl+C)
+    # This is a best-effort cleanup for any child processes
+    Write-Host "Cleaning up any remaining processes..." -ForegroundColor Yellow
+    try {
+        # Stop gradle daemon if it was started (optional - usually not needed)
+        & .\gradlew --stop 2>&1 | Out-Null
+    } catch {
+        # Ignore errors - gradle might not be running
+    }
+    
+    Write-Host "Stopping logcat capture..." -ForegroundColor Cyan
+    if ($logcatJob) {
+        Stop-Job -Job $logcatJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $logcatJob -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 200
+    }
+}
+
+# Trap Ctrl+C (SIGINT) - this will catch when user presses Ctrl+C
+trap {
+    if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) {
+        Stop-TestExecution -reason "Test execution cancelled by user (Ctrl+C)"
+        exit 130  # Standard exit code for Ctrl+C
+    }
+    throw
+}
+
 try {
+    # Execute Gradle command - Ctrl+C will be caught by the trap above
     & .\gradlew $gradleArgs 2>&1
     # Capture exit code immediately after command execution (before finally block)
     $exitCode = $LASTEXITCODE
@@ -77,8 +112,12 @@ try {
         # If $LASTEXITCODE is not set, check $? as fallback
         $exitCode = if ($?) { 0 } else { 1 }
     }
+} catch {
+    # Handle other errors (Ctrl+C is handled by trap above)
+    Write-Error "Error running Gradle: $($_.Exception.Message)"
+    $exitCode = 1
 } finally {
-    # Stop logcat capture (always run, even on error)
+    # Stop logcat capture (always run, even on error or Ctrl+C)
     Write-Host "Stopping logcat capture..." -ForegroundColor Cyan
     if ($logcatJob) {
         Stop-Job -Job $logcatJob -ErrorAction SilentlyContinue
