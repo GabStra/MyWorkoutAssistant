@@ -1,5 +1,7 @@
 Param(
-    [switch]$SmokeOnly
+    [switch]$SmokeOnly,
+    [string]$TestClass,
+    [string]$TestMethod
 )
 
 Write-Host "Checking connected Android devices..." -ForegroundColor Cyan
@@ -14,18 +16,72 @@ if (-not ($devicesOutput -match "device`r?$")) {
 
 Write-Host "Running Wear OS E2E tests..." -ForegroundColor Cyan
 
-if ($SmokeOnly) {
-    $cmd = ".\gradlew :wearos:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest"
-} else {
-    $cmd = ".\gradlew :wearos:connectedDebugAndroidTest"
+# Setup logcat capture
+$logsDir = "wearos/build/e2e-logs"
+if (-not (Test-Path $logsDir)) {
+    New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+}
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$logFile = Join-Path $logsDir "logcat_$timestamp.txt"
+Write-Host "Capturing device logs to: $logFile" -ForegroundColor Cyan
+
+# Clear logcat buffer and start capturing logs in background
+Write-Host "Starting logcat capture..." -ForegroundColor Cyan
+& $adb logcat -c | Out-Null
+$logcatProcess = Start-Process -FilePath $adb -ArgumentList "logcat", "-v", "time", "*:V" -NoNewWindow -PassThru -RedirectStandardOutput $logFile -RedirectStandardError $logFile
+
+# Wait a moment for logcat to start
+Start-Sleep -Milliseconds 500
+
+$gradleArgs = @(":wearos:connectedDebugAndroidTest")
+
+if ($TestMethod) {
+    if (-not $TestClass) {
+        Write-Error "TestMethod requires TestClass to be specified. Use: -TestClass <ClassName> -TestMethod <MethodName>"
+        if ($logcatProcess -and -not $logcatProcess.HasExited) {
+            Stop-Process -Id $logcatProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        exit 1
+    }
+    # Format: ClassName#methodName
+    $fullClassName = if ($TestClass -notmatch "^com\.") { "com.gabstra.myworkoutassistant.e2e.$TestClass" } else { $TestClass }
+    $gradleArgs += "-Pandroid.testInstrumentationRunnerArguments.class=$fullClassName#$TestMethod"
+} elseif ($TestClass) {
+    # Support comma-separated list of classes
+    $classes = $TestClass -split "," | ForEach-Object {
+        $class = $_.Trim()
+        if ($class -notmatch "^com\.") { "com.gabstra.myworkoutassistant.e2e.$class" } else { $class }
+    }
+    $gradleArgs += "-Pandroid.testInstrumentationRunnerArguments.class=$($classes -join ',')"
+} elseif ($SmokeOnly) {
+    $gradleArgs += "-Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest"
 }
 
-Write-Host "Executing: $cmd" -ForegroundColor Yellow
-iex $cmd
-$exitCode = $LASTEXITCODE
+$cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
+Write-Host "Executing: $cmdDisplay" -ForegroundColor Yellow
+
+try {
+    & .\gradlew $gradleArgs
+    $exitCode = $LASTEXITCODE
+} finally {
+    # Stop logcat capture (always run, even on error)
+    Write-Host "Stopping logcat capture..." -ForegroundColor Cyan
+    if ($logcatProcess -and -not $logcatProcess.HasExited) {
+        Stop-Process -Id $logcatProcess.Id -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 200
+    }
+}
+
+if (Test-Path $logFile) {
+    $logSize = (Get-Item $logFile).Length
+    Write-Host "Device logs saved to: $logFile ($([math]::Round($logSize / 1KB, 2)) KB)" -ForegroundColor Green
+} else {
+    Write-Warning "Log file was not created: $logFile"
+}
 
 if ($exitCode -ne 0) {
     Write-Error "Wear OS E2E tests failed with exit code $exitCode. Check JUnit XML under wearos/build/outputs/androidTest-results or wearos/build/test-results/connected."
+    Write-Host "Device logs available at: $logFile" -ForegroundColor Yellow
     exit $exitCode
 }
 

@@ -25,14 +25,26 @@ rules:
         - Unix shells: `bash ./scripts/run_wear_e2e.sh`
         These scripts perform the `adb devices` check and then invoke Gradle.
       - >
+        The helper scripts support running individual tests or subsets:
+        - Full suite (all tests): `pwsh ./scripts/run_wear_e2e.ps1` or `bash ./scripts/run_wear_e2e.sh`
+        - Smoke-only suite: `pwsh ./scripts/run_wear_e2e.ps1 -SmokeOnly` or `bash ./scripts/run_wear_e2e.sh --smoke-only`
+        - Single test class: `pwsh ./scripts/run_wear_e2e.ps1 -TestClass WorkoutSelectionE2ETest` or `bash ./scripts/run_wear_e2e.sh --test-class WorkoutSelectionE2ETest`
+        - Multiple test classes (comma-separated): `pwsh ./scripts/run_wear_e2e.ps1 -TestClass "SmokeE2ETest,WorkoutSelectionE2ETest"` or `bash ./scripts/run_wear_e2e.sh --test-class "SmokeE2ETest,WorkoutSelectionE2ETest"`
+        - Single test method: `pwsh ./scripts/run_wear_e2e.ps1 -TestClass WorkoutSelectionE2ETest -TestMethod launch_showsHeaderAndWorkouts` or `bash ./scripts/run_wear_e2e.sh --test-class WorkoutSelectionE2ETest --test-method launch_showsHeaderAndWorkouts`
+        - Available test classes: SmokeE2ETest, WorkoutSelectionE2ETest, WorkoutDetailE2ETest, WorkoutInProgressE2ETest, WorkoutCompleteE2ETest
+        - You can use short class names (e.g., `WorkoutSelectionE2ETest`) or full qualified names (e.g., `com.gabstra.myworkoutassistant.e2e.WorkoutSelectionE2ETest`)
+      - >
         If you need to run Gradle directly, use:
         - Full debug Wear E2E suite on all connected devices:
           `./gradlew :wearos:connectedDebugAndroidTest`
         - Optional release (near-production) suite:
           `./gradlew :wearos:connectedReleaseAndroidTest`
-        - Smoke-only suite (fast launch + basic flows):
-          `./gradlew :wearos:connectedDebugAndroidTest
-           -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest`
+        - Single test class:
+          `./gradlew :wearos:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest`
+        - Single test method:
+          `./gradlew :wearos:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest#launchApp_fromHome`
+        - Multiple test classes (comma-separated):
+          `./gradlew :wearos:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest,com.gabstra.myworkoutassistant.e2e.WorkoutSelectionE2ETest`
       - >
         Treat a non-zero Gradle exit code from any `connected*AndroidTest` task
         as an E2E test failure. Do not attempt to ignore or auto-retry without
@@ -42,6 +54,20 @@ rules:
         - `wearos/build/outputs/androidTest-results/`
         - or `wearos/build/test-results/connected/`
         Summarize: number of tests, failures, and the first few failure messages.
+      - >
+        After running E2E tests (especially if they fail), ALWAYS inspect the device
+        logs that were automatically captured during test execution. The helper scripts
+        (`run_wear_e2e.ps1` and `run_wear_e2e.sh`) automatically capture logcat logs
+        to timestamped files in `wearos/build/e2e-logs/` (e.g., `logcat_20241220_143022.txt`).
+        The script output will display the exact log file path after test completion.
+        Read the log file to identify:
+        - Application crashes or exceptions (look for FATAL, ERROR, or Exception stack traces)
+        - UI interaction issues (look for UIAutomator-related errors)
+        - Permission or system dialog issues
+        - App-specific errors from the package `com.gabstra.myworkoutassistant`
+        - Any relevant debug information that might explain test failures
+        When reporting test results, include relevant excerpts from the logs, especially
+        error messages and stack traces that correlate with test failures.
       - >
         The main E2E test class for quick health checks is
         `com.gabstra.myworkoutassistant.e2e.SmokeE2ETest`

@@ -24,7 +24,14 @@ class WorkoutInProgressE2ETest : BaseWearE2ETest() {
         require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
 
         clickText("Start")
-        drainPermissionDialogs()
+
+        // Wait for permission dialogs to be cleared and/or "Preparing" to appear
+        waitForDialogsClearedOrContentAppears(
+            expectedContentSelector = By.text("Preparing"),
+            timeoutMs = 10_000
+        )
+        
+        // Dismiss tutorial if it appears (may appear after permission dialogs)
         dismissTutorialIfPresent()
     }
 

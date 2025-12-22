@@ -24,10 +24,17 @@ class WorkoutCompleteE2ETest : BaseWearE2ETest() {
         require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
 
         clickText("Start")
-        drainPermissionDialogs()
-        dismissTutorialIfPresent()
 
-        val preparingVisible = device.wait(Until.hasObject(By.text("Preparing")), 10_000)
+        // Wait for permission dialogs to be cleared and/or "Preparing" to appear
+        val preparingVisible = waitForDialogsClearedOrContentAppears(
+            expectedContentSelector = By.text("Preparing"),
+            timeoutMs = 10_000
+        )
+        
+        // Dismiss tutorial if it appears (may appear after permission dialogs)
+        dismissTutorialIfPresent()
+        
+        // Final check for "Preparing" - it should be visible now
         require(preparingVisible) { "WorkoutScreen 'Preparing' state not visible" }
 
         device.pressBack()

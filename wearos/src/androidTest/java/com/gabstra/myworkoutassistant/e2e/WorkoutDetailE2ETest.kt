@@ -42,14 +42,21 @@ class WorkoutDetailE2ETest : BaseWearE2ETest() {
 
         clickText("Start")
 
-        drainPermissionDialogs()
-        dismissTutorialIfPresent()
-
-        val preparingVisible = device.wait(
-            Until.hasObject(By.text("Preparing")),
-            10_000
+        // Wait for permission dialogs to be cleared and/or "Preparing" to appear
+        val preparingVisible = waitForDialogsClearedOrContentAppears(
+            expectedContentSelector = By.text("Preparing"),
+            timeoutMs = 10_000
         )
-        require(preparingVisible) {
+        
+        // Dismiss tutorial if it appears (may appear after permission dialogs)
+        dismissTutorialIfPresent()
+        
+        // Final check for "Preparing" - it should be visible now
+        val finalCheck = device.wait(
+            Until.hasObject(By.text("Preparing")),
+            5_000
+        )
+        require(finalCheck) {
             "Expected 'Preparing' or workout screen content after Start; not found"
         }
     }

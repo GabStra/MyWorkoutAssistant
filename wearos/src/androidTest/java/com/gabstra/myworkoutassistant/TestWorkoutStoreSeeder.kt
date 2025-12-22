@@ -49,8 +49,8 @@ object TestWorkoutStoreSeeder {
      * and then copied/modified.
      */
     fun createDefaultTestWorkoutStore(): WorkoutStore {
-        val workout = createTestWorkout()
         val equipment = createTestBarbell()
+        val workout = createTestWorkout(equipment.id)
 
         return WorkoutStore(
             workouts = listOf(workout),
@@ -79,8 +79,7 @@ object TestWorkoutStoreSeeder {
         )
     }
 
-    private fun createTestWorkout(): Workout {
-        val equipmentId = UUID.randomUUID()
+    private fun createTestWorkout(equipmentId: UUID): Workout {
         val exercise1Id = UUID.randomUUID()
         val exercise2Id = UUID.randomUUID()
         val set1Id = UUID.randomUUID()
