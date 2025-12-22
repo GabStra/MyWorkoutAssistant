@@ -5,9 +5,10 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.TestWorkoutStoreSeeder
 import org.junit.Before
@@ -117,6 +118,38 @@ abstract class BaseWearE2ETest {
     }
 
     /**
+     * Generic helper that scrolls until a selector is found.
+     * First checks if the element is already visible (fast path), then attempts to scroll
+     * in the specified direction until the element is found.
+     * 
+     * @param selector The By selector to search for
+     * @param direction The direction to scroll (e.g., Direction.DOWN, Direction.UP)
+     * @param initialWaitMs Timeout in milliseconds to wait for the element before scrolling (default: 1_000)
+     * @return The found UiObject2, or null if not found after scrolling
+     */
+    protected fun scrollUntilFound(
+        selector: BySelector,
+        direction: Direction,
+        initialWaitMs: Long = 1_000
+    ): UiObject2? {
+        // Fast path: if already visible, return it immediately
+        device.wait(Until.findObject(selector), initialWaitMs)?.let {
+            return it
+        }
+
+        // Find scrollable container and scroll until the selector is found
+        val scrollable = device.findObject(By.scrollable(true))
+        if (scrollable != null) {
+            return runCatching {
+                scrollable.scrollUntil(direction, Until.findObject(selector))
+            }.getOrNull()
+        }
+
+        // No scrollable container found, return null
+        return null
+    }
+
+    /**
      * Enum representing different tutorial contexts in the app flow.
      * Each context corresponds to a specific screen where a tutorial may appear.
      */
@@ -131,70 +164,39 @@ abstract class BaseWearE2ETest {
      * Best-effort dismissal of any tutorial overlay that might be covering
      * the workout UI, checking only the relevant preference for the current screen context.
      *
-     * Original working behavior:
+     * Behavior:
      * 1) Check the specific tutorial preference for the given context.
      * 2) If already seen, skip UI interaction to avoid random scrolling.
-     * 3) Look for a "Got it" button; if found, click it and return.
-     * 4) If not found, check if there's any scrollable container.
-     * 5) If scrollable, scroll to the bottom once (to reveal the button),
-     *    then try again to find and click "Got it".
+     * 3) Use scrollUntilFound to find the "Got it" button (checks if visible first, then scrolls if needed).
+     * 4) If found, click it.
      *
      * @param tutorialContext The tutorial context indicating which screen we're on
      * @param maxWaitMs Maximum time to wait for the tutorial button to appear
      */
-    protected fun dismissTutorialIfPresent(tutorialContext: TutorialContext, maxWaitMs: Long = 1_000) {
+    protected fun dismissTutorialIfPresent(
+        tutorialContext: TutorialContext,
+        maxWaitMs: Long = 1_000
+    ) {
         val prefs = context.getSharedPreferences("tutorial_prefs", Context.MODE_PRIVATE)
-        
-        // Check only the relevant preference for this screen context
+
         val hasSeenTutorial = when (tutorialContext) {
-            TutorialContext.WORKOUT_SELECTION -> 
+            TutorialContext.WORKOUT_SELECTION ->
                 prefs.getBoolean("has_seen_workout_selection_tutorial", false)
-            TutorialContext.HEART_RATE -> 
+            TutorialContext.HEART_RATE ->
                 prefs.getBoolean("has_seen_workout_heart_rate_tutorial", false)
-            TutorialContext.SET_SCREEN -> 
+            TutorialContext.SET_SCREEN ->
                 prefs.getBoolean("has_seen_set_screen_tutorial", false)
-            TutorialContext.REST_SCREEN -> 
+            TutorialContext.REST_SCREEN ->
                 prefs.getBoolean("has_seen_rest_screen_tutorial", false)
         }
 
-        // If this specific tutorial was already seen, there's no overlay to dismiss.
-        if (hasSeenTutorial) {
-            return
-        }
+        if (hasSeenTutorial) return
 
-        // Wait for "Got it" button to appear (tutorial overlay may take time to render)
-        val button = device.wait(Until.findObject(By.text("Got it")), maxWaitMs)
-        if (button != null) {
-            try {
-                button.click()
-                return
-            } catch (_: Exception) {
-                // Button found but not clickable, try scrolling
-            }
-        }
-
-        // If button not found or not clickable, try scrolling to reveal it
-        val scrollable = UiScrollable(UiSelector().scrollable(true))
-        if (scrollable.exists()) {
-            try {
-                // Hint UiAutomator this is a vertical list and use a faster fling
-                scrollable.setAsVerticalList()
-                scrollable.flingToEnd(3)  // usually much faster than scrollToEnd(10)
-                device.waitForIdle(300)
-
-                // Try again after scrolling
-                val buttonAfterScroll = device.wait(Until.findObject(By.text("Got it")), 1_000)
-                if (buttonAfterScroll != null) {
-                    try {
-                        buttonAfterScroll.click()
-                        return
-                    } catch (_: Exception) {
-                        // Could not click even after scrolling
-                    }
-                }
-            } catch (_: Exception) {
-                // Scroll failed, tutorial might not be present or not scrollable
-            }
+        val gotItSelector = By.text("Got it")
+        
+        // If not immediately visible, scroll until found
+        scrollUntilFound(gotItSelector, Direction.DOWN, maxWaitMs)?.let { btn ->
+            runCatching { btn.click() }
         }
     }
 

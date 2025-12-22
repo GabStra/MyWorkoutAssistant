@@ -145,9 +145,18 @@ fun CustomDialogYesOnLongPress(
             onDismissRequest = {  },
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
         ) {
-            Box(
+            androidx.wear.compose.material.CircularProgressIndicator(
+                progress = progress,
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.background)
+                    .fillMaxSize(),
+                strokeWidth = 4.dp,
+                indicatorColor = MaterialTheme.colorScheme.primary,
+                trackColor = MediumDarkGray
+            )
+
+            Box(
+                modifier = Modifier
                     .fillMaxSize()
                     .padding(20.dp), contentAlignment = Alignment.Center
             ) {
@@ -227,16 +236,6 @@ fun CustomDialogYesOnLongPress(
                 },
                 label = "DialogProgressBarAlpha"
             )*/
-
-
-            androidx.wear.compose.material.CircularProgressIndicator(
-                progress = progress,
-                modifier = Modifier
-                    .fillMaxSize(),
-                strokeWidth = 4.dp,
-                indicatorColor = MaterialTheme.colorScheme.primary,
-                trackColor = MediumDarkGray
-            )
         }
     }
 }
