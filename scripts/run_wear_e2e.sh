@@ -46,8 +46,9 @@ echo "Capturing device logs to: $LOG_FILE"
 
 # Clear logcat buffer and start capturing logs in background
 echo "Starting logcat capture..."
+APP_PACKAGE="com.gabstra.myworkoutassistant"
 adb logcat -c >/dev/null 2>&1
-adb logcat -v time *:V > "$LOG_FILE" 2>&1 &
+adb logcat -v time *:V 2>&1 | grep "$APP_PACKAGE" > "$LOG_FILE" &
 LOGCAT_PID=$!
 
 # Wait a moment for logcat to start

@@ -28,11 +28,14 @@ Write-Host "Capturing device logs to: $logFile" -ForegroundColor Cyan
 # Clear logcat buffer and start capturing logs in background
 Write-Host "Starting logcat capture..." -ForegroundColor Cyan
 & $adb logcat -c | Out-Null
-# Use a job to capture both stdout and stderr to the same file
+# Use a job to capture logs filtered by app package (same as logcat filtering)
+$appPackage = "com.gabstra.myworkoutassistant"
 $logcatJob = Start-Job -ScriptBlock {
-    param($adbPath, $logFilePath)
-    & $adbPath logcat -v time *:V *>&1 | Out-File -FilePath $logFilePath -Encoding utf8
-} -ArgumentList $adb, $logFile
+    param($adbPath, $logFilePath, $packageName)
+    & $adbPath logcat -v time *:V *>&1 | 
+        Where-Object { $_ -match $packageName } | 
+        Out-File -FilePath $logFilePath -Encoding utf8 -Append
+} -ArgumentList $adb, $logFile, $appPackage
 
 # Wait a moment for logcat to start
 Start-Sleep -Milliseconds 500
@@ -65,9 +68,15 @@ if ($TestMethod) {
 $cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
 Write-Host "Executing: $cmdDisplay" -ForegroundColor Yellow
 
+$exitCode = 0
 try {
-    & .\gradlew $gradleArgs
+    & .\gradlew $gradleArgs 2>&1
+    # Capture exit code immediately after command execution (before finally block)
     $exitCode = $LASTEXITCODE
+    if ($null -eq $exitCode) {
+        # If $LASTEXITCODE is not set, check $? as fallback
+        $exitCode = if ($?) { 0 } else { 1 }
+    }
 } finally {
     # Stop logcat capture (always run, even on error)
     Write-Host "Stopping logcat capture..." -ForegroundColor Cyan

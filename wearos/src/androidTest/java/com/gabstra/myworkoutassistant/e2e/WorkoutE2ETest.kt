@@ -634,14 +634,16 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
         startWorkout(TimedDurationSetWorkoutStoreFixture.getWorkoutName())
 
-        // Wait for exercise screen
+        // Wait 5 seconds for countdown dialog to complete (countdown takes ~3.5 seconds)
+        // This ensures the countdown dialog is fully dismissed before pressing back
+        Thread.sleep(5_000)
+
+        // Wait for exercise screen to appear
         val exerciseNameVisible = device.wait(
             Until.hasObject(By.text("Timed Exercise")),
             5_000
         )
         require(exerciseNameVisible) { "Exercise screen not visible" }
-
-        device.waitForIdle(5_000)
 
         // Complete the timed duration set (tutorial dismissal for rest/completion is handled in completeSet())
         device.pressBack()
