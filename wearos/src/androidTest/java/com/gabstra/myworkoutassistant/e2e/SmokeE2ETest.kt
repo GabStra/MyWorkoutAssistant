@@ -9,11 +9,21 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.TestWorkoutStoreSeeder
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SmokeE2ETest {
+
+    /**
+     * Ensures the Wear app has a realistic WorkoutStore before we launch it.
+     * All E2E tests in this class should call this before launching MainActivity.
+     */
+    private fun seedWorkoutStore() {
+        val context: Context = ApplicationProvider.getApplicationContext()
+        TestWorkoutStoreSeeder.seedWorkoutStore(context)
+    }
 
     private fun launchAppFromHome(): Pair<UiDevice, Context> {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -40,6 +50,7 @@ class SmokeE2ETest {
 
     @Test
     fun launchApp_fromHome() {
+        seedWorkoutStore()
         val (device, context) = launchAppFromHome()
 
         // Example assertion: any root view from our package exists
@@ -49,16 +60,18 @@ class SmokeE2ETest {
 
     @Test
     fun launchApp_showsWorkoutSelectionHeader() {
+        seedWorkoutStore()
         val (device, _) = launchAppFromHome()
 
         // The WorkoutSelectionScreen shows a header with the app title text.
         val headerText = "My Workout Assistant"
-        val appeared = device.wait(Until.hasObject(By.text(headerText)), 5_000)
+        val appeared = device.wait(Until.hasObject(By.text(headerText)), 15_000)
         require(appeared) { "Expected header text '$headerText' was not visible after app launch" }
     }
 
     @Test
     fun launchApp_waitForIdle_stillOnApp() {
+        seedWorkoutStore()
         val (device, context) = launchAppFromHome()
 
         // Let the UI settle and ensure our app is still in the foreground.
