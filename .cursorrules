@@ -1,0 +1,56 @@
+// Cursor project rules for running Wear OS E2E tests
+
+rules:
+  - id: wearos-e2e-tests
+    description: >
+      How agents should prepare and execute Wear OS UIAutomator-based E2E tests,
+      and how to interpret their results.
+    appliesTo:
+      - "**/*"
+    priority: high
+    recommendations:
+      - >
+        To run Wear OS E2E tests, always execute commands from the project root
+        (`C:\\Users\\gabri\\Documents\\MyWorkoutAssistant`), not from a module
+        subdirectory.
+      - >
+        Before running any connected Android tests, ensure at least one Wear OS
+        emulator or physical watch is online:
+        1) Run `adb devices`.
+        2) Verify there is at least one entry with state `device` (not `offline`
+           or `unauthorized`).
+      - >
+        Prefer using the helper scripts when triggering Wear E2E tests:
+        - Windows/PowerShell: `pwsh ./scripts/run_wear_e2e.ps1`
+        - Unix shells: `bash ./scripts/run_wear_e2e.sh`
+        These scripts perform the `adb devices` check and then invoke Gradle.
+      - >
+        If you need to run Gradle directly, use:
+        - Full debug Wear E2E suite on all connected devices:
+          `./gradlew :wearos:connectedDebugAndroidTest`
+        - Optional release (near-production) suite:
+          `./gradlew :wearos:connectedReleaseAndroidTest`
+        - Smoke-only suite (fast launch + basic flows):
+          `./gradlew :wearos:connectedDebugAndroidTest
+           -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest`
+      - >
+        Treat a non-zero Gradle exit code from any `connected*AndroidTest` task
+        as an E2E test failure. Do not attempt to ignore or auto-retry without
+        inspecting the failure.
+      - >
+        To interpret detailed E2E results, read the JUnit XML output from:
+        - `wearos/build/outputs/androidTest-results/`
+        - or `wearos/build/test-results/connected/`
+        Summarize: number of tests, failures, and the first few failure messages.
+      - >
+        The main E2E test class for quick health checks is
+        `com.gabstra.myworkoutassistant.e2e.SmokeE2ETest`
+        (under `wearos/src/androidTest/java`). Use this when asked to run a
+        "smoke" or "basic" Wear E2E test.
+      - >
+        If `connectedDebugAndroidTest` fails with "No online devices found" or
+        "Device is OFFLINE", do not modify code. Instruct the user to start a
+        Wear OS emulator or connect their watch and confirm `adb devices`
+        shows at least one `device` before retrying.
+
+
