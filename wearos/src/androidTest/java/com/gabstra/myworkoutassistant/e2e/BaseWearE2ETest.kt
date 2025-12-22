@@ -161,6 +161,34 @@ abstract class BaseWearE2ETest {
     }
 
     /**
+     * Enum representing pager navigation directions.
+     */
+    protected enum class PagerDirection {
+        LEFT,   // Swipe left to go to next page
+        RIGHT   // Swipe right to go to previous page
+    }
+
+    /**
+     * Dismisses the resume workout dialog if present when reopening the app after leaving
+     * a workout incomplete. This ensures tests can start fresh without dealing with resume options.
+     * 
+     * Behavior:
+     * 1) Check if "Resume" button is visible (indicates paused workout dialog/screen is present)
+     * 2) If found, press back to dismiss and return to workout selection screen
+     * 3) This allows tests to start workouts fresh rather than resuming
+     */
+    protected fun dismissResumeDialogIfPresent() {
+        // Check if "Resume" button is visible (indicates we're on WorkoutDetailScreen with paused workout)
+        val resumeVisible = device.wait(Until.hasObject(By.textContains("Resume")), 2_000)
+        
+        if (resumeVisible) {
+            // Press back to dismiss the resume dialog and return to workout selection
+            device.pressBack()
+            device.waitForIdle(1_000)
+        }
+    }
+
+    /**
      * Best-effort dismissal of any tutorial overlay that might be covering
      * the workout UI, checking only the relevant preference for the current screen context.
      *
@@ -198,6 +226,34 @@ abstract class BaseWearE2ETest {
         scrollUntilFound(gotItSelector, Direction.DOWN, maxWaitMs)?.let { btn ->
             runCatching { btn.click() }
         }
+    }
+
+    /**
+     * Navigates to a specific pager page by swiping horizontally.
+     * 
+     * @param direction The direction to swipe (LEFT for next page, RIGHT for previous page)
+     */
+    protected fun navigateToPagerPage(direction: PagerDirection) {
+        // Get screen dimensions for swipe
+        val width = device.displayWidth
+        val height = device.displayHeight
+        val centerY = height / 2
+
+        when (direction) {
+            PagerDirection.LEFT -> {
+                // Swipe left to go to next page - swipe from 80% to 20% of screen width for more reliable page change
+                val startX = (width * 0.8).toInt().coerceAtMost(width - 1)
+                val endX = (width * 0.2).toInt().coerceAtLeast(0)
+                device.swipe(startX, centerY, endX, centerY, 5)
+            }
+            PagerDirection.RIGHT -> {
+                // Swipe right to go to previous page - swipe from 20% to 80% of screen width for more reliable page change
+                val startX = (width * 0.2).toInt().coerceAtLeast(0)
+                val endX = (width * 0.8).toInt().coerceAtMost(width - 1)
+                device.swipe(startX, centerY, endX, centerY, 5)
+            }
+        }
+        device.waitForIdle(500)
     }
 
     /**

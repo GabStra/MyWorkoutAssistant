@@ -7,27 +7,18 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
-import com.gabstra.myworkoutassistant.TestWorkoutStoreSeeder
-import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.Workout
-import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.equipments.Barbell
-import com.gabstra.myworkoutassistant.shared.equipments.Plate
-import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.e2e.fixtures.CompletionWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.MultipleSetsAndRestsWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.TimedDurationSetWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.WeightSetWorkoutStoreFixture
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.time.LocalDate
-import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class WorkoutE2ETest : BaseWearE2ETest() {
-
-    private val workoutName = "Test Workout"
 
     @Before
     override fun baseSetUp() {
@@ -45,372 +36,6 @@ class WorkoutE2ETest : BaseWearE2ETest() {
             android.Manifest.permission.BLUETOOTH_SCAN,
             android.Manifest.permission.BLUETOOTH_CONNECT
         )
-
-        // Use default workout store - individual tests will override if needed
-        seedWorkoutStore()
-        
-        // Launch the app
-        launchAppFromHome()
-    }
-
-    private fun createTestBarbell(): Barbell {
-        // Include multiple plates of each weight to support higher total weights
-        // For 100.0 kg total with 20.0 kg bar, need 80.0 kg plates (40.0 kg per side)
-        // With 2x 20.0 kg plates per side = 40.0 kg per side = 80.0 kg total + 20.0 kg bar = 100.0 kg
-        val plates = listOf(
-            Plate(20.0, 20.0),
-            Plate(20.0, 20.0), // Second pair of 20kg plates
-            Plate(10.0, 15.0),
-            Plate(10.0, 15.0), // Second pair of 10kg plates
-            Plate(5.0, 10.0),
-            Plate(5.0, 10.0),  // Second pair of 5kg plates
-            Plate(2.5, 5.0),
-            Plate(2.5, 5.0),   // Second pair of 2.5kg plates
-            Plate(1.25, 3.0),
-            Plate(1.25, 3.0)   // Second pair of 1.25kg plates
-        )
-        return Barbell(
-            id = UUID.randomUUID(),
-            name = "Test Barbell",
-            availablePlates = plates,
-            barLength = 200,
-            barWeight = 20.0
-        )
-    }
-
-    /**
-     * Sets up a workout store with a workout that has a TimedDurationSet exercise
-     * with countdown enabled. This is used for tests that need to verify countdown dialog.
-     */
-    private fun setupWorkoutStoreWithTimedDurationSet() {
-        val equipment = createTestBarbell()
-        val exerciseId = UUID.randomUUID()
-        val setId = UUID.randomUUID()
-
-        // TimedDurationSet supports countdown dialog
-        val exercise = Exercise(
-            id = exerciseId,
-            enabled = true,
-            name = "Timed Exercise",
-            doNotStoreHistory = false,
-            notes = "",
-            sets = listOf(
-                TimedDurationSet(setId, 60_000, autoStart = true, autoStop = false) // 60 seconds
-            ),
-            exerciseType = ExerciseType.COUNTDOWN,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
-            minReps = 5,
-            maxReps = 12,
-            lowerBoundMaxHRPercent = null,
-            upperBoundMaxHRPercent = null,
-            equipmentId = null,
-            bodyWeightPercentage = null,
-            generateWarmUpSets = false,
-            enableProgression = false,
-            keepScreenOn = false,
-            showCountDownTimer = true, // Enable countdown dialog
-            intraSetRestInSeconds = null,
-            loadJumpDefaultPct = null,
-            loadJumpMaxPct = null,
-            loadJumpOvercapUntil = null
-        )
-
-        val workout = Workout(
-            id = UUID.randomUUID(),
-            name = workoutName,
-            description = "Test Description",
-            workoutComponents = listOf(exercise),
-            order = 0,
-            enabled = true,
-            usePolarDevice = false,
-            creationDate = LocalDate.now(),
-            previousVersionId = null,
-            nextVersionId = null,
-            isActive = true,
-            timesCompletedInAWeek = null,
-            globalId = UUID.randomUUID(),
-            type = 0
-        )
-
-        val workoutStore = WorkoutStore(
-            workouts = listOf(workout),
-            equipments = listOf(equipment),
-            polarDeviceId = null,
-            birthDateYear = 1990,
-            weightKg = 75.0,
-            progressionPercentageAmount = 0.0
-        )
-
-        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
-    }
-
-    /**
-     * Sets up a workout store with a workout that has an EnduranceSet exercise
-     * with countdown enabled. This is used for tests that need to verify countdown dialog.
-     */
-    private fun setupWorkoutStoreWithEnduranceSet() {
-        val equipment = createTestBarbell()
-        val exerciseId = UUID.randomUUID()
-        val setId = UUID.randomUUID()
-
-        // EnduranceSet supports countdown dialog
-        val exercise = Exercise(
-            id = exerciseId,
-            enabled = true,
-            name = "Endurance Exercise",
-            doNotStoreHistory = false,
-            notes = "",
-            sets = listOf(
-                EnduranceSet(setId, 60_000, autoStart = false, autoStop = false) // 60 seconds
-            ),
-            exerciseType = ExerciseType.COUNTUP,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
-            minReps = 5,
-            maxReps = 12,
-            lowerBoundMaxHRPercent = null,
-            upperBoundMaxHRPercent = null,
-            equipmentId = null,
-            bodyWeightPercentage = null,
-            generateWarmUpSets = false,
-            enableProgression = false,
-            keepScreenOn = false,
-            showCountDownTimer = true, // Enable countdown dialog
-            intraSetRestInSeconds = null,
-            loadJumpDefaultPct = null,
-            loadJumpMaxPct = null,
-            loadJumpOvercapUntil = null
-        )
-
-        val workout = Workout(
-            id = UUID.randomUUID(),
-            name = workoutName,
-            description = "Test Description",
-            workoutComponents = listOf(exercise),
-            order = 0,
-            enabled = true,
-            usePolarDevice = false,
-            creationDate = LocalDate.now(),
-            previousVersionId = null,
-            nextVersionId = null,
-            isActive = true,
-            timesCompletedInAWeek = null,
-            globalId = UUID.randomUUID(),
-            type = 0
-        )
-
-        val workoutStore = WorkoutStore(
-            workouts = listOf(workout),
-            equipments = listOf(equipment),
-            polarDeviceId = null,
-            birthDateYear = 1990,
-            weightKg = 75.0,
-            progressionPercentageAmount = 0.0
-        )
-
-        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
-    }
-
-    /**
-     * Sets up a workout store with a workout that has a WeightSet exercise.
-     * This is used for tests that don't need countdown functionality.
-     */
-    private fun setupWorkoutStoreWithWeightSet() {
-        val equipment = createTestBarbell()
-        val exerciseId = UUID.randomUUID()
-        val setId = UUID.randomUUID()
-
-        val exercise = Exercise(
-            id = exerciseId,
-            enabled = true,
-            name = "Bench Press",
-            doNotStoreHistory = false,
-            notes = "",
-            sets = listOf(
-                WeightSet(setId, 10, 100.0)
-            ),
-            exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
-            minReps = 5,
-            maxReps = 12,
-            lowerBoundMaxHRPercent = null,
-            upperBoundMaxHRPercent = null,
-            equipmentId = equipment.id,
-            bodyWeightPercentage = null,
-            generateWarmUpSets = false,
-            enableProgression = true,
-            keepScreenOn = false,
-            showCountDownTimer = false,
-            intraSetRestInSeconds = null,
-            loadJumpDefaultPct = 0.025,
-            loadJumpMaxPct = 0.5,
-            loadJumpOvercapUntil = 2
-        )
-
-        val workout = Workout(
-            id = UUID.randomUUID(),
-            name = workoutName,
-            description = "Test Description",
-            workoutComponents = listOf(exercise),
-            order = 0,
-            enabled = true,
-            usePolarDevice = false,
-            creationDate = LocalDate.now(),
-            previousVersionId = null,
-            nextVersionId = null,
-            isActive = true,
-            timesCompletedInAWeek = null,
-            globalId = UUID.randomUUID(),
-            type = 0
-        )
-
-        val workoutStore = WorkoutStore(
-            workouts = listOf(workout),
-            equipments = listOf(equipment),
-            polarDeviceId = null,
-            birthDateYear = 1990,
-            weightKg = 75.0,
-            progressionPercentageAmount = 0.0
-        )
-
-        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
-    }
-
-    /**
-     * Sets up a workout store with multiple sets and rests for progression tests.
-     */
-    private fun setupWorkoutStoreWithMultipleSetsAndRests() {
-        val equipment = createTestBarbell()
-        val exerciseId = UUID.randomUUID()
-        val set1Id = UUID.randomUUID()
-        val set2Id = UUID.randomUUID()
-        val restId = UUID.randomUUID()
-
-        val exercise = Exercise(
-            id = exerciseId,
-            enabled = true,
-            name = "Bench Press",
-            doNotStoreHistory = false,
-            notes = "",
-            sets = listOf(
-                WeightSet(set1Id, 10, 100.0),
-                RestSet(restId, 60), // Short rest for faster E2E
-                WeightSet(set2Id, 8, 100.0)
-            ),
-            exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
-            minReps = 5,
-            maxReps = 12,
-            lowerBoundMaxHRPercent = null,
-            upperBoundMaxHRPercent = null,
-            equipmentId = equipment.id,
-            bodyWeightPercentage = null,
-            generateWarmUpSets = false,
-            enableProgression = true,
-            keepScreenOn = false,
-            showCountDownTimer = false,
-            intraSetRestInSeconds = null,
-            loadJumpDefaultPct = 0.025,
-            loadJumpMaxPct = 0.5,
-            loadJumpOvercapUntil = 2
-        )
-
-        val workout = Workout(
-            id = UUID.randomUUID(),
-            name = workoutName,
-            description = "Test Description",
-            workoutComponents = listOf(exercise),
-            order = 0,
-            enabled = true,
-            usePolarDevice = false,
-            creationDate = LocalDate.now(),
-            previousVersionId = null,
-            nextVersionId = null,
-            isActive = true,
-            timesCompletedInAWeek = null,
-            globalId = UUID.randomUUID(),
-            type = 0
-        )
-
-        val workoutStore = WorkoutStore(
-            workouts = listOf(workout),
-            equipments = listOf(equipment),
-            polarDeviceId = null,
-            birthDateYear = 1990,
-            weightKg = 75.0,
-            progressionPercentageAmount = 0.0
-        )
-
-        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
-    }
-
-
-    /**
-     * Sets up a workout store with a simple workout that can be completed quickly.
-     */
-    private fun setupWorkoutStoreForCompletion() {
-        val equipment = createTestBarbell()
-        val exerciseId = UUID.randomUUID()
-        val setId = UUID.randomUUID()
-
-        val exercise = Exercise(
-            id = exerciseId,
-            enabled = true,
-            name = "Simple Exercise",
-            doNotStoreHistory = false,
-            notes = "",
-            sets = listOf(
-                WeightSet(setId, 10, 100.0)
-            ),
-            exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
-            minReps = 5,
-            maxReps = 12,
-            lowerBoundMaxHRPercent = null,
-            upperBoundMaxHRPercent = null,
-            equipmentId = equipment.id,
-            bodyWeightPercentage = null,
-            generateWarmUpSets = false,
-            enableProgression = false,
-            keepScreenOn = false,
-            showCountDownTimer = false,
-            intraSetRestInSeconds = null,
-            loadJumpDefaultPct = null,
-            loadJumpMaxPct = null,
-            loadJumpOvercapUntil = null
-        )
-
-        val workout = Workout(
-            id = UUID.randomUUID(),
-            name = workoutName,
-            description = "Test Description",
-            workoutComponents = listOf(exercise),
-            order = 0,
-            enabled = true,
-            usePolarDevice = false,
-            creationDate = LocalDate.now(),
-            previousVersionId = null,
-            nextVersionId = null,
-            isActive = true,
-            timesCompletedInAWeek = null,
-            globalId = UUID.randomUUID(),
-            type = 0
-        )
-
-        val workoutStore = WorkoutStore(
-            workouts = listOf(workout),
-            equipments = listOf(equipment),
-            polarDeviceId = null,
-            birthDateYear = 1990,
-            weightKg = 75.0,
-            progressionPercentageAmount = 0.0
-        )
-
-        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
     }
 
     // ==================== Helper Methods ====================
@@ -420,13 +45,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
      * The dialog is triggered by pressing the back button once.
      * After completing, dismisses rest screen tutorial if it appears.
      */
-    private fun completeSet() {
-        device.pressBack()
+    private fun confirmLongPressDialog() {
         device.waitForIdle(1_000)
         longPressByDesc("Done")
         device.waitForIdle(1_000)
-        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-        device.waitForIdle(500)
     }
 
     /**
@@ -473,31 +95,6 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         // In a real implementation, you'd find +/- buttons and click them
     }
 
-    /**
-     * Navigates to a specific pager page by swiping horizontally.
-     */
-    private fun navigateToPagerPage(direction: String) {
-        // Get screen dimensions for swipe
-        val width = device.displayWidth
-        val height = device.displayHeight
-        val centerY = height / 2
-
-        when (direction.lowercase()) {
-            "left", "next" -> {
-                // Swipe left to go to next page - swipe from 80% to 20% of screen width for more reliable page change
-                val startX = (width * 0.8).toInt().coerceAtMost(width - 1)
-                val endX = (width * 0.2).toInt().coerceAtLeast(0)
-                device.swipe(startX, centerY, endX, centerY, 10)
-            }
-            "right", "previous" -> {
-                // Swipe right to go to previous page - swipe from 20% to 80% of screen width for more reliable page change
-                val startX = (width * 0.2).toInt().coerceAtLeast(0)
-                val endX = (width * 0.8).toInt().coerceAtMost(width - 1)
-                device.swipe(startX, centerY, endX, centerY, 10)
-            }
-        }
-        device.waitForIdle(500)
-    }
 
     /**
      * Taps the "Go Home" button and verifies navigation to WorkoutSelectionScreen.
@@ -538,12 +135,12 @@ class WorkoutE2ETest : BaseWearE2ETest() {
     @Test
     fun countdownDialog_showsWhenEnabled() {
         // Set up workout store with TimedDurationSet that supports countdown
-        setupWorkoutStoreWithTimedDurationSet()
+        TimedDurationSetWorkoutStoreFixture.setupWorkoutStore(context)
         
         // Restart the app to load the new workout store
         launchAppFromHome()
         
-        startWorkout(workoutName)
+        startWorkout(TimedDurationSetWorkoutStoreFixture.getWorkoutName())
 
         // Verify countdown dialog appears and starts with "3"
         // The countdown shows numbers 3, 2, 1 sequentially, each for approximately 1 second
@@ -572,13 +169,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun completeSet_progressesToRest() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete the first set (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Verify rest screen appears (rest timer should be visible)
         val restTimerVisible = device.wait(
@@ -590,13 +191,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun restTimer_autoAdvancesToNextSet() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete the first set (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for rest timer to appear
         val restTimerVisible = device.wait(
@@ -616,13 +221,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun restTimer_canBeEdited() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete the first set (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for rest screen
         val restTimerVisible = device.wait(
@@ -645,13 +254,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun restTimer_canBeSkipped() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete the first set (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for rest screen
         val restTimerVisible = device.wait(
@@ -675,20 +288,24 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun completeWorkout_showsCompletionScreen() {
-        setupWorkoutStoreForCompletion()
+        CompletionWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(CompletionWorkoutStoreFixture.getWorkoutName())
 
         // Complete the only set
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for completion screen
         waitForWorkoutCompletion()
 
         // Verify workout name is visible on completion screen
         val workoutNameVisible = device.wait(
-            Until.hasObject(By.text(workoutName)),
+            Until.hasObject(By.text(CompletionWorkoutStoreFixture.getWorkoutName())),
             3_000
         )
         require(workoutNameVisible) { "Workout name not visible on completion screen" }
@@ -696,13 +313,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun completeWorkout_autoCloseCountdown() {
-        setupWorkoutStoreForCompletion()
+        CompletionWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(CompletionWorkoutStoreFixture.getWorkoutName())
 
         // Complete the only set
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for completion screen
         waitForWorkoutCompletion()
@@ -717,13 +338,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun completeWorkout_dialogCanReturnToMenu() {
-        setupWorkoutStoreForCompletion()
+        CompletionWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(CompletionWorkoutStoreFixture.getWorkoutName())
 
         // Complete the only set
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for completion screen
         waitForWorkoutCompletion()
@@ -750,13 +375,13 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun exerciseScreen_pagerNavigationToPlates() {
-        setupWorkoutStoreWithWeightSet()
+        WeightSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(WeightSetWorkoutStoreFixture.getWorkoutName())
 
         // Swipe left to navigate to Plates page
-        navigateToPagerPage("left")
+        navigateToPagerPage(PagerDirection.LEFT)
         device.waitForIdle(1_000)
 
         // Verify we're on a different page (plates page should show plate information)
@@ -768,13 +393,13 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun exerciseScreen_pagerAutoReturnsToDetail() {
-        setupWorkoutStoreWithWeightSet()
+        WeightSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(WeightSetWorkoutStoreFixture.getWorkoutName())
 
         // Navigate away from detail page
-        navigateToPagerPage("left")
+        navigateToPagerPage(PagerDirection.LEFT)
         device.waitForIdle(500)
 
         // Wait 10+ seconds for auto-return
@@ -790,13 +415,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun restScreen_pagerNavigation() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete first set to get to rest screen (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for rest screen
         val restTimerVisible = device.wait(
@@ -806,7 +435,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         require(restTimerVisible) { "Rest screen did not appear" }
 
         // Navigate pager (swipe)
-        navigateToPagerPage("left")
+        navigateToPagerPage(PagerDirection.LEFT)
         device.waitForIdle(1_000)
 
         // Verify we're still on rest screen (pager navigation doesn't exit rest)
@@ -821,13 +450,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun goHome_persistsWorkoutRecord() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete first set (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for rest screen to ensure we're in a workout state
         val restTimerVisible = device.wait(
@@ -844,7 +477,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
                 goHomeFound = true
                 break
             }
-            navigateToPagerPage("left")
+            navigateToPagerPage(PagerDirection.LEFT)
         }
         require(goHomeFound) { "Go Home button not found" }
 
@@ -854,13 +487,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun resumeWorkout_restoresState() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete first set (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for rest screen
         val restTimerVisible = device.wait(
@@ -876,14 +513,14 @@ class WorkoutE2ETest : BaseWearE2ETest() {
                 goHomeFound = true
                 break
             }
-            navigateToPagerPage("left")
+            navigateToPagerPage(PagerDirection.LEFT)
         }
         require(goHomeFound) { "Go Home button not found" }
         goHome()
 
         // Relaunch and resume
         launchAppFromHome()
-        clickText(workoutName)
+        clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
         clickText("Resume")
 
         // Dismiss tutorials that may appear when resuming (HEART_RATE and REST_SCREEN)
@@ -903,13 +540,17 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun resumeWorkout_deletePausedWorkout() {
-        setupWorkoutStoreWithMultipleSetsAndRests()
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Complete first set (tutorial dismissal is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
+
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        device.waitForIdle(500)
 
         // Wait for rest screen
         val restTimerVisible = device.wait(
@@ -921,18 +562,22 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         // Go home
         var goHomeFound = false
         for (i in 0..5) {
-            if (device.wait(Until.hasObject(By.text("Go Home")), 1_000)) {
+            if (device.wait(Until.hasObject(By.text("Back")), 1_000)) {
                 goHomeFound = true
                 break
             }
-            navigateToPagerPage("left")
+            navigateToPagerPage(PagerDirection.LEFT)
         }
-        require(goHomeFound) { "Go Home button not found" }
+        require(goHomeFound) { "Back button not found" }
         goHome()
 
         // Relaunch
         launchAppFromHome()
-        clickText(workoutName)
+
+        device.waitForIdle(1_000)
+        dismissResumeDialogIfPresent()
+
+        clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         // Verify "Delete paused workout" button appears
         val deleteVisible = device.wait(
@@ -943,6 +588,8 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
         // Click delete
         clickText("Delete paused workout")
+
+        confirmLongPressDialog()
 
         // Verify workout can be started fresh (Start button should be available)
         val startVisible = device.wait(
@@ -956,10 +603,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun timedDurationSet_autoStartWorks() {
-        setupWorkoutStoreWithTimedDurationSet()
+        TimedDurationSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(TimedDurationSetWorkoutStoreFixture.getWorkoutName())
 
         // Wait for countdown to complete and exercise screen to appear
         val exerciseNameVisible = device.wait(
@@ -982,10 +629,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun timedDurationSet_completeSet() {
-        setupWorkoutStoreWithTimedDurationSet()
+        TimedDurationSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(TimedDurationSetWorkoutStoreFixture.getWorkoutName())
 
         // Wait for exercise screen
         val exerciseNameVisible = device.wait(
@@ -995,7 +642,8 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         require(exerciseNameVisible) { "Exercise screen not visible" }
 
         // Complete the timed duration set (tutorial dismissal for rest/completion is handled in completeSet())
-        completeSet()
+        device.pressBack()
+        confirmLongPressDialog()
 
         // Verify we progress (either to next set, rest, or completion)
         // Since this is a single-set workout, we should go to completion
@@ -1006,10 +654,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun enduranceSet_countdownAppears() {
-        setupWorkoutStoreWithEnduranceSet()
+        EnduranceSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(EnduranceSetWorkoutStoreFixture.getWorkoutName())
 
         // Verify countdown dialog appears
         val countdownStarted = device.wait(
@@ -1029,68 +677,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
     @Test
     fun enduranceSet_manualStart() {
         // Create workout with EnduranceSet that has autoStart = false
-        val equipment = createTestBarbell()
-        val exerciseId = UUID.randomUUID()
-        val setId = UUID.randomUUID()
-
-        val exercise = Exercise(
-            id = exerciseId,
-            enabled = true,
-            name = "Endurance Exercise",
-            doNotStoreHistory = false,
-            notes = "",
-            sets = listOf(
-                EnduranceSet(setId, 60_000, autoStart = false, autoStop = false)
-            ),
-            exerciseType = ExerciseType.COUNTUP,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
-            minReps = 5,
-            maxReps = 12,
-            lowerBoundMaxHRPercent = null,
-            upperBoundMaxHRPercent = null,
-            equipmentId = null,
-            bodyWeightPercentage = null,
-            generateWarmUpSets = false,
-            enableProgression = false,
-            keepScreenOn = false,
-            showCountDownTimer = false,
-            intraSetRestInSeconds = null,
-            loadJumpDefaultPct = null,
-            loadJumpMaxPct = null,
-            loadJumpOvercapUntil = null
-        )
-
-        val workout = Workout(
-            id = UUID.randomUUID(),
-            name = workoutName,
-            description = "Test Description",
-            workoutComponents = listOf(exercise),
-            order = 0,
-            enabled = true,
-            usePolarDevice = false,
-            creationDate = LocalDate.now(),
-            previousVersionId = null,
-            nextVersionId = null,
-            isActive = true,
-            timesCompletedInAWeek = null,
-            globalId = UUID.randomUUID(),
-            type = 0
-        )
-
-        val workoutStore = WorkoutStore(
-            workouts = listOf(workout),
-            equipments = listOf(equipment),
-            polarDeviceId = null,
-            birthDateYear = 1990,
-            weightKg = 75.0,
-            progressionPercentageAmount = 0.0
-        )
-
-        TestWorkoutStoreSeeder.seedWorkoutStore(context, workoutStore)
+        EnduranceSetManualStartWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(EnduranceSetManualStartWorkoutStoreFixture.getWorkoutName())
 
         // Wait for exercise screen
         val exerciseNameVisible = device.wait(
@@ -1109,10 +699,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun workoutInProgress_backDialog() {
-        setupWorkoutStoreWithWeightSet()
+        WeightSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(WeightSetWorkoutStoreFixture.getWorkoutName())
 
         // Press back button
         device.pressBack()
@@ -1135,10 +725,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
 
     @Test
     fun workoutInProgress_backDialogPause() {
-        setupWorkoutStoreWithWeightSet()
+        WeightSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
 
-        startWorkout(workoutName)
+        startWorkout(WeightSetWorkoutStoreFixture.getWorkoutName())
 
         // Double-press back
         device.pressBack()
