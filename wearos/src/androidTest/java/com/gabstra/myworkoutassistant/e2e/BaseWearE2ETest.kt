@@ -16,10 +16,10 @@ abstract class BaseWearE2ETest {
 
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
-    protected val defaultTimeoutMs: Long = 15_000
+    protected val defaultTimeoutMs: Long = 5_000
 
     @Before
-    fun baseSetUp() {
+    open fun baseSetUp() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         device = UiDevice.getInstance(instrumentation)
         context = ApplicationProvider.getApplicationContext()
@@ -75,8 +75,8 @@ abstract class BaseWearE2ETest {
         // Wait a bit for the app to fully initialize and potentially show tutorial
         device.waitForIdle(2_000)
         
-        // Dismiss tutorial overlay if present (shown after app launch before WorkoutSelectionScreen)
-        dismissTutorialIfPresent()
+        // Dismiss tutorial overlay if present (shown after app launch on WorkoutSelectionScreen)
+        dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION)
         
         // Wait for UI to settle after tutorial dismissal
         device.waitForIdle(1_000)
@@ -117,24 +117,56 @@ abstract class BaseWearE2ETest {
     }
 
     /**
-     * Best-effort dismissal of any tutorial overlay that might be covering
-     * the workout UI.
-     *
-     * In the app, tutorial overlays always have a "Got it" button at the
-     * bottom of a scrollable column. The algorithm here is:
-     * 1) Look for a "Got it" button; if found, click it and return.
-     * 2) If not found, check if there's any scrollable container.
-     * 3) If scrollable, scroll to the bottom once (to reveal the button),
-     *    then try again to find and click "Got it".
-     * 4) Repeat this loop until the timeout is reached.
+     * Enum representing different tutorial contexts in the app flow.
+     * Each context corresponds to a specific screen where a tutorial may appear.
      */
-    protected fun dismissTutorialIfPresent(maxWaitMs: Long = 2_000) {
+    protected enum class TutorialContext {
+        WORKOUT_SELECTION,  // WorkoutSelectionScreen
+        HEART_RATE,         // WorkoutScreen when workout starts (before Set/Rest states)
+        SET_SCREEN,         // WorkoutScreen when in Set state
+        REST_SCREEN         // WorkoutScreen when in Rest state
+    }
+
+    /**
+     * Best-effort dismissal of any tutorial overlay that might be covering
+     * the workout UI, checking only the relevant preference for the current screen context.
+     *
+     * Original working behavior:
+     * 1) Check the specific tutorial preference for the given context.
+     * 2) If already seen, skip UI interaction to avoid random scrolling.
+     * 3) Look for a "Got it" button; if found, click it and return.
+     * 4) If not found, check if there's any scrollable container.
+     * 5) If scrollable, scroll to the bottom once (to reveal the button),
+     *    then try again to find and click "Got it".
+     *
+     * @param tutorialContext The tutorial context indicating which screen we're on
+     * @param maxWaitMs Maximum time to wait for the tutorial button to appear
+     */
+    protected fun dismissTutorialIfPresent(tutorialContext: TutorialContext, maxWaitMs: Long = 1_000) {
+        val prefs = context.getSharedPreferences("tutorial_prefs", Context.MODE_PRIVATE)
+        
+        // Check only the relevant preference for this screen context
+        val hasSeenTutorial = when (tutorialContext) {
+            TutorialContext.WORKOUT_SELECTION -> 
+                prefs.getBoolean("has_seen_workout_selection_tutorial", false)
+            TutorialContext.HEART_RATE -> 
+                prefs.getBoolean("has_seen_workout_heart_rate_tutorial", false)
+            TutorialContext.SET_SCREEN -> 
+                prefs.getBoolean("has_seen_set_screen_tutorial", false)
+            TutorialContext.REST_SCREEN -> 
+                prefs.getBoolean("has_seen_rest_screen_tutorial", false)
+        }
+
+        // If this specific tutorial was already seen, there's no overlay to dismiss.
+        if (hasSeenTutorial) {
+            return
+        }
+
         // Wait for "Got it" button to appear (tutorial overlay may take time to render)
         val button = device.wait(Until.findObject(By.text("Got it")), maxWaitMs)
         if (button != null) {
             try {
                 button.click()
-                device.waitForIdle(1_000)
                 return
             } catch (_: Exception) {
                 // Button found but not clickable, try scrolling
@@ -145,14 +177,16 @@ abstract class BaseWearE2ETest {
         val scrollable = UiScrollable(UiSelector().scrollable(true))
         if (scrollable.exists()) {
             try {
-                scrollable.scrollToEnd(5)
-                device.waitForIdle(500)
+                // Hint UiAutomator this is a vertical list and use a faster fling
+                scrollable.setAsVerticalList()
+                scrollable.flingToEnd(3)  // usually much faster than scrollToEnd(10)
+                device.waitForIdle(300)
+
                 // Try again after scrolling
-                val buttonAfterScroll = device.wait(Until.findObject(By.text("Got it")), 2_000)
+                val buttonAfterScroll = device.wait(Until.findObject(By.text("Got it")), 1_000)
                 if (buttonAfterScroll != null) {
                     try {
                         buttonAfterScroll.click()
-                        device.waitForIdle(1_000)
                         return
                     } catch (_: Exception) {
                         // Could not click even after scrolling
@@ -162,6 +196,51 @@ abstract class BaseWearE2ETest {
                 // Scroll failed, tutorial might not be present or not scrollable
             }
         }
+    }
+
+    /**
+     * Starts a workout by selecting it by name and waiting for the preparing step to complete.
+     * 
+     * @param workoutName The name of the workout to select and start
+     */
+    protected fun startWorkout(workoutName: String) {
+        // Dismiss workout selection tutorial if present (we're still on WorkoutSelectionScreen)
+        dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 2_000)
+
+        val headerAppeared = waitForText("My Workout Assistant")
+        require(headerAppeared) { "Selection header not visible" }
+
+        val workoutAppeared = device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
+        require(workoutAppeared) { "Workout '$workoutName' not visible to tap" }
+
+        clickText(workoutName)
+
+        val detailAppeared = device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
+        require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
+
+        clickText("Start")
+
+        // Dismiss heart rate tutorial if it appears (shown when workout starts, before Set/Rest states)
+        // Use longer timeout to catch tutorial that appears after a delay
+        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
+        
+        // Wait for "Preparing HR Sensor" or "Preparing Polar Sensor" text to appear
+        // The screen shows "Preparing HR Sensor" not just "Preparing"
+        // Note: Tutorial overlay is full-screen and blocks "Preparing" text when visible
+        // If "Preparing" is visible, tutorial is definitely dismissed
+        val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
+        require(preparingVisible) { "WorkoutScreen 'Preparing' state not visible" }
+
+        // Wait for preparing step to complete (preparing text disappears)
+        // This indicates we've moved past the preparing state
+        val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 15_000)
+        require(preparingGone) { "Preparing step did not complete" }
+
+        // After preparing step completes, we transition to the first exercise screen (Set state).
+        // Dismiss set screen tutorial if it appears when transitioning to the first exercise screen.
+        // The "Got it" button might only become visible after scrolling, so we do not gate
+        // this on detecting the button first.
+        dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
     }
 }
 

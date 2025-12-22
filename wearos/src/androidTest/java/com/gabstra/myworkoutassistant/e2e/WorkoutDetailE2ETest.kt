@@ -42,8 +42,8 @@ class WorkoutDetailE2ETest : BaseWearE2ETest() {
 
         clickText("Start")
 
-        // Dismiss tutorial if it appears
-        dismissTutorialIfPresent()
+        // Dismiss heart rate tutorial if it appears (shown when workout starts, before Set/Rest states)
+        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
         
         // Wait for "Preparing HR Sensor" or "Preparing Polar Sensor" text to appear
         // The screen shows "Preparing HR Sensor" not just "Preparing"
