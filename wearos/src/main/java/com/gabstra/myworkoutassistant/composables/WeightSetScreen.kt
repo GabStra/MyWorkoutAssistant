@@ -28,6 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -255,6 +258,7 @@ fun WeightSetScreen(
 
     @Composable
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
+        val repsText = "${currentSetData.actualReps}"
         Row(
             modifier = modifier
                 .height(40.dp)
@@ -284,7 +288,11 @@ fun WeightSetScreen(
                             hapticsViewModel.doHardVibrationTwice()
                         }
                     }
-                ),
+                )
+                .semantics {
+                    contentDescription = "${SetValueSemantics.RepsValueDescription}: $repsText"
+                    stateDescription = repsText
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
@@ -296,7 +304,7 @@ fun WeightSetScreen(
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
-                text = "${currentSetData.actualReps}",
+                text = repsText,
                 style = style,
                 color = textColor,
                 textAlign = TextAlign.Center
@@ -306,6 +314,7 @@ fun WeightSetScreen(
 
     @Composable
     fun WeightRow(modifier: Modifier = Modifier, style: TextStyle) {
+        val weightText = equipment!!.formatWeight(currentSetData.getWeight())
         Row(
             modifier = modifier
                 .height(40.dp)
@@ -334,7 +343,11 @@ fun WeightSetScreen(
                             hapticsViewModel.doHardVibrationTwice()
                         }
                     }
-                ),
+                )
+                .semantics {
+                    contentDescription = "${SetValueSemantics.WeightValueDescription}: $weightText"
+                    stateDescription = weightText
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
@@ -342,8 +355,6 @@ fun WeightSetScreen(
                 currentSetData.actualWeight < previousSetData.actualWeight -> Red
                 else -> Green
             }
-
-            val weightText = equipment!!.formatWeight(currentSetData.getWeight())
 
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),

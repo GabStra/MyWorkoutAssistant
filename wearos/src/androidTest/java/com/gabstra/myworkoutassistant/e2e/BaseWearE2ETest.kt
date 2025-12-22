@@ -280,7 +280,7 @@ abstract class BaseWearE2ETest {
 
         // Dismiss heart rate tutorial if it appears (shown when workout starts, before Set/Rest states)
         // Use longer timeout to catch tutorial that appears after a delay
-        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
+        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 10_000)
         
         // Wait for "Preparing HR Sensor" or "Preparing Polar Sensor" text to appear
         // The screen shows "Preparing HR Sensor" not just "Preparing"
@@ -291,14 +291,14 @@ abstract class BaseWearE2ETest {
 
         // Wait for preparing step to complete (preparing text disappears)
         // This indicates we've moved past the preparing state
-        val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 15_000)
+        val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 10_000)
         require(preparingGone) { "Preparing step did not complete" }
 
         // After preparing step completes, we transition to the first exercise screen (Set state).
         // Dismiss set screen tutorial if it appears when transitioning to the first exercise screen.
         // The "Got it" button might only become visible after scrolling, so we do not gate
         // this on detecting the button first.
-        dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
+        dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 10_000)
     }
 }
 

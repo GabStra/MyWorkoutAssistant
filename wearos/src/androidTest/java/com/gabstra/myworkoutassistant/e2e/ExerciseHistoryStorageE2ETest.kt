@@ -1,11 +1,13 @@
 package com.gabstra.myworkoutassistant.e2e
 
+import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.fixtures.ComprehensiveHistoryWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -16,6 +18,11 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
@@ -48,10 +55,7 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
         )
     }
 
-    /**
-     * Data class to track modifications made during workout execution.
-     */
-    data class ModifiedSetData(
+    private data class ModifiedSetData(
         val setId: UUID,
         val exerciseId: UUID,
         val originalReps: Int?,
@@ -64,8 +68,51 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
         val actualDuration: Int?
     )
 
-    // Track modifications made during workout execution
     private val modifications = mutableMapOf<UUID, ModifiedSetData>()
+
+    private data class CurrentSetInfo(
+        val set: com.gabstra.myworkoutassistant.shared.sets.Set,
+        val exerciseId: UUID
+    )
+
+    /**
+     * Determines the current set info by querying the database (WorkoutRecord).
+     * This is more reliable than UI detection since it directly accesses the workout state.
+     *
+     * @return The current set info, or null if no workout record exists or workout is complete
+     */
+    private suspend fun getCurrentSetInfo(): CurrentSetInfo? {
+        val db = AppDatabase.getDatabase(context)
+        val workoutRecordDao = db.workoutRecordDao()
+        
+        // Get workout name and find workout
+        val workoutName = ComprehensiveHistoryWorkoutStoreFixture.getWorkoutName()
+        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStore = workoutStoreRepository.getWorkoutStore()
+        val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
+            ?: return null
+        
+        // Get current workout record
+        val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
+            ?: return null
+        
+        // Find the exercise
+        val exercise = workout.workoutComponents
+            .filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>()
+            .firstOrNull { it.id == workoutRecord.exerciseId }
+            ?: return null
+        
+        // Get the set at the current setIndex
+        val setIndex = workoutRecord.setIndex.toInt()
+        if (setIndex < 0 || setIndex >= exercise.sets.size) {
+            return null
+        }
+        
+        return CurrentSetInfo(
+            set = exercise.sets[setIndex],
+            exerciseId = exercise.id
+        )
+    }
 
     @Test
     fun exerciseHistory_storedCorrectlyAfterWorkoutCompletion() = runBlocking {
@@ -76,20 +123,7 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
         // Start the workout
         startWorkout(ComprehensiveHistoryWorkoutStoreFixture.getWorkoutName())
 
-        // Execute all sets with modifications
-        // For this comprehensive test, we'll modify a few key sets to verify modifications are stored
-        // Note: In a real scenario, you would navigate through all exercises and modify sets
-        // For brevity, we'll complete sets and modify a few representative ones
-
-        // Complete first few sets normally (to test unmodified values are stored)
-        // Then modify some sets to verify modifications are stored
-
-        // For WeightSet exercises, we'll modify reps and weight on a few sets
-        // For BodyWeightSet, we'll modify reps and additional weight
-        // For timed sets, we'll let them run for different durations
-
-        // Complete workout by going through all sets
-        // This is a simplified version - in practice, you'd navigate through each exercise
+        // Complete all sets in the workout and attempt UI modifications on editable sets.
         completeAllSetsInWorkout()
 
         // Wait for completion screen
@@ -144,9 +178,10 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
         // For EnduranceSet: start and stop manually
 
         var setsCompleted = 0
-        val maxSets = 50 // Safety limit
+        val maxSets = 200 // Increased limit for comprehensive workouts
+        var consecutiveNulls = 0 // Track consecutive nulls to detect completion
 
-        while (setsCompleted < maxSets) {
+        while (setsCompleted < maxSets && consecutiveNulls < 3) {
             device.waitForIdle(500)
 
             // Check if workout is complete first
@@ -155,123 +190,433 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
                 break
             }
 
-            // Check if we're on a timed set screen
-            val isTimedSet = device.wait(
-                Until.hasObject(By.text("Timed Exercise")),
-                1_000
-            ) || device.wait(
-                Until.hasObject(By.text("Endurance Exercise")),
-                1_000
-            )
-
-            if (isTimedSet) {
-                completeTimedSet()
-                setsCompleted++
-                continue
-            }
-
-            // Check if we're on a set screen (WeightSet or BodyWeightSet)
-            // Look for common indicators of set screens
-            val hasRepsOrWeight = device.wait(
-                Until.hasObject(By.textContains("REPS")),
-                1_000
-            ) || device.wait(
-                Until.hasObject(By.textContains("WEIGHT")),
-                1_000
-            ) || device.wait(
-                Until.hasObject(By.textContains("kg")),
-                1_000
-            )
-
-            if (hasRepsOrWeight) {
-                // Try to modify reps or weight on some sets (for testing modifications)
-                if (setsCompleted < 3) {
-                    // Modify first few sets to test modification storage
-                    tryModifySetData()
+            // Determine set type from database (more reliable than UI detection)
+            val currentSetInfo = runBlocking { getCurrentSetInfo() }
+            val currentSet = currentSetInfo?.set
+            
+            when (currentSet) {
+                is TimedDurationSet, is EnduranceSet -> {
+                    consecutiveNulls = 0 // Reset counter
+                    completeTimedSet()
+                    setsCompleted++
+                    // Wait a bit after completing timed set
+                    device.waitForIdle(1_000)
                 }
-
-                // Complete the set
-                device.pressBack()
-                confirmLongPressDialog()
-                setsCompleted++
-
-            } else {
-                // If we can't identify the screen, try to complete current set anyway
-                device.pressBack()
-                device.waitForIdle(500)
-                try {
+                is WeightSet, is BodyWeightSet -> {
+                    consecutiveNulls = 0 // Reset counter
+                    tryModifySetData(currentSetInfo)
+                    device.pressBack()
                     confirmLongPressDialog()
                     setsCompleted++
-                } catch (e: Exception) {
-                    // If that fails, we might be done or on a different screen
-                   
+                    device.waitForIdle(500)
+                }
+                is RestSet -> {
+                    consecutiveNulls = 0 // Reset counter
+                    // Skip rest sets
+                    device.waitForIdle(500)
+                    skipRest()
+                    device.waitForIdle(500)
+                }
+                null -> {
+                    consecutiveNulls++
+                    // No workout record - workout might be complete or transitioning
+                    // Wait a bit and check again
+                    device.waitForIdle(1_000)
+                    
+                    // Double-check if workout is complete
+                    val completedCheck = device.wait(Until.hasObject(By.text("Completed")), 1_000)
+                    if (completedCheck) {
+                        break
+                    }
+                    
+                    // If we've had multiple consecutive nulls, try to advance anyway
+                    if (consecutiveNulls >= 2) {
+                        device.pressBack()
+                        device.waitForIdle(500)
+                        try {
+                            confirmLongPressDialog()
+                            setsCompleted++
+                        } catch (e: Exception) {
+                            // If that fails, we might be done
+                        }
+                    }
                 }
             }
 
-
-            // Skip rest if present
-            dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-            device.waitForIdle(500)
-
-            // Check if rest screen is present
-            val restVisible = device.wait(Until.hasObject(By.textContains(":")), 1_000)
-            if (restVisible) {
-                skipRest()
-            }
-
-            device.waitForIdle(500)
+            dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 5_000)
         }
     }
 
     /**
-     * Attempts to modify set data (reps or weight) by entering edit mode.
+     * Legacy exploration for UI-based modifications (kept for reference).
      */
+    /*
     private fun tryModifySetData() {
-        // Try to find reps or weight display and long-press to enter edit mode
-        // This is a simplified version - actual implementation would need to find specific UI elements
+        Log.d("ExerciseHistoryStorageE2ETest", "tryModifySetData() called - starting modification attempt")
         try {
-            // Look for numeric values that might be reps or weight
-            // UIAutomator doesn't support regex directly, so we'll look for common patterns
-            val allObjects = device.findObjects(By.res(".*"))
+            // Wait for screen to be ready
+            device.waitForIdle(500)
             
-            // Try to find elements that might be reps or weight displays
-            // Look for elements with numeric text
-            var foundNumeric = false
-            for (obj in allObjects) {
+            // The reps and weight are in clickable Row containers in the center area
+            // We'll try to find clickable elements or long-press in the area where they're displayed
+            val width = device.displayWidth
+            val height = device.displayHeight
+            val centerX = width / 2
+            val centerY = height / 2
+            
+            Log.d("ExerciseHistoryStorageE2ETest", "Screen dimensions: ${width}x${height}, center: ($centerX, $centerY)")
+            
+            // Approach 1: Try to find all clickable/long-clickable elements
+            val clickableObjects = try {
+                device.findObjects(By.clickable(true))
+            } catch (e: Exception) {
+                Log.w("ExerciseHistoryStorageE2ETest", "Failed to find clickable objects: ${e.message}")
+                emptyList()
+            }
+            Log.d("ExerciseHistoryStorageE2ETest", "Found ${clickableObjects.size} clickable objects")
+            
+            // Log all clickable objects to see what we have
+            clickableObjects.forEachIndexed { index, obj ->
+                Log.d("ExerciseHistoryStorageE2ETest", "Clickable object $index: text='${obj.text}', desc='${obj.contentDescription}', bounds=${obj.bounds}, clickable=${obj.isClickable}, longClickable=${obj.isLongClickable}")
+            }
+            
+            // Approach 2: Try to find elements by text that might be numeric
+            // Even if they're in clickable containers, the text might still be accessible
+            val allTextObjects = try {
+                device.findObjects(By.clazz("android.widget.TextView"))
+            } catch (e: Exception) {
+                Log.w("ExerciseHistoryStorageE2ETest", "Failed to find TextView objects: ${e.message}")
+                emptyList()
+            }
+            Log.d("ExerciseHistoryStorageE2ETest", "Found ${allTextObjects.size} TextView objects")
+            
+            // Look for numeric text in TextViews
+            var foundNumericText = false
+            for (obj in allTextObjects) {
                 val text = obj.text
-                if (text != null && text.matches(Regex("\\d+(\\.\\d+)?"))) {
-                    // Found a numeric element - try to long-press it
+                if (text != null && text.isNotBlank() && text.matches(Regex("\\d+(\\.\\d+)?"))) {
+                    Log.d("ExerciseHistoryStorageE2ETest", "Found numeric TextView: '$text' at bounds: ${obj.bounds}")
+                    // Try to get the parent or find a clickable container near this text
                     try {
+                        // Try to long-click the text element itself
+                        Log.d("ExerciseHistoryStorageE2ETest", "Attempting to long-click numeric TextView: '$text'")
                         obj.longClick()
                         device.waitForIdle(1_000)
-                        foundNumeric = true
+                        foundNumericText = true
+                        Log.d("ExerciseHistoryStorageE2ETest", "Successfully long-clicked numeric TextView")
                         
                         // Try to find +/- buttons and click plus once
                         val plusButton = device.wait(Until.findObject(By.desc("Plus")), 1_000)
                             ?: device.wait(Until.findObject(By.desc("+")), 1_000)
-                        plusButton?.click()
-                        device.waitForIdle(1_000)
+                        if (plusButton != null) {
+                            Log.d("ExerciseHistoryStorageE2ETest", "Found plus button, clicking it")
+                            plusButton.click()
+                            device.waitForIdle(1_000)
+                        } else {
+                            Log.d("ExerciseHistoryStorageE2ETest", "Plus button not found")
+                        }
 
                         // Wait for edit mode to auto-exit (2 seconds)
                         device.waitForIdle(2_500)
+                        Log.d("ExerciseHistoryStorageE2ETest", "Edit mode should have auto-exited")
                         break
                     } catch (e: Exception) {
-                        // Continue trying other elements
+                        Log.w("ExerciseHistoryStorageE2ETest", "Failed to interact with numeric TextView '$text': ${e.message}")
                     }
                 }
             }
             
-            if (!foundNumeric) {
-                // Fallback: try long-pressing on center of screen where reps/weight usually are
-                val width = device.displayWidth
-                val height = device.displayHeight
-                device.swipe(width / 2, height / 2, width / 2, height / 2, 10) // Long press simulation
+            // Approach 3: If we didn't find numeric text, try long-pressing clickable containers
+            // The reps/weight containers are in the center area, slightly offset
+            if (!foundNumericText && clickableObjects.isNotEmpty()) {
+                Log.d("ExerciseHistoryStorageE2ETest", "Trying to long-press clickable containers")
+                // Try the first few clickable objects that are in the center area
+                for (obj in clickableObjects.take(5)) {
+                    val bounds = obj.bounds
+                    val objCenterX = bounds.centerX()
+                    val objCenterY = bounds.centerY()
+                    // Check if it's in the center area (where reps/weight are displayed)
+                    if (objCenterX in (width * 0.2).toInt()..(width * 0.8).toInt() &&
+                        objCenterY in (height * 0.3).toInt()..(height * 0.7).toInt()) {
+                        try {
+                            Log.d("ExerciseHistoryStorageE2ETest", "Long-clicking clickable container at ($objCenterX, $objCenterY), bounds: $bounds")
+                            obj.longClick()
+                            device.waitForIdle(1_000)
+                            
+                            // Check if edit mode appeared (look for plus button)
+                            val plusButton = device.wait(Until.findObject(By.desc("Plus")), 1_000)
+                                ?: device.wait(Until.findObject(By.desc("+")), 1_000)
+                            if (plusButton != null) {
+                                Log.d("ExerciseHistoryStorageE2ETest", "Found plus button after long-click, clicking it")
+                                plusButton.click()
+                                device.waitForIdle(1_000)
+                                device.waitForIdle(2_500) // Wait for edit mode to auto-exit
+                                break
+                            } else {
+                                Log.d("ExerciseHistoryStorageE2ETest", "No plus button found after long-click")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("ExerciseHistoryStorageE2ETest", "Failed to long-click container: ${e.message}")
+                        }
+                    }
+                }
+            }
+            
+            // Approach 4: Fallback - long-press in the center area where reps/weight are displayed
+            if (!foundNumericText) {
+                Log.d("ExerciseHistoryStorageE2ETest", "Using fallback: long-press in center area")
+                // The reps/weight are typically in the center-left and center-right areas
+                // Try center-left first (where REPS usually is)
+                val repsX = (width * 0.35).toInt()
+                val repsY = centerY
+                Log.d("ExerciseHistoryStorageE2ETest", "Long-pressing at reps area: ($repsX, $repsY)")
+                device.swipe(repsX, repsY, repsX, repsY, 50) // 50 steps = longer press
                 device.waitForIdle(1_000)
+                
+                // Check if edit mode appeared
+                val plusButton = device.wait(Until.findObject(By.desc("Plus")), 1_000)
+                    ?: device.wait(Until.findObject(By.desc("+")), 1_000)
+                if (plusButton != null) {
+                    Log.d("ExerciseHistoryStorageE2ETest", "Found plus button after fallback long-press, clicking it")
+                    plusButton.click()
+                    device.waitForIdle(1_000)
+                    device.waitForIdle(2_500) // Wait for edit mode to auto-exit
+                } else {
+                    Log.d("ExerciseHistoryStorageE2ETest", "No plus button found after fallback long-press")
+                }
             }
         } catch (e: Exception) {
+            Log.e("ExerciseHistoryStorageE2ETest", "Exception in tryModifySetData(): ${e.message}", e)
             // If modification fails, continue - not all sets may support modification in this way
             // This is expected for some set types or UI states
         }
+        Log.d("ExerciseHistoryStorageE2ETest", "tryModifySetData() completed")
+    }
+    */
+
+    /**
+     * Attempts to modify reps and weight via accessibility-labeled rows and records expected changes.
+     * Best-effort: skips if nodes aren't present.
+     */
+    private fun tryModifySetData(currentSetInfo: CurrentSetInfo?) {
+        if (currentSetInfo == null) return
+        if (currentSetInfo.set !is WeightSet && currentSetInfo.set !is BodyWeightSet) return
+
+        device.waitForIdle(500)
+
+        val repsTarget = device.wait(
+            Until.findObject(By.descContains(SetValueSemantics.RepsValueDescription)),
+            5_000
+        )
+
+        if (repsTarget != null) {
+            val parsedReps = repsTarget.contentDescription
+                ?.toString()
+                ?.substringAfter(":", "")
+                ?.trim()
+                ?.toIntOrNull()
+
+            val originalReps = parsedReps ?: when (val set = currentSetInfo.set) {
+                is WeightSet -> set.reps
+                is BodyWeightSet -> set.reps
+                else -> null
+            }
+
+            if (parsedReps == null) {
+                Log.w(
+                    "ExerciseHistoryStorageE2ETest",
+                    "Unable to parse reps value from content description; falling back to set data"
+                )
+            }
+
+            if (originalReps == null) {
+                Log.w("ExerciseHistoryStorageE2ETest", "Unable to determine reps value for modification")
+            } else {
+                runCatching {
+                    repsTarget.longClick()
+                    device.waitForIdle(500)
+
+                    val addButton = device.wait(Until.findObject(By.desc("Add")), 1_000)
+                    if (addButton == null) {
+                        Log.w("ExerciseHistoryStorageE2ETest", "Add button not found after long-press")
+                        return@runCatching
+                    }
+
+                    addButton.click()
+                    device.waitForIdle(2_500)
+
+                    val updatedReps = device.wait(
+                        Until.findObject(By.descContains(SetValueSemantics.RepsValueDescription)),
+                        1_000
+                    )?.contentDescription
+                        ?.toString()
+                        ?.substringAfter(":", "")
+                        ?.trim()
+                        ?.toIntOrNull()
+
+                    if (updatedReps == null || updatedReps == originalReps) {
+                        Log.w("ExerciseHistoryStorageE2ETest", "Reps value did not change after modification")
+                        return@runCatching
+                    }
+
+                    val modifiedReps = updatedReps
+                    val set = currentSetInfo.set
+                    val modification = when (set) {
+                        is WeightSet -> ModifiedSetData(
+                            setId = set.id,
+                            exerciseId = currentSetInfo.exerciseId,
+                            originalReps = originalReps,
+                            modifiedReps = modifiedReps,
+                            originalWeight = set.weight,
+                            modifiedWeight = null,
+                            originalAdditionalWeight = null,
+                            modifiedAdditionalWeight = null,
+                            originalDuration = null,
+                            actualDuration = null
+                        )
+                        is BodyWeightSet -> ModifiedSetData(
+                            setId = set.id,
+                            exerciseId = currentSetInfo.exerciseId,
+                            originalReps = originalReps,
+                            modifiedReps = modifiedReps,
+                            originalWeight = null,
+                            modifiedWeight = null,
+                            originalAdditionalWeight = set.additionalWeight,
+                            modifiedAdditionalWeight = null,
+                            originalDuration = null,
+                            actualDuration = null
+                        )
+                        else -> null
+                    }
+
+                    if (modification != null) {
+                        modifications[modification.setId] = modification
+                    }
+                }.onFailure { e ->
+                    Log.w("ExerciseHistoryStorageE2ETest", "Failed to modify set data: ${e.message}")
+                }
+            }
+        } else {
+            Log.w("ExerciseHistoryStorageE2ETest", "Reps value not found for modification")
+        }
+
+        device.waitForIdle(1_000)
+
+        val weightTarget = device.wait(
+            Until.findObject(By.descContains(SetValueSemantics.WeightValueDescription)),
+            1_000
+        )
+
+        if (weightTarget == null) {
+            Log.w("ExerciseHistoryStorageE2ETest", "Weight value not found for modification")
+            return
+        }
+
+        runCatching {
+            val originalWeight = parseWeightFromDescription(weightTarget.contentDescription?.toString())
+                ?: when (val set = currentSetInfo.set) {
+                    is WeightSet -> set.weight
+                    is BodyWeightSet -> set.additionalWeight
+                    else -> null
+                }
+
+            if (originalWeight == null) {
+                Log.w("ExerciseHistoryStorageE2ETest", "Unable to determine weight value for modification")
+                return@runCatching
+            }
+
+            weightTarget.longClick()
+            device.waitForIdle(500)
+
+            val addButton = device.wait(Until.findObject(By.desc("Add")), 1_000)
+            if (addButton == null) {
+                Log.w("ExerciseHistoryStorageE2ETest", "Add button not found after weight long-press")
+                return@runCatching
+            }
+
+            addButton.click()
+            device.waitForIdle(2_500)
+
+            val updatedWeight = device.wait(
+                Until.findObject(By.descContains(SetValueSemantics.WeightValueDescription)),
+                1_000
+            )?.contentDescription
+                ?.toString()
+                ?.let { parseWeightFromDescription(it) }
+
+            if (updatedWeight == null || updatedWeight == originalWeight) {
+                Log.w("ExerciseHistoryStorageE2ETest", "Weight value did not change after modification")
+                return@runCatching
+            }
+
+            val set = currentSetInfo.set
+            val existing = modifications[set.id]
+            val updatedModification = when (set) {
+                is WeightSet -> {
+                    val base = existing ?: ModifiedSetData(
+                        setId = set.id,
+                        exerciseId = currentSetInfo.exerciseId,
+                        originalReps = null,
+                        modifiedReps = null,
+                        originalWeight = originalWeight,
+                        modifiedWeight = null,
+                        originalAdditionalWeight = null,
+                        modifiedAdditionalWeight = null,
+                        originalDuration = null,
+                        actualDuration = null
+                    )
+                    base.copy(
+                        originalWeight = originalWeight,
+                        modifiedWeight = updatedWeight
+                    )
+                }
+                is BodyWeightSet -> {
+                    val base = existing ?: ModifiedSetData(
+                        setId = set.id,
+                        exerciseId = currentSetInfo.exerciseId,
+                        originalReps = null,
+                        modifiedReps = null,
+                        originalWeight = null,
+                        modifiedWeight = null,
+                        originalAdditionalWeight = originalWeight,
+                        modifiedAdditionalWeight = null,
+                        originalDuration = null,
+                        actualDuration = null
+                    )
+                    base.copy(
+                        originalAdditionalWeight = originalWeight,
+                        modifiedAdditionalWeight = updatedWeight
+                    )
+                }
+                else -> null
+            }
+
+            if (updatedModification != null) {
+                modifications[updatedModification.setId] = updatedModification
+            }
+        }.onFailure { e ->
+            Log.w("ExerciseHistoryStorageE2ETest", "Failed to modify weight data: ${e.message}")
+        }
+    }
+
+    private fun parseWeightFromDescription(description: String?): Double? {
+        if (description == null) return null
+        val text = description.substringAfter(":", "").trim()
+        if (text.equals("BW", ignoreCase = true) || text == "-") return 0.0
+
+        val totalMatch = Regex("Tot:?\\s*([0-9]+(?:\\.[0-9]+)?)", RegexOption.IGNORE_CASE).find(text)
+        if (totalMatch != null) {
+            return totalMatch.groupValues[1].toDoubleOrNull()
+        }
+
+        val doubledMatch = Regex("([0-9]+(?:\\.[0-9]+)?)\\s*x\\s*2", RegexOption.IGNORE_CASE).find(text)
+        if (doubledMatch != null) {
+            val base = doubledMatch.groupValues[1].toDoubleOrNull() ?: return null
+            return base * 2.0
+        }
+
+        val numberMatch = Regex("([0-9]+(?:\\.[0-9]+)?)").find(text)
+        return numberMatch?.groupValues?.get(1)?.toDoubleOrNull()
     }
 
     /**

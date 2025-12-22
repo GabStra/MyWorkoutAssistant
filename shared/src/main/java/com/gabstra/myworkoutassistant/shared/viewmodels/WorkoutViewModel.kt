@@ -2251,27 +2251,35 @@ open class WorkoutViewModel(
         if(currentState is WorkoutState.Rest && currentState.isIntraSetRest) return
 
         val newSetHistory = when (currentState) {
-            is WorkoutState.Set -> SetHistory(
-                id = UUID.randomUUID(),
-                setId = currentState.set.id,
-                setData = currentState.currentSetData,
-                order = currentState.setIndex,
-                skipped = currentState.skipped,
-                exerciseId = currentState.exerciseId,
-                startTime = currentState.startTime!!,
-                endTime = LocalDateTime.now()
-            )
+            is WorkoutState.Set -> {
+                // Use current time as fallback if startTime is null
+                val startTime = currentState.startTime ?: LocalDateTime.now()
+                SetHistory(
+                    id = UUID.randomUUID(),
+                    setId = currentState.set.id,
+                    setData = currentState.currentSetData,
+                    order = currentState.setIndex,
+                    skipped = currentState.skipped,
+                    exerciseId = currentState.exerciseId,
+                    startTime = startTime,
+                    endTime = LocalDateTime.now()
+                )
+            }
 
-            is WorkoutState.Rest -> SetHistory(
-                id = UUID.randomUUID(),
-                setId = currentState.set.id,
-                setData = currentState.currentSetData,
-                order = currentState.order,
-                skipped = false,
-                exerciseId = currentState.exerciseId,
-                startTime = currentState.startTime!!,
-                endTime = LocalDateTime.now()
-            )
+            is WorkoutState.Rest -> {
+                // Use current time as fallback if startTime is null
+                val startTime = currentState.startTime ?: LocalDateTime.now()
+                SetHistory(
+                    id = UUID.randomUUID(),
+                    setId = currentState.set.id,
+                    setData = currentState.currentSetData,
+                    order = currentState.order,
+                    skipped = false,
+                    exerciseId = currentState.exerciseId,
+                    startTime = startTime,
+                    endTime = LocalDateTime.now()
+                )
+            }
 
             else -> return
         }
