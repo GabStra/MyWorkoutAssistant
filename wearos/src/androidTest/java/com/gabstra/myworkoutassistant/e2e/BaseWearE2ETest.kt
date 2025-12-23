@@ -95,7 +95,7 @@ abstract class BaseWearE2ETest {
         require(obj != null) {
             "Timed out waiting for UI object with text '$text' to appear"
         }
-        obj.click()
+        clickObjectOrAncestor(obj)
         device.waitForIdle(500)
     }
 
@@ -111,9 +111,11 @@ abstract class BaseWearE2ETest {
         require(obj != null) {
             "Timed out waiting for UI object with content description '$contentDescription' to appear"
         }
-        // Long press requires holding for at least the system long press timeout (typically 500ms)
-        // UIAutomator's longClick() handles this automatically
-        obj.longClick()
+        // Use a swipe-based press to trigger pointerInput long-press handlers reliably.
+        val bounds = obj.visibleBounds
+        val centerX = bounds.centerX()
+        val centerY = bounds.centerY()
+        device.swipe(centerX, centerY, centerX, centerY, 100)
         device.waitForIdle(1_000)
     }
 
@@ -224,8 +226,24 @@ abstract class BaseWearE2ETest {
         
         // If not immediately visible, scroll until found
         scrollUntilFound(gotItSelector, Direction.DOWN, maxWaitMs)?.let { btn ->
-            runCatching { btn.click() }
+            runCatching { clickObjectOrAncestor(btn) }
         }
+    }
+
+    private fun clickObjectOrAncestor(obj: UiObject2) {
+        var current: UiObject2? = obj
+        while (current != null && !current.isClickable) {
+            current = current.parent
+        }
+        (current ?: obj).click()
+    }
+
+    private fun longClickObjectOrAncestor(obj: UiObject2) {
+        var current: UiObject2? = obj
+        while (current != null && !current.isLongClickable) {
+            current = current.parent
+        }
+        (current ?: obj).longClick()
     }
 
     /**
@@ -301,5 +319,3 @@ abstract class BaseWearE2ETest {
         dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 10_000)
     }
 }
-
-

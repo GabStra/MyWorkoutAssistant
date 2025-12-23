@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -290,8 +289,7 @@ fun WeightSetScreen(
                     }
                 )
                 .semantics {
-                    contentDescription = "${SetValueSemantics.RepsValueDescription}: $repsText"
-                    stateDescription = repsText
+                    contentDescription = SetValueSemantics.RepsValueDescription
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -345,8 +343,7 @@ fun WeightSetScreen(
                     }
                 )
                 .semantics {
-                    contentDescription = "${SetValueSemantics.WeightValueDescription}: $weightText"
-                    stateDescription = weightText
+                    contentDescription = SetValueSemantics.WeightValueDescription
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -417,7 +414,9 @@ fun WeightSetScreen(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = modifier
+            modifier = modifier.semantics {
+                contentDescription = SetValueSemantics.WeightSetTypeDescription
+            }
         ) {
             if (isRepsInEditMode || isWeightInEditMode) {
                 ControlButtonsVertical(
@@ -433,6 +432,10 @@ fun WeightSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onCloseClick = {
+                        isRepsInEditMode = false
+                        isWeightInEditMode = false
+                    },
                     content = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,

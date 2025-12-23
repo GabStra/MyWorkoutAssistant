@@ -24,18 +24,17 @@ if (-not (Test-Path $logsDir)) {
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $logFile = Join-Path $logsDir "logcat_$timestamp.txt"
 Write-Host "Capturing device logs to: $logFile" -ForegroundColor Cyan
+New-Item -ItemType File -Path $logFile -Force | Out-Null
 
 # Clear logcat buffer and start capturing logs in background
 Write-Host "Starting logcat capture..." -ForegroundColor Cyan
 & $adb logcat -c | Out-Null
-# Use a job to capture logs filtered by app package (same as logcat filtering)
-$appPackage = "com.gabstra.myworkoutassistant"
+# Use a job to capture raw logcat output
 $logcatJob = Start-Job -ScriptBlock {
-    param($adbPath, $logFilePath, $packageName)
-    & $adbPath logcat -v time *:V *>&1 | 
-        Where-Object { $_ -match $packageName } | 
+    param($adbPath, $logFilePath)
+    & $adbPath logcat -v threadtime *:V *>&1 |
         Out-File -FilePath $logFilePath -Encoding utf8 -Append
-} -ArgumentList $adb, $logFile, $appPackage
+} -ArgumentList $adb, $logFile
 
 # Wait a moment for logcat to start
 Start-Sleep -Milliseconds 500

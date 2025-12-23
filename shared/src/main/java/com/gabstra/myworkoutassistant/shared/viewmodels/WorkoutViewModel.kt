@@ -2236,7 +2236,13 @@ open class WorkoutViewModel(
 
     private suspend fun storeSetDataInternal() {
         val currentState = _workoutState.value
-        if (!(currentState is WorkoutState.Set || currentState is WorkoutState.Rest)) return
+        val currentSet = when (currentState) {
+            is WorkoutState.Set -> currentState.set
+            is WorkoutState.Rest -> currentState.set
+            else -> return
+        }
+
+        if (currentSet is RestSet) return
 
         if (currentState is WorkoutState.Set) {
             val exercise = exercisesById[currentState.exerciseId]!!

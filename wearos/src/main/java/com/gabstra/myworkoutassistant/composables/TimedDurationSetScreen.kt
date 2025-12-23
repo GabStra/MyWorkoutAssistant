@@ -29,6 +29,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
@@ -352,7 +354,9 @@ fun TimedDurationSetScreen(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = modifier
+            modifier = modifier.semantics {
+                contentDescription = SetValueSemantics.TimedDurationSetTypeDescription
+            }
         ) {
             if (isTimerInEditMode) {
                 ControlButtonsVertical(
@@ -368,6 +372,9 @@ fun TimedDurationSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onCloseClick = {
+                        isTimerInEditMode = false
+                    },
                     content = {
                         textComposable()
                     }

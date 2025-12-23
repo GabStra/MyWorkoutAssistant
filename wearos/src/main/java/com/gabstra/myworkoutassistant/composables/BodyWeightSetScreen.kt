@@ -29,7 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -270,8 +269,7 @@ fun BodyWeightSetScreen(
                     }
                 )
                 .semantics {
-                    contentDescription = "${SetValueSemantics.RepsValueDescription}: $repsText"
-                    stateDescription = repsText
+                    contentDescription = SetValueSemantics.RepsValueDescription
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -328,8 +326,7 @@ fun BodyWeightSetScreen(
                     }
                 )
                 .semantics {
-                    contentDescription = "${SetValueSemantics.WeightValueDescription}: $weightText"
-                    stateDescription = weightText
+                    contentDescription = SetValueSemantics.WeightValueDescription
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -419,6 +416,10 @@ fun BodyWeightSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onCloseClick = {
+                        isRepsInEditMode = false
+                        isWeightInEditMode = false
+                    },
                     content = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -432,7 +433,11 @@ fun BodyWeightSetScreen(
 
             }else{
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .semantics {
+                            contentDescription = SetValueSemantics.BodyWeightSetTypeDescription
+                        },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {

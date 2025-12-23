@@ -47,7 +47,7 @@ object ComprehensiveHistoryWorkoutStoreFixture {
         exercises.add(createBarbellExercise(equipments[0].id))
 
         // Exercise 2: WEIGHT, DUMBBELLS - 2 WeightSets
-       /* exercises.add(createDumbbellsExercise(equipments[1].id))
+        exercises.add(createDumbbellsExercise(equipments[1].id))
 
         // Exercise 3: WEIGHT, DUMBBELL - 2 WeightSets
         exercises.add(createDumbbellExercise(equipments[2].id))
@@ -74,7 +74,7 @@ object ComprehensiveHistoryWorkoutStoreFixture {
         exercises.add(createCountupExercise())
 
         // Exercise 11: WEIGHT, BARBELL, doNotStoreHistory=true
-        exercises.add(createDoNotStoreHistoryExercise(equipments[0].id))*/
+        exercises.add(createDoNotStoreHistoryExercise(equipments[0].id))
 
         val workout = Workout(
             id = UUID.randomUUID(),
